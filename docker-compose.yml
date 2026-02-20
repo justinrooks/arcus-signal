@@ -1,0 +1,44 @@
+x-shared_environment: &shared_environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  QUEUE_WORKER_COUNT: ${QUEUE_WORKER_COUNT:-1}
+  REDIS_POOL_MAX_CONNECTIONS: ${REDIS_POOL_MAX_CONNECTIONS:-8}
+  REDIS_POOL_CONNECTION_TIMEOUT_SECONDS: ${REDIS_POOL_CONNECTION_TIMEOUT_SECONDS:-30}
+  WORKER_STARTUP_GRACE_SECONDS: ${WORKER_STARTUP_GRACE_SECONDS:-5}
+
+services:
+  api:
+    image: arcus-signal:latest
+    build:
+      context: .
+    environment:
+      <<: *shared_environment
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - '8080:8080'
+    command: ["./Run", "serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8080"]
+
+  worker:
+    image: arcus-signal:latest
+    build:
+      context: .
+    environment:
+      <<: *shared_environment
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - '8081:8081'
+    command: ["./RunWorker", "serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8081"]
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

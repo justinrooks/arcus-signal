@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:arcus-signal}",
+            "name": "Debug Run",
+            "target": "Run",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Run"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:arcus-signal}",
+            "name": "Release Run",
+            "target": "Run",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Run"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:arcus-signal}",
+            "name": "Debug RunWorker",
+            "target": "RunWorker",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug RunWorker"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:arcus-signal}",
+            "name": "Release RunWorker",
+            "target": "RunWorker",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release RunWorker"
+        }
+    ]
+}
