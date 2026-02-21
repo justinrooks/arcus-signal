@@ -5,22 +5,25 @@
 //  Created by Justin Rooks on 2/21/26.
 //
 
-import Foundation
-import OSLog
+import Logging
 
 extension Logger {
-    static let subsystem = "Arcus-Signal"//Bundle.main.bundleIdentifier!
-    
+    private static func arcus(category: String) -> Logger {
+        var logger = Logger(label: "arcus-signal")
+        logger[metadataKey: "category"] = .string(category)
+        return logger
+    }
+
     // MARK: Plumbing
-    static let providersSpcClient = Logger(subsystem: subsystem, category: "providers.spc.client")
-    static let networkDownloader = Logger(subsystem: subsystem, category: "network.downloader")
-    static let providersSpc = Logger(subsystem: subsystem, category: "providers.spc")
-    static let parsingRss = Logger(subsystem: subsystem, category: "parsing.rss")
-    static let providersNwsClient = Logger(subsystem: subsystem, category: "providers.nws.client")
-    static let providersNws = Logger(subsystem: subsystem, category: "providers.nws")
-    static let providersNwsGrid = Logger(subsystem: subsystem, category: "providers.nws.grid")
-    static let providersWeatherKit = Logger(subsystem: subsystem, category: "providers.weatherKit")
-    
+    static var providersSpcClient: Logger { arcus(category: "providers.spc.client") }
+    static var networkDownloader: Logger { arcus(category: "network.downloader") }
+    static var providersSpc: Logger { arcus(category: "providers.spc") }
+    static var parsingRss: Logger { arcus(category: "parsing.rss") }
+    static var providersNwsClient: Logger { arcus(category: "providers.nws.client") }
+    static var providersNws: Logger { arcus(category: "providers.nws") }
+    static var providersNwsGrid: Logger { arcus(category: "providers.nws.grid") }
+    static var providersWeatherKit: Logger { arcus(category: "providers.weatherKit") }
+
     // MARK: Notification Delivery
-    static let notificationsSender = Logger(subsystem: subsystem, category: "notifications.sender")
+    static var notificationsSender: Logger { arcus(category: "notifications.sender") }
 }

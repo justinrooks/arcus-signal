@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import OSLog
+import Logging
 
 enum NwsError: Error, Equatable {
     case invalidUrl
@@ -31,7 +31,7 @@ struct NwsHttpClient: NwsClient {
     private let logger = Logger.providersNwsClient
     private static let baseURL = URL(string: "https://api.weather.gov")!
     
-    init(http: any HTTPClient = URLSessionHTTPClient()) {
+    init(http: any HTTPClient) {
         self.http = http
     }
     
@@ -48,7 +48,13 @@ struct NwsHttpClient: NwsClient {
     
     func fetchActiveAlertsJsonData(for location: Coordinate2D) async throws -> Data {
         let (lat, lon) = truncatedCoordinates(for: location)
-        logger.info("NWS request started endpoint=/alerts/active lat=\(lat, privacy: .private(mask: .hash)) lon=\(lon, privacy: .private(mask: .hash))")
+        logger.info(
+            "NWS request started endpoint=/alerts/active(point)",
+            metadata: [
+                "lat": .string("\(lat)"),
+                "lon": .string("\(lon)")
+            ]
+        )
         let point = "\(lat),\(lon)"
         let url = try makeNwsUrl(
             path: "/alerts/active",
@@ -60,7 +66,13 @@ struct NwsHttpClient: NwsClient {
     
     func fetchPointMetadata(for location: Coordinate2D) async throws -> Data {
         let (lat, lon) = truncatedCoordinates(for: location)
-        logger.info("NWS request started endpoint=/points lat=\(lat, privacy: .private(mask: .hash)) lon=\(lon, privacy: .private(mask: .hash))")
+        logger.info(
+            "NWS request started endpoint=/points",
+            metadata: [
+                "lat": .string("\(lat)"),
+                "lon": .string("\(lon)")
+            ]
+        )
         let url = try makeNwsUrl(path: "/points/\(lat),\(lon)")
         
         return try await fetch(from: url)
@@ -101,7 +113,13 @@ struct NwsHttpClient: NwsClient {
         }
         
         guard let data = resp.data else {
-            logger.error("NWS response missing body endpoint=\(url.path, privacy: .public) status=\(resp.status, privacy: .public)")
+            logger.error(
+                "NWS response missing body.",
+                metadata: [
+                    "endpoint": .string(url.path),
+                    "status": .string("\(resp.status)")
+                ]
+            )
             throw NwsError.missingData
         }
         
@@ -111,11 +129,31 @@ struct NwsHttpClient: NwsClient {
     private func logFailure(error: NwsError, endpoint: String, status: Int) {
         switch error {
         case .rateLimited(let retryAfter):
-            logger.warning("NWS rate limited endpoint=\(endpoint, privacy: .public) status=\(status, privacy: .public) retryAfterSeconds=\(retryAfter ?? -1, privacy: .public)")
+            logger.warning(
+                "NWS rate limited.",
+                metadata: [
+                    "endpoint": .string(endpoint),
+                    "status": .string("\(status)"),
+                    "retryAfterSeconds": .string("\(retryAfter ?? -1)")
+                ]
+            )
         case .serviceUnavailable(let retryAfter):
-            logger.warning("NWS service unavailable endpoint=\(endpoint, privacy: .public) status=\(status, privacy: .public) retryAfterSeconds=\(retryAfter ?? -1, privacy: .public)")
+            logger.warning(
+                "NWS service unavailable.",
+                metadata: [
+                    "endpoint": .string(endpoint),
+                    "status": .string("\(status)"),
+                    "retryAfterSeconds": .string("\(retryAfter ?? -1)")
+                ]
+            )
         default:
-            logger.error("NWS request failed endpoint=\(endpoint, privacy: .public) status=\(status, privacy: .public)")
+            logger.error(
+                "NWS request failed.",
+                metadata: [
+                    "endpoint": .string(endpoint),
+                    "status": .string("\(status)")
+                ]
+            )
         }
     }
     

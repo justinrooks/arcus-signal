@@ -1,12 +1,5 @@
-//
-//  HTTPDataDownloader.swift
-//  ArcusSignal
-//
-//  Created by Justin Rooks on 2/21/26.
-//
-
 import Foundation
-import OSLog
+import Vapor
 
 public enum HTTPStatusClassification: Sendable, Equatable {
     case success
@@ -33,11 +26,12 @@ public enum HTTPRetryAfterParser {
 }
 
 public enum HTTPRequestHeaders {
-    public static func userAgent(bundle: Bundle = .main, fallbackName: String = "SkyAware") -> String {
+    public static func userAgent(bundle: Bundle = .main, fallbackName: String = "arcus-signal") -> String {
         let appName = (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? fallbackName
-        let bundleID = bundle.bundleIdentifier ?? "skyaware.app"
-//        return "\(appName)/\(bundle.appVersion) (\(bundleID); build:\(bundle.buildNumber))"
-        return "\(appName)/0.1.0 (\(bundleID); build:1)"
+        let appVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "dev"
+        let build = (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "dev"
+        let bundleID = bundle.bundleIdentifier ?? "arcus.signal"
+        return "\(appName)/\(appVersion) (\(bundleID); build:\(build))"
     }
 
     public static func nws(bundle: Bundle = .main) -> [String: String] {
@@ -62,11 +56,11 @@ public enum HTTPRequestHeaders {
     }
 }
 
-public struct HTTPResponse {
+public struct HTTPResponse: Sendable {
     public let status: Int
     public let headers: [String: String]
     public let data: Data?
-    
+
     public func header(_ name: String) -> String? {
         headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
     }
@@ -87,151 +81,174 @@ public struct HTTPResponse {
 }
 
 public protocol HTTPResponseObserving: Sendable {
-    func didReceive(response: HTTPURLResponse, for requestURL: URL) async
+    func didReceive(response: HTTPResponse, for requestURL: URL) async
 }
 
 public struct NoOpHTTPResponseObserver: HTTPResponseObserving {
     public init() {}
-    public func didReceive(response: HTTPURLResponse, for requestURL: URL) async {}
+    public func didReceive(response: HTTPResponse, for requestURL: URL) async {}
 }
 
 public actor LastGlobalSuccessHTTPObserver: HTTPResponseObserving {
-    private let store: UserDefaults?
-    private let key: String
+    public private(set) var lastGlobalSuccessAt: Date?
 
-    public init(
-        store: UserDefaults? = UserDefaults(suiteName: "com.justinrooks.skyaware"),
-        key: String = "lastGlobalSuccessAt"
-    ) {
-        self.store = store
-        self.key = key
-    }
+    public init() {}
 
-    public func didReceive(response: HTTPURLResponse, for requestURL: URL) async {
-        guard (200...299).contains(response.statusCode) else { return }
-        guard let lastModified = response.value(forHTTPHeaderField: "Last-Modified")?.fromRFC1123String() else { return }
-        store?.set(lastModified.timeIntervalSince1970, forKey: key)
+    public func didReceive(response: HTTPResponse, for requestURL: URL) async {
+        guard (200...299).contains(response.status) else { return }
+        if let lastModified = response.header("Last-Modified")?.fromRFC1123String() {
+            lastGlobalSuccessAt = lastModified
+            return
+        }
+        lastGlobalSuccessAt = .now
     }
 }
 
 public protocol HTTPClient: Sendable {
-    func get (_ url: URL, headers: [String: String]) async throws -> HTTPResponse
+    func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse
     func clearCache()
 }
 
-public final class URLSessionHTTPClient: HTTPClient {
-    private let logger = Logger.networkDownloader
-    private let session: URLSession
-    private let delays: [UInt64] = [0, 5, 10, 15] // seconds
+public final class VaporApplicationHTTPClient: HTTPClient {
+    private let application: Application
+    private let delays: [UInt64]
     private let observer: any HTTPResponseObserving
-    
-    public init(observer: any HTTPResponseObserving = NoOpHTTPResponseObserver()) {
+    private let logger: Logger
+
+    public init(
+        application: Application,
+        observer: any HTTPResponseObserving = NoOpHTTPResponseObserver(),
+        retryDelaysSeconds: [UInt64] = [0, 5, 10, 15]
+    ) {
+        self.application = application
         self.observer = observer
-        let config = URLSessionConfiguration.default
-        config.requestCachePolicy = .useProtocolCachePolicy
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 25
-        config.urlCache = URLCache.shared
-       
-        self.session = URLSession(configuration: config)
+        self.delays = retryDelaysSeconds
+        self.logger = .networkDownloader
     }
-    
+
     public func get(_ url: URL, headers: [String: String] = [:]) async throws -> HTTPResponse {
-        try await request(url: url, method: "GET", headers: headers)
+        try await request(url: url, method: .GET, headers: headers)
     }
 
-    public func clearCache() {
-        URLCache.shared.removeAllCachedResponses()
-    }
+    /// Vapor's client does not expose an app-level HTTP cache to clear.
+    public func clearCache() {}
 
-    func getCachedData(for url: URL) -> Data? {
-        let request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 20.0)
-        if let cachedResponse = URLCache.shared.cachedResponse(for: request) {
-            return cachedResponse.data
-        }
-        return nil
-    }
-    
-    private func request(url: URL, method: String, headers: [String: String]) async throws -> HTTPResponse {
-        // Try up to `delays.count` attempts. Delays array encodes backoff for retries,
-        // where index+1 corresponds to the wait before the next attempt.
-        for attempt in 0..<delays.count {
+    private func request(
+        url: URL,
+        method: HTTPMethod,
+        headers: [String: String]
+    ) async throws -> HTTPResponse {
+        let retryDelays = delays.isEmpty ? [0] : delays
+
+        for attempt in 0..<retryDelays.count {
             try Task.checkCancellation()
             do {
-                var req = URLRequest(url: url)
-                req.httpMethod = method
-                
-                headers.forEach { header in
-                    req.setValue(
-                            header.value,
-                            forHTTPHeaderField: header.key
-                        )
-                }
+                let uri = URI(string: url.absoluteString)
+                let response = try await application.client.send(
+                    method,
+                    headers: vaporHeaders(from: headers),
+                    to: uri
+                )
 
-                let (data, response) = try await session.data(for: req, delegate: nil)
-                
-                guard let http = response as? HTTPURLResponse else {
-                    throw URLError(.badServerResponse)
-                }
-                
-                await observer.didReceive(response: http, for: url)
-
-                let responseHeaders = normalizedHeaders(from: http.allHeaderFields)
-
-                return HTTPResponse(status: http.statusCode,
-                                    headers: responseHeaders,
-                                    data: data.isEmpty ? nil : data)
+                let normalized = toHTTPResponse(response)
+                await observer.didReceive(response: normalized, for: url)
+                return normalized
             } catch {
                 if error is CancellationError || Task.isCancelled {
-                    logger.debug("Request cancelled for host=\(url.host ?? "unknown", privacy: .public) path=\(url.path, privacy: .public)")
+                    logger.debug(
+                        "HTTP request cancelled.",
+                        metadata: [
+                            "host": .string(url.host ?? "unknown"),
+                            "path": .string(url.path)
+                        ]
+                    )
                     throw CancellationError()
                 }
 
-                if isTransient(error) {
-                    logger.debug("Triggering retry. Retries: \(attempt, privacy: .public)")
-                    // If this was the last attempt, bubble up the error.
-                    if attempt >= delays.count - 1 { throw error }
-                    
-                    // Otherwise, wait the configured backoff before retrying.
-                    let wait = delays[attempt + 1]
-                    logger.debug("Sleeping for \(wait, privacy: .public) seconds")
+                if isTransient(error), attempt < retryDelays.count - 1 {
+                    let wait = retryDelays[attempt + 1]
+                    logger.debug(
+                        "Retrying transient HTTP failure.",
+                        metadata: [
+                            "host": .string(url.host ?? "unknown"),
+                            "path": .string(url.path),
+                            "attempt": .string("\(attempt + 1)"),
+                            "waitSeconds": .string("\(wait)")
+                        ]
+                    )
                     try await Task.sleep(for: .seconds(Int(wait)))
-                    logger.debug("Retrying query...")
                     continue
-                } else {
-                    logger.error("Non transient request error. Fatal: \(error, privacy: .public)")
-                    throw error
                 }
+
+                throw error
             }
         }
-        
-        // Defensive fallback; loop should either return or throw earlier.
-        throw URLError(.cannotLoadFromNetwork)
+
+        throw Abort(.internalServerError, reason: "Unexpected HTTP retry state reached.")
     }
 
-    private func normalizedHeaders(from raw: [AnyHashable: Any]) -> [String: String] {
-        var output: [String: String] = [:]
-        output.reserveCapacity(raw.count)
+    private func vaporHeaders(from input: [String: String]) -> HTTPHeaders {
+        var headers = HTTPHeaders()
+        for (key, value) in input {
+            headers.add(name: key, value: value)
+        }
+        return headers
+    }
 
-        for (key, value) in raw {
-            let headerName = String(describing: key)
-            let headerValue = String(describing: value)
-            output[headerName] = headerValue
+    private func toHTTPResponse(_ response: ClientResponse) -> HTTPResponse {
+        let headers = normalizedHeaders(from: response.headers)
+
+        let data: Data?
+        if var body = response.body, body.readableBytes > 0 {
+            data = body.readData(length: body.readableBytes)
+        } else {
+            data = nil
+        }
+
+        return HTTPResponse(status: Int(response.status.code), headers: headers, data: data)
+    }
+
+    private func normalizedHeaders(from headers: HTTPHeaders) -> [String: String] {
+        var output: [String: String] = [:]
+        output.reserveCapacity(headers.count)
+
+        for header in headers {
+            output[header.name] = header.value
         }
 
         return output
     }
-    
+
     private func isTransient(_ error: any Error) -> Bool {
-        let e = error as? URLError
-        switch e?.code {
-        case .timedOut, .cannotFindHost, .cannotConnectToHost,
-             .networkConnectionLost, .dnsLookupFailed, .resourceUnavailable,
-             .notConnectedToInternet, .internationalRoamingOff,
-             .callIsActive, .dataNotAllowed, .requestBodyStreamExhausted:
-            return true
-        default:
-            return false
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut,
+                 .cannotFindHost,
+                 .cannotConnectToHost,
+                 .networkConnectionLost,
+                 .dnsLookupFailed,
+                 .resourceUnavailable,
+                 .notConnectedToInternet,
+                 .internationalRoamingOff,
+                 .callIsActive,
+                 .dataNotAllowed,
+                 .requestBodyStreamExhausted:
+                return true
+            default:
+                break
+            }
         }
+
+        let message = String(describing: error).lowercased()
+        let transientTokens = [
+            "timed out",
+            "connection reset",
+            "connection refused",
+            "temporarily unavailable",
+            "network is unreachable",
+            "broken pipe",
+            "dns"
+        ]
+        return transientTokens.contains { message.contains($0) }
     }
 }
