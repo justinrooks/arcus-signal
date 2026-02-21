@@ -1,4 +1,5 @@
 @testable import App
+import Foundation
 import Testing
 import Vapor
 import VaporTesting
@@ -20,6 +21,14 @@ struct AppTests {
         try await app.asyncShutdown()
     }
 
+    private func isoDate(_ value: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else {
+            fatalError("Invalid ISO8601 date in test fixture: \(value)")
+        }
+        return date
+    }
+
     @Test("API health endpoint returns ok")
     func apiHealth() async throws {
         try await withApp(mode: .api) { app in
@@ -38,5 +47,285 @@ struct AppTests {
                 #expect(res.body.string == "ok")
             })
         }
+    }
+
+    @Test("NWS event JSON decodes polygon geometry coordinates")
+    func nwsPolygonCoordinatesDecode() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:example",
+              "type": "Feature",
+              "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                  [
+                    [-104.0, 39.0],
+                    [-103.5, 39.5],
+                    [-104.0, 39.0]
+                  ]
+                ]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/example",
+                "areaDesc": "Test County"
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+
+        guard let geometry = decoded.features?.first?.geometry else {
+            Issue.record("Expected a geometry payload.")
+            return
+        }
+
+        switch geometry.coordinates {
+        case .array(let rings):
+            #expect(rings.isEmpty == false)
+        default:
+            Issue.record("Expected polygon coordinates to decode as a nested array.")
+        }
+    }
+
+    @Test("NWS event JSON decodes point geometry coordinates")
+    func nwsPointCoordinatesDecode() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:example-point",
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [-104.0, 39.0]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/example-point",
+                "areaDesc": "Test County"
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+
+        guard let geometry = decoded.features?.first?.geometry else {
+            Issue.record("Expected a geometry payload.")
+            return
+        }
+
+        switch geometry.coordinates {
+        case .array(let pair):
+            #expect(pair.count == 2)
+        default:
+            Issue.record("Expected point coordinates to decode as an array pair.")
+        }
+    }
+
+    @Test("NWS feature maps to canonical ArcusEvent")
+    func nwsFeatureMapsToArcusEvent() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:abc123",
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [-104.99, 39.73]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/abc123",
+                "areaDesc": "Denver County",
+                "geocode": {
+                  "UGC": ["COC031", "COC005"],
+                  "SAME": ["08031", "08005"]
+                },
+                "event": "Tornado Warning",
+                "headline": "Tornado Warning for Denver County",
+                "severity": "Severe",
+                "urgency": "Immediate",
+                "certainty": "Observed",
+                "sent": "2026-02-21T16:00:00Z",
+                "effective": "2026-02-21T16:02:00Z",
+                "expires": "2026-02-21T17:00:00Z"
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+        let now = isoDate("2026-02-21T16:30:00Z")
+        let events = decoded.toArcusEvents(now: now)
+
+        #expect(events.count == 1)
+        guard let event = events.first else {
+            Issue.record("Expected a canonical event from mapper.")
+            return
+        }
+
+        #expect(event.eventKey == "nws:urn:oid:abc123")
+        #expect(event.source == .nws)
+        #expect(event.kind == .torWarning)
+        #expect(event.sourceURL == "https://api.weather.gov/alerts/abc123")
+        #expect(event.status == .active)
+        #expect(event.severity == .warning)
+        #expect(event.urgency == .immediate)
+        #expect(event.certainty == .observed)
+        #expect(event.areaDesc == "Denver County")
+        #expect(event.title == "Tornado Warning for Denver County")
+        #expect(event.ugcCodes == ["COC031", "COC005"])
+
+        switch event.geometry {
+        case .point(let lon, let lat):
+            #expect(lon == -104.99)
+            #expect(lat == 39.73)
+        default:
+            Issue.record("Expected point geometry in mapped canonical event.")
+        }
+    }
+
+    @Test("NWS mapper marks event ended when expired")
+    func nwsMapperMarksEndedWhenExpired() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:ended-1",
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [-105.2, 39.1]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/ended-1",
+                "areaDesc": "Jefferson County",
+                "event": "Severe Thunderstorm Warning",
+                "expires": "2026-02-21T15:00:00Z"
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+        let now = isoDate("2026-02-21T16:30:00Z")
+        let events = decoded.toArcusEvents(now: now)
+
+        #expect(events.count == 1)
+        #expect(events.first?.status == .ended)
+    }
+
+    @Test("NWS mapper converts polygon geometry and filters unsupported events")
+    func nwsMapperConvertsPolygonAndFiltersUnsupported() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:poly-1",
+              "type": "Feature",
+              "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                  [
+                    [-104.0, 39.0],
+                    [-103.5, 39.5],
+                    [-104.0, 39.0]
+                  ]
+                ]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/poly-1",
+                "areaDesc": "Polygon County",
+                "event": "Flash Flood Warning"
+              }
+            },
+            {
+              "id": "urn:oid:skip-1",
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [-100.0, 40.0]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/skip-1",
+                "areaDesc": "Skip County",
+                "event": "Special Weather Statement"
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+        let events = decoded.toArcusEvents(now: isoDate("2026-02-21T16:30:00Z"))
+
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .ffWarning)
+
+        switch events.first?.geometry {
+        case .polygon(let rings):
+            #expect(rings.isEmpty == false)
+            #expect(rings.first?.isEmpty == false)
+        default:
+            Issue.record("Expected polygon geometry in mapped canonical event.")
+        }
+    }
+
+    @Test("ArcusEventModel round-trips canonical event")
+    func arcusEventModelRoundTrip() throws {
+        let domain = ArcusEvent(
+            eventKey: "nws:urn:oid:roundtrip-1",
+            source: .nws,
+            kind: .torWarning,
+            sourceURL: "https://api.weather.gov/alerts/roundtrip-1",
+            status: .active,
+            revision: 2,
+            issuedAt: isoDate("2026-02-21T16:00:00Z"),
+            effectiveAt: isoDate("2026-02-21T16:05:00Z"),
+            expiresAt: isoDate("2026-02-21T17:00:00Z"),
+            severity: .warning,
+            urgency: .immediate,
+            certainty: .observed,
+            geometry: .polygon(
+                rings: [[
+                    .init(lon: -104.0, lat: 39.0),
+                    .init(lon: -103.5, lat: 39.5),
+                    .init(lon: -104.0, lat: 39.0)
+                ]]
+            ),
+            ugcCodes: ["COC031", "COC005"],
+            h3Resolution: 8,
+            h3CoverHash: "test-cover-hash",
+            title: "Round trip test",
+            areaDesc: "Denver Metro",
+            rawRef: "raw/nws/roundtrip-1.json"
+        )
+
+        let model = try ArcusEventModel(from: domain)
+        let roundTrip = try model.asDomain()
+
+        #expect(roundTrip == domain)
     }
 }
