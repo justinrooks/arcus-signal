@@ -131,6 +131,41 @@ War story: this is the “airport baggage claim” moment for data models. NWS J
 
 War story: ORMs are like shipping containers. If you stuff domain objects directly into them without labeling and boundaries, you get customs problems later. A separate canonical model + persistence model keeps border control clean.
 
+### Milestone: Networking stack moved to Vapor client primitives
+
+- Replaced custom `URLSession` transport with a Vapor-native HTTP transport (`VaporApplicationHTTPClient`) so outbound requests run through Vapor's client lifecycle and connection handling.
+- Kept the app's protocol boundary (`HTTPClient`) and status classification logic, but swapped the concrete engine under it.
+- Updated NWS ingest wiring to construct the HTTP client from `QueueContext.application`, which keeps worker jobs aligned with app runtime configuration.
+- Removed server-side `UserDefaults` persistence from network observer behavior and kept observer state in-memory for process-local telemetry only.
+
+War story: this was a good reminder that server apps are airports, not notebooks. Local sticky notes (`UserDefaults`) feel convenient, but in distributed systems they turn into conflicting gate announcements.
+
+### Milestone: Logging stack aligned to Vapor/SwiftLog
+
+- Removed `OSLog` usage from server networking code and standardized on SwiftLog (`Logging.Logger`) so logs flow through Vapor's configured logging pipeline.
+- Reworked logger categories to use logger metadata (`category`) instead of Apple-platform subsystem/category APIs.
+- Updated NWS client logging to structured metadata fields (`endpoint`, `status`, `retryAfterSeconds`, etc.) for cleaner filtering and ingestion downstream.
+
+War story: mixed logging stacks are like speaking half in English and half in radio code on the same ops channel. Everyone hears something, but nobody gets the full message quickly during an incident.
+
+### Bug squash: Vapor contract cleanup + Linux safety pass
+
+- Fixed API health response contract to return `"ok"` so it matches bootstrap test expectations.
+- Refactored `NWSIngestService` into the actual ingest boundary and moved job execution to call service-first, keeping job responsibilities focused on persistence.
+- Replaced `fatalError` on missing ingest service registration with a logged critical + thrown service error path.
+- Hardened ingest persistence against worker concurrency collisions by handling unique-constraint conflicts and converting them into update behavior.
+- Removed timezone force unwraps in SPC date parsing (`CDT`/`CST`) with a UTC fallback to avoid platform-specific crashes.
+
+War story: this was the “small paper cuts” sprint. None of the issues alone looked dramatic, but together they defined whether the app behaves like a server in production or a demo on one laptop.
+
+### Bug squash: upsert duplicate-key noise in recurring ingest
+
+- Symptom: periodic worker runs logged Postgres `23505` unique violations on (`event_key`, `revision`) during normal ingest cycles.
+- Root cause: ingest persistence used insert-first behavior, so existing rows generated conflict errors before reconciliation.
+- Fix: switched to query-first upsert flow (update when present, insert only when missing) and kept a unique-violation fallback path only for real cross-worker race conditions.
+
+War story: this one looked like a race at first glance, but it was mostly a strategy mismatch. If you know most rows already exist, asking Postgres to "fail then recover" every minute just creates noise and masks real incidents.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.
