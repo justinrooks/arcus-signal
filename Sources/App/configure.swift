@@ -15,7 +15,11 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     configureMigrations(on: app)
     try configureQueues(on: app)
 
-    app.nwsIngestService = StubNWSIngestService()
+    if app.environment == .testing {
+        app.nwsIngestService = StubNWSIngestService()
+    } else {
+        app.nwsIngestService = DefaultNWSIngestService()
+    }
     app.queues.add(IngestNWSAlertsJob())
 
     switch mode {

@@ -6,7 +6,7 @@ func configureAPIRoutes(_ app: Application) throws {
     // MARK: Health APIs
     app.group("health") { health in
         health.get() { _ in
-            "service up"
+            "ok"
         }
         // TODO: DB endpoint health?
     }

@@ -64,9 +64,8 @@ extension String {
     /// - Parameter text: string that looks like: 0651 PM CST Sat Nov 08 2025
     /// - Returns: Valid date object in UTC time
     public func parseAsIssuedDate() -> Date? {
-        let tz: TimeZone = self.uppercased().contains("CDT")
-            ? .init(abbreviation: "CDT")!
-            : .init(abbreviation: "CST")!
+        let timezoneAbbreviation = self.uppercased().contains("CDT") ? "CDT" : "CST"
+        let tz = TimeZone(abbreviation: timezoneAbbreviation) ?? .utc
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = tz
