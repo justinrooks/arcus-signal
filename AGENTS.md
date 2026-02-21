@@ -12,11 +12,15 @@ The backend is intentionally split into two runtime roles:
 - `Run` (`api` container): HTTP endpoints and enqueue-only behavior
 - `RunWorker` (`worker` container): queue workers, ingestion scheduler, targeting, and APNs delivery pipeline
 
+This solution is implemented with Vapor. For all feature work, architecture changes, and operational behavior, default to official Vapor documentation and Vapor best practices.
+
 ## Key Architecture Decisions
 
 - Two executables, one shared `App` module.
 - Queue-backed background processing via Vapor `Queues` + Redis backend.
+- Shared relational persistence via Vapor Fluent + PostgreSQL for both runtime roles.
 - `REDIS_URL` is the canonical queue backend config. No silent non-dev fallback.
+- `DATABASE_URL` is the canonical Postgres config. No silent non-dev fallback.
 - Worker-only Vapor Queues scheduled job dispatches ingestion jobs every 60 seconds.
 - Health endpoints are separate per process (`GET /health`).
 - API never sends APNs directly. Push delivery stays worker-owned.
@@ -32,6 +36,7 @@ The backend is intentionally split into two runtime roles:
 - Redis queue pool size is explicit (`REDIS_POOL_MAX_CONNECTIONS`, default `8`).
 - Redis pool lease timeout is explicit (`REDIS_POOL_CONNECTION_TIMEOUT_SECONDS`, default `30`).
 - Worker startup grace is explicit (`WORKER_STARTUP_GRACE_SECONDS`, default `5`).
+- Dev/testing Postgres fallback knobs are explicit (`DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `DATABASE_NAME`).
 
 ## Build and Run
 
@@ -55,10 +60,13 @@ Expected ports:
 - API: `8080`
 - Worker health: `8081`
 - Redis: `6379`
+- Postgres: `5432`
 
 ## Quirks and Gotchas
 
 - Worker scheduler and queue consumers are intentionally started only in `RunWorker`.
 - `RunWorker` still binds HTTP for health checks, but should expose only internal/ops endpoints.
 - In `development`/`testing`, queue config defaults to `redis://127.0.0.1:6379` with a warning when `REDIS_URL` is absent.
+- In `development`/`testing`, DB config defaults to local Postgres values with a warning when `DATABASE_URL` is absent.
 - In non-dev environments, missing `REDIS_URL` is an immediate startup failure.
+- In non-dev environments, missing `DATABASE_URL` is an immediate startup failure.

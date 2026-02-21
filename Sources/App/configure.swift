@@ -1,3 +1,6 @@
+import Fluent
+import FluentPostgresDriver
+import Foundation
 import Queues
 import QueuesRedisDriver
 import Vapor
@@ -8,6 +11,8 @@ public enum AppRuntimeMode: String, Sendable {
 }
 
 public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
+    try configureDatabases(on: app)
+    configureMigrations(on: app)
     try configureQueues(on: app)
 
     app.nwsIngestService = StubNWSIngestService()
@@ -23,6 +28,75 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         app.logger.info("Configured scheduled ingestion dispatch (every 60 seconds).")
         try configureWorkerRoutes(app)
     }
+}
+
+private func configureMigrations(on app: Application) {
+    app.migrations.add(CreateArcusEventModel())
+}
+
+private func configureDatabases(on app: Application) throws {
+    if let databaseURL = Environment.get("DATABASE_URL"), !databaseURL.isEmpty {
+        app.databases.use(try .postgres(url: databaseURL), as: .psql)
+        app.logger.info("Postgres database configured from DATABASE_URL.")
+        return
+    }
+
+    if app.environment == .development || app.environment == .testing {
+        let hostname = Environment.get("DATABASE_HOST") ?? "127.0.0.1"
+        let port = Environment.get("DATABASE_PORT").flatMap(Int.init) ?? 5432
+        let username = Environment.get("DATABASE_USERNAME") ?? "arcus"
+        let password = Environment.get("DATABASE_PASSWORD") ?? "arcus"
+        let database = Environment.get("DATABASE_NAME") ?? "arcus_signal"
+        let localDatabaseURL = try makePostgresURL(
+            hostname: hostname,
+            port: port,
+            username: username,
+            password: password,
+            database: database,
+            tlsMode: "disable"
+        )
+
+        app.databases.use(try .postgres(url: localDatabaseURL), as: .psql)
+
+        app.logger.warning(
+            "DATABASE_URL is not set; defaulting Postgres config for \(app.environment.name).",
+            metadata: [
+                "databaseHost": .string(hostname),
+                "databasePort": .stringConvertible(port),
+                "databaseName": .string(database)
+            ]
+        )
+        return
+    }
+
+    throw Abort(
+        .internalServerError,
+        reason: "DATABASE_URL must be set when running in \(app.environment.name)."
+    )
+}
+
+private func makePostgresURL(
+    hostname: String,
+    port: Int,
+    username: String,
+    password: String,
+    database: String,
+    tlsMode: String
+) throws -> String {
+    var components = URLComponents()
+    components.scheme = "postgres"
+    components.host = hostname
+    components.port = port
+    components.path = "/" + database
+    components.user = username
+    components.password = password
+    components.queryItems = [URLQueryItem(name: "tlsmode", value: tlsMode)]
+
+    guard let url = components.string else {
+        throw Abort(.internalServerError, reason: "Failed to construct DATABASE_URL from environment values.")
+    }
+
+    return url
 }
 
 private func configureQueues(on app: Application) throws {
@@ -84,11 +158,11 @@ private func configureWorkerRuntime(on app: Application) {
     app.lifecycle.use(WorkerRuntime(startupGracePeriodSeconds: Int64(startupGraceSeconds)))
 }
 
-private func configureAPIRoutes(_ app: Application) throws {
-    app.get("health") { _ in
-        "ok"
-    }
-}
+// private func configureAPIRoutes(_ app: Application) throws {
+//     app.get("health") { _ in
+//         "ok"
+//     }
+// }
 
 private func configureWorkerRoutes(_ app: Application) throws {
     app.get("health") { _ in

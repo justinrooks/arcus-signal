@@ -14,6 +14,9 @@ let package = Package(
     dependencies: [
         // 💧 A server-side Swift web framework.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.115.0"),
+        // 🗄️ ORM + PostgreSQL driver.
+        .package(url: "https://github.com/vapor/fluent.git", from: "4.11.0"),
+        .package(url: "https://github.com/vapor/fluent-postgres-driver.git", from: "2.10.0"),
         // 📬 Background jobs and queue workers.
         .package(url: "https://github.com/vapor/queues.git", from: "1.17.2"),
         // 🧠 Redis queue backend.
@@ -24,6 +27,8 @@ let package = Package(
             name: "App",
             dependencies: [
                 .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "FluentPostgresDriver", package: "fluent-postgres-driver"),
                 .product(name: "Queues", package: "queues"),
                 .product(name: "QueuesRedisDriver", package: "queues-redis-driver"),
             ],

@@ -3,7 +3,20 @@
         {
             "type": "swift",
             "request": "launch",
-            "args": [],
+            "args": [
+                "serve",
+                "--env",
+                "development",
+                "--hostname",
+                "0.0.0.0",
+                "--port",
+                "8080"
+            ],
+            "env": {
+                "LOG_LEVEL": "debug",
+                "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal",
+                "REDIS_URL": "redis://127.0.0.1:6379"
+            },
             "cwd": "${workspaceFolder:arcus-signal}",
             "name": "Debug Run",
             "target": "Run",
@@ -13,7 +26,20 @@
         {
             "type": "swift",
             "request": "launch",
-            "args": [],
+            "args": [
+                "serve",
+                "--env",
+                "development",
+                "--hostname",
+                "0.0.0.0",
+                "--port",
+                "8080"
+            ],
+            "env": {
+                "LOG_LEVEL": "info",
+                "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal",
+                "REDIS_URL": "redis://127.0.0.1:6379"
+            },
             "cwd": "${workspaceFolder:arcus-signal}",
             "name": "Release Run",
             "target": "Run",
@@ -23,7 +49,24 @@
         {
             "type": "swift",
             "request": "launch",
-            "args": [],
+            "args": [
+                "serve",
+                "--env",
+                "development",
+                "--hostname",
+                "0.0.0.0",
+                "--port",
+                "8081"
+            ],
+            "env": {
+                "LOG_LEVEL": "debug",
+                "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal",
+                "REDIS_URL": "redis://127.0.0.1:6379",
+                "QUEUE_WORKER_COUNT": "1",
+                "REDIS_POOL_MAX_CONNECTIONS": "8",
+                "REDIS_POOL_CONNECTION_TIMEOUT_SECONDS": "30",
+                "WORKER_STARTUP_GRACE_SECONDS": "5"
+            },
             "cwd": "${workspaceFolder:arcus-signal}",
             "name": "Debug RunWorker",
             "target": "RunWorker",
@@ -33,7 +76,24 @@
         {
             "type": "swift",
             "request": "launch",
-            "args": [],
+            "args": [
+                "serve",
+                "--env",
+                "development",
+                "--hostname",
+                "0.0.0.0",
+                "--port",
+                "8081"
+            ],
+            "env": {
+                "LOG_LEVEL": "info",
+                "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal",
+                "REDIS_URL": "redis://127.0.0.1:6379",
+                "QUEUE_WORKER_COUNT": "1",
+                "REDIS_POOL_MAX_CONNECTIONS": "8",
+                "REDIS_POOL_CONNECTION_TIMEOUT_SECONDS": "30",
+                "WORKER_STARTUP_GRACE_SECONDS": "5"
+            },
             "cwd": "${workspaceFolder:arcus-signal}",
             "name": "Release RunWorker",
             "target": "RunWorker",
