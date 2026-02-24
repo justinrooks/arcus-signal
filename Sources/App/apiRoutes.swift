@@ -12,19 +12,28 @@ func configureAPIRoutes(_ app: Application) throws {
     }
     
     // MARK: V1 Device APIs
-    app.group("v1","devices") { devices in
+    app.group("api", "v1", "devices") { devices in
         devices.get() { req async throws in
             "fetch the devices"
         }
         
-        devices.post("register") { req async throws in
-            "register device!"
-//            req.content.decode(tbd)
-        }
-        
-        devices.post("checkin") { req async throws in
-            "Record latest device cell and prefs"
-//            req.content.decode(tbd)
+        devices.post("location-snapshots") { req async throws -> LocationSnapshotAcceptedResponse in
+            let payload = try req.content.decode(LocationSnapshotPushPayload.self)
+
+//            guard (-90.0...90.0).contains(payload.latitude),
+//                  (-180.0...180.0).contains(payload.longitude) else {
+//                throw Abort(.badRequest, reason: "Invalid coordinates")
+//            }
+
+            guard !payload.apnsDeviceToken.isEmpty else {
+                throw Abort(.badRequest, reason: "Missing apnsDeviceToken")
+            }
+
+            // TODO: persist or enqueue for downstream processing.
+            // Avoid logging full APNS token in production logs.
+//            req.logger.info("location snapshot ts=\(payload.timestamp.ISO8601Format()) lat=\(payload.latitude) lon=\(payload.longitude) h3=\(payload.h3Cell ?? "nil") county=\(payload.county ?? "nil") zone=\(payload.zone ?? "nil") fireZone=\(payload.fireZone ?? "nil")")
+            req.logger.info("location snapshot ts=\(payload.timestamp.ISO8601Format()) h3=\(payload.h3Cell ?? "nil") county=\(payload.county ?? "nil") zone=\(payload.zone ?? "nil") fireZone=\(payload.fireZone ?? "nil")")
+            return .init(status: "ok", receivedAt: Date())
         }
         
 //        devices.group(":id") { device in
