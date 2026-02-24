@@ -166,6 +166,52 @@ War story: this was the “small paper cuts” sprint. None of the issues alone 
 
 War story: this one looked like a race at first glance, but it was mostly a strategy mismatch. If you know most rows already exist, asking Postgres to "fail then recover" every minute just creates noise and masks real incidents.
 
+### Optimization: reduced per-event DB round trips in ingest upsert
+
+- Replaced per-event existence checks with one batched prefetch for known event keys/revisions.
+- Added in-memory indexing by (`event_key`, `revision`) so each incoming event can decide update/insert without extra lookup queries.
+- Added no-op detection so unchanged rows are not updated, reducing unnecessary write churn during recurring ingests.
+- Kept a unique-constraint fallback path for true multi-worker insert races.
+
+War story: when the feed repeats mostly unchanged data, "always update" is like repainting the same wall every minute. It looks busy, but it's mostly wasted effort.
+
+### Milestone: ingestion flow hardened for dedupe + update reliability
+
+- Refactored ingest persistence into explicit phases: dedupe incoming events, upsert changes, then mark expired rows.
+- Added deterministic dedupe behavior keyed by `event_key` with "latest duplicate wins" semantics.
+- Added transaction-wrapped persistence for each ingest run so counts and state changes are coherent per run.
+- Added richer run metrics (`inserted`, `updated`, `unchanged`, `duplicatesIgnored`, `expiredMarked`) to make ingestion behavior observable in logs.
+- Added unit coverage for dedupe semantics so duplicate handling is tested independent of external feeds.
+
+War story: this is the "assembly line" upgrade. When each stage has one job and clear counters, incidents stop feeling like guesswork and start feeling like accounting.
+
+### Milestone: hash-based change detection + revision bumps
+
+- Added persisted `content_hash` on `arcus_events` and compute it from canonical event payload fields.
+- Switched update detection to compare `content_hash` values, so duplicates are clearly identified as "same payload" instead of field-by-field guesswork.
+- Treat `revision` as a server-owned version counter: inserts start at 1, and updates bump revision only when payload hash changes.
+- Updated ingest identity matching to use `event_key` as the canonical key for "same alert, newer info."
+
+War story: this is the "fingerprint scanner" moment. Instead of asking a dozen questions to see if two events are the same, you compare fingerprints and move on.
+
+### Milestone: explicit ingest hooks for notification handoff points
+
+- Added explicit hook logs for:
+  - event created
+  - event updated
+  - event ended
+- Standardized hook message prefixes so downstream orchestration can grep/filter reliably during bring-up.
+- Included metadata (event key, revisions, reason, ended timestamp) so future notification jobs can consume context without another DB query for basics.
+
+### Milestone: persisted expiration flag for lifecycle filtering
+
+- Added `is_expired` to persisted Arcus events so queries can quickly filter active vs expired alerts without recomputing at read time.
+- Expiration is computed during ingest using a single run timestamp (`asOf`) for consistency across all events in one job execution.
+- Added a migration to add `is_expired` so future purge jobs can query expired rows directly.
+- Added a post-upsert expiration backfill step: rows already in DB with `expires_at <= asOf` are marked `is_expired = true` even if they are absent from the latest `/alerts/active` payload.
+
+War story: this is one of those small schema choices that pays rent forever. "Can we purge old alerts?" goes from a full-table scan problem to an indexed query.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.
