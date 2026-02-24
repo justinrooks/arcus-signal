@@ -29,6 +29,35 @@ struct AppTests {
         return date
     }
 
+    private func makeEvent(
+        key: String,
+        revision: Int = 1,
+        expiresAt: Date? = nil,
+        title: String? = nil
+    ) -> ArcusEvent {
+        ArcusEvent(
+            eventKey: key,
+            source: .nws,
+            kind: .torWarning,
+            sourceURL: "https://api.weather.gov/alerts/\(key)",
+            status: .active,
+            revision: revision,
+            issuedAt: isoDate("2026-02-21T16:00:00Z"),
+            effectiveAt: isoDate("2026-02-21T16:05:00Z"),
+            expiresAt: expiresAt,
+            severity: .warning,
+            urgency: .immediate,
+            certainty: .observed,
+            geometry: nil,
+            ugcCodes: [],
+            h3Resolution: nil,
+            h3CoverHash: nil,
+            title: title,
+            areaDesc: "Test Area",
+            rawRef: nil
+        )
+    }
+
     @Test("API health endpoint returns ok")
     func apiHealth() async throws {
         try await withApp(mode: .api) { app in
@@ -323,9 +352,44 @@ struct AppTests {
             rawRef: "raw/nws/roundtrip-1.json"
         )
 
-        let model = try ArcusEventModel(from: domain)
+        let model = try ArcusEventModel(from: domain, asOf: isoDate("2026-02-21T16:30:00Z"))
+        #expect(model.isExpired == false)
+
+        let expiredModel = try ArcusEventModel(from: domain, asOf: isoDate("2026-02-21T18:00:00Z"))
+        #expect(expiredModel.isExpired == true)
+
         let roundTrip = try model.asDomain()
 
         #expect(roundTrip == domain)
+    }
+
+    @Test("Ingest deduplicator ignores duplicates and keeps latest payload")
+    func ingestDeduplicatorKeepsLatest() throws {
+        let first = makeEvent(key: "nws:dup-1", revision: 1, title: "First")
+        let second = makeEvent(key: "nws:dup-1", revision: 99, title: "Second")
+        let distinct = makeEvent(key: "nws:dup-2", revision: 1, title: "Distinct")
+
+        let deduped = ArcusEventDeduplicator.deduplicate([first, second, distinct])
+
+        #expect(deduped.events.count == 2)
+        #expect(deduped.duplicatesIgnored == 1)
+        #expect(deduped.events[0].eventKey == "nws:dup-1")
+        #expect(deduped.events[0].title == "Second")
+        #expect(deduped.events[1].eventKey == "nws:dup-2")
+    }
+
+    @Test("ArcusEventModel content hash ignores revision but tracks payload changes")
+    func arcusEventContentHashSemantics() throws {
+        let base = makeEvent(key: "nws:hash-1", revision: 1, title: "Title A")
+        let samePayloadDifferentRevision = makeEvent(key: "nws:hash-1", revision: 42, title: "Title A")
+        let changedPayload = makeEvent(key: "nws:hash-1", revision: 1, title: "Title B")
+
+        let asOf = isoDate("2026-02-21T16:30:00Z")
+        let baseModel = try ArcusEventModel(from: base, asOf: asOf)
+        let samePayloadModel = try ArcusEventModel(from: samePayloadDifferentRevision, asOf: asOf)
+        let changedPayloadModel = try ArcusEventModel(from: changedPayload, asOf: asOf)
+
+        #expect(baseModel.contentHash == samePayloadModel.contentHash)
+        #expect(baseModel.contentHash != changedPayloadModel.contentHash)
     }
 }

@@ -22,6 +22,10 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     }
     app.queues.add(IngestNWSAlertsJob())
 
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    ContentConfiguration.global.use(decoder: decoder, for: .json)
+
     switch mode {
     case .api:
         try configureAPIRoutes(app)
@@ -36,6 +40,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
 
 private func configureMigrations(on app: Application) {
     app.migrations.add(CreateArcusEventModel())
+    app.migrations.add(AddIsExpiredToArcusEventModel())
+    app.migrations.add(AddContentHashToArcusEventModel())
 }
 
 private func configureDatabases(on app: Application) throws {

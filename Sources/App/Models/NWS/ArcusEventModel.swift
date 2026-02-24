@@ -1,5 +1,6 @@
 import Fluent
 import Foundation
+import Crypto
 
 public enum ArcusEventModelError: Error, Sendable {
     case invalidEnum(field: String, value: String)
@@ -69,6 +70,12 @@ public final class ArcusEventModel: Model, @unchecked Sendable {
     @OptionalField(key: "raw_ref")
     public var rawRef: String?
 
+    @Field(key: "content_hash")
+    public var contentHash: String
+
+    @Field(key: "is_expired")
+    public var isExpired: Bool
+
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
 
@@ -97,7 +104,9 @@ public final class ArcusEventModel: Model, @unchecked Sendable {
         h3CoverHash: String?,
         title: String?,
         areaDesc: String?,
-        rawRef: String?
+        rawRef: String?,
+        contentHash: String,
+        isExpired: Bool = false
     ) {
         self.id = id
         self.eventKey = eventKey
@@ -119,12 +128,16 @@ public final class ArcusEventModel: Model, @unchecked Sendable {
         self.title = title
         self.areaDesc = areaDesc
         self.rawRef = rawRef
+        self.contentHash = contentHash
+        self.isExpired = isExpired
     }
 }
 
 public extension ArcusEventModel {
-    convenience init(from event: ArcusEvent) throws {
+    convenience init(from event: ArcusEvent, asOf: Date = .now) throws {
         let geometryJSON = try Self.encodeGeometry(event.geometry)
+        let isExpired = Self.computeIsExpired(from: event, asOf: asOf)
+        let contentHash = try Self.computeContentHash(from: event)
 
         self.init(
             eventKey: event.eventKey,
@@ -145,7 +158,9 @@ public extension ArcusEventModel {
             h3CoverHash: event.h3CoverHash,
             title: event.title,
             areaDesc: event.areaDesc,
-            rawRef: event.rawRef
+            rawRef: event.rawRef,
+            contentHash: contentHash,
+            isExpired: isExpired
         )
     }
 
@@ -203,6 +218,47 @@ public extension ArcusEventModel {
         return String(decoding: data, as: UTF8.self)
     }
 
+    private static var hashEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    private static func computeContentHash(from event: ArcusEvent) throws -> String {
+        let fingerprint = ArcusEventContentFingerprint(
+            eventKey: event.eventKey,
+            source: event.source,
+            kind: event.kind,
+            sourceURL: event.sourceURL,
+            issuedAt: event.issuedAt,
+            effectiveAt: event.effectiveAt,
+            expiresAt: event.expiresAt,
+            severity: event.severity,
+            urgency: event.urgency,
+            certainty: event.certainty,
+            geometry: event.geometry,
+            ugcCodes: event.ugcCodes,
+            h3Resolution: event.h3Resolution,
+            h3CoverHash: event.h3CoverHash,
+            title: event.title,
+            areaDesc: event.areaDesc,
+            rawRef: event.rawRef
+        )
+
+        let data = try hashEncoder.encode(fingerprint)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func computeIsExpired(from event: ArcusEvent, asOf: Date) -> Bool {
+        if let expiresAt = event.expiresAt {
+            return expiresAt <= asOf
+        }
+
+        return event.status == .ended
+    }
+
     private func decodeGeometry(_ geometryJSON: String?) throws -> GeoShape? {
         guard let geometryJSON else { return nil }
         guard let data = geometryJSON.data(using: .utf8) else {
@@ -211,4 +267,24 @@ public extension ArcusEventModel {
 
         return try JSONDecoder().decode(GeoShape.self, from: data)
     }
+}
+
+private struct ArcusEventContentFingerprint: Codable, Sendable {
+    let eventKey: String
+    let source: EventSource
+    let kind: EventKind
+    let sourceURL: String
+    let issuedAt: Date?
+    let effectiveAt: Date?
+    let expiresAt: Date?
+    let severity: EventSeverity
+    let urgency: EventUrgency
+    let certainty: EventCertainty
+    let geometry: GeoShape?
+    let ugcCodes: [String]
+    let h3Resolution: Int?
+    let h3CoverHash: String?
+    let title: String?
+    let areaDesc: String?
+    let rawRef: String?
 }
