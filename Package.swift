@@ -21,6 +21,8 @@ let package = Package(
         .package(url: "https://github.com/vapor/queues.git", from: "1.17.2"),
         // 🧠 Redis queue backend.
         .package(url: "https://github.com/vapor/queues-redis-driver.git", from: "1.1.2"),
+        // ⬡ H3 Geospacial Encoding
+        .package(url: "https://github.com/pawelmajcher/SwiftyH3.git", from: "0.5.0"),
     ],
     targets: [
         .target(
@@ -31,6 +33,7 @@ let package = Package(
                 .product(name: "FluentPostgresDriver", package: "fluent-postgres-driver"),
                 .product(name: "Queues", package: "queues"),
                 .product(name: "QueuesRedisDriver", package: "queues-redis-driver"),
+                .product(name: "SwiftyH3", package: "SwiftyH3")
             ],
             swiftSettings: swiftSettings
         ),
