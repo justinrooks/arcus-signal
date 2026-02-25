@@ -6,6 +6,8 @@ public struct DispatchIngestNWSAlertsScheduledJob: AsyncScheduledJob {
 
     public func run(context: QueueContext) async throws {
         context.logger.info("Scheduler dispatching IngestNWSAlertsJob.")
-        try await context.application.queues.queue.dispatch(IngestNWSAlertsJob.self, .init())
+        try await context.application.queues
+            .queue(ArcusQueueLane.ingest.queueName)
+            .dispatch(IngestNWSAlertsJob.self, .init())
     }
 }

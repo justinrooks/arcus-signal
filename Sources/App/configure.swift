@@ -21,6 +21,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         app.nwsIngestService = DefaultNWSIngestService()
     }
     app.queues.add(IngestNWSAlertsJob())
+    app.queues.add(TargetEventRevisionJob())
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601

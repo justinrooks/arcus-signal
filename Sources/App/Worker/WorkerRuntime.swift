@@ -47,13 +47,18 @@ public final class WorkerRuntime: LifecycleHandler, @unchecked Sendable {
 
     public func shutdown(_ app: Application) {
         startupTask?.cancel()
-        app.logger.info("Worker scheduler stopped.")
+        app.logger.info("Worker runtime stopped.")
     }
 
     private func startWorkerRuntime(on app: Application) throws {
-        try app.queues.startInProcessJobs()
+        for lane in ArcusQueueLane.allCases {
+            try app.queues.startInProcessJobs(on: lane.queueName)
+            app.logger.info(
+                "Worker queue consumers started.",
+                metadata: ["lane": .string(lane.rawValue)]
+            )
+        }
         try app.queues.startScheduledJobs()
-        app.logger.info("Worker queue consumers started.")
         app.logger.info("Worker scheduled jobs started.")
     }
 }

@@ -12,23 +12,23 @@ struct ArcusEventLookupKey: Hashable, Sendable {
 }
 
 struct ArcusEventDeduplicationResult: Sendable {
-    let events: [ArcusEvent]
+    let events: [ArcusIngestEvent]
     let duplicatesIgnored: Int
 }
 
 enum ArcusEventDeduplicator {
-    static func deduplicate(_ events: [ArcusEvent]) -> ArcusEventDeduplicationResult {
+    static func deduplicate(_ events: [ArcusIngestEvent]) -> ArcusEventDeduplicationResult {
         guard !events.isEmpty else {
             return .init(events: [], duplicatesIgnored: 0)
         }
 
         var indexByKey: [ArcusEventLookupKey: Int] = [:]
-        var deduped: [ArcusEvent] = []
+        var deduped: [ArcusIngestEvent] = []
         var duplicatesIgnored = 0
         deduped.reserveCapacity(events.count)
 
         for event in events {
-            let key = ArcusEventLookupKey(eventKey: event.eventKey)
+            let key = ArcusEventLookupKey(eventKey: event.event.eventKey)
             if let existingIndex = indexByKey[key] {
                 deduped[existingIndex] = event
                 duplicatesIgnored += 1
@@ -48,19 +48,55 @@ struct ArcusEventPersistenceSummary: Sendable {
     var unchanged: Int
     var duplicatesIgnored: Int
     var expiredMarked: Int
+    var targetDispatches: [TargetEventRevisionPayload]
 
     init(
         inserted: Int = 0,
         updated: Int = 0,
         unchanged: Int = 0,
         duplicatesIgnored: Int = 0,
-        expiredMarked: Int = 0
+        expiredMarked: Int = 0,
+        targetDispatches: [TargetEventRevisionPayload] = []
     ) {
         self.inserted = inserted
         self.updated = updated
         self.unchanged = unchanged
         self.duplicatesIgnored = duplicatesIgnored
         self.expiredMarked = expiredMarked
+        self.targetDispatches = targetDispatches
+    }
+}
+
+private struct ArcusEventExistingIndex {
+    var byEventKey: [String: ArcusEventModel]
+    var bySourceURL: [String: ArcusEventModel]
+
+    init(byEventKey: [String: ArcusEventModel] = [:], bySourceURL: [String: ArcusEventModel] = [:]) {
+        self.byEventKey = byEventKey
+        self.bySourceURL = bySourceURL
+    }
+
+    func resolve(for ingestEvent: ArcusIngestEvent) -> ArcusEventModel? {
+        if let existing = byEventKey[ingestEvent.event.eventKey] {
+            return existing
+        }
+
+        if let existing = bySourceURL[ingestEvent.event.sourceURL] {
+            return existing
+        }
+
+        for referenceSourceURL in ingestEvent.referenceSourceURLs {
+            if let existing = bySourceURL[referenceSourceURL] {
+                return existing
+            }
+        }
+
+        return nil
+    }
+
+    mutating func track(_ model: ArcusEventModel) {
+        byEventKey[model.eventKey] = model
+        bySourceURL[model.sourceURL] = model
     }
 }
 
@@ -94,9 +130,11 @@ public struct IngestNWSAlertsJob: AsyncJob {
                     "updated": .string("\(persistence.updated)"),
                     "unchanged": .string("\(persistence.unchanged)"),
                     "duplicatesIgnored": .string("\(persistence.duplicatesIgnored)"),
-                    "expiredMarked": .string("\(persistence.expiredMarked)")
+                    "expiredMarked": .string("\(persistence.expiredMarked)"),
+                    "targetDispatches": .string("\(persistence.targetDispatches.count)")
                 ]
             )
+            try await dispatchTargetJobs(for: persistence.targetDispatches, context: context)
 
             context.logger.info("IngestNWSAlertsJob finished.")
         } catch {
@@ -114,10 +152,8 @@ public struct IngestNWSAlertsJob: AsyncJob {
 }
 
 private extension IngestNWSAlertsJob {
-    typealias ArcusEventLookupIndex = [ArcusEventLookupKey: ArcusEventModel]
-
     func persistArcusEvents(
-        _ events: [ArcusEvent],
+        _ events: [ArcusIngestEvent],
         on database: any Database,
         asOf: Date,
         logger: Logger
@@ -130,21 +166,30 @@ private extension IngestNWSAlertsJob {
             return summary
         }
 
-        var existingByKey = try await fetchExistingIndex(for: deduplication.events, on: database)
-        for event in deduplication.events {
-            let key = ArcusEventLookupKey(eventKey: event.eventKey)
-            let incoming = try ArcusEventModel(from: event, asOf: asOf)
+        var existingIndex = try await fetchExistingIndex(for: deduplication.events, on: database)
+        for ingestEvent in deduplication.events {
+            let incoming = try ArcusEventModel(from: ingestEvent.event, asOf: asOf)
 
-            if let existing = existingByKey[key] {
+            if let existing = existingIndex.resolve(for: ingestEvent) {
                 let contentChanged = existing.contentHash != incoming.contentHash
                 let oldRevision = existing.revision
                 let oldIsExpired = existing.isExpired
-                if apply(incoming, to: existing) {
+                let preserveCanonicalEventKey = existing.eventKey != incoming.eventKey
+                if apply(incoming, to: existing, preservingEventKey: preserveCanonicalEventKey) {
                     if contentChanged {
                         existing.revision += 1
                     }
                     try await existing.update(on: database)
+                    existingIndex.track(existing)
                     summary.updated += 1
+                    if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
+                        contentChanged: contentChanged,
+                        isExpired: existing.isExpired
+                    ) {
+                        summary.targetDispatches.append(
+                            .init(eventKey: existing.eventKey, revision: existing.revision)
+                        )
+                    }
                     emitHookEventUpdated(
                         logger: logger,
                         eventKey: existing.eventKey,
@@ -169,8 +214,13 @@ private extension IngestNWSAlertsJob {
 
             do {
                 try await incoming.create(on: database)
-                existingByKey[key] = incoming
+                existingIndex.track(incoming)
                 summary.inserted += 1
+                if TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: incoming.isExpired) {
+                    summary.targetDispatches.append(
+                        .init(eventKey: incoming.eventKey, revision: incoming.revision)
+                    )
+                }
                 emitHookEventCreated(
                     logger: logger,
                     eventKey: incoming.eventKey,
@@ -184,22 +234,32 @@ private extension IngestNWSAlertsJob {
                 // Rare race: another worker inserted this row after our existence check.
                 guard let existing = try await ArcusEventModel
                     .query(on: database)
-                    .filter(\.$eventKey == event.eventKey)
+                    .filter(\.$eventKey == ingestEvent.event.eventKey)
                     .sort(\.$revision, .descending)
                     .first() else {
                     throw error
                 }
 
-                existingByKey[key] = existing
+                existingIndex.track(existing)
                 let contentChanged = existing.contentHash != incoming.contentHash
                 let oldRevision = existing.revision
                 let oldIsExpired = existing.isExpired
-                if apply(incoming, to: existing) {
+                let preserveCanonicalEventKey = existing.eventKey != incoming.eventKey
+                if apply(incoming, to: existing, preservingEventKey: preserveCanonicalEventKey) {
                     if contentChanged {
                         existing.revision += 1
                     }
                     try await existing.update(on: database)
+                    existingIndex.track(existing)
                     summary.updated += 1
+                    if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
+                        contentChanged: contentChanged,
+                        isExpired: existing.isExpired
+                    ) {
+                        summary.targetDispatches.append(
+                            .init(eventKey: existing.eventKey, revision: existing.revision)
+                        )
+                    }
                     emitHookEventUpdated(
                         logger: logger,
                         eventKey: existing.eventKey,
@@ -226,6 +286,20 @@ private extension IngestNWSAlertsJob {
         return summary
     }
 
+    func dispatchTargetJobs(for payloads: [TargetEventRevisionPayload], context: QueueContext) async throws {
+        guard !payloads.isEmpty else { return }
+
+        let targetQueue = context.application.queues.queue(ArcusQueueLane.target.queueName)
+        for payload in payloads {
+            try await targetQueue.dispatch(TargetEventRevisionJob.self, payload)
+        }
+
+        context.logger.info(
+            "Dispatched TargetEventRevision jobs.",
+            metadata: ["count": .stringConvertible(payloads.count)]
+        )
+    }
+
     func isUniqueConstraintViolation(_ error: any Error) -> Bool {
         let description = String(describing: error).lowercased()
         return description.contains("duplicate key value")
@@ -234,26 +308,40 @@ private extension IngestNWSAlertsJob {
     }
 
     func fetchExistingIndex(
-        for events: [ArcusEvent],
+        for events: [ArcusIngestEvent],
         on database: any Database
-    ) async throws -> ArcusEventLookupIndex {
-        let keys = Array(Set(events.map(\.eventKey)))
-        guard !keys.isEmpty else { return [:] }
+    ) async throws -> ArcusEventExistingIndex {
+        let eventKeys = Array(Set(events.map(\.event.eventKey)))
+        let sourceURLs = Array(Set(events.map(\.event.sourceURL)))
+        let referenceSourceURLs = Array(Set(events.flatMap(\.referenceSourceURLs)))
+        let sourceURLsForLookup = Array(Set(sourceURLs + referenceSourceURLs))
 
-        let existing = try await ArcusEventModel
-            .query(on: database)
-            .filter(\.$eventKey ~~ keys)
-            .all()
+        guard !eventKeys.isEmpty || !sourceURLsForLookup.isEmpty else {
+            return ArcusEventExistingIndex()
+        }
 
-        var index: ArcusEventLookupIndex = [:]
-        index.reserveCapacity(existing.count)
+        var query = ArcusEventModel.query(on: database)
+        if !eventKeys.isEmpty {
+            query = query.group(.or) { group in
+                group.filter(\.$eventKey ~~ eventKeys)
+                if !sourceURLsForLookup.isEmpty {
+                    group.filter(\.$sourceURL ~~ sourceURLsForLookup)
+                }
+            }
+        } else {
+            query = query.filter(\.$sourceURL ~~ sourceURLsForLookup)
+        }
+
+        let existing = try await query.all()
+
+        var index = ArcusEventExistingIndex()
         for model in existing {
-            let key = ArcusEventLookupKey(eventKey: model.eventKey)
-            if let current = index[key], current.revision >= model.revision {
+            if let current = index.byEventKey[model.eventKey], current.revision > model.revision {
                 continue
             }
-            index[key] = model
+            index.track(model)
         }
+
         return index
     }
 
@@ -341,10 +429,16 @@ private extension IngestNWSAlertsJob {
         )
     }
 
-    func apply(_ source: ArcusEventModel, to target: ArcusEventModel) -> Bool {
+    func apply(
+        _ source: ArcusEventModel,
+        to target: ArcusEventModel,
+        preservingEventKey: Bool
+    ) -> Bool {
         var changed = false
 
-        changed = assignIfChanged(source.eventKey, to: &target.eventKey) || changed
+        if !preservingEventKey {
+            changed = assignIfChanged(source.eventKey, to: &target.eventKey) || changed
+        }
         changed = assignIfChanged(source.source, to: &target.source) || changed
         changed = assignIfChanged(source.kind, to: &target.kind) || changed
         changed = assignIfChanged(source.sourceURL, to: &target.sourceURL) || changed

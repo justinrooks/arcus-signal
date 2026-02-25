@@ -149,6 +149,17 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     }
 }
 
+/// Ingest payload that preserves upstream linkage metadata needed for revision chaining.
+public struct ArcusIngestEvent: Sendable, Equatable {
+    public let event: ArcusEvent
+    public let referenceSourceURLs: [String]
+
+    public init(event: ArcusEvent, referenceSourceURLs: [String]) {
+        self.event = event
+        self.referenceSourceURLs = referenceSourceURLs
+    }
+}
+
 /// Revision record for idempotency + dedupe persistence.
 /// Intended unique constraint: (eventKey, revisionHash).
 public struct EventRevision: Codable, Sendable, Equatable {
@@ -176,14 +187,14 @@ public struct EventRevision: Codable, Sendable, Equatable {
 // MARK: - NWS -> Canonical Mapper
 
 public extension NwsEventDTO {
-    func toArcusEvents(
+    func toArcusIngestEvents(
         now: Date = .now,
         revision: Int = 1,
         h3Resolution: Int? = 8,
         rawRef: String? = nil
-    ) -> [ArcusEvent] {
+    ) -> [ArcusIngestEvent] {
         (features ?? []).compactMap {
-            $0.toArcusEvent(
+            $0.toArcusIngestEvent(
                 now: now,
                 revision: revision,
                 h3Resolution: h3Resolution,
@@ -191,9 +202,45 @@ public extension NwsEventDTO {
             )
         }
     }
+
+    func toArcusEvents(
+        now: Date = .now,
+        revision: Int = 1,
+        h3Resolution: Int? = 8,
+        rawRef: String? = nil
+    ) -> [ArcusEvent] {
+        toArcusIngestEvents(
+            now: now,
+            revision: revision,
+            h3Resolution: h3Resolution,
+            rawRef: rawRef
+        ).map(\.event)
+    }
 }
 
 public extension NwsEventFeatureDTO {
+    func toArcusIngestEvent(
+        now: Date = .now,
+        revision: Int = 1,
+        h3Resolution: Int? = 8,
+        rawRef: String? = nil
+    ) -> ArcusIngestEvent? {
+        guard let event = toArcusEvent(
+            now: now,
+            revision: revision,
+            h3Resolution: h3Resolution,
+            rawRef: rawRef
+        ) else {
+            return nil
+        }
+
+        let referenceSourceURLs = properties.references?
+            .map(\.id)
+            .filter { !$0.isEmpty } ?? []
+
+        return ArcusIngestEvent(event: event, referenceSourceURLs: referenceSourceURLs)
+    }
+
     func toArcusEvent(
         now: Date = .now,
         revision: Int = 1,

@@ -1,8 +1,10 @@
 @testable import App
 import Foundation
+import Queues
 import Testing
 import Vapor
 import VaporTesting
+import XCTQueues
 
 @Suite("Arcus Signal bootstrap tests", .serialized)
 struct AppTests {
@@ -55,6 +57,19 @@ struct AppTests {
             title: title,
             areaDesc: "Test Area",
             rawRef: nil
+        )
+    }
+
+    private func makeIngestEvent(
+        key: String,
+        revision: Int = 1,
+        expiresAt: Date? = nil,
+        title: String? = nil,
+        referenceSourceURLs: [String] = []
+    ) -> ArcusIngestEvent {
+        ArcusIngestEvent(
+            event: makeEvent(key: key, revision: revision, expiresAt: expiresAt, title: title),
+            referenceSourceURLs: referenceSourceURLs
         )
     }
 
@@ -322,6 +337,47 @@ struct AppTests {
         }
     }
 
+    @Test("NWS mapper preserves references for ingest linkage")
+    func nwsMapperPreservesReferenceSourceURLs() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:update-2",
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [-104.99, 39.73]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/update-2",
+                "areaDesc": "Denver County",
+                "event": "Tornado Warning",
+                "references": [
+                  {
+                    "@id": "https://api.weather.gov/alerts/update-1",
+                    "identifier": "ABC-123",
+                    "sender": "w-nws.webmaster@noaa.gov",
+                    "sent": "2026-02-21T16:00:00Z"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+        let ingestEvents = decoded.toArcusIngestEvents(now: isoDate("2026-02-21T16:30:00Z"))
+
+        #expect(ingestEvents.count == 1)
+        #expect(ingestEvents.first?.referenceSourceURLs == ["https://api.weather.gov/alerts/update-1"])
+        #expect(ingestEvents.first?.event.sourceURL == "https://api.weather.gov/alerts/update-2")
+    }
+
     @Test("ArcusEventModel round-trips canonical event")
     func arcusEventModelRoundTrip() throws {
         let domain = ArcusEvent(
@@ -365,17 +421,17 @@ struct AppTests {
 
     @Test("Ingest deduplicator ignores duplicates and keeps latest payload")
     func ingestDeduplicatorKeepsLatest() throws {
-        let first = makeEvent(key: "nws:dup-1", revision: 1, title: "First")
-        let second = makeEvent(key: "nws:dup-1", revision: 99, title: "Second")
-        let distinct = makeEvent(key: "nws:dup-2", revision: 1, title: "Distinct")
+        let first = makeIngestEvent(key: "nws:dup-1", revision: 1, title: "First")
+        let second = makeIngestEvent(key: "nws:dup-1", revision: 99, title: "Second")
+        let distinct = makeIngestEvent(key: "nws:dup-2", revision: 1, title: "Distinct")
 
         let deduped = ArcusEventDeduplicator.deduplicate([first, second, distinct])
 
         #expect(deduped.events.count == 2)
         #expect(deduped.duplicatesIgnored == 1)
-        #expect(deduped.events[0].eventKey == "nws:dup-1")
-        #expect(deduped.events[0].title == "Second")
-        #expect(deduped.events[1].eventKey == "nws:dup-2")
+        #expect(deduped.events[0].event.eventKey == "nws:dup-1")
+        #expect(deduped.events[0].event.title == "Second")
+        #expect(deduped.events[1].event.eventKey == "nws:dup-2")
     }
 
     @Test("ArcusEventModel content hash ignores revision but tracks payload changes")
@@ -391,5 +447,47 @@ struct AppTests {
 
         #expect(baseModel.contentHash == samePayloadModel.contentHash)
         #expect(baseModel.contentHash != changedPayloadModel.contentHash)
+    }
+
+    @Test("Scheduler dispatches ingest job to ingest lane")
+    func scheduledDispatchUsesIngestLane() async throws {
+        try await withApp(mode: .worker) { app in
+            app.queues.use(.test)
+            let hook = DispatchCaptureHook()
+            app.queues.add(hook)
+
+            let context = QueueContext(
+                queueName: QueueName(string: "scheduled"),
+                configuration: app.queues.configuration,
+                application: app,
+                logger: app.logger,
+                on: app.eventLoopGroup.any()
+            )
+            try await DispatchIngestNWSAlertsScheduledJob().run(context: context)
+
+            #expect(app.queues.test.contains(IngestNWSAlertsJob.self))
+            #expect(await hook.dispatchedQueueNames().contains(ArcusQueueLane.ingest.rawValue))
+        }
+    }
+
+    @Test("TargetEventRevision dispatch policy gates to changed and active revisions")
+    func targetDispatchPolicyGatesChangedAndActive() {
+        #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: false))
+        #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: true))
+        #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: false))
+        #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: false, isExpired: false))
+        #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: true))
+    }
+}
+
+private actor DispatchCaptureHook: AsyncJobEventDelegate {
+    private var queueNames: [String] = []
+
+    func dispatched(job: JobEventData) async throws {
+        queueNames.append(job.queueName)
+    }
+
+    func dispatchedQueueNames() -> [String] {
+        queueNames
     }
 }

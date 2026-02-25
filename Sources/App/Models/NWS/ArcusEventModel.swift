@@ -227,7 +227,6 @@ public extension ArcusEventModel {
 
     private static func computeContentHash(from event: ArcusEvent) throws -> String {
         let fingerprint = ArcusEventContentFingerprint(
-            eventKey: event.eventKey,
             source: event.source,
             kind: event.kind,
             sourceURL: event.sourceURL,
@@ -270,7 +269,6 @@ public extension ArcusEventModel {
 }
 
 private struct ArcusEventContentFingerprint: Codable, Sendable {
-    let eventKey: String
     let source: EventSource
     let kind: EventKind
     let sourceURL: String

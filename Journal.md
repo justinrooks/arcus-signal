@@ -203,6 +203,21 @@ War story: this is the "fingerprint scanner" moment. Instead of asking a dozen q
 - Standardized hook message prefixes so downstream orchestration can grep/filter reliably during bring-up.
 - Included metadata (event key, revisions, reason, ended timestamp) so future notification jobs can consume context without another DB query for basics.
 
+### Milestone: Story 1.4 queue handoff (ingest -> target) landed
+
+- Added explicit queue lane constants (`ingest`, `target`, `send`) so dispatch and workers no longer rely on the anonymous default queue.
+- Added `TargetEventRevisionJob` as a stub worker contract with `eventKey + revision` payload, giving us a concrete queue handoff surface before targeting logic is implemented.
+- Updated scheduler dispatch to enqueue ingest work onto the `ingest` lane.
+- Updated ingest persistence summary to collect and dispatch `TargetEventRevision` payloads when revisions are:
+  - newly created and active, or
+  - updated with changed content and still active.
+- Updated worker runtime startup to watch named lanes instead of only `.default`.
+- Added tests for:
+  - scheduler dispatch routing to `ingest` lane
+  - dispatch gating policy (`changed && active`) for the temporary pre-`is_notifiable` phase.
+
+War story: this is the "conveyor belt labels" bug class. Jobs were moving, but all on the same unlabeled belt (`default`). It works until throughput grows, then debugging turns into "which worker consumed what?" chaos. Naming lanes early is cheap and saves incident time later.
+
 ### Milestone: persisted expiration flag for lifecycle filtering
 
 - Added `is_expired` to persisted Arcus events so queries can quickly filter active vs expired alerts without recomputing at read time.

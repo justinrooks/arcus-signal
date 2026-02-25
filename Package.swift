@@ -52,6 +52,7 @@ let package = Package(
             dependencies: [
                 .target(name: "App"),
                 .product(name: "VaporTesting", package: "vapor"),
+                .product(name: "XCTQueues", package: "queues"),
             ],
             swiftSettings: swiftSettings
         )
