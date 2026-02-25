@@ -15,6 +15,10 @@ public enum EventKind: String, Codable, Sendable {
     case torWatch
     case svrWatch
     case winterStormWarning
+    case fireWarning
+    case fireWeatherWatch
+    case extremeFireDanger
+    case redFlagWarning
 
     // SPC
     case spcMesoscaleDiscussion
@@ -263,6 +267,14 @@ private extension EventKind {
             return .svrWatch
         case "winter storm warning":
             return .winterStormWarning
+        case "extreme fire danger":
+            return .extremeFireDanger
+        case "fire warning":
+            return .fireWarning
+        case "fire weather watch":
+            return .fireWeatherWatch
+        case "red flag warning":
+            return .redFlagWarning
         default: // If it isn't defined here, we aren't supporting it yet.
             return nil
         }

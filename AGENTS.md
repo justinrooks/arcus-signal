@@ -14,6 +14,22 @@ The backend is intentionally split into two runtime roles:
 
 This solution is implemented with Vapor. For all feature work, architecture changes, and operational behavior, default to official Vapor documentation and Vapor best practices.
 
+## Arcus Signal — Canonical Specs
+Before making changes, read:
+- docs/architecture.md
+- docs/epics-stories.md
+
+Treat these as the source of truth for:
+- pipeline flow (ingest → target → outbox → send)
+- DB invariants (exactly-once via unique constraints)
+- notification content composition (compose at outbox insert time)
+- queue lanes and concurrency caps
+
+## Working agreements
+- Prefer idempotent jobs and DB-enforced uniqueness.
+- Never send APNs directly from targeting; write to outbox.
+- Do not introduce server-side lat/lon storage unless explicitly requested.
+
 ## Key Architecture Decisions
 
 - Two executables, one shared `App` module.

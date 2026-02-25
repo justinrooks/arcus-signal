@@ -168,12 +168,6 @@ private func configureWorkerRuntime(on app: Application) {
     app.lifecycle.use(WorkerRuntime(startupGracePeriodSeconds: Int64(startupGraceSeconds)))
 }
 
-// private func configureAPIRoutes(_ app: Application) throws {
-//     app.get("health") { _ in
-//         "ok"
-//     }
-// }
-
 private func configureWorkerRoutes(_ app: Application) throws {
     app.get("health") { _ in
         "ok"
