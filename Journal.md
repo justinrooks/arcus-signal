@@ -227,6 +227,19 @@ War story: this is the "conveyor belt labels" bug class. Jobs were moving, but a
 
 War story: this is one of those small schema choices that pays rent forever. "Can we purge old alerts?" goes from a full-table scan problem to an indexed query.
 
+### Milestone: supersession-aware ingest flow for NWS update messages
+
+- Updated ingest identity semantics so `event_key` now tracks the **current NWS message id** (not the original feature id).
+- Added a lineage resolver that groups messages into one chain when an incoming message references prior message ids in `references`.
+- Collapsed each run to a single winner per lineage (latest superseding message), so we persist one final state and avoid noisy intermediate writes.
+- Updated status rules:
+  - `Cancel` messages end the event immediately.
+  - `ends` is treated as lifecycle end.
+  - `expires` is no longer used as an automatic end signal.
+- Tightened revision bumps to tracked property changes only by removing message-identity fields from the content hash.
+
+War story: this was a classic "label mismatch" bug. We were grouping by the envelope id while NOAA was shipping updates in brand-new envelopes every time. Once we switched to supersession chains, the ingest line stopped treating updates like strangers.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

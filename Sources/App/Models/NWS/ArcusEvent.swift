@@ -54,6 +54,13 @@ public enum EventCertainty: String, Codable, Sendable {
     case unknown
 }
 
+public enum NWSAlertMessageType: String, Codable, Sendable {
+    case alert
+    case update
+    case cancel
+    case unknown
+}
+
 /// Geometry sufficient for H3 cover generation.
 public enum GeoShape: Codable, Sendable, Equatable {
     case point(lon: Double, lat: Double)
@@ -74,7 +81,7 @@ public enum GeoShape: Codable, Sendable, Equatable {
 /// Canonical event that downstream systems should depend on.
 public struct ArcusEvent: Codable, Sendable, Equatable {
     // Identity
-    public let eventKey: String      // "nws:<feature.id>" OR "spc:md:<id>"
+    public let eventKey: String      // current upstream message id
     public let source: EventSource
     public let kind: EventKind
     public let sourceURL: String
@@ -152,11 +159,20 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
 /// Ingest payload that preserves upstream linkage metadata needed for revision chaining.
 public struct ArcusIngestEvent: Sendable, Equatable {
     public let event: ArcusEvent
-    public let referenceSourceURLs: [String]
+    public let messageType: NWSAlertMessageType
+    public let sentAt: Date?
+    public let supersededEventKeys: [String]
 
-    public init(event: ArcusEvent, referenceSourceURLs: [String]) {
+    public init(
+        event: ArcusEvent,
+        messageType: NWSAlertMessageType,
+        sentAt: Date?,
+        supersededEventKeys: [String]
+    ) {
         self.event = event
-        self.referenceSourceURLs = referenceSourceURLs
+        self.messageType = messageType
+        self.sentAt = sentAt
+        self.supersededEventKeys = supersededEventKeys
     }
 }
 
@@ -234,11 +250,17 @@ public extension NwsEventFeatureDTO {
             return nil
         }
 
-        let referenceSourceURLs = properties.references?
-            .map(\.id)
-            .filter { !$0.isEmpty } ?? []
+        let supersededEventKeys = properties.references?
+            .compactMap { Self.normalizeMessageID($0.id) }
+            .uniquedPreservingOrder() ?? []
+        let messageType = NWSAlertMessageType.fromNws(properties.messageType)
 
-        return ArcusIngestEvent(event: event, referenceSourceURLs: referenceSourceURLs)
+        return ArcusIngestEvent(
+            event: event,
+            messageType: messageType,
+            sentAt: properties.sent,
+            supersededEventKeys: supersededEventKeys
+        )
     }
 
     func toArcusEvent(
@@ -251,18 +273,20 @@ public extension NwsEventFeatureDTO {
             return nil
         }
 
-        let expiresAt = properties.ends ?? properties.expires
+        let messageID = Self.normalizeMessageID(properties.id) ?? Self.normalizeMessageID(id) ?? properties.id
+        let endsAt = properties.ends
+        let messageType = NWSAlertMessageType.fromNws(properties.messageType)
 
         return ArcusEvent(
-            eventKey: "nws:\(id)",
+            eventKey: messageID,
             source: .nws,
             kind: kind,
-            sourceURL: properties.id,
-            status: ArcusEvent.status(now: now, expiresAt: expiresAt),
+            sourceURL: messageID,
+            status: ArcusEvent.status(now: now, messageType: messageType, endsAt: endsAt),
             revision: revision,
             issuedAt: properties.sent,
             effectiveAt: properties.effective ?? properties.onset ?? properties.sent,
-            expiresAt: expiresAt,
+            expiresAt: endsAt,
             severity: ArcusEvent.severity(for: kind, nwsSeverity: properties.severity),
             urgency: EventUrgency.fromNws(properties.urgency),
             certainty: EventCertainty.fromNws(properties.certainty),
@@ -275,12 +299,23 @@ public extension NwsEventFeatureDTO {
             rawRef: rawRef
         )
     }
+
+    private static func normalizeMessageID(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
 }
 
 private extension ArcusEvent {
-    static func status(now: Date, expiresAt: Date?) -> EventStatus {
-        guard let expiresAt else { return .active }
-        return expiresAt <= now ? .ended : .active
+    static func status(now: Date, messageType: NWSAlertMessageType, endsAt: Date?) -> EventStatus {
+        if messageType == .cancel {
+            return .ended
+        }
+
+        guard let endsAt else { return .active }
+        return endsAt <= now ? .ended : .active
     }
 
     static func severity(for kind: EventKind, nwsSeverity: String?) -> EventSeverity {
@@ -372,6 +407,35 @@ private extension EventCertainty {
         default:
             return .unknown
         }
+    }
+}
+
+private extension NWSAlertMessageType {
+    static func fromNws(_ raw: String?) -> NWSAlertMessageType {
+        switch raw?.normalizedLowercased {
+        case "alert":
+            return .alert
+        case "update":
+            return .update
+        case "cancel":
+            return .cancel
+        default:
+            return .unknown
+        }
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniquedPreservingOrder() -> [Element] {
+        var seen: Set<Element> = []
+        var result: [Element] = []
+        result.reserveCapacity(count)
+
+        for value in self where seen.insert(value).inserted {
+            result.append(value)
+        }
+
+        return result
     }
 }
 

@@ -227,10 +227,8 @@ public extension ArcusEventModel {
 
     private static func computeContentHash(from event: ArcusEvent) throws -> String {
         let fingerprint = ArcusEventContentFingerprint(
-            source: event.source,
             kind: event.kind,
-            sourceURL: event.sourceURL,
-            issuedAt: event.issuedAt,
+            status: event.status,
             effectiveAt: event.effectiveAt,
             expiresAt: event.expiresAt,
             severity: event.severity,
@@ -238,11 +236,8 @@ public extension ArcusEventModel {
             certainty: event.certainty,
             geometry: event.geometry,
             ugcCodes: event.ugcCodes,
-            h3Resolution: event.h3Resolution,
-            h3CoverHash: event.h3CoverHash,
             title: event.title,
-            areaDesc: event.areaDesc,
-            rawRef: event.rawRef
+            areaDesc: event.areaDesc
         )
 
         let data = try hashEncoder.encode(fingerprint)
@@ -269,10 +264,8 @@ public extension ArcusEventModel {
 }
 
 private struct ArcusEventContentFingerprint: Codable, Sendable {
-    let source: EventSource
     let kind: EventKind
-    let sourceURL: String
-    let issuedAt: Date?
+    let status: EventStatus
     let effectiveAt: Date?
     let expiresAt: Date?
     let severity: EventSeverity
@@ -280,9 +273,6 @@ private struct ArcusEventContentFingerprint: Codable, Sendable {
     let certainty: EventCertainty
     let geometry: GeoShape?
     let ugcCodes: [String]
-    let h3Resolution: Int?
-    let h3CoverHash: String?
     let title: String?
     let areaDesc: String?
-    let rawRef: String?
 }

@@ -37,11 +37,12 @@ struct AppTests {
         expiresAt: Date? = nil,
         title: String? = nil
     ) -> ArcusEvent {
-        ArcusEvent(
+        let sourceURL = key.hasPrefix("http") ? key : "https://api.weather.gov/alerts/\(key)"
+        return ArcusEvent(
             eventKey: key,
             source: .nws,
             kind: .torWarning,
-            sourceURL: "https://api.weather.gov/alerts/\(key)",
+            sourceURL: sourceURL,
             status: .active,
             revision: revision,
             issuedAt: isoDate("2026-02-21T16:00:00Z"),
@@ -65,11 +66,15 @@ struct AppTests {
         revision: Int = 1,
         expiresAt: Date? = nil,
         title: String? = nil,
-        referenceSourceURLs: [String] = []
+        messageType: NWSAlertMessageType = .alert,
+        sentAt: Date? = nil,
+        supersededEventKeys: [String] = []
     ) -> ArcusIngestEvent {
         ArcusIngestEvent(
             event: makeEvent(key: key, revision: revision, expiresAt: expiresAt, title: title),
-            referenceSourceURLs: referenceSourceURLs
+            messageType: messageType,
+            sentAt: sentAt,
+            supersededEventKeys: supersededEventKeys
         )
     }
 
@@ -223,7 +228,7 @@ struct AppTests {
             return
         }
 
-        #expect(event.eventKey == "nws:urn:oid:abc123")
+        #expect(event.eventKey == "https://api.weather.gov/alerts/abc123")
         #expect(event.source == .nws)
         #expect(event.kind == .torWarning)
         #expect(event.sourceURL == "https://api.weather.gov/alerts/abc123")
@@ -244,8 +249,8 @@ struct AppTests {
         }
     }
 
-    @Test("NWS mapper marks event ended when expired")
-    func nwsMapperMarksEndedWhenExpired() throws {
+    @Test("NWS mapper marks event ended when message is cancel")
+    func nwsMapperMarksEndedWhenCancel() throws {
         let json = """
         {
           "type": "FeatureCollection",
@@ -261,7 +266,7 @@ struct AppTests {
                 "id": "https://api.weather.gov/alerts/ended-1",
                 "areaDesc": "Jefferson County",
                 "event": "Severe Thunderstorm Warning",
-                "expires": "2026-02-21T15:00:00Z"
+                "messageType": "Cancel"
               }
             }
           ]
@@ -337,7 +342,40 @@ struct AppTests {
         }
     }
 
-    @Test("NWS mapper preserves references for ingest linkage")
+    @Test("NWS mapper keeps event active when only expires is in past")
+    func nwsMapperDoesNotEndWhenOnlyExpiresPassed() throws {
+        let json = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "id": "urn:oid:expires-1",
+              "type": "Feature",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [-104.99, 39.73]
+              },
+              "properties": {
+                "id": "https://api.weather.gov/alerts/expires-1",
+                "areaDesc": "Denver County",
+                "event": "Tornado Warning",
+                "expires": "2026-02-21T15:00:00Z"
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
+        let events = decoded.toArcusEvents(now: isoDate("2026-02-21T16:30:00Z"))
+
+        #expect(events.count == 1)
+        #expect(events.first?.status == .active)
+    }
+
+    @Test("NWS mapper preserves superseded event keys for ingest linkage")
     func nwsMapperPreservesReferenceSourceURLs() throws {
         let json = """
         {
@@ -374,7 +412,7 @@ struct AppTests {
         let ingestEvents = decoded.toArcusIngestEvents(now: isoDate("2026-02-21T16:30:00Z"))
 
         #expect(ingestEvents.count == 1)
-        #expect(ingestEvents.first?.referenceSourceURLs == ["https://api.weather.gov/alerts/update-1"])
+        #expect(ingestEvents.first?.supersededEventKeys == ["https://api.weather.gov/alerts/update-1"])
         #expect(ingestEvents.first?.event.sourceURL == "https://api.weather.gov/alerts/update-2")
     }
 
@@ -425,13 +463,70 @@ struct AppTests {
         let second = makeIngestEvent(key: "nws:dup-1", revision: 99, title: "Second")
         let distinct = makeIngestEvent(key: "nws:dup-2", revision: 1, title: "Distinct")
 
-        let deduped = ArcusEventDeduplicator.deduplicate([first, second, distinct])
+        let deduped = ArcusIngestMessageDeduplicator.deduplicate([first, second, distinct])
 
         #expect(deduped.events.count == 2)
         #expect(deduped.duplicatesIgnored == 1)
         #expect(deduped.events[0].event.eventKey == "nws:dup-1")
         #expect(deduped.events[0].event.title == "Second")
         #expect(deduped.events[1].event.eventKey == "nws:dup-2")
+    }
+
+    @Test("Ingest lineage resolver keeps only final superseding message in a chain")
+    func ingestLineageResolverKeepsLatestSupersedingMessage() {
+        let alert = makeIngestEvent(
+            key: "https://api.weather.gov/alerts/a",
+            sentAt: isoDate("2026-02-21T16:00:00Z")
+        )
+        let update1 = makeIngestEvent(
+            key: "https://api.weather.gov/alerts/b",
+            messageType: .update,
+            sentAt: isoDate("2026-02-21T16:05:00Z"),
+            supersededEventKeys: ["https://api.weather.gov/alerts/a"]
+        )
+        let update2 = makeIngestEvent(
+            key: "https://api.weather.gov/alerts/c",
+            messageType: .update,
+            sentAt: isoDate("2026-02-21T16:10:00Z"),
+            supersededEventKeys: [
+                "https://api.weather.gov/alerts/a",
+                "https://api.weather.gov/alerts/b"
+            ]
+        )
+
+        let resolved = ArcusIngestLineageResolver.resolve(
+            events: [alert, update1, update2],
+            existingByEventKey: [:]
+        )
+
+        #expect(resolved.count == 1)
+        #expect(resolved.first?.winner.event.eventKey == "https://api.weather.gov/alerts/c")
+        #expect(resolved.first?.supersededInRun == 2)
+    }
+
+    @Test("Ingest lineage resolver links update chain to existing event key")
+    func ingestLineageResolverLinksToExistingEvent() throws {
+        let existingEventKey = "https://api.weather.gov/alerts/existing-a"
+        let existingModel = try ArcusEventModel(
+            from: makeEvent(key: existingEventKey, title: "Existing"),
+            asOf: isoDate("2026-02-21T16:00:00Z")
+        )
+
+        let incomingUpdate = makeIngestEvent(
+            key: "https://api.weather.gov/alerts/existing-b",
+            messageType: .update,
+            sentAt: isoDate("2026-02-21T16:05:00Z"),
+            supersededEventKeys: [existingEventKey]
+        )
+
+        let resolved = ArcusIngestLineageResolver.resolve(
+            events: [incomingUpdate],
+            existingByEventKey: [existingEventKey: existingModel]
+        )
+
+        #expect(resolved.count == 1)
+        #expect(resolved.first?.existing?.eventKey == existingEventKey)
+        #expect(resolved.first?.winner.event.eventKey == "https://api.weather.gov/alerts/existing-b")
     }
 
     @Test("ArcusEventModel content hash ignores revision but tracks payload changes")

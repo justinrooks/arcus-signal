@@ -7,38 +7,167 @@ public struct IngestNWSAlertsPayload: Codable, Sendable {
     public init() {}
 }
 
-struct ArcusEventLookupKey: Hashable, Sendable {
-    let eventKey: String
-}
-
-struct ArcusEventDeduplicationResult: Sendable {
+struct ArcusIngestMessageDeduplicationResult: Sendable {
     let events: [ArcusIngestEvent]
     let duplicatesIgnored: Int
 }
 
-enum ArcusEventDeduplicator {
-    static func deduplicate(_ events: [ArcusIngestEvent]) -> ArcusEventDeduplicationResult {
+enum ArcusIngestMessageDeduplicator {
+    static func deduplicate(_ events: [ArcusIngestEvent]) -> ArcusIngestMessageDeduplicationResult {
         guard !events.isEmpty else {
             return .init(events: [], duplicatesIgnored: 0)
         }
 
-        var indexByKey: [ArcusEventLookupKey: Int] = [:]
-        var deduped: [ArcusIngestEvent] = []
-        var duplicatesIgnored = 0
-        deduped.reserveCapacity(events.count)
+        let orderedEvents = ArcusIngestLineageResolver.orderedIngestEvents(events)
+        var latestByMessageID: [String: ArcusIngestEvent] = [:]
+        latestByMessageID.reserveCapacity(orderedEvents.count)
 
-        for event in events {
-            let key = ArcusEventLookupKey(eventKey: event.event.eventKey)
-            if let existingIndex = indexByKey[key] {
-                deduped[existingIndex] = event
-                duplicatesIgnored += 1
-            } else {
-                indexByKey[key] = deduped.count
-                deduped.append(event)
+        for event in orderedEvents {
+            latestByMessageID[event.event.eventKey] = event
+        }
+
+        let deduped = ArcusIngestLineageResolver.orderedIngestEvents(Array(latestByMessageID.values))
+        return .init(
+            events: deduped,
+            duplicatesIgnored: max(events.count - deduped.count, 0)
+        )
+    }
+}
+
+private struct ArcusIngestLineageBucket {
+    var existing: ArcusEventModel?
+    var orderedEvents: [ArcusIngestEvent]
+
+    init(existing: ArcusEventModel? = nil, orderedEvents: [ArcusIngestEvent] = []) {
+        self.existing = existing
+        self.orderedEvents = orderedEvents
+    }
+}
+
+struct ArcusIngestResolvedLineage: Sendable {
+    let existing: ArcusEventModel?
+    let winner: ArcusIngestEvent
+    let supersededInRun: Int
+}
+
+enum ArcusIngestLineageResolver {
+    static func resolve(
+        events: [ArcusIngestEvent],
+        existingByEventKey: [String: ArcusEventModel]
+    ) -> [ArcusIngestResolvedLineage] {
+        guard !events.isEmpty else { return [] }
+
+        let orderedEvents = orderedIngestEvents(events)
+        var lineageByMessageKey: [String: String] = [:]
+        var bucketsByLineage: [String: ArcusIngestLineageBucket] = [:]
+
+        for event in orderedEvents {
+            let existing = resolveExisting(for: event, existingByEventKey: existingByEventKey)
+            let lineageKey = resolveLineageKey(
+                for: event,
+                existing: existing,
+                lineageByMessageKey: lineageByMessageKey
+            )
+
+            lineageByMessageKey[event.event.eventKey] = lineageKey
+
+            var bucket = bucketsByLineage[lineageKey] ?? ArcusIngestLineageBucket()
+            if bucket.existing == nil {
+                bucket.existing = existing
+            }
+            bucket.orderedEvents.append(event)
+            bucketsByLineage[lineageKey] = bucket
+        }
+
+        let resolved = bucketsByLineage.values.compactMap { bucket -> ArcusIngestResolvedLineage? in
+            guard let winner = bucket.orderedEvents.last else { return nil }
+            return ArcusIngestResolvedLineage(
+                existing: bucket.existing,
+                winner: winner,
+                supersededInRun: max(bucket.orderedEvents.count - 1, 0)
+            )
+        }
+
+        return resolved.sorted { isEarlier($0.winner, $1.winner) }
+    }
+
+    static func orderedIngestEvents(_ events: [ArcusIngestEvent]) -> [ArcusIngestEvent] {
+        events.sorted(by: isEarlier)
+    }
+
+    private static func resolveLineageKey(
+        for event: ArcusIngestEvent,
+        existing: ArcusEventModel?,
+        lineageByMessageKey: [String: String]
+    ) -> String {
+        if let existing {
+            let stableRowIdentity = existing.id?.uuidString.lowercased() ?? existing.eventKey
+            return "db:\(stableRowIdentity)"
+        }
+
+        for supersededEventKey in event.supersededEventKeys {
+            if let knownLineage = lineageByMessageKey[supersededEventKey] {
+                return knownLineage
             }
         }
 
-        return .init(events: deduped, duplicatesIgnored: duplicatesIgnored)
+        return "new:\(event.event.eventKey)"
+    }
+
+    private static func resolveExisting(
+        for event: ArcusIngestEvent,
+        existingByEventKey: [String: ArcusEventModel]
+    ) -> ArcusEventModel? {
+        var candidates: [ArcusEventModel] = []
+
+        if let direct = existingByEventKey[event.event.eventKey] {
+            candidates.append(direct)
+        }
+
+        for supersededEventKey in event.supersededEventKeys {
+            if let candidate = existingByEventKey[supersededEventKey] {
+                candidates.append(candidate)
+            }
+        }
+
+        guard !candidates.isEmpty else { return nil }
+
+        return candidates.sorted {
+            if $0.revision != $1.revision {
+                return $0.revision < $1.revision
+            }
+            return $0.eventKey < $1.eventKey
+        }.last
+    }
+
+    private static func isEarlier(_ lhs: ArcusIngestEvent, _ rhs: ArcusIngestEvent) -> Bool {
+        let lhsSentAt = lhs.sentAt ?? lhs.event.issuedAt ?? .distantPast
+        let rhsSentAt = rhs.sentAt ?? rhs.event.issuedAt ?? .distantPast
+
+        if lhsSentAt != rhsSentAt {
+            return lhsSentAt < rhsSentAt
+        }
+
+        let lhsTypeWeight = messageTypeWeight(lhs.messageType)
+        let rhsTypeWeight = messageTypeWeight(rhs.messageType)
+        if lhsTypeWeight != rhsTypeWeight {
+            return lhsTypeWeight < rhsTypeWeight
+        }
+
+        return lhs.event.eventKey < rhs.event.eventKey
+    }
+
+    private static func messageTypeWeight(_ type: NWSAlertMessageType) -> Int {
+        switch type {
+        case .alert:
+            return 0
+        case .update:
+            return 1
+        case .cancel:
+            return 2
+        case .unknown:
+            return 3
+        }
     }
 }
 
@@ -47,6 +176,7 @@ struct ArcusEventPersistenceSummary: Sendable {
     var updated: Int
     var unchanged: Int
     var duplicatesIgnored: Int
+    var supersededCollapsed: Int
     var expiredMarked: Int
     var targetDispatches: [TargetEventRevisionPayload]
 
@@ -55,6 +185,7 @@ struct ArcusEventPersistenceSummary: Sendable {
         updated: Int = 0,
         unchanged: Int = 0,
         duplicatesIgnored: Int = 0,
+        supersededCollapsed: Int = 0,
         expiredMarked: Int = 0,
         targetDispatches: [TargetEventRevisionPayload] = []
     ) {
@@ -62,41 +193,9 @@ struct ArcusEventPersistenceSummary: Sendable {
         self.updated = updated
         self.unchanged = unchanged
         self.duplicatesIgnored = duplicatesIgnored
+        self.supersededCollapsed = supersededCollapsed
         self.expiredMarked = expiredMarked
         self.targetDispatches = targetDispatches
-    }
-}
-
-private struct ArcusEventExistingIndex {
-    var byEventKey: [String: ArcusEventModel]
-    var bySourceURL: [String: ArcusEventModel]
-
-    init(byEventKey: [String: ArcusEventModel] = [:], bySourceURL: [String: ArcusEventModel] = [:]) {
-        self.byEventKey = byEventKey
-        self.bySourceURL = bySourceURL
-    }
-
-    func resolve(for ingestEvent: ArcusIngestEvent) -> ArcusEventModel? {
-        if let existing = byEventKey[ingestEvent.event.eventKey] {
-            return existing
-        }
-
-        if let existing = bySourceURL[ingestEvent.event.sourceURL] {
-            return existing
-        }
-
-        for referenceSourceURL in ingestEvent.referenceSourceURLs {
-            if let existing = bySourceURL[referenceSourceURL] {
-                return existing
-            }
-        }
-
-        return nil
-    }
-
-    mutating func track(_ model: ArcusEventModel) {
-        byEventKey[model.eventKey] = model
-        bySourceURL[model.sourceURL] = model
     }
 }
 
@@ -109,14 +208,14 @@ public struct IngestNWSAlertsJob: AsyncJob {
         let runTimestamp = Date()
 
         do {
-            let arcusEvents = try await context.application.nwsIngestService.ingestOnce(
+            let ingestEvents = try await context.application.nwsIngestService.ingestOnce(
                 on: context.application,
                 logger: context.logger
             )
 
             let persistence = try await context.application.db.transaction { database in
                 try await persistArcusEvents(
-                    arcusEvents,
+                    ingestEvents,
                     on: database,
                     asOf: runTimestamp,
                     logger: context.logger
@@ -130,6 +229,7 @@ public struct IngestNWSAlertsJob: AsyncJob {
                     "updated": .string("\(persistence.updated)"),
                     "unchanged": .string("\(persistence.unchanged)"),
                     "duplicatesIgnored": .string("\(persistence.duplicatesIgnored)"),
+                    "supersededCollapsed": .string("\(persistence.supersededCollapsed)"),
                     "expiredMarked": .string("\(persistence.expiredMarked)"),
                     "targetDispatches": .string("\(persistence.targetDispatches.count)")
                 ]
@@ -158,7 +258,7 @@ private extension IngestNWSAlertsJob {
         asOf: Date,
         logger: Logger
     ) async throws -> ArcusEventPersistenceSummary {
-        let deduplication = ArcusEventDeduplicator.deduplicate(events)
+        let deduplication = ArcusIngestMessageDeduplicator.deduplicate(events)
         var summary = ArcusEventPersistenceSummary(duplicatesIgnored: deduplication.duplicatesIgnored)
 
         guard !deduplication.events.isEmpty else {
@@ -166,22 +266,29 @@ private extension IngestNWSAlertsJob {
             return summary
         }
 
-        var existingIndex = try await fetchExistingIndex(for: deduplication.events, on: database)
-        for ingestEvent in deduplication.events {
-            let incoming = try ArcusEventModel(from: ingestEvent.event, asOf: asOf)
+        let existingByEventKey = try await fetchExistingByEventKey(for: deduplication.events, on: database)
+        let resolvedLineages = ArcusIngestLineageResolver.resolve(
+            events: deduplication.events,
+            existingByEventKey: existingByEventKey
+        )
+        summary.supersededCollapsed = resolvedLineages.reduce(0) { $0 + $1.supersededInRun }
 
-            if let existing = existingIndex.resolve(for: ingestEvent) {
+        for lineage in resolvedLineages {
+            let winner = lineage.winner
+            let incoming = try ArcusEventModel(from: winner.event, asOf: asOf)
+
+            if let existing = lineage.existing {
                 let contentChanged = existing.contentHash != incoming.contentHash
                 let oldRevision = existing.revision
                 let oldIsExpired = existing.isExpired
-                let preserveCanonicalEventKey = existing.eventKey != incoming.eventKey
-                if apply(incoming, to: existing, preservingEventKey: preserveCanonicalEventKey) {
+
+                if apply(incoming, to: existing) {
                     if contentChanged {
                         existing.revision += 1
                     }
                     try await existing.update(on: database)
-                    existingIndex.track(existing)
                     summary.updated += 1
+
                     if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
                         contentChanged: contentChanged,
                         isExpired: existing.isExpired
@@ -190,6 +297,7 @@ private extension IngestNWSAlertsJob {
                             .init(eventKey: existing.eventKey, revision: existing.revision)
                         )
                     }
+
                     emitHookEventUpdated(
                         logger: logger,
                         eventKey: existing.eventKey,
@@ -197,6 +305,7 @@ private extension IngestNWSAlertsJob {
                         newRevision: existing.revision,
                         contentChanged: contentChanged
                     )
+
                     if oldIsExpired == false, existing.isExpired == true {
                         emitHookEventEnded(
                             logger: logger,
@@ -214,13 +323,14 @@ private extension IngestNWSAlertsJob {
 
             do {
                 try await incoming.create(on: database)
-                existingIndex.track(incoming)
                 summary.inserted += 1
+
                 if TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: incoming.isExpired) {
                     summary.targetDispatches.append(
                         .init(eventKey: incoming.eventKey, revision: incoming.revision)
                     )
                 }
+
                 emitHookEventCreated(
                     logger: logger,
                     eventKey: incoming.eventKey,
@@ -231,27 +341,25 @@ private extension IngestNWSAlertsJob {
                     throw error
                 }
 
-                // Rare race: another worker inserted this row after our existence check.
                 guard let existing = try await ArcusEventModel
                     .query(on: database)
-                    .filter(\.$eventKey == ingestEvent.event.eventKey)
+                    .filter(\.$eventKey == incoming.eventKey)
                     .sort(\.$revision, .descending)
                     .first() else {
                     throw error
                 }
 
-                existingIndex.track(existing)
                 let contentChanged = existing.contentHash != incoming.contentHash
                 let oldRevision = existing.revision
                 let oldIsExpired = existing.isExpired
-                let preserveCanonicalEventKey = existing.eventKey != incoming.eventKey
-                if apply(incoming, to: existing, preservingEventKey: preserveCanonicalEventKey) {
+
+                if apply(incoming, to: existing) {
                     if contentChanged {
                         existing.revision += 1
                     }
                     try await existing.update(on: database)
-                    existingIndex.track(existing)
                     summary.updated += 1
+
                     if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
                         contentChanged: contentChanged,
                         isExpired: existing.isExpired
@@ -260,6 +368,7 @@ private extension IngestNWSAlertsJob {
                             .init(eventKey: existing.eventKey, revision: existing.revision)
                         )
                     }
+
                     emitHookEventUpdated(
                         logger: logger,
                         eventKey: existing.eventKey,
@@ -267,6 +376,7 @@ private extension IngestNWSAlertsJob {
                         newRevision: existing.revision,
                         contentChanged: contentChanged
                     )
+
                     if oldIsExpired == false, existing.isExpired == true {
                         emitHookEventEnded(
                             logger: logger,
@@ -307,39 +417,29 @@ private extension IngestNWSAlertsJob {
             || description.contains("23505")
     }
 
-    func fetchExistingIndex(
+    func fetchExistingByEventKey(
         for events: [ArcusIngestEvent],
         on database: any Database
-    ) async throws -> ArcusEventExistingIndex {
-        let eventKeys = Array(Set(events.map(\.event.eventKey)))
-        let sourceURLs = Array(Set(events.map(\.event.sourceURL)))
-        let referenceSourceURLs = Array(Set(events.flatMap(\.referenceSourceURLs)))
-        let sourceURLsForLookup = Array(Set(sourceURLs + referenceSourceURLs))
+    ) async throws -> [String: ArcusEventModel] {
+        let messageKeys = events.map(\.event.eventKey)
+        let referencedKeys = events.flatMap(\.supersededEventKeys)
+        let lookupKeys = Array(Set(messageKeys + referencedKeys))
 
-        guard !eventKeys.isEmpty || !sourceURLsForLookup.isEmpty else {
-            return ArcusEventExistingIndex()
-        }
+        guard !lookupKeys.isEmpty else { return [:] }
 
-        var query = ArcusEventModel.query(on: database)
-        if !eventKeys.isEmpty {
-            query = query.group(.or) { group in
-                group.filter(\.$eventKey ~~ eventKeys)
-                if !sourceURLsForLookup.isEmpty {
-                    group.filter(\.$sourceURL ~~ sourceURLsForLookup)
-                }
-            }
-        } else {
-            query = query.filter(\.$sourceURL ~~ sourceURLsForLookup)
-        }
+        let existing = try await ArcusEventModel
+            .query(on: database)
+            .filter(\.$eventKey ~~ lookupKeys)
+            .all()
 
-        let existing = try await query.all()
+        var index: [String: ArcusEventModel] = [:]
+        index.reserveCapacity(existing.count)
 
-        var index = ArcusEventExistingIndex()
         for model in existing {
-            if let current = index.byEventKey[model.eventKey], current.revision > model.revision {
+            if let current = index[model.eventKey], current.revision >= model.revision {
                 continue
             }
-            index.track(model)
+            index[model.eventKey] = model
         }
 
         return index
@@ -372,7 +472,7 @@ private extension IngestNWSAlertsJob {
                 eventKey: model.eventKey,
                 revision: model.revision,
                 endedAt: asOf,
-                reason: "expiry-backfill"
+                reason: "ends-backfill"
             )
         }
 
@@ -429,16 +529,10 @@ private extension IngestNWSAlertsJob {
         )
     }
 
-    func apply(
-        _ source: ArcusEventModel,
-        to target: ArcusEventModel,
-        preservingEventKey: Bool
-    ) -> Bool {
+    func apply(_ source: ArcusEventModel, to target: ArcusEventModel) -> Bool {
         var changed = false
 
-        if !preservingEventKey {
-            changed = assignIfChanged(source.eventKey, to: &target.eventKey) || changed
-        }
+        changed = assignIfChanged(source.eventKey, to: &target.eventKey) || changed
         changed = assignIfChanged(source.source, to: &target.source) || changed
         changed = assignIfChanged(source.kind, to: &target.kind) || changed
         changed = assignIfChanged(source.sourceURL, to: &target.sourceURL) || changed

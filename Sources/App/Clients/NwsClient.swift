@@ -25,6 +25,7 @@ protocol NwsClient: Sendable {
 
 //https://api.weather.gov/alerts/active?point=39%2C-104
 //https://api.weather.gov/alerts/active?status=actual&message_type=alert,update&point=39%2C-104
+//https://api.weather.gov/alerts/active?status=actual&event=tornado%20warning,severe%20thunderstorm%20warning,flash%20flood%20warning,tornado%20watch,severe%20thunderstorm%20watch,winter%20storm%20warning,extreme%20fire%20danger,fire%20warning,fire%20weather%20watch,red%20flag%20warning&region_type=land
 
 struct NwsHttpClient: NwsClient {
     private let http: any HTTPClient
