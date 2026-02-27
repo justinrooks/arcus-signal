@@ -40,9 +40,9 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
 }
 
 private func configureMigrations(on app: Application) {
-//    app.migrations.add(CreateArcusEventModel())
-//    app.migrations.add(AddIsExpiredToArcusEventModel())
-//    app.migrations.add(AddContentHashToArcusEventModel())
+    app.migrations.add(CreatePgcryptoExtension())
+    app.migrations.add(CreateAlertSeriesModel())
+    app.migrations.add(CreateAlertRevision())
 }
 
 private func configureDatabases(on app: Application) throws {

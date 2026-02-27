@@ -25,7 +25,7 @@ public enum EventKind: String, Codable, Sendable {
     case spcMesoscaleDiscussion
 }
 
-public enum EventStatus: String, Codable, Sendable {
+public enum EventState: String, Codable, Sendable {
     case active
     case ended
     case issuedInError
@@ -89,19 +89,20 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     public let source: EventSource
     public let kind: EventKind // event property in the message
     public let sourceURL: String
-    public let vtec: VTECDescriptor?
+    public let vtec: VTECDescriptor? // Maybe remove, we aren't going to persist. may be used for calculation
     public let messageType: NWSAlertMessageType
 
     // Lifecycle
-    public let status: EventStatus
+    public let state: EventState
     public let references: [String] // list of id's this message supersedes
 
     // Timing
-    public let sentAt: Date? // time of the origination of message itself
-    public let effectiveAt: Date? // goes into effect
-    public let onsetAt: Date? // beginning of the event in message
-    public let expiresAt: Date? // alert message expiration
-    public let endsAt: Date?
+    public let sent: Date? // time of the origination of message itself
+    public let effective: Date? // goes into effect
+    public let onset: Date? // beginning of the event in message
+    public let expires: Date? // alert message expiration
+    public let ends: Date?
+    public let lastSeenActive: Date
 
     // Severity inputs (normalized)
     public let severity: EventSeverity
@@ -128,13 +129,14 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         sourceURL: String,
         vtec: VTECDescriptor?,
         messageType: NWSAlertMessageType,
-        status: EventStatus,
+        state: EventState,
         references: [String] = [],
-        sentAt: Date?,
-        effectiveAt: Date?,
-        onsetAt: Date?,
-        expiresAt: Date?,
-        endsAt: Date?,
+        sent: Date?,
+        effective: Date?,
+        onset: Date?,
+        expires: Date?,
+        ends: Date?,
+        lastSeenActive: Date,
         severity: EventSeverity,
         urgency: EventUrgency,
         certainty: EventCertainty,
@@ -152,13 +154,14 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         self.sourceURL = sourceURL
         self.vtec = vtec
         self.messageType = messageType
-        self.status = status
+        self.state = state
         self.references = references
-        self.sentAt = sentAt
-        self.effectiveAt = effectiveAt
-        self.onsetAt = onsetAt
-        self.expiresAt = expiresAt
-        self.endsAt = endsAt
+        self.sent = sent
+        self.effective = effective
+        self.onset = onset
+        self.expires = expires
+        self.ends = ends
+        self.lastSeenActive = lastSeenActive
         self.severity = severity
         self.urgency = urgency
         self.certainty = certainty
@@ -318,13 +321,14 @@ public extension NwsEventFeatureDTO {
             sourceURL: id,
             vtec: vtecP ?? nil, // We are specifically only grabbing the first. Its a business decision, we can adjust later
             messageType: NWSAlertMessageType.fromNws(properties.messageType),
-            status: ArcusEvent.status(now: now, messageType: messageType, endsAt: endsAt),
+            state: ArcusEvent.status(now: now, messageType: messageType, endsAt: endsAt),
             references: refs ?? [],
-            sentAt: properties.sent,
-            effectiveAt: properties.effective,
-            onsetAt: properties.onset,
-            expiresAt: properties.expires,
-            endsAt: endsAt,
+            sent: properties.sent,
+            effective: properties.effective,
+            onset: properties.onset,
+            expires: properties.expires,
+            ends: endsAt,
+            lastSeenActive: now,
             severity: EventSeverity.fromNws(properties.severity),
             urgency: EventUrgency.fromNws(properties.urgency),
             certainty: EventCertainty.fromNws(properties.certainty),
@@ -338,6 +342,7 @@ public extension NwsEventFeatureDTO {
         )
     }
 
+    // MARK: TEMP H3 HASHING
     private static func h3CoverHashForPolygon(
         _ rings: [[GeoShape.GeoCoordinate]],
         resolution: Int?
@@ -372,7 +377,7 @@ public extension NwsEventFeatureDTO {
 }
 
 private extension ArcusEvent {
-    static func status(now: Date, messageType: NWSAlertMessageType, endsAt: Date?) -> EventStatus {
+    static func status(now: Date, messageType: NWSAlertMessageType, endsAt: Date?) -> EventState {
         if messageType == .cancel {
             return .issuedInError
         }

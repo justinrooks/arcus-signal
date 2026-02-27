@@ -1,0 +1,304 @@
+//
+//  ArcusSeriesModel.swift
+//  ArcusSignal
+//
+//  Created by Justin Rooks on 2/26/26.
+//
+
+import Fluent
+import Foundation
+import Crypto
+
+public enum ArcusEventModelError: Error, Sendable {
+    case invalidEnum(field: String, value: String)
+    case invalidGeometryJSON
+}
+
+public final class ArcusSeriesModel: Model, @unchecked Sendable {
+    public static let schema = "arcus_series"
+    
+    // MARK: Identity
+    @ID(key: .id) // The series id
+    public var id: UUID?
+    
+    @Field(key: "source")
+    public var source: String
+    
+    @Field(key: "event")
+    public var event: String // event property in the message
+    
+    @Field(key: "source_url")
+    public var sourceURL: String
+    
+    @Field(key: "current_revision_urn")
+    public var currentRevisionUrn: String
+    
+    @Field(key: "current_revision_sent")
+    public var currentRevisionSent: Date?
+    
+    @Field(key: "message_type")
+    public var messageType: String
+    
+    @Field(key: "content_fingerprint")
+    public var contentFingerprint: String
+    
+    
+    // MARK: Lifecycle
+    @Field(key: "state")
+    public var state: String
+    
+    // When this object was created.
+    @Timestamp(key: "created", on: .create)
+    var created: Date?
+    
+    // When this object was last updated.
+    @Timestamp(key: "updated", on: .update)
+    var updated: Date?
+    
+    @Field(key: "last_seen_active")
+    public var lastSeenActive: Date
+    
+    
+    // MARK: Timing
+    @OptionalField(key: "sent")
+    public var sent: Date? // time of the origination of message itself
+    
+    @OptionalField(key: "effective")
+    public var effective: Date? // goes into effect
+    
+    @OptionalField(key: "onset")
+    public var onset: Date? // beginning of the event in message
+    
+    @OptionalField(key: "expires")
+    public var expires: Date? // alert message expiration
+    
+    @OptionalField(key: "ends")
+    public var ends: Date?
+    
+    
+    // MARK: Severity inputs (normalized)
+    // status is not needed, as we are only pulling Actual per the filter
+    //    @Field(key: "status")
+    //    public var status: String
+    
+    @Field(key: "severity")
+    public var severity: String
+    
+    @Field(key: "urgency")
+    public var urgency: String
+    
+    @Field(key: "certainty")
+    public var certainty: String
+    
+    
+    // MARK: Targeting
+    //    #warning("Define in DB")
+    //    TODO: Figure out how to persist this
+    //    public var geometry: GeoShape?
+    
+    @Field(key: "ugc_codes")
+    public var ugcCodes: [String]
+    
+    
+    // MARK: Human-facing metadata
+    @OptionalField(key: "title")
+    public var title: String?
+    
+    @OptionalField(key: "area_desc")
+    public var areaDesc: String?
+    
+    
+    // MARK: Inits
+    public init() {}
+    
+    public init(
+        id: UUID? = nil,
+        source: String,
+        event: String,
+        sourceURL: String,
+        currentRevisionUrn: String,
+        currentRevisionSent: Date? = nil,
+        messageType: String,
+        contentFingerprint: String,
+        state: String,
+        created: Date? = nil,
+        updated: Date? = nil,
+        sent: Date? = nil,
+        effective: Date? = nil,
+        onset: Date? = nil,
+        expires: Date? = nil,
+        ends: Date? = nil,
+        lastSeenActive: Date,
+        severity: String,
+        urgency: String,
+        certainty: String,
+        ugcCodes: [String],
+        title: String? = nil,
+        areaDesc: String? = nil
+    ) {
+        self.id = id
+        self.source = source
+        self.event = event
+        self.sourceURL = sourceURL
+        self.currentRevisionUrn = currentRevisionUrn
+        self.currentRevisionSent = currentRevisionSent
+        self.messageType = messageType
+        self.contentFingerprint = contentFingerprint
+        self.state = state
+        self.created = created
+        self.updated = updated
+        self.sent = sent
+        self.effective = effective
+        self.onset = onset
+        self.expires = expires
+        self.ends = ends
+        self.lastSeenActive = lastSeenActive
+        self.severity = severity
+        self.urgency = urgency
+        self.certainty = certainty
+        self.ugcCodes = ugcCodes
+        self.title = title
+        self.areaDesc = areaDesc
+    }
+    
+}
+
+
+// MARK: Extensions
+public extension ArcusSeriesModel {
+    convenience init(from event: ArcusEvent, asOf: Date = .now) throws {
+        //        let geometryJSON = try Self.encodeGeometry(event.geometry)
+        //        let isExpired = Self.computeIsExpired(from: event, asOf: asOf)
+        let contentHash = try Self.computeContentHash(from: event)
+        
+        self.init(
+            //            id: nil, // To be assigned at the database
+            source: event.source.rawValue,
+            event: event.kind.rawValue,
+            sourceURL: event.sourceURL,
+            currentRevisionUrn: event.id,
+            currentRevisionSent: event.sent,
+            messageType: event.messageType.rawValue,
+            contentFingerprint: contentHash,
+            state: event.state.rawValue,
+            created: nil,
+            updated: nil,
+            sent: event.sent,
+            effective: event.effective,
+            onset: event.onset,
+            expires: event.expires,
+            ends: event.ends,
+            lastSeenActive: asOf,
+            severity: event.severity.rawValue,
+            urgency: event.urgency.rawValue,
+            certainty: event.certainty.rawValue,
+            ugcCodes: event.ugcCodes,
+            title: event.title,
+            areaDesc: event.areaDesc
+        )
+    }
+    
+    func asDomain() throws -> ArcusEvent {
+        guard let source = EventSource(rawValue: source) else {
+            throw ArcusEventModelError.invalidEnum(field: "source", value: source)
+        }
+        
+        guard let kind = EventKind(rawValue: event) else {
+            throw ArcusEventModelError.invalidEnum(field: "kind", value: event)
+        }
+        
+        guard let severity = EventSeverity(rawValue: severity) else {
+            throw ArcusEventModelError.invalidEnum(field: "severity", value: severity)
+        }
+        
+        guard let urgency = EventUrgency(rawValue: urgency) else {
+            throw ArcusEventModelError.invalidEnum(field: "urgency", value: urgency)
+        }
+        
+        guard let certainty = EventCertainty(rawValue: certainty) else {
+            throw ArcusEventModelError.invalidEnum(field: "certainty", value: certainty)
+        }
+        
+        guard let messageType = NWSAlertMessageType(rawValue: messageType) else {
+            throw ArcusEventModelError.invalidEnum(field: "messageType", value: messageType)
+        }
+        
+        guard let state = EventState(rawValue: state) else {
+            throw ArcusEventModelError.invalidEnum(field: "state", value: state)
+        }
+        
+        return .init(
+            urn: currentRevisionUrn,
+            source: source,
+            kind: kind,
+            sourceURL: sourceURL,
+            vtec: nil, // Just nil, since we don't persist
+            messageType: messageType,
+            state: state,
+            references: [], // TODO: Figure this out too
+            sent: sent,
+            effective: effective,
+            onset: onset,
+            expires: expires,
+            ends: ends,
+            lastSeenActive: lastSeenActive,
+            severity: severity,
+            urgency: urgency,
+            certainty: certainty,
+            geometry: nil, // TODO: Figure this out
+            ugcCodes: ugcCodes,
+            h3Resolution: nil,
+            h3CoverHash: nil,
+            title: title,
+            areaDesc: areaDesc,
+            rawRef: nil
+        )
+    }
+    
+    private static func computeContentHash(from event: ArcusEvent) throws -> String {
+        let fingerprint = ArcusEventContentFingerprint(
+            kind: event.kind,
+            state: event.state,
+            sent: event.sent,
+            effective: event.effective,
+            onset: event.onset,
+            expires: event.expires,
+            ends: event.ends,
+            severity: event.severity,
+            urgency: event.urgency,
+            certainty: event.certainty,
+            geometry: event.geometry,
+            ugcCodes: event.ugcCodes,
+            title: event.title,
+            areaDesc: event.areaDesc
+        )
+        
+        let data = try hashEncoder.encode(fingerprint)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+    
+    private static var hashEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+}
+
+private struct ArcusEventContentFingerprint: Codable, Sendable {
+    let kind: EventKind
+    let state: EventState
+    let sent: Date?
+    let effective: Date?
+    let onset: Date?
+    let expires: Date?
+    let ends: Date?
+    let severity: EventSeverity
+    let urgency: EventUrgency
+    let certainty: EventCertainty
+    let geometry: GeoShape?
+    let ugcCodes: [String]
+    let title: String?
+    let areaDesc: String?
+}
