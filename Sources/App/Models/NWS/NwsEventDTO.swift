@@ -5,6 +5,9 @@
 //  Created by Justin Rooks on 2/21/26.
 //
 // This is the shape of the incomming JSON from the NWS for alerts
+// We are really only concerned with the array of NwsEventFeatureDTOs
+// and children. The NwsEventDTO is just a parent container for
+// serialization.
 // api.weather.gov/alerts
 
 import Foundation

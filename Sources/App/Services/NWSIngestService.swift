@@ -3,7 +3,7 @@ import Logging
 import Vapor
 
 public protocol NWSIngestService: Sendable {
-    func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusIngestEvent]
+    func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusEvent]
 }
 
 public enum NWSIngestServiceError: Error, Sendable {
@@ -13,7 +13,7 @@ public enum NWSIngestServiceError: Error, Sendable {
 public struct DefaultNWSIngestService: NWSIngestService {
     public init() {}
 
-    public func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusIngestEvent] {
+    public func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusEvent] {
         let responseObserver = LastGlobalSuccessHTTPObserver()
         let httpClient = VaporApplicationHTTPClient(
             application: application,
@@ -23,7 +23,7 @@ public struct DefaultNWSIngestService: NWSIngestService {
 
         let data = try await client.fetchActiveAlertsJsonData()
         let decoded = try Self.iso8601Decoder.decode(NwsEventDTO.self, from: data)
-        let arcusEvents = decoded.toArcusIngestEvents()
+        let arcusEvents = decoded.toArcusEvents()
         logger.info(
             "Mapped NWS alert payload into canonical events.",
             metadata: [
@@ -44,14 +44,14 @@ public struct DefaultNWSIngestService: NWSIngestService {
 public struct StubNWSIngestService: NWSIngestService {
     public init() {}
 
-    public func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusIngestEvent] {
+    public func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusEvent] {
         logger.info("Stub NWS ingest completed.")
         return []
     }
 }
 
 private struct UnconfiguredNWSIngestService: NWSIngestService {
-    func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusIngestEvent] {
+    func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusEvent] {
         logger.critical("NWSIngestService was accessed before being configured.")
         throw NWSIngestServiceError.unconfigured
     }

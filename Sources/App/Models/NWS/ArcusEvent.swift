@@ -1,6 +1,7 @@
 import Foundation
+import SwiftyH3
 
-// MARK: - Canonical Model
+// MARK: - Canonical Domain Model
 
 public enum EventSource: String, Codable, Sendable {
     case nws
@@ -10,10 +11,10 @@ public enum EventSource: String, Codable, Sendable {
 public enum EventKind: String, Codable, Sendable {
     // NWS
     case torWarning
-    case svrWarning
+    case svrTstormWarning
     case ffWarning
     case torWatch
-    case svrWatch
+    case svrTstormWatch
     case winterStormWarning
     case fireWarning
     case fireWeatherWatch
@@ -27,37 +28,40 @@ public enum EventKind: String, Codable, Sendable {
 public enum EventStatus: String, Codable, Sendable {
     case active
     case ended
+    case issuedInError
 }
 
 public enum EventSeverity: String, Codable, Sendable {
-    // Normalized severity buckets owned by Arcus.
-    case info
-    case advisory
-    case watch
-    case warning
-    case emergency
+    // severities pairing with CAP standards
+    case extreme // extraordinary threat to live or property
+    case severe // significant threat to life or property
+    case moderate // possible threat to life or property
+    case minor // minimal to no konwn threat to life or property
+    case unknown // unknown
 }
 
 public enum EventUrgency: String, Codable, Sendable {
-    case immediate
-    case expected
-    case future
-    case past
+    // urgencies pairing with CAP standards
+    case immediate //Responsive action should be taken immediately
+    case expected // Responsive action should be taken soon (within the next hr)
+    case future // Responsive action should be taken in the near future
+    case past // Responsive action is no longer required
     case unknown
 }
 
 public enum EventCertainty: String, Codable, Sendable {
-    case observed
-    case likely
-    case possible
-    case unlikely
-    case unknown
+    case observed // determined to have occurred or to be ongoing
+    case likely // > ~50% probability
+    case possible //possible but not likely, <= ~50% probability of
+    case unlikely // probability ~0
+    case unknown // unknown
 }
 
 public enum NWSAlertMessageType: String, Codable, Sendable {
+    // NWS spin on CAP standard
     case alert
     case update
-    case cancel
+    case cancel // Issued in error
     case unknown
 }
 
@@ -81,19 +85,23 @@ public enum GeoShape: Codable, Sendable, Equatable {
 /// Canonical event that downstream systems should depend on.
 public struct ArcusEvent: Codable, Sendable, Equatable {
     // Identity
-    public let eventKey: String      // current upstream message id
+    public let id: String      // urn:oid:...
     public let source: EventSource
-    public let kind: EventKind
+    public let kind: EventKind // event property in the message
     public let sourceURL: String
+    public let vtec: VTECDescriptor?
+    public let messageType: NWSAlertMessageType
 
     // Lifecycle
     public let status: EventStatus
-    public let revision: Int
+    public let references: [String] // list of id's this message supersedes
 
     // Timing
-    public let issuedAt: Date?
-    public let effectiveAt: Date?
-    public let expiresAt: Date?
+    public let sentAt: Date? // time of the origination of message itself
+    public let effectiveAt: Date? // goes into effect
+    public let onsetAt: Date? // beginning of the event in message
+    public let expiresAt: Date? // alert message expiration
+    public let endsAt: Date?
 
     // Severity inputs (normalized)
     public let severity: EventSeverity
@@ -114,15 +122,19 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     public let rawRef: String?
 
     public init(
-        eventKey: String,
+        urn: String,
         source: EventSource,
         kind: EventKind,
         sourceURL: String,
+        vtec: VTECDescriptor?,
+        messageType: NWSAlertMessageType,
         status: EventStatus,
-        revision: Int,
-        issuedAt: Date?,
+        references: [String] = [],
+        sentAt: Date?,
         effectiveAt: Date?,
+        onsetAt: Date?,
         expiresAt: Date?,
+        endsAt: Date?,
         severity: EventSeverity,
         urgency: EventUrgency,
         certainty: EventCertainty,
@@ -134,15 +146,19 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         areaDesc: String?,
         rawRef: String?
     ) {
-        self.eventKey = eventKey
+        self.id = urn
         self.source = source
         self.kind = kind
         self.sourceURL = sourceURL
+        self.vtec = vtec
+        self.messageType = messageType
         self.status = status
-        self.revision = revision
-        self.issuedAt = issuedAt
+        self.references = references
+        self.sentAt = sentAt
         self.effectiveAt = effectiveAt
+        self.onsetAt = onsetAt
         self.expiresAt = expiresAt
+        self.endsAt = endsAt
         self.severity = severity
         self.urgency = urgency
         self.certainty = certainty
@@ -156,61 +172,61 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     }
 }
 
-/// Ingest payload that preserves upstream linkage metadata needed for revision chaining.
-public struct ArcusIngestEvent: Sendable, Equatable {
-    public let event: ArcusEvent
-    public let messageType: NWSAlertMessageType
-    public let sentAt: Date?
-    public let supersededEventKeys: [String]
+///// Ingest payload that preserves upstream linkage metadata needed for revision chaining.
+//public struct ArcusIngestEvent: Sendable, Equatable {
+//    public let event: ArcusEvent
+//    public let messageType: NWSAlertMessageType
+//    public let sentAt: Date?
+//    public let supersededEventKeys: [String]
+//
+//    public init(
+//        event: ArcusEvent,
+//        messageType: NWSAlertMessageType,
+//        sentAt: Date?,
+//        supersededEventKeys: [String]
+//    ) {
+//        self.event = event
+//        self.messageType = messageType
+//        self.sentAt = sentAt
+//        self.supersededEventKeys = supersededEventKeys
+//    }
+//}
 
-    public init(
-        event: ArcusEvent,
-        messageType: NWSAlertMessageType,
-        sentAt: Date?,
-        supersededEventKeys: [String]
-    ) {
-        self.event = event
-        self.messageType = messageType
-        self.sentAt = sentAt
-        self.supersededEventKeys = supersededEventKeys
-    }
-}
-
-/// Revision record for idempotency + dedupe persistence.
-/// Intended unique constraint: (eventKey, revisionHash).
-public struct EventRevision: Codable, Sendable, Equatable {
-    public let eventKey: String
-    public let revision: Int
-    public let revisionHash: String
-    public let createdAt: Date
-    public let changeSummary: String?
-
-    public init(
-        eventKey: String,
-        revision: Int,
-        revisionHash: String,
-        createdAt: Date = Date(),
-        changeSummary: String? = nil
-    ) {
-        self.eventKey = eventKey
-        self.revision = revision
-        self.revisionHash = revisionHash
-        self.createdAt = createdAt
-        self.changeSummary = changeSummary
-    }
-}
+///// Revision record for idempotency + dedupe persistence.
+///// Intended unique constraint: (eventKey, revisionHash).
+//public struct EventRevision: Codable, Sendable, Equatable {
+//    public let eventKey: String
+//    public let revision: Int
+//    public let revisionHash: String
+//    public let createdAt: Date
+//    public let changeSummary: String?
+//
+//    public init(
+//        eventKey: String,
+//        revision: Int,
+//        revisionHash: String,
+//        createdAt: Date = Date(),
+//        changeSummary: String? = nil
+//    ) {
+//        self.eventKey = eventKey
+//        self.revision = revision
+//        self.revisionHash = revisionHash
+//        self.createdAt = createdAt
+//        self.changeSummary = changeSummary
+//    }
+//}
 
 // MARK: - NWS -> Canonical Mapper
 
 public extension NwsEventDTO {
-    func toArcusIngestEvents(
+    func toArcusEvents(
         now: Date = .now,
         revision: Int = 1,
         h3Resolution: Int? = 8,
         rawRef: String? = nil
-    ) -> [ArcusIngestEvent] {
+    ) -> [ArcusEvent] {
         (features ?? []).compactMap {
-            $0.toArcusIngestEvent(
+            $0.toArcusEvent(
                 now: now,
                 revision: revision,
                 h3Resolution: h3Resolution,
@@ -218,51 +234,51 @@ public extension NwsEventDTO {
             )
         }
     }
-
-    func toArcusEvents(
-        now: Date = .now,
-        revision: Int = 1,
-        h3Resolution: Int? = 8,
-        rawRef: String? = nil
-    ) -> [ArcusEvent] {
-        toArcusIngestEvents(
-            now: now,
-            revision: revision,
-            h3Resolution: h3Resolution,
-            rawRef: rawRef
-        ).map(\.event)
-    }
+//
+//    func toArcusEvents(
+//        now: Date = .now,
+//        revision: Int = 1,
+//        h3Resolution: Int? = 8,
+//        rawRef: String? = nil
+//    ) -> [ArcusEvent] {
+//        toArcusIngestEvents(
+//            now: now,
+//            revision: revision,
+//            h3Resolution: h3Resolution,
+//            rawRef: rawRef
+//        ).map(\.event)
+//    }
 }
 
 public extension NwsEventFeatureDTO {
-    func toArcusIngestEvent(
-        now: Date = .now,
-        revision: Int = 1,
-        h3Resolution: Int? = 8,
-        rawRef: String? = nil
-    ) -> ArcusIngestEvent? {
-        guard let event = toArcusEvent(
-            now: now,
-            revision: revision,
-            h3Resolution: h3Resolution,
-            rawRef: rawRef
-        ) else {
-            return nil
-        }
-
-        let supersededEventKeys = properties.references?
-            .compactMap { Self.normalizeMessageID($0.id) }
-            .uniquedPreservingOrder() ?? []
-        let messageType = NWSAlertMessageType.fromNws(properties.messageType)
-
-        return ArcusIngestEvent(
-            event: event,
-            messageType: messageType,
-            sentAt: properties.sent,
-            supersededEventKeys: supersededEventKeys
-        )
-    }
-
+//    func toArcusIngestEvent(
+//        now: Date = .now,
+//        revision: Int = 1,
+//        h3Resolution: Int? = 8,
+//        rawRef: String? = nil
+//    ) -> ArcusIngestEvent? {
+//        guard let event = toArcusEvent(
+//            now: now,
+//            revision: revision,
+//            h3Resolution: h3Resolution,
+//            rawRef: rawRef
+//        ) else {
+//            return nil
+//        }
+//
+//        let supersededEventKeys = properties.references?
+//            .compactMap { Self.normalizeMessageID($0.id) }
+//            .uniquedPreservingOrder() ?? []
+//        let messageType = NWSAlertMessageType.fromNws(properties.messageType)
+//
+//        return ArcusIngestEvent(
+//            event: event,
+//            messageType: messageType,
+//            sentAt: properties.sent,
+//            supersededEventKeys: supersededEventKeys
+//        )
+//    }
+//
     func toArcusEvent(
         now: Date = .now,
         revision: Int = 1,
@@ -276,28 +292,75 @@ public extension NwsEventFeatureDTO {
         let messageID = Self.normalizeMessageID(properties.id) ?? Self.normalizeMessageID(id) ?? properties.id
         let endsAt = properties.ends
         let messageType = NWSAlertMessageType.fromNws(properties.messageType)
+        let vtec = properties.parameters?["VTEC"]?.first ?? ""
+        let vtecP = vtec.parseVTEC()
+        let refs = properties.references?.compactMap{ $0.identifier }
+        let geometry = geometry?.toGeoShape()
+        let poly: String? = switch geometry {
+        case .polygon(let rings)?:
+            try? Self.h3CoverHashForPolygon(rings, resolution: h3Resolution)
+        case .multiPolygon(let polygons)?:
+            if let firstPolygon = polygons.first {
+                try? Self.h3CoverHashForPolygon(firstPolygon, resolution: h3Resolution)
+            } else {
+                nil
+            }
+        case .point?:
+            nil
+        case nil:
+            nil
+        }
 
-        return ArcusEvent(
-            eventKey: messageID,
+        return .init(
+            urn: messageID,
             source: .nws,
             kind: kind,
-            sourceURL: messageID,
+            sourceURL: id,
+            vtec: vtecP ?? nil, // We are specifically only grabbing the first. Its a business decision, we can adjust later
+            messageType: NWSAlertMessageType.fromNws(properties.messageType),
             status: ArcusEvent.status(now: now, messageType: messageType, endsAt: endsAt),
-            revision: revision,
-            issuedAt: properties.sent,
-            effectiveAt: properties.effective ?? properties.onset ?? properties.sent,
-            expiresAt: endsAt,
-            severity: ArcusEvent.severity(for: kind, nwsSeverity: properties.severity),
+            references: refs ?? [],
+            sentAt: properties.sent,
+            effectiveAt: properties.effective,
+            onsetAt: properties.onset,
+            expiresAt: properties.expires,
+            endsAt: endsAt,
+            severity: EventSeverity.fromNws(properties.severity),
             urgency: EventUrgency.fromNws(properties.urgency),
             certainty: EventCertainty.fromNws(properties.certainty),
-            geometry: geometry?.toGeoShape(),
+            geometry: geometry,
             ugcCodes: properties.geocode?.ugc ?? [],
             h3Resolution: h3Resolution,
-            h3CoverHash: nil,
+            h3CoverHash: poly, // We'll compute this later, and only if there's geometry provided.
             title: properties.headline ?? properties.event,
             areaDesc: properties.areaDesc,
             rawRef: rawRef
         )
+    }
+
+    private static func h3CoverHashForPolygon(
+        _ rings: [[GeoShape.GeoCoordinate]],
+        resolution: Int?
+    ) throws -> String {
+        guard let boundaryRing = rings.first, !boundaryRing.isEmpty else {
+            throw SwiftyH3Error.invalidInput
+        }
+        let boundary: H3Loop = boundaryRing.map { coordinate in
+            H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
+        }
+
+        let holes: [H3Loop] = rings.dropFirst().map { holeRing in
+            holeRing.map { coordinate in
+                H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
+            }
+        }
+
+        let polygon = H3Polygon(boundary, holes: holes)
+        let h3Resolution = H3Cell.Resolution(rawValue: Int32(resolution ?? 8)) ?? .res8
+        let cells = try polygon.cells(at: h3Resolution)
+        let hashes = cells.map(\.description).sorted()
+        //print(hashes)
+        return hashes.joined(separator: ",")
     }
 
     private static func normalizeMessageID(_ raw: String?) -> String? {
@@ -311,26 +374,11 @@ public extension NwsEventFeatureDTO {
 private extension ArcusEvent {
     static func status(now: Date, messageType: NWSAlertMessageType, endsAt: Date?) -> EventStatus {
         if messageType == .cancel {
-            return .ended
+            return .issuedInError
         }
 
         guard let endsAt else { return .active }
         return endsAt <= now ? .ended : .active
-    }
-
-    static func severity(for kind: EventKind, nwsSeverity: String?) -> EventSeverity {
-        switch nwsSeverity?.normalizedLowercased {
-        case "extreme":
-            return .emergency
-        case "severe":
-            return .warning
-        case "moderate":
-            return kind.isWatch ? .watch : .advisory
-        case "minor":
-            return .advisory
-        default:
-            return kind.defaultSeverity
-        }
     }
 }
 
@@ -340,13 +388,13 @@ private extension EventKind {
         case "tornado warning":
             return .torWarning
         case "severe thunderstorm warning":
-            return .svrWarning
+            return .svrTstormWarning
         case "flash flood warning":
             return .ffWarning
         case "tornado watch":
             return .torWatch
         case "severe thunderstorm watch":
-            return .svrWatch
+            return .svrTstormWatch
         case "winter storm warning":
             return .winterStormWarning
         case "extreme fire danger":
@@ -361,18 +409,22 @@ private extension EventKind {
             return nil
         }
     }
+}
 
-    var isWatch: Bool {
-        switch self {
-        case .torWatch, .svrWatch:
-            return true
+private extension EventSeverity {
+    static func fromNws(_ raw: String?) -> EventSeverity {
+        switch raw?.normalizedLowercased {
+        case "extreme":
+            return .extreme
+        case "severe":
+            return .severe
+        case "moderate":
+            return .moderate
+        case "minor":
+            return .moderate
         default:
-            return false
+            return .unknown
         }
-    }
-
-    var defaultSeverity: EventSeverity {
-        isWatch ? .watch : .warning
     }
 }
 
@@ -425,20 +477,20 @@ private extension NWSAlertMessageType {
     }
 }
 
-private extension Array where Element: Hashable {
-    func uniquedPreservingOrder() -> [Element] {
-        var seen: Set<Element> = []
-        var result: [Element] = []
-        result.reserveCapacity(count)
-
-        for value in self where seen.insert(value).inserted {
-            result.append(value)
-        }
-
-        return result
-    }
-}
-
+//private extension Array where Element: Hashable {
+//    func uniquedPreservingOrder() -> [Element] {
+//        var seen: Set<Element> = []
+//        var result: [Element] = []
+//        result.reserveCapacity(count)
+//
+//        for value in self where seen.insert(value).inserted {
+//            result.append(value)
+//        }
+//
+//        return result
+//    }
+//}
+//
 private extension NWSGeometryDTO {
     func toGeoShape() -> GeoShape? {
         switch type.normalizedLowercased {
@@ -495,11 +547,5 @@ private extension NWSCoordinatesDTO {
         guard let values = array else { return nil }
         let polygons = values.compactMap { $0.toPolygon() }
         return polygons.isEmpty ? nil : polygons
-    }
-}
-
-private extension String {
-    var normalizedLowercased: String {
-        trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
