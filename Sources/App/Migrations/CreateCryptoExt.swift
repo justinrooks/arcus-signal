@@ -11,7 +11,7 @@ import SQLKit
 struct CreatePgcryptoExtension: AsyncMigration {
     func prepare(on database: any Database) async throws {
         guard let sql = database as? any SQLDatabase else { return }
-        try await sql.raw("CREATE EXTENSION IF NOT EXISTS pgcypto;").run()
+        try await sql.raw("CREATE EXTENSION IF NOT EXISTS pgcrypto;").run()
     }
     
     func revert(on database: any Database) async throws {

@@ -36,7 +36,7 @@ public struct CreateAlertSeriesModel: AsyncMigration {
         guard let sql = database as? any SQLDatabase else { return }
         
         try await sql.raw("""
-                    ALTER TABLE alert_series
+                    ALTER TABLE arcus_series
                       ALTER COLUMN id SET DEFAULT gen_random_uuid(),
                       ALTER COLUMN state SET DEFAULT 'active',
                       ALTER COLUMN created SET DEFAULT now(),
@@ -47,16 +47,16 @@ public struct CreateAlertSeriesModel: AsyncMigration {
                     """).run()
         
         try await sql.raw("""
-                    ALTER TABLE alert_series
+                    ALTER TABLE arcus_series
                       ADD CONSTRAINT alert_series_state_check
                       CHECK (state IN ('active', 'cancelled_in_error', 'expired'));
                     """).run()
         
-        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_alert_series_state ON alert_series(state);").run()
-        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_alert_series_expires ON alert_series(expires);").run()
-        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_alert_series_ends ON alert_series(ends);").run()
-        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_alert_series_last_seen_active ON alert_series(last_seen_active);").run()
-        try await sql.raw("CREATE INDEX IF NOT EXISTS gin_alert_series_ugc_codes ON alert_series USING GIN (affected_zones);").run()
+        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_arcus_series_state ON arcus_series(state);").run()
+        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_arcus_series_expires ON arcus_series(expires);").run()
+        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_arcus_series_ends ON arcus_series(ends);").run()
+        try await sql.raw("CREATE INDEX IF NOT EXISTS idx_arcus_series_last_seen_active ON arcus_series(last_seen_active);").run()
+        try await sql.raw("CREATE INDEX IF NOT EXISTS gin_arcus_series_ugc_codes ON arcus_series USING GIN (ugc_codes);").run()
         
     }
     
