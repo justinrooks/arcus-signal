@@ -21,6 +21,10 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 logger: context.logger
             )
 
+            let persisted = try await context.application.db.transaction{ database in
+                try await persistArcusEvents(ingestEvents, on: database, asOf: runTimestamp, logger: context.logger)
+            }
+            context.logger.info("Inserted: \(persisted)")
 //            let persistence = try await context.application.db.transaction { database in
 //                try await persistArcusEvents(
 //                    ingestEvents,
@@ -59,7 +63,90 @@ public struct IngestNWSAlertsJob: AsyncJob {
     }
 }
 
-//private extension IngestNWSAlertsJob {
+private extension IngestNWSAlertsJob {
+    func persistArcusEvents(
+        _ events: [ArcusEvent],
+        on database: any Database,
+        asOf: Date,
+        logger: Logger
+    ) async throws -> Int {
+        var inserted: Int = 0
+        do {
+            for event in events {
+                let incoming = try ArcusSeriesModel(from: event, asOf: asOf)
+                try await incoming.create(on: database)
+                inserted += 1
+                
+                //            if TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: incoming.isExpired) {
+                //                summary.targetDispatches.append(
+                //                    .init(eventKey: incoming.eventKey, revision: incoming.revision)
+                //                )
+                //            }
+                
+                //            emitHookEventCreated(
+                //                logger: logger,
+                //                eventKey: incoming.eventKey,
+                //                revision: incoming.revision
+                //            )
+            }
+        } catch {
+            print(error)
+//            guard isUniqueConstraintViolation(error) else {
+//                throw error
+//            }
+            
+//            guard let existing = try await ArcusEventModel
+//                .query(on: database)
+//                .filter(\.$eventKey == incoming.eventKey)
+//                .sort(\.$revision, .descending)
+//                .first() else {
+//                throw error
+//            }
+//            
+//            let contentChanged = existing.contentHash != incoming.contentHash
+//            let oldRevision = existing.revision
+//            let oldIsExpired = existing.isExpired
+//            
+//            if apply(incoming, to: existing) {
+//                if contentChanged {
+//                    existing.revision += 1
+//                }
+//                try await existing.update(on: database)
+//                summary.updated += 1
+//                
+//                if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
+//                    contentChanged: contentChanged,
+//                    isExpired: existing.isExpired
+//                ) {
+//                    summary.targetDispatches.append(
+//                        .init(eventKey: existing.eventKey, revision: existing.revision)
+//                    )
+//                }
+//                
+//                emitHookEventUpdated(
+//                    logger: logger,
+//                    eventKey: existing.eventKey,
+//                    previousRevision: oldRevision,
+//                    newRevision: existing.revision,
+//                    contentChanged: contentChanged
+//                )
+//                
+//                if oldIsExpired == false, existing.isExpired == true {
+//                    emitHookEventEnded(
+//                        logger: logger,
+//                        eventKey: existing.eventKey,
+//                        revision: existing.revision,
+//                        endedAt: asOf,
+//                        reason: "incoming-race-update"
+//                    )
+//                }
+//            } else {
+//                summary.unchanged += 1
+//            }
+        }
+        return inserted
+    }
+    
 //    func persistArcusEvents(
 //        _ events: [ArcusIngestEvent],
 //        on database: any Database,
@@ -369,4 +456,4 @@ public struct IngestNWSAlertsJob: AsyncJob {
 //        target = newValue
 //        return true
 //    }
-//}
+}
