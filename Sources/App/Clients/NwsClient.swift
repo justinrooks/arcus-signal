@@ -19,8 +19,6 @@ enum NwsError: Error, Equatable {
 
 protocol NwsClient: Sendable {
     func fetchActiveAlertsJsonData() async throws -> Data
-    func fetchActiveAlertsJsonData(for location: Coordinate2D) async throws -> Data
-    func fetchPointMetadata(for location: Coordinate2D) async throws -> Data
 }
 
 //https://api.weather.gov/alerts/active?point=39%2C-104
@@ -45,45 +43,6 @@ struct NwsHttpClient: NwsClient {
 //        https://api.weather.gov/alerts/active?status=actual&region_type=land&severity=Extreme,Severe,Moderate
         
         return try await fetch(from: url)
-    }
-    
-    func fetchActiveAlertsJsonData(for location: Coordinate2D) async throws -> Data {
-        let (lat, lon) = truncatedCoordinates(for: location)
-        logger.info(
-            "NWS request started endpoint=/alerts/active(point)",
-            metadata: [
-                "lat": .string("\(lat)"),
-                "lon": .string("\(lon)")
-            ]
-        )
-        let point = "\(lat),\(lon)"
-        let url = try makeNwsUrl(
-            path: "/alerts/active",
-            queryItems: [URLQueryItem(name: "point", value: point)]
-        )
-        
-        return try await fetch(from: url)
-    }
-    
-    func fetchPointMetadata(for location: Coordinate2D) async throws -> Data {
-        let (lat, lon) = truncatedCoordinates(for: location)
-        logger.info(
-            "NWS request started endpoint=/points",
-            metadata: [
-                "lat": .string("\(lat)"),
-                "lon": .string("\(lon)")
-            ]
-        )
-        let url = try makeNwsUrl(path: "/points/\(lat),\(lon)")
-        
-        return try await fetch(from: url)
-    }
-    
-    private func truncatedCoordinates(for location: Coordinate2D) -> (Double, Double) {
-        (
-            location.latitude.truncated(to: 4), // NWS api only accepts 4 points of precision
-            location.longitude.truncated(to: 4)
-        )
     }
 
     private var requestHeaders: [String: String] {
