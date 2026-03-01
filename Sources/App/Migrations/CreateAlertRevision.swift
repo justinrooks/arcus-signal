@@ -5,7 +5,8 @@ struct CreateAlertRevision: AsyncMigration {
     func prepare(on database: any Database) async throws {
         try await database.schema(ArcusEventRevisionModel.schema)
             .id()
-            .field("revision_urn", .string, .required) //.identifier(auto: false)
+            .field("revision_urn", .string, .required)
+            .unique(on: "revision_urn")//.identifier(auto: false)
             .field("series_id", .uuid, .required,
                    .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
 

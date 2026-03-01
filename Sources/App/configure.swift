@@ -43,6 +43,8 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreatePgcryptoExtension())
     app.migrations.add(CreateAlertSeriesModel())
     app.migrations.add(CreateAlertRevision())
+    app.migrations.add(AddGeometryJSONBToAlertSeries())
+    app.migrations.add(EnforceContentFingerprintIntegrityOnAlertSeries())
 }
 
 private func configureDatabases(on app: Application) throws {

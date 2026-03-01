@@ -1,5 +1,6 @@
 import Foundation
 import SwiftyH3
+import Crypto
 
 // MARK: - Canonical Domain Model
 
@@ -91,6 +92,7 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     public let sourceURL: String
     public let vtec: VTECDescriptor? // Maybe remove, we aren't going to persist. may be used for calculation
     public let messageType: NWSAlertMessageType
+//    public let contentFingerprint: String
 
     // Lifecycle
     public let state: EventState
@@ -175,50 +177,6 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     }
 }
 
-///// Ingest payload that preserves upstream linkage metadata needed for revision chaining.
-//public struct ArcusIngestEvent: Sendable, Equatable {
-//    public let event: ArcusEvent
-//    public let messageType: NWSAlertMessageType
-//    public let sentAt: Date?
-//    public let supersededEventKeys: [String]
-//
-//    public init(
-//        event: ArcusEvent,
-//        messageType: NWSAlertMessageType,
-//        sentAt: Date?,
-//        supersededEventKeys: [String]
-//    ) {
-//        self.event = event
-//        self.messageType = messageType
-//        self.sentAt = sentAt
-//        self.supersededEventKeys = supersededEventKeys
-//    }
-//}
-
-///// Revision record for idempotency + dedupe persistence.
-///// Intended unique constraint: (eventKey, revisionHash).
-//public struct EventRevision: Codable, Sendable, Equatable {
-//    public let eventKey: String
-//    public let revision: Int
-//    public let revisionHash: String
-//    public let createdAt: Date
-//    public let changeSummary: String?
-//
-//    public init(
-//        eventKey: String,
-//        revision: Int,
-//        revisionHash: String,
-//        createdAt: Date = Date(),
-//        changeSummary: String? = nil
-//    ) {
-//        self.eventKey = eventKey
-//        self.revision = revision
-//        self.revisionHash = revisionHash
-//        self.createdAt = createdAt
-//        self.changeSummary = changeSummary
-//    }
-//}
-
 // MARK: - NWS -> Canonical Mapper
 
 public extension NwsEventDTO {
@@ -237,51 +195,9 @@ public extension NwsEventDTO {
             )
         }
     }
-//
-//    func toArcusEvents(
-//        now: Date = .now,
-//        revision: Int = 1,
-//        h3Resolution: Int? = 8,
-//        rawRef: String? = nil
-//    ) -> [ArcusEvent] {
-//        toArcusIngestEvents(
-//            now: now,
-//            revision: revision,
-//            h3Resolution: h3Resolution,
-//            rawRef: rawRef
-//        ).map(\.event)
-//    }
 }
 
 public extension NwsEventFeatureDTO {
-//    func toArcusIngestEvent(
-//        now: Date = .now,
-//        revision: Int = 1,
-//        h3Resolution: Int? = 8,
-//        rawRef: String? = nil
-//    ) -> ArcusIngestEvent? {
-//        guard let event = toArcusEvent(
-//            now: now,
-//            revision: revision,
-//            h3Resolution: h3Resolution,
-//            rawRef: rawRef
-//        ) else {
-//            return nil
-//        }
-//
-//        let supersededEventKeys = properties.references?
-//            .compactMap { Self.normalizeMessageID($0.id) }
-//            .uniquedPreservingOrder() ?? []
-//        let messageType = NWSAlertMessageType.fromNws(properties.messageType)
-//
-//        return ArcusIngestEvent(
-//            event: event,
-//            messageType: messageType,
-//            sentAt: properties.sent,
-//            supersededEventKeys: supersededEventKeys
-//        )
-//    }
-//
     func toArcusEvent(
         now: Date = .now,
         revision: Int = 1,
@@ -384,6 +300,76 @@ private extension ArcusEvent {
 
         guard let endsAt else { return .active }
         return endsAt <= now ? .ended : .active
+    }
+}
+    
+extension ArcusEvent {
+    func computeContentFingerprint() throws -> String {
+        struct ArcusEventContentFingerprint: Codable, Sendable {
+            let kind: EventKind
+            let messageType: NWSAlertMessageType
+            let sent: Date?
+            let effective: Date?
+            let onset: Date?
+            let expires: Date?
+            let ends: Date?
+            let severity: EventSeverity
+            let urgency: EventUrgency
+            let certainty: EventCertainty
+            let geometry: GeoShape?
+            let ugcCodes: [String]
+            let title: String?
+            let areaDesc: String?
+        }
+
+        let fingerprint = ArcusEventContentFingerprint(
+            kind: self.kind,
+            messageType: self.messageType,
+            sent: self.sent,
+            effective: self.effective,
+            onset: self.onset,
+            expires: self.expires,
+            ends: self.ends,
+            severity: self.severity,
+            urgency: self.urgency,
+            certainty: self.certainty,
+            geometry: self.geometry,
+            ugcCodes: normalizedUGCCodes,
+            title: normalizedText(self.title),
+            areaDesc: normalizedText(self.areaDesc)
+        )
+
+        let data = try hashEncoder.encode(fingerprint)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+    
+    private var hashEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    private var normalizedUGCCodes: [String] {
+        var normalized: [String] = []
+        normalized.reserveCapacity(ugcCodes.count)
+
+        for code in ugcCodes {
+            let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            normalized.append(trimmed.uppercased())
+        }
+
+        return Array(Set(normalized)).sorted()
+    }
+
+    private func normalizedText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              trimmed.isEmpty == false else {
+            return nil
+        }
+        return trimmed
     }
 }
 

@@ -64,18 +64,103 @@ public struct IngestNWSAlertsJob: AsyncJob {
 }
 
 private extension IngestNWSAlertsJob {
+    func isUniqueConstraintViolation(_ error: any Error) -> Bool {
+        let description = String(describing: error).lowercased()
+        return description.contains("duplicate key value")
+        || description.contains("unique constraint")
+        || description.contains("23505")
+    }
+    
     func persistArcusEvents(
         _ events: [ArcusEvent],
         on database: any Database,
         asOf: Date,
         logger: Logger
     ) async throws -> Int {
-        var inserted: Int = 0
+//        var insertedSeries: Int = 0
+//        var isnertedRevs: Int = 0
         do {
             for event in events {
-                let incoming = try ArcusSeriesModel(from: event, asOf: asOf)
-                try await incoming.create(on: database)
-                inserted += 1
+                // Phase 1: revision-level idempotency gate (avoid 23505 duplicate key errors).
+                if let _ = try await ArcusEventRevisionModel
+                    .query(on: database)
+                    .filter(\.$revisionUrn == event.id)
+                    .first() {
+                    logger.debug("Duplicate revision skipped", metadata: ["revisionUrn": .string(event.id)])
+                    continue
+                }
+                
+                let seriesIds = try await ArcusEventRevisionModel.resolveSeriesIDs(referencedURNs: event.references, on: database)
+                
+                switch seriesIds.count {
+                case 0:
+                    logger.info("New series detected")
+                    let incoming = try ArcusSeriesModel(from: event, asOf: asOf)
+                    
+                    try await incoming.create(on: database)
+                    
+                    logger.info("New series creatd", metadata: ["seriesId": .string(String(describing: incoming.id))])
+
+                    if let seriesId = incoming.id {
+                        logger.info("Adding revision for series")
+                        let rev = try ArcusEventRevisionModel(from: event, seriesId: seriesId)
+                        try await rev.create(on: database)
+                    }
+                    //return .unresolved(reason: .referencedRevisionsNotFound(referencedURNs))
+                case 1:
+                    guard let seriesId = seriesIds.first else {
+                        throw Abort(.internalServerError, reason: "Expected 1 seriesId but found none.")
+                    }
+                    
+                    guard let series = try await ArcusSeriesModel.find(seriesId, on: database) else {
+                        throw Abort(.notFound)
+                    }
+                    
+                    // CHECK IF update is newer than db version, else return
+                    guard let currentSent = series.currentRevisionSent, let incomingSent = event.sent else {
+                        logger.info("Missing required sent props")
+                        // If this happens, your DB row is inconsistent; decide policy.
+                        continue
+                    }
+                    guard incomingSent >= currentSent else {
+                        logger.info("Incoming event is older than the current")
+                        continue
+                    }
+                    
+                    series.source = event.source.rawValue
+                    series.event = event.kind.rawValue
+                    series.sourceURL = event.sourceURL
+                    series.currentRevisionUrn = event.id
+                    series.currentRevisionSent = event.sent
+                    series.messageType = event.messageType.rawValue
+                    series.state = event.state.rawValue
+                    series.updated = Date.now
+                    series.sent = event.sent
+                    series.effective = event.effective
+                    series.onset = event.onset
+                    series.expires = event.expires
+                    series.ends = event.ends
+                    series.lastSeenActive = Date.now
+                    series.severity = event.severity.rawValue
+                    series.urgency = event.urgency.rawValue
+                    series.certainty = event.certainty.rawValue
+                    series.ugcCodes = event.ugcCodes
+                    series.title = event.title
+                    series.areaDesc = event.areaDesc
+                    series.contentFingerprint = try event.computeContentFingerprint()
+                    
+                    try await series.update(on: database)
+                    
+                    logger.info("Updated revision")
+                default:
+                    logger.warning("Multiple series... figure out why and how to merge")
+                    //                        // v1: deterministic winner; log merge candidate
+                    //                        let winner = seriesIDs.min { $0.uuidString < $1.uuidString }!
+                    //                        // log: merge candidate (seriesIDs, winner, referencedURNs)
+                    //                        return .existing(winner)
+                }
+                
+                logger.info("Arcus event processed")
                 
                 //            if TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: incoming.isExpired) {
                 //                summary.targetDispatches.append(
@@ -90,7 +175,7 @@ private extension IngestNWSAlertsJob {
                 //            )
             }
         } catch {
-            print(error)
+            logger.error("\(String(reflecting: error))")
 //            guard isUniqueConstraintViolation(error) else {
 //                throw error
 //            }
@@ -144,8 +229,23 @@ private extension IngestNWSAlertsJob {
 //                summary.unchanged += 1
 //            }
         }
-        return inserted
+        return 0
     }
+    
+    func dispatchTargetJobs(for payloads: [TargetEventRevisionPayload], context: QueueContext) async throws {
+        guard !payloads.isEmpty else { return }
+        
+        let targetQueue = context.application.queues.queue(ArcusQueueLane.target.queueName)
+        for payload in payloads {
+            try await targetQueue.dispatch(TargetEventRevisionJob.self, payload)
+        }
+        
+        context.logger.info(
+            "Dispatched TargetEventRevision jobs.",
+            metadata: ["count": .stringConvertible(payloads.count)]
+        )
+    }
+    
     
 //    func persistArcusEvents(
 //        _ events: [ArcusIngestEvent],
@@ -291,27 +391,8 @@ private extension IngestNWSAlertsJob {
 //        return summary
 //    }
 //
-//    func dispatchTargetJobs(for payloads: [TargetEventRevisionPayload], context: QueueContext) async throws {
-//        guard !payloads.isEmpty else { return }
-//
-//        let targetQueue = context.application.queues.queue(ArcusQueueLane.target.queueName)
-//        for payload in payloads {
-//            try await targetQueue.dispatch(TargetEventRevisionJob.self, payload)
-//        }
-//
-//        context.logger.info(
-//            "Dispatched TargetEventRevision jobs.",
-//            metadata: ["count": .stringConvertible(payloads.count)]
-//        )
-//    }
-//
-//    func isUniqueConstraintViolation(_ error: any Error) -> Bool {
-//        let description = String(describing: error).lowercased()
-//        return description.contains("duplicate key value")
-//            || description.contains("unique constraint")
-//            || description.contains("23505")
-//    }
-//
+
+
 //    func fetchExistingByEventKey(
 //        for events: [ArcusIngestEvent],
 //        on database: any Database
@@ -424,7 +505,7 @@ private extension IngestNWSAlertsJob {
 //        )
 //    }
 //
-//    func apply(_ source: ArcusEventModel, to target: ArcusEventModel) -> Bool {
+//    func apply(_ source: ArcusSeriesModel, to target: ArcusSeriesModel) -> Bool {
 //        var changed = false
 //
 //        changed = assignIfChanged(source.eventKey, to: &target.eventKey) || changed
@@ -439,14 +520,14 @@ private extension IngestNWSAlertsJob {
 //        changed = assignIfChanged(source.severity, to: &target.severity) || changed
 //        changed = assignIfChanged(source.urgency, to: &target.urgency) || changed
 //        changed = assignIfChanged(source.certainty, to: &target.certainty) || changed
-//        changed = assignIfChanged(source.geometryJSON, to: &target.geometryJSON) || changed
+//        changed = assignIfChanged(source.geometry, to: &target.geometry) || changed
 //        changed = assignIfChanged(source.ugcCodes, to: &target.ugcCodes) || changed
-//        changed = assignIfChanged(source.h3Resolution, to: &target.h3Resolution) || changed
-//        changed = assignIfChanged(source.h3CoverHash, to: &target.h3CoverHash) || changed
+////        changed = assignIfChanged(source.h3Resolution, to: &target.h3Resolution) || changed
+////        changed = assignIfChanged(source.h3CoverHash, to: &target.h3CoverHash) || changed
 //        changed = assignIfChanged(source.title, to: &target.title) || changed
 //        changed = assignIfChanged(source.areaDesc, to: &target.areaDesc) || changed
-//        changed = assignIfChanged(source.rawRef, to: &target.rawRef) || changed
-//        changed = assignIfChanged(source.isExpired, to: &target.isExpired) || changed
+////        changed = assignIfChanged(source.rawRef, to: &target.rawRef) || changed
+////        changed = assignIfChanged(source.isExpired, to: &target.isExpired) || changed
 //
 //        return changed
 //    }

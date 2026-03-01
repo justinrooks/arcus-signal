@@ -15,8 +15,8 @@ public final class ArcusEventRevisionModel: Model, @unchecked Sendable {
     @ID(key: .id) // The series id
     public var id: UUID?
     
-    @Field(key: "series_id")
-    public var seriesId: UUID
+    @Parent(key: "series_id")
+    public var series: ArcusSeriesModel
     
     @Field(key: "revision_urn")
     public var revisionUrn: String
@@ -30,7 +30,7 @@ public final class ArcusEventRevisionModel: Model, @unchecked Sendable {
     @Field(key: "received")
     public var received: Date
     
-    @Field(key: "reference_urns")
+    @Field(key: "referenced_urns")
     public var referencedUrns: [String]
     
     
@@ -47,7 +47,7 @@ public final class ArcusEventRevisionModel: Model, @unchecked Sendable {
         referencedUrns: [String]
     ) {
         self.id = id
-        self.seriesId = seriesId
+        self.$series.id = seriesId
         self.revisionUrn = revisionUrn
         self.messageType = messageType
         self.sent = sent
@@ -58,4 +58,32 @@ public final class ArcusEventRevisionModel: Model, @unchecked Sendable {
     // Example of a parent relation.
 //        @Parent(key: "star_id")
 //        var star: Star
+}
+
+// MARK: Extensions
+public extension ArcusEventRevisionModel {
+    convenience init(from event: ArcusEvent, seriesId id: UUID, asOf: Date = .now) throws {
+        self.init(
+            seriesId: id,
+            revisionUrn: event.id,
+            messageType: event.messageType.rawValue,
+            sent: event.sent ?? asOf,
+            received: asOf,
+            referencedUrns: event.references
+        )
+    }
+    
+    static func resolveSeriesIDs(
+        referencedURNs: [String],
+        on db: any Database
+    ) async throws -> Set<UUID> {
+        guard !referencedURNs.isEmpty else {return []}
+        
+        //Fetch
+        let rows = try await ArcusEventRevisionModel.query(on: db)
+            .filter(\.$revisionUrn ~~ referencedURNs)
+            .all()
+        
+        return Set(rows.compactMap{ $0.$series.id })
+    }
 }

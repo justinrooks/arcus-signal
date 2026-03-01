@@ -240,6 +240,28 @@ War story: this is one of those small schema choices that pays rent forever. "Ca
 
 War story: this was a classic "label mismatch" bug. We were grouping by the envelope id while NOAA was shipping updates in brand-new envelopes every time. Once we switched to supersession chains, the ingest line stopped treating updates like strangers.
 
+### Milestone: geometry storage moved to JSONB-ready schema
+
+- Added a forward migration to append `geometry` to `arcus_series` using Fluent `.dictionary` (Postgres `JSONB`).
+- Added a Postgres GIN index on `arcus_series.geometry` so future structured queries can stay fast.
+- Registered the migration in shared app bootstrap so API and worker runtimes stay schema-aligned.
+
+War story: storing geometry as plain text felt simple until we asked future-us to query pieces of it. JSONB is the difference between "read a sentence" and "ask the database a precise question."
+
+### Milestone: content fingerprinting hardened for deterministic persistence
+
+- Made `ArcusEvent.computeContentFingerprint()` throwing so encoding failures cannot silently persist a placeholder hash.
+- Canonicalized fingerprint inputs:
+  - UGC codes are now trimmed, uppercased, de-duplicated, and sorted before hashing.
+  - `title` and `areaDesc` are trimmed so incidental whitespace does not create false deltas.
+- Switched the fingerprint payload from derived `state` to `messageType` to reduce time-sensitive hash drift.
+- Added a migration to strengthen DB integrity for `content_fingerprint`:
+  - dropped the empty-string default
+  - added a lowercase SHA-256 format check constraint (`NOT VALID` for safe rollout)
+  - added an index for future lookup workflows.
+
+War story: a hash is only useful if it's boringly predictable. If one bad encode path can write "encoding failed," you've built a random-number generator with extra steps.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

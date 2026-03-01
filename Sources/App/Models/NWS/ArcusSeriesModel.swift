@@ -92,9 +92,8 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
     
     
     // MARK: Targeting
-    //    #warning("Define in DB")
-    //    TODO: Figure out how to persist this
-    //    public var geometry: GeoShape?
+    @OptionalField(key: "geometry")
+    public var geometry: GeoShape?
     
     @Field(key: "ugc_codes")
     public var ugcCodes: [String]
@@ -134,7 +133,8 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
         certainty: String,
         ugcCodes: [String],
         title: String? = nil,
-        areaDesc: String? = nil
+        areaDesc: String? = nil,
+        geometry: GeoShape?
     ) {
         self.id = id
         self.source = source
@@ -159,6 +159,7 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
         self.ugcCodes = ugcCodes
         self.title = title
         self.areaDesc = areaDesc
+        self.geometry = geometry
     }
     
 }
@@ -167,19 +168,14 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
 // MARK: Extensions
 public extension ArcusSeriesModel {
     convenience init(from event: ArcusEvent, asOf: Date = .now) throws {
-        //        let geometryJSON = try Self.encodeGeometry(event.geometry)
-        //        let isExpired = Self.computeIsExpired(from: event, asOf: asOf)
-        let contentHash = try Self.computeContentHash(from: event)
-        
         self.init(
-            //            id: nil, // To be assigned at the database
             source: event.source.rawValue,
             event: event.kind.rawValue,
             sourceURL: event.sourceURL,
             currentRevisionUrn: event.id,
             currentRevisionSent: event.sent,
             messageType: event.messageType.rawValue,
-            contentFingerprint: contentHash,
+            contentFingerprint: try event.computeContentFingerprint(),
             state: event.state.rawValue,
             created: nil,
             updated: nil,
@@ -194,7 +190,8 @@ public extension ArcusSeriesModel {
             certainty: event.certainty.rawValue,
             ugcCodes: event.ugcCodes,
             title: event.title,
-            areaDesc: event.areaDesc
+            areaDesc: event.areaDesc,
+            geometry: event.geometry
         )
     }
     
@@ -245,7 +242,7 @@ public extension ArcusSeriesModel {
             severity: severity,
             urgency: urgency,
             certainty: certainty,
-            geometry: nil, // TODO: Figure this out
+            geometry: geometry,
             ugcCodes: ugcCodes,
             h3Resolution: nil,
             h3CoverHash: nil,
@@ -254,51 +251,4 @@ public extension ArcusSeriesModel {
             rawRef: nil
         )
     }
-    
-    private static func computeContentHash(from event: ArcusEvent) throws -> String {
-        let fingerprint = ArcusEventContentFingerprint(
-            kind: event.kind,
-            state: event.state,
-            sent: event.sent,
-            effective: event.effective,
-            onset: event.onset,
-            expires: event.expires,
-            ends: event.ends,
-            severity: event.severity,
-            urgency: event.urgency,
-            certainty: event.certainty,
-            geometry: event.geometry,
-            ugcCodes: event.ugcCodes,
-            title: event.title,
-            areaDesc: event.areaDesc
-        )
-        
-        let data = try hashEncoder.encode(fingerprint)
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-    
-    private static var hashEncoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
-    }
-}
-
-private struct ArcusEventContentFingerprint: Codable, Sendable {
-    let kind: EventKind
-    let state: EventState
-    let sent: Date?
-    let effective: Date?
-    let onset: Date?
-    let expires: Date?
-    let ends: Date?
-    let severity: EventSeverity
-    let urgency: EventUrgency
-    let certainty: EventCertainty
-    let geometry: GeoShape?
-    let ugcCodes: [String]
-    let title: String?
-    let areaDesc: String?
 }
