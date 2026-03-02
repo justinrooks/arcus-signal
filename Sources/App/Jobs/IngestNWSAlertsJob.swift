@@ -3,8 +3,25 @@ import Foundation
 import Queues
 import Vapor
 
+public enum IngestNWSAlertsSource: String, Codable, Sendable {
+    case live
+    case fixture
+}
+
 public struct IngestNWSAlertsPayload: Codable, Sendable {
-    public init() {}
+    public let source: IngestNWSAlertsSource
+    public let fixtureName: String?
+    public let runLabel: String?
+
+    public init(
+        source: IngestNWSAlertsSource = .live,
+        fixtureName: String? = nil,
+        runLabel: String? = nil
+    ) {
+        self.source = source
+        self.fixtureName = fixtureName
+        self.runLabel = runLabel
+    }
 }
 
 private struct PersistResult {
@@ -32,13 +49,20 @@ public struct IngestNWSAlertsJob: AsyncJob {
     public init() {}
 
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
-        context.logger.info("IngestNWSAlertsJob started.")
+        context.logger.info(
+            "IngestNWSAlertsJob started.",
+            metadata: [
+                "source": .string(payload.source.rawValue),
+                "fixtureName": .string(payload.fixtureName ?? "none"),
+                "runLabel": .string(payload.runLabel ?? "none")
+            ]
+        )
         let runTimestamp = Date()
 
         do {
-            let ingestEvents = try await context.application.nwsIngestService.ingestOnce(
-                on: context.application,
-                logger: context.logger
+            let ingestEvents = try await resolveIngestEvents(
+                for: payload,
+                context: context
             )
 
             let result = try await context.application.db.transaction{ database in
@@ -84,6 +108,24 @@ public struct IngestNWSAlertsJob: AsyncJob {
 }
 
 private extension IngestNWSAlertsJob {
+    func resolveIngestEvents(
+        for payload: IngestNWSAlertsPayload,
+        context: QueueContext
+    ) async throws -> [ArcusEvent] {
+        switch payload.source {
+        case .live:
+            return try await context.application.nwsIngestService.ingestOnce(
+                on: context.application,
+                logger: context.logger
+            )
+        case .fixture:
+            throw Abort(
+                .notImplemented,
+                reason: "Fixture replay source is not wired yet. Step 3 will add fixture loader support."
+            )
+        }
+    }
+
     func isUniqueConstraintViolation(_ error: any Error) -> Bool {
         let description = String(describing: error).lowercased()
         return description.contains("duplicate key value")

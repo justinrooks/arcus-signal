@@ -1,3 +1,4 @@
+import Queues
 import Vapor
 
 // Api Routes
@@ -66,8 +67,18 @@ func configureAPIRoutes(_ app: Application) throws {
                 ]
             )
 
+            let payload = IngestNWSAlertsPayload(
+                source: .fixture,
+                fixtureName: fixtureName,
+                runLabel: runLabel
+            )
+            try await req.application.queues
+                .queue(ArcusQueueLane.ingest.queueName)
+                .dispatch(IngestNWSAlertsJob.self, payload)
+
             let accepted = ReplayIngestAcceptedResponse(
                 status: "accepted",
+                source: IngestNWSAlertsSource.fixture.rawValue,
                 fixtureName: fixtureName,
                 runLabel: runLabel,
                 queuedAt: Date()
