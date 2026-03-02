@@ -119,10 +119,22 @@ private extension IngestNWSAlertsJob {
                 logger: context.logger
             )
         case .fixture:
-            throw Abort(
-                .notImplemented,
-                reason: "Fixture replay source is not wired yet. Step 3 will add fixture loader support."
-            )
+            guard let fixtureName = payload.fixtureName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  fixtureName.isEmpty == false else {
+                throw Abort(.badRequest, reason: "Fixture source requires fixtureName.")
+            }
+
+            do {
+                return try context.application.nwsReplayFixtureLoader.loadEvents(
+                    fixtureName: fixtureName,
+                    on: context.application,
+                    logger: context.logger
+                )
+            } catch NWSReplayFixtureLoaderError.invalidFixtureName {
+                throw Abort(.badRequest, reason: "Invalid fixtureName.")
+            } catch let NWSReplayFixtureLoaderError.fixtureNotFound(path) {
+                throw Abort(.notFound, reason: "Fixture file not found at path: \(path)")
+            }
         }
     }
 

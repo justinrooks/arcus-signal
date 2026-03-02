@@ -20,6 +20,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     } else {
         app.nwsIngestService = DefaultNWSIngestService()
     }
+    app.nwsReplayFixtureLoader = LocalNWSReplayFixtureLoader()
     app.queues.add(IngestNWSAlertsJob())
     app.queues.add(TargetEventRevisionJob())
 
