@@ -5,6 +5,18 @@ Arcus Signal is the notification backend for Project Arcus / SkyAware. It runs a
 - `Run`: API process for HTTP endpoints
 - `RunWorker`: worker process for queue consumption + ingestion scheduling
 
+## Overview
+
+Arcus Signal ingests active NWS CAP alerts from `api.weather.gov`, stores immutable revision records, maintains a canonical alert series snapshot, and dispatches downstream targeting work through queue lanes.
+
+Current ingestion flow:
+
+- Persist revision records idempotently by CAP message URN.
+- Resolve/merge referenced revisions into a canonical series.
+- Compute and persist geolocation coverage (`GeoShape` JSONB + H3 cells/hash).
+- Use a durable outbox table for ingest -> target queue handoff.
+- Keep queue processing split across named lanes (`ingest`, `target`, `send`).
+
 ## Local SwiftPM
 
 ```bash
@@ -32,7 +44,7 @@ Development/testing Postgres fallback (when `DATABASE_URL` is absent):
 - `DATABASE_PASSWORD` (default `arcus`)
 - `DATABASE_NAME` (default `arcus_signal`)
 
-Current migration set includes `arcus_events` (canonical `ArcusEventModel` persistence).
+Current migration set includes series/revision persistence, geolocation (`arcus_geolocation`), and target dispatch outbox (`target_dispatch_outbox`).
 
 ## Docker Compose
 
