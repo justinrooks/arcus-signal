@@ -92,6 +92,7 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
     
     
     // MARK: Targeting
+    @available(*, deprecated, message: "Move to ArcusGeolocationModel")
     @OptionalField(key: "geometry")
     public var geometry: GeoShape?
     
@@ -244,8 +245,6 @@ public extension ArcusSeriesModel {
             certainty: certainty,
             geometry: geometry,
             ugcCodes: ugcCodes,
-            h3Resolution: nil,
-            h3CoverHash: nil,
             title: title,
             areaDesc: areaDesc,
             rawRef: nil

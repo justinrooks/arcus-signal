@@ -1,5 +1,4 @@
 import Foundation
-import SwiftyH3
 import Crypto
 
 // MARK: - Canonical Domain Model
@@ -114,8 +113,6 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     // Targeting
     public let geometry: GeoShape?
     public let ugcCodes: [String]
-    public let h3Resolution: Int?
-    public let h3CoverHash: String?
 
     // Human-facing metadata
     public let title: String?
@@ -144,8 +141,6 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         certainty: EventCertainty,
         geometry: GeoShape?,
         ugcCodes: [String],
-        h3Resolution: Int?,
-        h3CoverHash: String?,
         title: String?,
         areaDesc: String?,
         rawRef: String?
@@ -169,8 +164,6 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         self.certainty = certainty
         self.geometry = geometry
         self.ugcCodes = ugcCodes
-        self.h3Resolution = h3Resolution
-        self.h3CoverHash = h3CoverHash
         self.title = title
         self.areaDesc = areaDesc
         self.rawRef = rawRef
@@ -183,14 +176,12 @@ public extension NwsEventDTO {
     func toArcusEvents(
         now: Date = .now,
         revision: Int = 1,
-        h3Resolution: Int? = 8,
         rawRef: String? = nil
     ) -> [ArcusEvent] {
         (features ?? []).compactMap {
             $0.toArcusEvent(
                 now: now,
                 revision: revision,
-                h3Resolution: h3Resolution,
                 rawRef: rawRef
             )
         }
@@ -201,7 +192,6 @@ public extension NwsEventFeatureDTO {
     func toArcusEvent(
         now: Date = .now,
         revision: Int = 1,
-        h3Resolution: Int? = 8,
         rawRef: String? = nil
     ) -> ArcusEvent? {
         guard let kind = EventKind.fromNwsEventName(properties.event) else {
@@ -215,20 +205,7 @@ public extension NwsEventFeatureDTO {
         let vtecP = vtec.parseVTEC()
         let refs = properties.references?.compactMap{ $0.identifier }
         let geometry = geometry?.toGeoShape()
-        let poly: String? = switch geometry {
-        case .polygon(let rings)?:
-            try? Self.h3CoverHashForPolygon(rings, resolution: h3Resolution)
-        case .multiPolygon(let polygons)?:
-            if let firstPolygon = polygons.first {
-                try? Self.h3CoverHashForPolygon(firstPolygon, resolution: h3Resolution)
-            } else {
-                nil
-            }
-        case .point?:
-            nil
-        case nil:
-            nil
-        }
+        
 
         return .init(
             urn: messageID,
@@ -250,38 +227,10 @@ public extension NwsEventFeatureDTO {
             certainty: EventCertainty.fromNws(properties.certainty),
             geometry: geometry,
             ugcCodes: properties.geocode?.ugc ?? [],
-            h3Resolution: h3Resolution,
-            h3CoverHash: poly, // We'll compute this later, and only if there's geometry provided.
             title: properties.headline ?? properties.event,
             areaDesc: properties.areaDesc,
             rawRef: rawRef
         )
-    }
-
-    // MARK: TEMP H3 HASHING
-    private static func h3CoverHashForPolygon(
-        _ rings: [[GeoShape.GeoCoordinate]],
-        resolution: Int?
-    ) throws -> String {
-        guard let boundaryRing = rings.first, !boundaryRing.isEmpty else {
-            throw SwiftyH3Error.invalidInput
-        }
-        let boundary: H3Loop = boundaryRing.map { coordinate in
-            H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
-        }
-
-        let holes: [H3Loop] = rings.dropFirst().map { holeRing in
-            holeRing.map { coordinate in
-                H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
-            }
-        }
-
-        let polygon = H3Polygon(boundary, holes: holes)
-        let h3Resolution = H3Cell.Resolution(rawValue: Int32(resolution ?? 8)) ?? .res8
-        let cells = try polygon.cells(at: h3Resolution)
-        let hashes = cells.map(\.description).sorted()
-        //print(hashes)
-        return hashes.joined(separator: ",")
     }
 
     private static func normalizeMessageID(_ raw: String?) -> String? {
