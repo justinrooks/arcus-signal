@@ -43,4 +43,38 @@ func configureAPIRoutes(_ app: Application) throws {
         //    }
 //        }
     }
+
+    app.group("api", "v1", "dev") { dev in
+        dev.post("replay-ingest") { req async throws -> Response in
+            guard req.application.environment != .production else {
+                throw Abort(.notFound)
+            }
+
+            let request = try req.content.decode(ReplayIngestRequest.self)
+            let fixtureName = request.fixtureName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let runLabel = request.runLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !fixtureName.isEmpty else {
+                throw Abort(.badRequest, reason: "fixtureName is required")
+            }
+
+            req.logger.info(
+                "Replay ingest accepted.",
+                metadata: [
+                    "fixtureName": .string(fixtureName),
+                    "runLabel": .string(runLabel ?? "none")
+                ]
+            )
+
+            let accepted = ReplayIngestAcceptedResponse(
+                status: "accepted",
+                fixtureName: fixtureName,
+                runLabel: runLabel,
+                queuedAt: Date()
+            )
+            let response = Response(status: .accepted)
+            try response.content.encode(accepted)
+            return response
+        }
+    }
 }
