@@ -1,0 +1,73 @@
+x-shared_environment: &shared_environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: ${DATABASE_URL:-postgres://arcus:arcus@postgres:5432/arcus_signal}
+  DATABASE_HOST: ${DATABASE_HOST:-postgres}
+  DATABASE_PORT: ${DATABASE_PORT:-5432}
+  DATABASE_USERNAME: ${DATABASE_USERNAME:-arcus}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD:-arcus}
+  DATABASE_NAME: ${DATABASE_NAME:-arcus_signal}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  QUEUE_WORKER_COUNT: ${QUEUE_WORKER_COUNT:-1}
+  REDIS_POOL_MAX_CONNECTIONS: ${REDIS_POOL_MAX_CONNECTIONS:-8}
+  REDIS_POOL_CONNECTION_TIMEOUT_SECONDS: ${REDIS_POOL_CONNECTION_TIMEOUT_SECONDS:-30}
+  WORKER_STARTUP_GRACE_SECONDS: ${WORKER_STARTUP_GRACE_SECONDS:-5}
+
+services:
+  api:
+    image: arcus-signal:latest
+    build:
+      context: .
+    environment:
+      <<: *shared_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - '8080:8080'
+    command: ["./Run", "serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8080"]
+
+  worker:
+    image: arcus-signal:latest
+    build:
+      context: .
+    environment:
+      <<: *shared_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - '8081:8081'
+    command: ["./RunWorker", "serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8081"]
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DATABASE_USERNAME:-arcus}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-arcus}
+      POSTGRES_DB: ${DATABASE_NAME:-arcus_signal}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-arcus} -d ${DATABASE_NAME:-arcus_signal}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres_data:
