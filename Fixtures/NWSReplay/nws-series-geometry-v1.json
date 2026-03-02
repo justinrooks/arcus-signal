@@ -1,0 +1,108 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.replay.alert.001",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-104.95, 39.70],
+            [-104.75, 39.80],
+            [-104.60, 39.70],
+            [-104.70, 39.55],
+            [-104.90, 39.50],
+            [-104.95, 39.70]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.replay.alert.001",
+        "areaDesc": "Replay County Alpha",
+        "geocode": {
+          "UGC": ["COC001", "COC031"],
+          "SAME": ["08001", "08031"]
+        },
+        "sent": "2026-03-02T15:00:00Z",
+        "effective": "2026-03-02T15:01:00Z",
+        "onset": "2026-03-02T15:03:00Z",
+        "expires": "2026-03-02T16:15:00Z",
+        "ends": "2026-03-02T16:20:00Z",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Severe",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "event": "Tornado Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Replay Office",
+        "headline": "Replay Tornado Warning",
+        "description": "Replay fixture initial message.",
+        "instruction": "Seek shelter immediately.",
+        "response": "Shelter",
+        "parameters": {
+          "VTEC": ["/O.NEW.KBOU.TO.W.0001.260302T1500Z-260302T1620Z/"]
+        }
+      }
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.replay.alert.002",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-104.98, 39.72],
+            [-104.72, 39.84],
+            [-104.52, 39.72],
+            [-104.66, 39.48],
+            [-104.92, 39.44],
+            [-104.98, 39.72]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.replay.alert.002",
+        "areaDesc": "Replay County Alpha, Replay County Beta",
+        "geocode": {
+          "UGC": ["COC001", "COC031", "COC005"],
+          "SAME": ["08001", "08031", "08005"]
+        },
+        "references": [
+          {
+            "@id": "urn:oid:2.49.0.1.840.0.replay.alert.001",
+            "identifier": "urn:oid:2.49.0.1.840.0.replay.alert.001",
+            "sender": "w-nws.webmaster@noaa.gov",
+            "sent": "2026-03-02T15:00:00Z"
+          }
+        ],
+        "sent": "2026-03-02T15:10:00Z",
+        "effective": "2026-03-02T15:11:00Z",
+        "onset": "2026-03-02T15:12:00Z",
+        "expires": "2026-03-02T16:30:00Z",
+        "ends": "2026-03-02T16:40:00Z",
+        "status": "Actual",
+        "messageType": "Update",
+        "category": "Met",
+        "severity": "Severe",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "event": "Tornado Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Replay Office",
+        "headline": "Replay Tornado Warning (Updated Polygon)",
+        "description": "Replay fixture update message with expanded polygon.",
+        "instruction": "Remain in shelter.",
+        "response": "Shelter",
+        "parameters": {
+          "VTEC": ["/O.CON.KBOU.TO.W.0001.260302T1500Z-260302T1640Z/"]
+        }
+      }
+    }
+  ],
+  "title": "NWS Replay Fixture - Alert + Update with Geometry",
+  "updated": "2026-03-02T15:10:00Z"
+}
+
