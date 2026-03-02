@@ -1,5 +1,6 @@
 x-shared_environment: &shared_environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  VAPOR_ENV: ${VAPOR_ENV:-production}
   DATABASE_URL: ${DATABASE_URL:-postgres://arcus:arcus@postgres:5432/arcus_signal}
   DATABASE_HOST: ${DATABASE_HOST:-postgres}
   DATABASE_PORT: ${DATABASE_PORT:-5432}
@@ -26,7 +27,9 @@ services:
         condition: service_healthy
     ports:
       - '8080:8080'
-    command: ["./Run", "serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - ./Fixtures:/app/Fixtures:ro
+    command: ["./Run", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8080"]
 
   worker:
     image: arcus-signal:latest
@@ -41,7 +44,9 @@ services:
         condition: service_healthy
     ports:
       - '8081:8081'
-    command: ["./RunWorker", "serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8081"]
+    volumes:
+      - ./Fixtures:/app/Fixtures:ro
+    command: ["./RunWorker", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8081"]
 
   redis:
     image: redis:7-alpine
