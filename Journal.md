@@ -262,6 +262,29 @@ War story: storing geometry as plain text felt simple until we asked future-us t
 
 War story: a hash is only useful if it's boringly predictable. If one bad encode path can write "encoding failed," you've built a random-number generator with extra steps.
 
+### Milestone: durable ingest -> target handoff with outbox
+
+- Replaced direct in-memory target dispatch handoff with a durable outbox table (`target_dispatch_outbox`).
+- Ingest now writes outbox rows in the same DB transaction as revision/series persistence, keyed by `revision_urn` for idempotency.
+- Added an outbox drain step after commit:
+  - dispatches pending rows to the `target` queue lane
+  - marks successes with `dispatched` timestamp
+  - records `attempt_count` + `last_error` on failures for retry/audit
+- This closes the "DB commit succeeded but queue publish failed" gap where retries previously skipped dispatch due revision dedupe.
+
+War story: this is the distributed-systems version of mailing a package after you shred the receipt. If the courier fails and you already forgot what you mailed, recovery is guesswork. Outbox keeps the receipt until delivery is confirmed.
+
+### Milestone: multi-reference series merge now resolves to freshest lineage
+
+- Updated merge winner selection for multi-reference events to pick the series with the most recent `current_revision_sent` (deterministic tie-break by UUID).
+- Added full alias consolidation when multiple series are referenced:
+  - move all revision rows to the winner series
+  - move pending outbox rows to winner and rewrite payload `seriesId`
+  - consolidate geolocation row ownership under winner and prune extras
+  - tombstone loser series to preserve historical references without dangling lookups
+
+War story: this one is like merging duplicate customer profiles. If you pick the winner by random UUID, you might keep the stale profile and archive the one with the latest address. Freshness-first avoids that subtle but expensive drift.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.
