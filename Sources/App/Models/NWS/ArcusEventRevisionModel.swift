@@ -54,10 +54,6 @@ public final class ArcusEventRevisionModel: Model, @unchecked Sendable {
         self.received = received
         self.referencedUrns = referencedUrns
     }
-    
-    // Example of a parent relation.
-//        @Parent(key: "star_id")
-//        var star: Star
 }
 
 // MARK: Extensions

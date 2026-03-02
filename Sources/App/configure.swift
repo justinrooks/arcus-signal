@@ -45,6 +45,9 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateAlertRevision())
     app.migrations.add(AddGeometryJSONBToAlertSeries())
     app.migrations.add(EnforceContentFingerprintIntegrityOnAlertSeries())
+    app.migrations.add(CreateArcusGeolocation())
+    app.migrations.add(AddArcusGeolocationTimestampsIfMissing())
+    app.migrations.add(CreateTargetDispatchOutbox())
 }
 
 private func configureDatabases(on app: Application) throws {
