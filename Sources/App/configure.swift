@@ -23,6 +23,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.nwsReplayFixtureLoader = LocalNWSReplayFixtureLoader()
     app.queues.add(IngestNWSAlertsJob())
     app.queues.add(TargetEventRevisionJob())
+    app.queues.add(NotificationSendJob())
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
@@ -49,6 +50,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateArcusGeolocation())
     app.migrations.add(AddArcusGeolocationTimestampsIfMissing())
     app.migrations.add(CreateTargetDispatchOutbox())
+    app.migrations.add(CreateNotificationOutbox())
 }
 
 private func configureDatabases(on app: Application) throws {

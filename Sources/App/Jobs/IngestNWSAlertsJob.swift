@@ -28,6 +28,7 @@ private struct PersistResult {
     let newRevisionsCreated: Int
     let newSeriesCreated: Int
     let targetOutboxQueued: Int
+    let notificationOutboxQueued: Int
 }
 
 private struct DispatchDrainResult {
@@ -84,6 +85,15 @@ public struct IngestNWSAlertsJob: AsyncJob {
                     "failed": .stringConvertible(drainResult.failed)
                 ]
             )
+            let drainNotificationsResult = try await dispatchPendingNotificationJobs(context: context)
+            context.logger.info(
+                "Notification dispatch outbox drain finished.",
+                metadata: [
+                    "dispatched": .stringConvertible(drainNotificationsResult.dispatched),
+                    "failed": .stringConvertible(drainNotificationsResult.failed)
+                ]
+            )
+            
             context.logger.info("IngestNWSAlertsJob finished.")
         } catch {
             context.logger.report(error: error)
@@ -143,7 +153,8 @@ private extension IngestNWSAlertsJob {
         asOf: Date,
         logger: Logger
     ) async throws -> PersistResult {
-        var outboxQueued = 0
+        var outboxQueued: Int = 0
+        var notificationOutboxQueued: Int = 0
         var insertedSeries: Int = 0
         var insertedRevs: Int = 0
         for event in events {
@@ -176,14 +187,15 @@ private extension IngestNWSAlertsJob {
                 try await revision.create(on: database)
                 insertedRevs += 1
 
-                if try await enqueueTargetDispatchOutboxIfNeeded(
+                let (geoOutbox, notificationOutbox) = try await queueDispatchMessages(
                     event: event,
                     seriesId: seriesId,
+                    reason: .new,
                     on: database,
                     logger: logger
-                ) {
-                    outboxQueued += 1
-                }
+                )
+                outboxQueued += geoOutbox
+                notificationOutboxQueued += notificationOutbox
             case 1:
                 guard let seriesId = seriesIds.first else {
                     throw Abort(.internalServerError, reason: "Expected 1 seriesId but found none.")
@@ -202,15 +214,15 @@ private extension IngestNWSAlertsJob {
                     try await series.update(on: database)
                     logger.info("Series snapshot updated.", metadata: ["seriesId": .stringConvertible(seriesId)])
                     
-                    if try await enqueueTargetDispatchOutboxIfNeeded(
+                    let (geoOutbox, notificationOutbox) = try await queueDispatchMessages(
                         event: event,
                         seriesId: seriesId,
+                        reason: .update,
                         on: database,
                         logger: logger
-                    ) {
-                        outboxQueued += 1
-                        logger.info("Update geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
-                    }
+                    )
+                    outboxQueued += geoOutbox
+                    notificationOutboxQueued += notificationOutbox
                 }
             default:
                 // Deterministic merge policy: winner is the series with the most recent sent timestamp.
@@ -249,15 +261,15 @@ private extension IngestNWSAlertsJob {
                     
                     guard let seriesId = series.id else { throw Abort(.notFound, reason: "Series Id missing on winning series") }
                     
-                    if try await enqueueTargetDispatchOutboxIfNeeded(
+                    let (geoOutbox, notificationOutbox) = try await queueDispatchMessages(
                         event: event,
                         seriesId: seriesId,
+                        reason: .update,
                         on: database,
                         logger: logger
-                    ) {
-                        outboxQueued += 1
-                        logger.info("Update geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
-                    }
+                    )
+                    outboxQueued += geoOutbox
+                    notificationOutboxQueued += notificationOutbox
                 }
             }
 
@@ -267,8 +279,43 @@ private extension IngestNWSAlertsJob {
         return .init(
             newRevisionsCreated: insertedRevs,
             newSeriesCreated: insertedSeries,
-            targetOutboxQueued: outboxQueued
+            targetOutboxQueued: outboxQueued,
+            notificationOutboxQueued: notificationOutboxQueued
         )
+    }
+    
+    private func queueDispatchMessages(
+        event: ArcusEvent,
+        seriesId: UUID,
+        reason: NotificationReason,
+        on database: any Database,
+        logger: Logger
+    ) async throws -> (Int, Int) {
+        var outboxQueued: Int = 0
+        var notificationOutboxQueued: Int = 0
+        
+        if try await enqueueTargetDispatchOutboxIfNeeded(
+            event: event,
+            seriesId: seriesId,
+            on: database,
+            logger: logger
+        ) {
+            outboxQueued += 1
+            logger.info("Geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
+        }
+        
+        if try await enqueueNotificationDispatchOutbox(
+            event: event,
+            seriesId: seriesId,
+            reason: reason,
+            on: database,
+            logger: logger
+        ) {
+            notificationOutboxQueued += 1
+            logger.info("Notification job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
+        }
+        
+        return (outboxQueued, notificationOutboxQueued)
     }
 
     func shouldAdvanceSeriesSnapshot(
@@ -351,7 +398,106 @@ private extension IngestNWSAlertsJob {
             throw error
         }
     }
+    
+    func enqueueNotificationDispatchOutbox(
+        event: ArcusEvent,
+        seriesId: UUID,
+        reason: NotificationReason,
+        on database: any Database,
+        logger: Logger
+    ) async throws -> Bool {
+        // TODO: reason will be implemented later
+        
+        // ensure that we have no geometry so we fall back
+        // to ugc codes
+        guard event.geometry == nil else {
+            return false
+        }
+        
+        let outboxRecord = ArcusNotificationOutboxModel(
+            series: seriesId,
+            revisionUrn: event.id,
+            mode: NotificationTargetMode.ugc.rawValue,
+            state: "ready",
+            attempts: 0,
+            availableAt: .now
+        )
+        
+        do {
+            try await outboxRecord.create(on: database)
+            return true
+        } catch {
+            if isUniqueConstraintViolation(error) {
+                logger.debug(
+                    "Notification dispatch already queued for revision.",
+                    metadata: ["revisionUrn": .string(event.id)]
+                )
+                return false
+            }
 
+            throw error
+        }
+    }
+
+    func dispatchPendingNotificationJobs(
+        context: QueueContext,
+        limit: Int = 250
+    ) async throws -> DispatchDrainResult {
+        let pendingRows = try await ArcusNotificationOutboxModel.query(on: context.application.db)
+            .filter(\.$state == "ready")
+            .sort(\.$created, .ascending)
+            .limit(limit)
+            .all()
+
+        guard !pendingRows.isEmpty else {
+            return .init(dispatched: 0, failed: 0)
+        }
+
+        let sendQueue = context.application.queues.queue(ArcusQueueLane.send.queueName)
+        var dispatched = 0
+        var failed = 0
+
+        for row in pendingRows {
+            do {
+                guard let mode = NotificationTargetMode(rawValue: row.mode) else {
+                    throw ArcusEventModelError.invalidEnum(field: "mode", value: row.mode)
+                }
+                
+                let pl: NotificationSendJobPayload = .init(
+                    seriesId: row.$series.id,
+                    revisionUrn: row.revisionUrn,
+                    mode: mode,
+                    reason: .new
+                )
+                
+                try await sendQueue.dispatch(NotificationSendJob.self, pl)
+                row.availableAt = Date()
+                row.lastError = nil
+                row.attempts += 1
+                row.state = "processing"
+                
+                try await row.update(on: context.application.db)
+                dispatched += 1
+            } catch {
+                failed += 1
+                row.attempts += 1
+                row.lastError = String(reflecting: error)
+                try? await row.update(on: context.application.db)
+
+                context.logger.error(
+                    "Failed to dispatch notifcation job from outbox.",
+                    metadata: [
+                        "outboxId": .string(row.id?.uuidString ?? "unknown"),
+                        "revisionUrn": .string(row.revisionUrn),
+                        "error": .string(String(reflecting: error))
+                    ]
+                )
+            }
+        }
+
+        return .init(dispatched: dispatched, failed: failed)
+    }
+    
     func dispatchPendingTargetJobs(
         context: QueueContext,
         limit: Int = 250
