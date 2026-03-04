@@ -76,14 +76,6 @@ public struct IngestNWSAlertsJob: AsyncJob {
                     "targetOutboxQueued": .string("\(result.targetOutboxQueued)")
                 ])
 
-//            #if DEBUG
-//            let testSeriesId = "26f46a65-847c-4e32-a881-346abe9b1551"
-//            let testGeo: GeoShape
-//            
-//            
-//            
-//            #endif
-            
             let drainResult = try await dispatchPendingTargetJobs(context: context)
             context.logger.info(
                 "Target dispatch outbox drain finished.",
@@ -209,6 +201,16 @@ private extension IngestNWSAlertsJob {
                     try applySnapshot(from: event, to: series, asOf: asOf)
                     try await series.update(on: database)
                     logger.info("Series snapshot updated.", metadata: ["seriesId": .stringConvertible(seriesId)])
+                    
+                    if try await enqueueTargetDispatchOutboxIfNeeded(
+                        event: event,
+                        seriesId: seriesId,
+                        on: database,
+                        logger: logger
+                    ) {
+                        outboxQueued += 1
+                        logger.info("Update geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
+                    }
                 }
             default:
                 // Deterministic merge policy: winner is the series with the most recent sent timestamp.
@@ -244,6 +246,18 @@ private extension IngestNWSAlertsJob {
                     try applySnapshot(from: event, to: series, asOf: asOf)
                     try await series.update(on: database)
                     logger.info("Winner series snapshot updated.", metadata: ["seriesId": .stringConvertible(winnerSeriesId)])
+                    
+                    guard let seriesId = series.id else { throw Abort(.notFound, reason: "Series Id missing on winning series") }
+                    
+                    if try await enqueueTargetDispatchOutboxIfNeeded(
+                        event: event,
+                        seriesId: seriesId,
+                        on: database,
+                        logger: logger
+                    ) {
+                        outboxQueued += 1
+                        logger.info("Update geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
+                    }
                 }
             }
 
@@ -514,52 +528,6 @@ private extension IngestNWSAlertsJob {
         row.updated ?? row.created ?? .distantPast
     }
     
-    
-//    func persistArcusEvents(
-//        _ events: [ArcusIngestEvent],
-//        on database: any Database,
-//        asOf: Date,
-//        logger: Logger
-//    ) async throws -> ArcusEventPersistenceSummary {
-//        let deduplication = ArcusIngestMessageDeduplicator.deduplicate(events)
-//        var summary = ArcusEventPersistenceSummary(duplicatesIgnored: deduplication.duplicatesIgnored)
-//
-//        guard !deduplication.events.isEmpty else {
-//            summary.expiredMarked = try await markExpiredEvents(asOf: asOf, on: database, logger: logger)
-//            return summary
-//        }
-//
-//        let existingByEventKey = try await fetchExistingByEventKey(for: deduplication.events, on: database)
-//        let resolvedLineages = ArcusIngestLineageResolver.resolve(
-//            events: deduplication.events,
-//            existingByEventKey: existingByEventKey
-//        )
-//        summary.supersededCollapsed = resolvedLineages.reduce(0) { $0 + $1.supersededInRun }
-//
-//        for lineage in resolvedLineages {
-//            let winner = lineage.winner
-//            let incoming = try ArcusEventModel(from: winner.event, asOf: asOf)
-//
-//            if let existing = lineage.existing {
-//                let contentChanged = existing.contentHash != incoming.contentHash
-//                let oldRevision = existing.revision
-//                let oldIsExpired = existing.isExpired
-//
-//                if apply(incoming, to: existing) {
-//                    if contentChanged {
-//                        existing.revision += 1
-//                    }
-//                    try await existing.update(on: database)
-//                    summary.updated += 1
-//
-//                    if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
-//                        contentChanged: contentChanged,
-//                        isExpired: existing.isExpired
-//                    ) {
-//                        summary.targetDispatches.append(
-//                            .init(eventKey: existing.eventKey, revision: existing.revision)
-//                        )
-//                    }
 //
 //                    emitHookEventUpdated(
 //                        logger: logger,
@@ -568,127 +536,13 @@ private extension IngestNWSAlertsJob {
 //                        newRevision: existing.revision,
 //                        contentChanged: contentChanged
 //                    )
-//
-//                    if oldIsExpired == false, existing.isExpired == true {
-//                        emitHookEventEnded(
-//                            logger: logger,
-//                            eventKey: existing.eventKey,
-//                            revision: existing.revision,
-//                            endedAt: asOf,
-//                            reason: "incoming-update"
-//                        )
-//                    }
-//                } else {
-//                    summary.unchanged += 1
-//                }
-//                continue
-//            }
-//
-//            do {
-//                try await incoming.create(on: database)
-//                summary.inserted += 1
-//
-//                if TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: incoming.isExpired) {
-//                    summary.targetDispatches.append(
-//                        .init(eventKey: incoming.eventKey, revision: incoming.revision)
-//                    )
-//                }
-//
+
 //                emitHookEventCreated(
 //                    logger: logger,
 //                    eventKey: incoming.eventKey,
 //                    revision: incoming.revision
 //                )
-//            } catch {
-//                guard isUniqueConstraintViolation(error) else {
-//                    throw error
-//                }
-//
-//                guard let existing = try await ArcusEventModel
-//                    .query(on: database)
-//                    .filter(\.$eventKey == incoming.eventKey)
-//                    .sort(\.$revision, .descending)
-//                    .first() else {
-//                    throw error
-//                }
-//
-//                let contentChanged = existing.contentHash != incoming.contentHash
-//                let oldRevision = existing.revision
-//                let oldIsExpired = existing.isExpired
-//
-//                if apply(incoming, to: existing) {
-//                    if contentChanged {
-//                        existing.revision += 1
-//                    }
-//                    try await existing.update(on: database)
-//                    summary.updated += 1
-//
-//                    if TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(
-//                        contentChanged: contentChanged,
-//                        isExpired: existing.isExpired
-//                    ) {
-//                        summary.targetDispatches.append(
-//                            .init(eventKey: existing.eventKey, revision: existing.revision)
-//                        )
-//                    }
-//
-//                    emitHookEventUpdated(
-//                        logger: logger,
-//                        eventKey: existing.eventKey,
-//                        previousRevision: oldRevision,
-//                        newRevision: existing.revision,
-//                        contentChanged: contentChanged
-//                    )
-//
-//                    if oldIsExpired == false, existing.isExpired == true {
-//                        emitHookEventEnded(
-//                            logger: logger,
-//                            eventKey: existing.eventKey,
-//                            revision: existing.revision,
-//                            endedAt: asOf,
-//                            reason: "incoming-race-update"
-//                        )
-//                    }
-//                } else {
-//                    summary.unchanged += 1
-//                }
-//            }
-//        }
-//
-//        summary.expiredMarked = try await markExpiredEvents(asOf: asOf, on: database, logger: logger)
-//        return summary
-//    }
-//
 
-
-//    func fetchExistingByEventKey(
-//        for events: [ArcusIngestEvent],
-//        on database: any Database
-//    ) async throws -> [String: ArcusEventModel] {
-//        let messageKeys = events.map(\.event.eventKey)
-//        let referencedKeys = events.flatMap(\.supersededEventKeys)
-//        let lookupKeys = Array(Set(messageKeys + referencedKeys))
-//
-//        guard !lookupKeys.isEmpty else { return [:] }
-//
-//        let existing = try await ArcusEventModel
-//            .query(on: database)
-//            .filter(\.$eventKey ~~ lookupKeys)
-//            .all()
-//
-//        var index: [String: ArcusEventModel] = [:]
-//        index.reserveCapacity(existing.count)
-//
-//        for model in existing {
-//            if let current = index[model.eventKey], current.revision >= model.revision {
-//                continue
-//            }
-//            index[model.eventKey] = model
-//        }
-//
-//        return index
-//    }
-//
 //    func markExpiredEvents(
 //        asOf: Date,
 //        on database: any Database,
@@ -771,38 +625,5 @@ private extension IngestNWSAlertsJob {
 //                "reason": .string(reason)
 //            ]
 //        )
-//    }
-//
-//    func apply(_ source: ArcusSeriesModel, to target: ArcusSeriesModel) -> Bool {
-//        var changed = false
-//
-//        changed = assignIfChanged(source.eventKey, to: &target.eventKey) || changed
-//        changed = assignIfChanged(source.source, to: &target.source) || changed
-//        changed = assignIfChanged(source.kind, to: &target.kind) || changed
-//        changed = assignIfChanged(source.sourceURL, to: &target.sourceURL) || changed
-//        changed = assignIfChanged(source.status, to: &target.status) || changed
-//        changed = assignIfChanged(source.contentHash, to: &target.contentHash) || changed
-//        changed = assignIfChanged(source.issuedAt, to: &target.issuedAt) || changed
-//        changed = assignIfChanged(source.effectiveAt, to: &target.effectiveAt) || changed
-//        changed = assignIfChanged(source.expiresAt, to: &target.expiresAt) || changed
-//        changed = assignIfChanged(source.severity, to: &target.severity) || changed
-//        changed = assignIfChanged(source.urgency, to: &target.urgency) || changed
-//        changed = assignIfChanged(source.certainty, to: &target.certainty) || changed
-//        changed = assignIfChanged(source.geometry, to: &target.geometry) || changed
-//        changed = assignIfChanged(source.ugcCodes, to: &target.ugcCodes) || changed
-////        changed = assignIfChanged(source.h3Resolution, to: &target.h3Resolution) || changed
-////        changed = assignIfChanged(source.h3CoverHash, to: &target.h3CoverHash) || changed
-//        changed = assignIfChanged(source.title, to: &target.title) || changed
-//        changed = assignIfChanged(source.areaDesc, to: &target.areaDesc) || changed
-////        changed = assignIfChanged(source.rawRef, to: &target.rawRef) || changed
-////        changed = assignIfChanged(source.isExpired, to: &target.isExpired) || changed
-//
-//        return changed
-//    }
-//
-//    func assignIfChanged<Value: Equatable>(_ newValue: Value, to target: inout Value) -> Bool {
-//        guard target != newValue else { return false }
-//        target = newValue
-//        return true
 //    }
 }
