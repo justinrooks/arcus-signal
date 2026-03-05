@@ -51,6 +51,8 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddArcusGeolocationTimestampsIfMissing())
     app.migrations.add(CreateTargetDispatchOutbox())
     app.migrations.add(CreateNotificationOutbox())
+    app.migrations.add(CreateDeviceInstallations())
+    app.migrations.add(CreateDevicePresence())
 }
 
 private func configureDatabases(on app: Application) throws {
