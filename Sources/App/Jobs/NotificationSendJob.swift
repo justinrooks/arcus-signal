@@ -57,7 +57,7 @@ public struct NotificationSendJob: AsyncJob {
         )
     }
     
-    public func error(_ context: QueueContext, _error: any Error, _ payload: Payload) async throws {
+    public func error(_ context: QueueContext, _ error: any Error, _ payload: Payload) async throws {
         context.logger.error(
             "NotificationSendJob failed.",
             metadata: ["error": .string(String(describing: error))]
