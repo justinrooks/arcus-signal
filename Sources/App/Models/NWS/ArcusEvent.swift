@@ -27,8 +27,8 @@ public enum EventKind: String, Codable, Sendable {
 
 public enum EventState: String, Codable, Sendable {
     case active
-    case ended
-    case issuedInError
+    case expired
+    case cancelled_in_error
 }
 
 public enum EventSeverity: String, Codable, Sendable {
@@ -244,11 +244,11 @@ public extension NwsEventFeatureDTO {
 private extension ArcusEvent {
     static func status(now: Date, messageType: NWSAlertMessageType, endsAt: Date?) -> EventState {
         if messageType == .cancel {
-            return .issuedInError
+            return .cancelled_in_error
         }
 
         guard let endsAt else { return .active }
-        return endsAt <= now ? .ended : .active
+        return endsAt <= now ? .expired : .active
     }
 }
     

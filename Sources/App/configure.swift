@@ -20,8 +20,10 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     } else {
         app.nwsIngestService = DefaultNWSIngestService()
     }
+    app.nwsReplayFixtureLoader = LocalNWSReplayFixtureLoader()
     app.queues.add(IngestNWSAlertsJob())
     app.queues.add(TargetEventRevisionJob())
+    app.queues.add(NotificationSendJob())
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
@@ -48,6 +50,9 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateArcusGeolocation())
     app.migrations.add(AddArcusGeolocationTimestampsIfMissing())
     app.migrations.add(CreateTargetDispatchOutbox())
+    app.migrations.add(CreateNotificationOutbox())
+    app.migrations.add(CreateDeviceInstallations())
+    app.migrations.add(CreateDevicePresence())
 }
 
 private func configureDatabases(on app: Application) throws {
