@@ -65,36 +65,38 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 for: payload,
                 context: context
             )
-
+            
             let result = try await context.application.db.transaction{ database in
                 try await persistArcusEvents(ingestEvents, on: database, asOf: runTimestamp, logger: context.logger)
             }
             context.logger.info(
-                "Arcus events persisted.",
+                "Arcus events persisted",
                 metadata: [
                     "newSeries": .string("\(result.newSeriesCreated)"),
                     "newRevs": .string("\(result.newRevisionsCreated)"),
-                    "targetOutboxQueued": .string("\(result.targetOutboxQueued)")
+                    "targetOutboxQueued": .string("\(result.targetOutboxQueued)"),
+                    "notificationOutboxQueued": .string("\(result.notificationOutboxQueued)")
                 ])
 
             let drainResult = try await dispatchPendingTargetJobs(context: context)
             context.logger.info(
-                "Target dispatch outbox drain finished.",
+                "Target dispatch outbox drain finished",
                 metadata: [
                     "dispatched": .stringConvertible(drainResult.dispatched),
                     "failed": .stringConvertible(drainResult.failed)
                 ]
             )
+            
             let drainNotificationsResult = try await dispatchPendingNotificationJobs(context: context)
             context.logger.info(
-                "Notification dispatch outbox drain finished.",
+                "Notification dispatch outbox drain finished",
                 metadata: [
                     "dispatched": .stringConvertible(drainNotificationsResult.dispatched),
                     "failed": .stringConvertible(drainNotificationsResult.failed)
                 ]
             )
             
-            context.logger.info("IngestNWSAlertsJob finished.")
+            context.logger.info("IngestNWSAlertsJob finished")
         } catch {
             context.logger.report(error: error)
             throw error
@@ -444,7 +446,10 @@ private extension IngestNWSAlertsJob {
         limit: Int = 250
     ) async throws -> DispatchDrainResult {
         let pendingRows = try await ArcusNotificationOutboxModel.query(on: context.application.db)
-            .filter(\.$state == "ready")
+            .group(.and) { group in
+                group.filter(\.$state == "ready")
+                     .filter(\.$mode == "ugc") // Lock this dispatcher to only send ready ugc notification msgs
+            }
             .sort(\.$created, .ascending)
             .limit(limit)
             .all()
@@ -474,7 +479,7 @@ private extension IngestNWSAlertsJob {
                 row.availableAt = Date()
                 row.lastError = nil
                 row.attempts += 1
-                row.state = "processing"
+                row.state = "done" // Mark as done since we've sent it to the queue
                 
                 try await row.update(on: context.application.db)
                 dispatched += 1
@@ -482,6 +487,11 @@ private extension IngestNWSAlertsJob {
                 failed += 1
                 row.attempts += 1
                 row.lastError = String(reflecting: error)
+                
+                if row.attempts >= 3 {
+                    row.state = "dead" // Mark is as dead after 3 retries
+                }
+                
                 try? await row.update(on: context.application.db)
 
                 context.logger.error(
