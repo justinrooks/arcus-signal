@@ -322,35 +322,6 @@ extension ArcusEvent {
     }
 }
 
-private extension EventKind {
-    static func fromNwsEventName(_ eventName: String?) -> EventKind? {
-        switch eventName?.normalizedLowercased {
-        case "tornado warning":
-            return .torWarning
-        case "severe thunderstorm warning":
-            return .svrTstormWarning
-        case "flash flood warning":
-            return .ffWarning
-        case "tornado watch":
-            return .torWatch
-        case "severe thunderstorm watch":
-            return .svrTstormWatch
-        case "winter storm warning":
-            return .winterStormWarning
-        case "extreme fire danger":
-            return .extremeFireDanger
-        case "fire warning":
-            return .fireWarning
-        case "fire weather watch":
-            return .fireWeatherWatch
-        case "red flag warning":
-            return .redFlagWarning
-        default: // If it isn't defined here, we aren't supporting it yet.
-            return nil
-        }
-    }
-}
-
 private extension EventSeverity {
     static func fromNws(_ raw: String?) -> EventSeverity {
         switch raw?.normalizedLowercased {

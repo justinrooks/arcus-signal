@@ -382,7 +382,7 @@ private extension IngestNWSAlertsJob {
         let outboxRecord = ArcusTargetDispatchOutboxModel(
             revisionUrn: event.id,
             seriesId: seriesId,
-            payload: .init(seriesId: seriesId, geometry: geometry)
+            payload: .init(seriesId: seriesId, revisionUrn: event.id, geometry: geometry)
         )
 
         do {
@@ -626,7 +626,7 @@ private extension IngestNWSAlertsJob {
             .all()
         for row in pendingOutbox {
             row.$series.id = winnerSeriesId
-            row.payload = .init(seriesId: winnerSeriesId, geometry: row.payload.geometry)
+            row.payload = .init(seriesId: winnerSeriesId, revisionUrn: row.payload.revisionUrn, geometry: row.payload.geometry)
             try await row.update(on: database)
         }
 

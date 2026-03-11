@@ -134,6 +134,11 @@ extension String {
         trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
     
+    var sentenceCased: String {
+        guard let first = first else { return "" }
+        return String(first).uppercased() + dropFirst().lowercased()
+    }
+    
     // MARK: Helpers
     private func rfcConvert(_ date: String, format: String) -> Date? {
         let formatter = DateFormatter()

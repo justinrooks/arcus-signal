@@ -1,5 +1,10 @@
 @testable import App
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 import Queues
 import Testing
 import Vapor
@@ -21,6 +26,34 @@ struct AppTests {
             throw error
         }
         try await app.asyncShutdown()
+    }
+
+    private func withEnvironment(
+        _ overrides: [String: String?],
+        test: () async throws -> Void
+    ) async throws {
+        let previousValues = overrides.keys.reduce(into: [String: String?]()) { partialResult, key in
+            partialResult[key] = Environment.get(key)
+        }
+
+        func apply(_ values: [String: String?]) {
+            for (key, value) in values {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        apply(overrides)
+        do {
+            try await test()
+        } catch {
+            apply(previousValues)
+            throw error
+        }
+        apply(previousValues)
     }
 
     private func isoDate(_ value: String) -> Date {
@@ -95,6 +128,55 @@ struct AppTests {
                 #expect(res.status == .ok)
                 #expect(res.body.string == "ok")
             })
+        }
+    }
+
+    @Test("Worker testing bootstrap allows missing APNS config")
+    func workerTestingBootstrapAllowsMissingAPNSConfig() async throws {
+        try await withEnvironment([
+            "APNS_PRIVATE_KEY_PATH": nil,
+            "APNS_KEY_ID": nil,
+            "APNS_TEAM_ID": nil
+        ]) {
+            try await withApp(mode: .worker) { app in
+                let productionContainer = await app.apns.containers.container(for: .production)
+                let developmentContainer = await app.apns.containers.container(for: .development)
+                #expect(productionContainer == nil)
+                #expect(developmentContainer == nil)
+            }
+        }
+    }
+
+    @Test("Worker production bootstrap fails when APNS config is missing")
+    func workerProductionBootstrapFailsWithoutAPNSConfig() async throws {
+        try await withEnvironment([
+            "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable",
+            "REDIS_URL": "redis://127.0.0.1:6379",
+            "APNS_PRIVATE_KEY_PATH": nil,
+            "APNS_KEY_ID": nil,
+            "APNS_TEAM_ID": nil
+        ]) {
+            let app = try await Application.make(.production)
+            var capturedError: (any Error)?
+            do {
+                try await configure(app, mode: .worker)
+            } catch {
+                capturedError = error
+            }
+            try await app.asyncShutdown()
+
+            guard let capturedError else {
+                Issue.record("Expected configure to fail when APNS config is missing in production.")
+                return
+            }
+
+            guard let abortError = capturedError as? any AbortError else {
+                Issue.record("Expected AbortError but got \(String(describing: capturedError)).")
+                return
+            }
+
+            #expect(abortError.status == .internalServerError)
+            #expect(abortError.reason.contains("APNS configuration is incomplete."))
         }
     }
 
