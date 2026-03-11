@@ -285,6 +285,51 @@ War story: this is the distributed-systems version of mailing a package after yo
 
 War story: this one is like merging duplicate customer profiles. If you pick the winner by random UUID, you might keep the stale profile and archive the one with the latest address. Freshness-first avoids that subtle but expensive drift.
 
+### Milestone: APNs secrets moved to worker-only mounted key + env identifiers
+
+- Moved APNs bootstrap from global app setup to worker-only setup so the API process never receives push credentials.
+- Switched APNs key handling to file-based loading via `APNS_PRIVATE_KEY_PATH` (mounted `.p8`), with `APNS_KEY_ID` and `APNS_TEAM_ID` loaded from env vars.
+- Hardened startup policy:
+  - `development` / `testing`: warn and disable APNs when config is missing/invalid.
+  - non-dev envs (including `production`): fail fast on missing/invalid APNs config.
+- Updated local Compose wiring to mount `.p8` into `worker` only and keep API container clean of APNs secrets.
+
+War story: this was the "don’t hand the restaurant host the safe combination" fix. The host stand (`Run`) only needs reservation data. The kitchen (`RunWorker`) is the only place that should touch the expensive ingredients and the lockbox key.
+
+### Bug squash: installation ID type mismatch (String vs UUID) in notification ledger path
+
+- Standardized `installation_id` to UUID end-to-end:
+  - device installation model
+  - device presence model
+  - notification ledger model
+  - API payload decoding and upsert path
+  - create-table migrations
+- Added an explicit conversion migration to cast existing `installation_id` values from `text` to `uuid` with FK constraints dropped/recreated in the right order.
+
+War story: this was a "same idea, two dialects" failure. Part of the code treated IDs like plain strings, another part treated them like UUIDs, and Postgres was the strict language teacher refusing to translate automatically. We fixed it by making the entire stack speak UUID natively.
+
+### Milestone: notification outbox now respects delayed readiness
+
+- Fixed `dispatchPendingNotificationJobs` to honor `available_at <= now` before dispatching send-lane jobs.
+- Added deterministic drain ordering by `available_at` first, then `created`, so older ready rows are processed first.
+- This aligns notification outbox semantics with its own schema contract (`available_at` exists for backoff/delayed readiness) and prevents premature dispatch.
+
+War story: this was a "restaurant buzzer" bug. We had a queue of tables and a buzzer time, but the host kept seating people before their buzzer went off. It works until retries/backoff show up, then ordering turns into chaos.
+
+### Bug squash: preserve notification reason through outbox and H3 handoff
+
+- Carried `reason` end-to-end through the H3 path:
+  - added `reason` to `TargetEventRevisionPayload`
+  - propagated `reason` from ingest queueing into target outbox payload
+  - consumed payload `reason` in `TargetEventRevisionJob` instead of hardcoding `.new`
+- Added backward-compatible decoding for older target outbox payload rows that predate `reason` by defaulting missing values to `.new`.
+- Hardened `AddReasonToNotificationOutbox` migration for existing data:
+  - add column as nullable first
+  - backfill existing rows with `'new'`
+  - then enforce `NOT NULL` + default.
+
+War story: this one was like sending food tickets from host stand to kitchen but dropping the “allergy note” on transfer. The dish still arrives, but not the right one. We fixed the handoff so intent survives every station.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

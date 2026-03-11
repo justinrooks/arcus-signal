@@ -23,6 +23,9 @@ public final class ArcusNotificationOutboxModel: Model, @unchecked Sendable {
     @Field(key: "mode")
     public var mode: String //ugc|h3
     
+    @Field(key: "reason")
+    public var reason: String //new|update|cancelled|endedAllClear
+    
     @Field(key: "state")
     public var state: String //pending|ready|processing|done|dead
     
@@ -51,6 +54,7 @@ public final class ArcusNotificationOutboxModel: Model, @unchecked Sendable {
         series: UUID,
         revisionUrn: String,
         mode: String,
+        reason: String,
         state: String,
         attempts: Int,
         lastError: String? = nil,
@@ -60,6 +64,7 @@ public final class ArcusNotificationOutboxModel: Model, @unchecked Sendable {
         self.$series.id = series
         self.revisionUrn = revisionUrn
         self.mode = mode
+        self.reason = reason
         self.state = state
         self.attempts = attempts
         self.lastError = lastError

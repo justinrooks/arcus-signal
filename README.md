@@ -36,6 +36,17 @@ Optional tuning:
 - `REDIS_POOL_CONNECTION_TIMEOUT_SECONDS` (default `30`)
 - `WORKER_STARTUP_GRACE_SECONDS` (default `5`)
 
+Worker APNs configuration:
+
+- `APNS_PRIVATE_KEY_PATH` (absolute path to mounted `.p8`)
+- `APNS_KEY_ID` (Apple Key ID)
+- `APNS_TEAM_ID` (Apple Team ID)
+
+APNs startup behavior:
+
+- `development`/`testing`: missing or invalid APNs config logs a warning and disables APNs client setup.
+- non-dev environments (including `production`): missing or invalid APNs config fails worker startup.
+
 Development/testing Postgres fallback (when `DATABASE_URL` is absent):
 
 - `DATABASE_HOST` (default `127.0.0.1`)
@@ -53,6 +64,22 @@ docker compose up --build
 ```
 
 Compose sets defaults for queue tuning env vars (`QUEUE_WORKER_COUNT`, `REDIS_POOL_MAX_CONNECTIONS`, `REDIS_POOL_CONNECTION_TIMEOUT_SECONDS`, `WORKER_STARTUP_GRACE_SECONDS`).
+
+Compose APNs wiring (worker only):
+
+- `APNS_PRIVATE_KEY_PATH` defaults to `/run/secrets/apns/AuthKey.p8` inside the worker container.
+- `APNS_P8_HOST_PATH` controls the host-side `.p8` bind mount path (default `./.secrets/apns/AuthKey.p8`).
+- `APNS_KEY_ID` and `APNS_TEAM_ID` are read from environment and passed only to the worker service.
+
+Example:
+
+```bash
+mkdir -p .secrets/apns
+# copy your real key to .secrets/apns/AuthKey.p8
+APNS_KEY_ID=ABC123DEFG APNS_TEAM_ID=TEAM123456 docker compose up --build
+```
+
+For production deployments, prefer Docker secrets or an external secret manager over direct bind mounts.
 
 Services:
 

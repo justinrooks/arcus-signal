@@ -37,6 +37,9 @@ services:
       context: .
     environment:
       <<: *shared_environment
+      APNS_PRIVATE_KEY_PATH: ${APNS_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey.p8}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,6 +49,7 @@ services:
       - '8081:8081'
     volumes:
       - ./Fixtures:/app/Fixtures:ro
+      - ${APNS_P8_HOST_PATH:-./.secrets/apns/AuthKey.p8}:${APNS_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey.p8}:ro
     command: ["./RunWorker", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8081"]
 
   redis:
