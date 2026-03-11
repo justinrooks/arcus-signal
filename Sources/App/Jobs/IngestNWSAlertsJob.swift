@@ -299,6 +299,7 @@ private extension IngestNWSAlertsJob {
         if try await enqueueTargetDispatchOutboxIfNeeded(
             event: event,
             seriesId: seriesId,
+            reason: reason,
             on: database,
             logger: logger
         ) {
@@ -372,6 +373,7 @@ private extension IngestNWSAlertsJob {
     func enqueueTargetDispatchOutboxIfNeeded(
         event: ArcusEvent,
         seriesId: UUID,
+        reason: NotificationReason,
         on database: any Database,
         logger: Logger
     ) async throws -> Bool {
@@ -382,7 +384,12 @@ private extension IngestNWSAlertsJob {
         let outboxRecord = ArcusTargetDispatchOutboxModel(
             revisionUrn: event.id,
             seriesId: seriesId,
-            payload: .init(seriesId: seriesId, revisionUrn: event.id, geometry: geometry)
+            payload: .init(
+                seriesId: seriesId,
+                revisionUrn: event.id,
+                geometry: geometry,
+                reason: reason
+            )
         )
 
         do {
@@ -408,8 +415,6 @@ private extension IngestNWSAlertsJob {
         on database: any Database,
         logger: Logger
     ) async throws -> Bool {
-        // TODO: reason will be implemented later
-        
         // ensure that we have no geometry so we fall back
         // to ugc codes
         guard event.geometry == nil else {
@@ -420,6 +425,7 @@ private extension IngestNWSAlertsJob {
             series: seriesId,
             revisionUrn: event.id,
             mode: NotificationTargetMode.ugc.rawValue,
+            reason: reason.rawValue,
             state: "ready",
             attempts: 0,
             availableAt: .now
@@ -445,12 +451,14 @@ private extension IngestNWSAlertsJob {
         context: QueueContext,
         limit: Int = 250
     ) async throws -> DispatchDrainResult {
+        let now = Date()
         let pendingRows = try await ArcusNotificationOutboxModel.query(on: context.application.db)
             .group(.and) { group in
                 group.filter(\.$state == "ready")
                      .filter(\.$mode == "ugc") // Lock this dispatcher to only send ready ugc notification msgs
+                     .filter(\.$availableAt <= now)
             }
-            .sort(\.$created, .ascending)
+            .sort(\.$availableAt, .ascending)
             .limit(limit)
             .all()
 
@@ -467,12 +475,15 @@ private extension IngestNWSAlertsJob {
                 guard let mode = NotificationTargetMode(rawValue: row.mode) else {
                     throw ArcusEventModelError.invalidEnum(field: "mode", value: row.mode)
                 }
+                guard let reason = NotificationReason(rawValue: row.reason) else {
+                    throw ArcusEventModelError.invalidEnum(field: "reason", value: row.reason)
+                }
                 
                 let pl: NotificationSendJobPayload = .init(
                     seriesId: row.$series.id,
                     revisionUrn: row.revisionUrn,
                     mode: mode,
-                    reason: .new
+                    reason: reason
                 )
                 
                 try await sendQueue.dispatch(NotificationSendJob.self, pl)
@@ -626,7 +637,12 @@ private extension IngestNWSAlertsJob {
             .all()
         for row in pendingOutbox {
             row.$series.id = winnerSeriesId
-            row.payload = .init(seriesId: winnerSeriesId, revisionUrn: row.payload.revisionUrn, geometry: row.payload.geometry)
+            row.payload = .init(
+                seriesId: winnerSeriesId,
+                revisionUrn: row.payload.revisionUrn,
+                geometry: row.payload.geometry,
+                reason: row.payload.reason
+            )
             try await row.update(on: database)
         }
 

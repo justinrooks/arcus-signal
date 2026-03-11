@@ -9,11 +9,33 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
     public let seriesId: UUID
     public let revisionUrn: String
     public let geometry: GeoShape
+    public let reason: NotificationReason
 
-    public init(seriesId: UUID, revisionUrn: String, geometry: GeoShape) {
+    public init(
+        seriesId: UUID,
+        revisionUrn: String,
+        geometry: GeoShape,
+        reason: NotificationReason
+    ) {
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
         self.geometry = geometry
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case seriesId
+        case revisionUrn
+        case geometry
+        case reason
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.seriesId = try container.decode(UUID.self, forKey: .seriesId)
+        self.revisionUrn = try container.decode(String.self, forKey: .revisionUrn)
+        self.geometry = try container.decode(GeoShape.self, forKey: .geometry)
+        self.reason = try container.decodeIfPresent(NotificationReason.self, forKey: .reason) ?? .new
     }
 }
 
@@ -33,7 +55,8 @@ public struct TargetEventRevisionJob: AsyncJob {
             "TargetEventRevisionJob dequeued. Begin h3 encoding",
             metadata: [
                 "seriesId": .string(payload.seriesId.uuidString),
-                "geometryType": .string(geometryType(payload.geometry))
+                "geometryType": .string(geometryType(payload.geometry)),
+                "reason": .string(payload.reason.rawValue)
             ]
         )
         
@@ -57,6 +80,7 @@ public struct TargetEventRevisionJob: AsyncJob {
             metadata: [
                 "seriesId": .string(payload.seriesId.uuidString),
                 "geometryType": .string(geometryType(payload.geometry)),
+                "reason": .string(payload.reason.rawValue),
                 "error": .string(String(reflecting: error))
             ]
         )
@@ -129,7 +153,7 @@ private extension TargetEventRevisionJob {
         if try await enqueueNotificationDispatchOutbox(
             revisionUrn: payload.revisionUrn,
             seriesId: payload.seriesId,
-            reason: .new,
+            reason: payload.reason,
             on: database,
             logger: logger
         ) {
@@ -150,6 +174,7 @@ private extension TargetEventRevisionJob {
             series: seriesId,
             revisionUrn: revisionUrn,
             mode: NotificationTargetMode.h3.rawValue,
+            reason: reason.rawValue,
             state: "ready",
             attempts: 0,
             availableAt: .now
@@ -206,12 +231,15 @@ private extension TargetEventRevisionJob {
                 guard let mode = NotificationTargetMode(rawValue: row.mode) else {
                     throw ArcusEventModelError.invalidEnum(field: "mode", value: row.mode)
                 }
+                guard let reason = NotificationReason(rawValue: row.reason) else {
+                    throw ArcusEventModelError.invalidEnum(field: "reason", value: row.reason)
+                }
                 
                 let pl: NotificationSendJobPayload = .init(
                     seriesId: row.$series.id,
                     revisionUrn: row.revisionUrn,
                     mode: mode,
-                    reason: .new
+                    reason: reason
                 )
                 
                 try await sendQueue.dispatch(NotificationSendJob.self, pl)

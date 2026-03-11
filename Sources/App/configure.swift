@@ -60,6 +60,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateNotificationLedger())
     app.migrations.add(AddCreatedToNotificationLedger())
     app.migrations.add(ConvertInstallationIDsToUUID())
+    app.migrations.add(AddReasonToNotificationOutbox())
 }
 
 private func configureAPNs(on app: Application) async throws {

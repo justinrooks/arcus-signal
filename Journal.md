@@ -308,6 +308,28 @@ War story: this was the "don’t hand the restaurant host the safe combination" 
 
 War story: this was a "same idea, two dialects" failure. Part of the code treated IDs like plain strings, another part treated them like UUIDs, and Postgres was the strict language teacher refusing to translate automatically. We fixed it by making the entire stack speak UUID natively.
 
+### Milestone: notification outbox now respects delayed readiness
+
+- Fixed `dispatchPendingNotificationJobs` to honor `available_at <= now` before dispatching send-lane jobs.
+- Added deterministic drain ordering by `available_at` first, then `created`, so older ready rows are processed first.
+- This aligns notification outbox semantics with its own schema contract (`available_at` exists for backoff/delayed readiness) and prevents premature dispatch.
+
+War story: this was a "restaurant buzzer" bug. We had a queue of tables and a buzzer time, but the host kept seating people before their buzzer went off. It works until retries/backoff show up, then ordering turns into chaos.
+
+### Bug squash: preserve notification reason through outbox and H3 handoff
+
+- Carried `reason` end-to-end through the H3 path:
+  - added `reason` to `TargetEventRevisionPayload`
+  - propagated `reason` from ingest queueing into target outbox payload
+  - consumed payload `reason` in `TargetEventRevisionJob` instead of hardcoding `.new`
+- Added backward-compatible decoding for older target outbox payload rows that predate `reason` by defaulting missing values to `.new`.
+- Hardened `AddReasonToNotificationOutbox` migration for existing data:
+  - add column as nullable first
+  - backfill existing rows with `'new'`
+  - then enforce `NOT NULL` + default.
+
+War story: this one was like sending food tickets from host stand to kitchen but dropping the “allergy note” on transfer. The dish still arrives, but not the right one. We fixed the handoff so intent survives every station.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.
