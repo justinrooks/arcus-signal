@@ -13,7 +13,7 @@ struct CreateNotificationLedger: AsyncMigration {
         try await db.schema(NotificationLedgerModel.schema)
             .field("id", .uuid, .identifier(auto: false))
 
-            .field("installation_id", .string, .required,
+            .field("installation_id", .uuid, .required,
                    .references(DeviceInstallationModel.schema, "installation_id", onDelete: .cascade))
         
             .field("series_id", .uuid, .required,
@@ -43,7 +43,6 @@ struct AddCreatedToNotificationLedger: AsyncMigration {
     }
 
     func revert(on db: any Database) async throws {
-        try await db.schema(NotificationLedgerModel.schema).delete()
+        try await db.schema(NotificationLedgerModel.schema).deleteField("created").update()
     }
 }
-

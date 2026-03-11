@@ -12,9 +12,9 @@ import Vapor
 public final class DeviceInstallationModel: Model, @unchecked Sendable {
     public static let schema = "device_installations"
     
-    // Primary key: installation_id (string)
+    // Primary key: installation_id (UUID)
     @ID(custom: "installation_id", generatedBy: .user)
-    public var id: String?
+    public var id: UUID?
 
     // Delivery
     @Field(key: "apns_device_token")
@@ -56,7 +56,7 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
     public init() {}
 
     public init(
-        installationId: String,
+        installationId: UUID,
         apnsDeviceToken: String,
         apnsEnvironment: APNsEnvironment,
         platform: Platform,
@@ -99,12 +99,7 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
 //public extension DeviceLocationModel {
 //    convenience init(from snapshot: LocationSnapshotPushPayload) throws {
 //        
-//        if let uuid = UUID(uuidString: snapshot.installationId) {
-//            print("Valid UUID: \(uuid)")
-//        } else {
-//            print("Invalid UUID string")
-//        }
-//        
+//        let uuid = snapshot.installationId
 //        self.init(
 //            id: uuid
 //        )

@@ -6,7 +6,7 @@ struct CreateDevicePresence: AsyncMigration {
         try await database.schema(DevicePresenceModel.schema)
             .field(
                 "installation_id",
-                .string,
+                .uuid,
                 .identifier(auto: false),
                 .references(DeviceInstallationModel.schema, "installation_id", onDelete: .cascade)
             )
@@ -80,4 +80,3 @@ struct CreateDevicePresence: AsyncMigration {
         try await database.schema(DevicePresenceModel.schema).delete()
     }
 }
-

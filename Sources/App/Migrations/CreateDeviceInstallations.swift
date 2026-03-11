@@ -4,7 +4,7 @@ import SQLKit
 struct CreateDeviceInstallations: AsyncMigration {
     func prepare(on database: any Database) async throws {
         try await database.schema(DeviceInstallationModel.schema)
-            .field("installation_id", .string, .identifier(auto: false))
+            .field("installation_id", .uuid, .identifier(auto: false))
             .field("apns_device_token", .string, .required)
             .field("apns_environment", .string, .required)
             .field("platform", .string, .required)
@@ -57,4 +57,3 @@ struct CreateDeviceInstallations: AsyncMigration {
         try await database.schema(DeviceInstallationModel.schema).delete()
     }
 }
-

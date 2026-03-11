@@ -296,6 +296,18 @@ War story: this one is like merging duplicate customer profiles. If you pick the
 
 War story: this was the "don’t hand the restaurant host the safe combination" fix. The host stand (`Run`) only needs reservation data. The kitchen (`RunWorker`) is the only place that should touch the expensive ingredients and the lockbox key.
 
+### Bug squash: installation ID type mismatch (String vs UUID) in notification ledger path
+
+- Standardized `installation_id` to UUID end-to-end:
+  - device installation model
+  - device presence model
+  - notification ledger model
+  - API payload decoding and upsert path
+  - create-table migrations
+- Added an explicit conversion migration to cast existing `installation_id` values from `text` to `uuid` with FK constraints dropped/recreated in the right order.
+
+War story: this was a "same idea, two dialects" failure. Part of the code treated IDs like plain strings, another part treated them like UUIDs, and Postgres was the strict language teacher refusing to translate automatically. We fixed it by making the entire stack speak UUID natively.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

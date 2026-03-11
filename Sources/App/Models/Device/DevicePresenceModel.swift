@@ -27,7 +27,7 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
 
     // PK = installation_id (also FK to device_installations)
     @ID(custom: "installation_id", generatedBy: .user)
-    public var id: String?
+    public var id: UUID?
 
     // Timestamps / quality
     @Field(key: "captured_at")
@@ -76,7 +76,7 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
     public init() {}
 
     public init(
-        installationId: String,
+        installationId: UUID,
         capturedAt: Date,
         receivedAt: Date = .now,
         locationAgeSeconds: Double,

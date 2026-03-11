@@ -38,7 +38,7 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable {
     
     public init(
         id: UUID? = nil,
-        installationId: String,
+        installationId: UUID,
         series: UUID,
         revisionUrn: String,
         mode: String,

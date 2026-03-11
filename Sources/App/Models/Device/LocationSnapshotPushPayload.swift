@@ -19,7 +19,7 @@ struct LocationSnapshotPushPayload: Content, Sendable {
     let zone: String?
     let fireZone: String?
     let apnsDeviceToken: String
-    let installationId: String
+    let installationId: UUID
     let source: String
     let auth: String
     let appVersion: String

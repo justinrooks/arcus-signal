@@ -21,7 +21,7 @@ func configureAPIRoutes(_ app: Application) throws {
         
         devices.post("location-snapshots") { req async throws -> LocationSnapshotAcceptedResponse in
             let payload = try req.content.decode(LocationSnapshotPushPayload.self)
-            let installationId = payload.installationId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let installationId = payload.installationId
             let apnsDeviceToken = payload.apnsDeviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
 
             // Validate enums
@@ -42,9 +42,6 @@ func configureAPIRoutes(_ app: Application) throws {
             }
 
             // Validate required identifiers
-            guard !installationId.isEmpty else {
-                throw Abort(.badRequest, reason: "Missing installationId")
-            }
             guard !apnsDeviceToken.isEmpty else {
                 throw Abort(.badRequest, reason: "Missing apnsDeviceToken")
             }
@@ -134,7 +131,7 @@ func configureAPIRoutes(_ app: Application) throws {
                     "zone": .string(payload.zone ?? "N/A"),
                     "fireZone": .string(payload.fireZone ?? "N/A"),
                     "apnsDeviceTokenSuffix": .string(String(apnsDeviceToken.suffix(8))),
-                    "installationId": .string(installationId),
+                    "installationId": .string(installationId.uuidString),
                     "source": .string(payload.source),
                     "auth": .string(payload.auth),
                     "appVersion": .string(payload.appVersion),
@@ -209,7 +206,7 @@ private enum DevicePresenceUpsertOutcome: String {
 }
 
 private func upsertDeviceInstallation(
-    installationId: String,
+    installationId: UUID,
     apnsDeviceToken: String,
     apnsEnvironment: APNsEnvironment,
     platform: Platform,
@@ -271,7 +268,7 @@ private func upsertDeviceInstallation(
 }
 
 private func upsertDevicePresence(
-    installationId: String,
+    installationId: UUID,
     payload: LocationSnapshotPushPayload,
     cellScheme: CellScheme,
     locationSource: LocationSource,
