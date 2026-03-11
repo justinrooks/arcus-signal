@@ -285,6 +285,17 @@ War story: this is the distributed-systems version of mailing a package after yo
 
 War story: this one is like merging duplicate customer profiles. If you pick the winner by random UUID, you might keep the stale profile and archive the one with the latest address. Freshness-first avoids that subtle but expensive drift.
 
+### Milestone: APNs secrets moved to worker-only mounted key + env identifiers
+
+- Moved APNs bootstrap from global app setup to worker-only setup so the API process never receives push credentials.
+- Switched APNs key handling to file-based loading via `APNS_PRIVATE_KEY_PATH` (mounted `.p8`), with `APNS_KEY_ID` and `APNS_TEAM_ID` loaded from env vars.
+- Hardened startup policy:
+  - `development` / `testing`: warn and disable APNs when config is missing/invalid.
+  - non-dev envs (including `production`): fail fast on missing/invalid APNs config.
+- Updated local Compose wiring to mount `.p8` into `worker` only and keep API container clean of APNs secrets.
+
+War story: this was the "don’t hand the restaurant host the safe combination" fix. The host stand (`Run`) only needs reservation data. The kitchen (`RunWorker`) is the only place that should touch the expensive ingredients and the lockbox key.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

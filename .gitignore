@@ -32,6 +32,11 @@ playground.xcworkspace
 .build/
 .swiftpm/
 .DS_Store
+.env
+
+# Local secrets
+.secrets/
+*.p8
 
 # CocoaPods
 #
