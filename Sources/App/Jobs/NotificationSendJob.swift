@@ -113,8 +113,15 @@ public struct NotificationSendJob: AsyncJob {
         // Build an alert
         let alertKind = EventKind.toNwsEventName(series.event)
         
+        let title:String = switch payload.reason {
+        case .new: "New weather alert for your area"
+        case .update: "Updated weather alert for your area"
+        case .cancelInError: "Weather alert for your area has been cancelled"
+        case .endedAllClear: "Weather alert as ended for your area"
+        }
+        
         let alert: AlertDetails = .init(
-            title: "Weather Alert for your area",
+            title: title,
             subTitle: "\(alertKind.sentenceCased) issued",
             body: series.title ?? "Unknown series"
         )
