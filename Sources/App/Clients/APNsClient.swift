@@ -43,7 +43,7 @@ struct APNsClient {
         )
         
         // Send the notification
-        try! await app.apns.client(.development).sendAlertNotification(
+        try await app.apns.client(.development).sendAlertNotification(
             alert,
             deviceToken: device
         )
