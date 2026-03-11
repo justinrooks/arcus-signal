@@ -330,6 +330,14 @@ War story: this was a "restaurant buzzer" bug. We had a queue of tables and a bu
 
 War story: this one was like sending food tickets from host stand to kitchen but dropping the “allergy note” on transfer. The dish still arrives, but not the right one. We fixed the handoff so intent survives every station.
 
+### Bug squash: migration ordering for `installation_id` UUID conversion
+
+- Hit a migration-time FK error where `notification_ledger.installation_id` was `uuid` but `device_installations.installation_id` was still `text` on older databases.
+- Fixed by moving `ConvertInstallationIDsToUUID` to run before `CreateNotificationLedger` in migration registration order.
+- Hardened the conversion migration so it conditionally handles `notification_ledger` only when that table exists (works both pre- and post-ledger creation states).
+
+War story: this was a train-switch bug. We changed the track gauge (text -> UUID) but one station was still on old rails when the next train (new FK) arrived. Reordering the switch and making it context-aware fixed the derailment.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

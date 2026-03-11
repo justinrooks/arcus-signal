@@ -57,9 +57,9 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateNotificationOutbox())
     app.migrations.add(CreateDeviceInstallations())
     app.migrations.add(CreateDevicePresence())
+    app.migrations.add(ConvertInstallationIDsToUUID())
     app.migrations.add(CreateNotificationLedger())
     app.migrations.add(AddCreatedToNotificationLedger())
-    app.migrations.add(ConvertInstallationIDsToUUID())
     app.migrations.add(AddReasonToNotificationOutbox())
 }
 

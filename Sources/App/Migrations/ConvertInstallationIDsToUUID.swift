@@ -11,8 +11,14 @@ struct ConvertInstallationIDsToUUID: AsyncMigration {
         """).run()
 
         try await sql.raw("""
-            ALTER TABLE notification_ledger
-              DROP CONSTRAINT IF EXISTS notification_ledger_installation_id_fkey;
+            DO $$
+            BEGIN
+                IF to_regclass('public.notification_ledger') IS NOT NULL THEN
+                    ALTER TABLE notification_ledger
+                      DROP CONSTRAINT IF EXISTS notification_ledger_installation_id_fkey;
+                END IF;
+            END
+            $$;
         """).run()
 
         try await sql.raw("""
@@ -28,9 +34,15 @@ struct ConvertInstallationIDsToUUID: AsyncMigration {
         """).run()
 
         try await sql.raw("""
-            ALTER TABLE notification_ledger
-              ALTER COLUMN installation_id TYPE uuid
-              USING installation_id::uuid;
+            DO $$
+            BEGIN
+                IF to_regclass('public.notification_ledger') IS NOT NULL THEN
+                    ALTER TABLE notification_ledger
+                      ALTER COLUMN installation_id TYPE uuid
+                      USING installation_id::uuid;
+                END IF;
+            END
+            $$;
         """).run()
 
         try await sql.raw("""
@@ -42,11 +54,17 @@ struct ConvertInstallationIDsToUUID: AsyncMigration {
         """).run()
 
         try await sql.raw("""
-            ALTER TABLE notification_ledger
-              ADD CONSTRAINT notification_ledger_installation_id_fkey
-              FOREIGN KEY (installation_id)
-              REFERENCES device_installations(installation_id)
-              ON DELETE CASCADE;
+            DO $$
+            BEGIN
+                IF to_regclass('public.notification_ledger') IS NOT NULL THEN
+                    ALTER TABLE notification_ledger
+                      ADD CONSTRAINT notification_ledger_installation_id_fkey
+                      FOREIGN KEY (installation_id)
+                      REFERENCES device_installations(installation_id)
+                      ON DELETE CASCADE;
+                END IF;
+            END
+            $$;
         """).run()
     }
 
@@ -59,14 +77,26 @@ struct ConvertInstallationIDsToUUID: AsyncMigration {
         """).run()
 
         try await sql.raw("""
-            ALTER TABLE notification_ledger
-              DROP CONSTRAINT IF EXISTS notification_ledger_installation_id_fkey;
+            DO $$
+            BEGIN
+                IF to_regclass('public.notification_ledger') IS NOT NULL THEN
+                    ALTER TABLE notification_ledger
+                      DROP CONSTRAINT IF EXISTS notification_ledger_installation_id_fkey;
+                END IF;
+            END
+            $$;
         """).run()
 
         try await sql.raw("""
-            ALTER TABLE notification_ledger
-              ALTER COLUMN installation_id TYPE text
-              USING installation_id::text;
+            DO $$
+            BEGIN
+                IF to_regclass('public.notification_ledger') IS NOT NULL THEN
+                    ALTER TABLE notification_ledger
+                      ALTER COLUMN installation_id TYPE text
+                      USING installation_id::text;
+                END IF;
+            END
+            $$;
         """).run()
 
         try await sql.raw("""
@@ -90,11 +120,17 @@ struct ConvertInstallationIDsToUUID: AsyncMigration {
         """).run()
 
         try await sql.raw("""
-            ALTER TABLE notification_ledger
-              ADD CONSTRAINT notification_ledger_installation_id_fkey
-              FOREIGN KEY (installation_id)
-              REFERENCES device_installations(installation_id)
-              ON DELETE CASCADE;
+            DO $$
+            BEGIN
+                IF to_regclass('public.notification_ledger') IS NOT NULL THEN
+                    ALTER TABLE notification_ledger
+                      ADD CONSTRAINT notification_ledger_installation_id_fkey
+                      FOREIGN KEY (installation_id)
+                      REFERENCES device_installations(installation_id)
+                      ON DELETE CASCADE;
+                END IF;
+            END
+            $$;
         """).run()
     }
 }
