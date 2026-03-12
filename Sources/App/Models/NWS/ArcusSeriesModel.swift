@@ -14,6 +14,8 @@ public enum ArcusEventModelError: Error, Sendable {
     case invalidGeometryJSON
 }
 
+//area desc, status, category, event, senderName, headline, description, instructions, response
+
 public final class ArcusSeriesModel: Model, @unchecked Sendable {
     public static let schema = "arcus_series"
     
@@ -107,6 +109,27 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
     @OptionalField(key: "area_desc")
     public var areaDesc: String?
     
+    @OptionalField(key:"category")
+    public var category: String?
+        
+    @OptionalField(key:"sender_name")
+    public var senderName: String?
+    
+    @OptionalField(key:"headline")
+    public var headline: String?
+    
+    @OptionalField(key:"description")
+    public var description: String?
+    
+    @OptionalField(key:"instructions")
+    public var instructions: String?
+    
+    @OptionalField(key:"response")
+    public var response: String?
+    
+    @OptionalField(key:"status")
+    public var status: String?
+    
     
     // MARK: Inits
     public init() {}
@@ -135,7 +158,14 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
         ugcCodes: [String],
         title: String? = nil,
         areaDesc: String? = nil,
-        geometry: GeoShape?
+        geometry: GeoShape? = nil,
+        category: String? = nil,
+        senderName: String? = nil,
+        headline: String? = nil,
+        description: String? = nil,
+        instructions: String? = nil,
+        response: String? = nil,
+        status: String? = nil
     ) {
         self.id = id
         self.source = source
@@ -161,8 +191,14 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
         self.title = title
         self.areaDesc = areaDesc
         self.geometry = geometry
+        self.category = category
+        self.senderName = senderName
+        self.headline = headline
+        self.description = description
+        self.instructions = instructions
+        self.response = response
+        self.status = status
     }
-    
 }
 
 
@@ -192,7 +228,14 @@ public extension ArcusSeriesModel {
             ugcCodes: event.ugcCodes,
             title: event.title,
             areaDesc: event.areaDesc,
-            geometry: event.geometry
+            geometry: event.geometry,
+            category: event.category,
+            senderName: event.senderName,
+            headline: event.headline,
+            description: event.description,
+            instructions: event.instructions,
+            response: event.response,
+            status: event.status
         )
     }
     
@@ -247,7 +290,15 @@ public extension ArcusSeriesModel {
             ugcCodes: ugcCodes,
             title: title,
             areaDesc: areaDesc,
-            rawRef: nil
+            rawRef: nil,
+            category: category,
+            event: event,
+            senderName: senderName,
+            headline: headline,
+            description: description,
+            instructions: instructions,
+            response: response,
+            status: status
         )
     }
 }

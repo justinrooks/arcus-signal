@@ -1,6 +1,58 @@
 import Fluent
 import SQLKit
 
+public struct AddRemainingArcusSeriesFields: AsyncMigration {
+    public func prepare(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .field("category", .string)
+            .field("senderName", .string)
+            .field("headline", .string)
+            .field("description", .string)
+            .field("instructions", .string)
+            .field("response", .string)
+            .field("status", .string)
+            .update()
+    }
+
+    public func revert(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .deleteField("category")
+            .deleteField("senderName")
+            .deleteField("headline")
+            .deleteField("description")
+            .deleteField("instructions")
+            .deleteField("response")
+            .deleteField("status")
+            .update()
+    }
+}
+
+public struct FixArcusSeriesSenderNameField: AsyncMigration {
+    public func prepare(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .field("sender_name", .string)
+            .update()
+    }
+
+    public func revert(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .deleteField("sender_name")
+            .update()
+    }
+}
+
+public struct RemoveArcusSeriesSenderNameField: AsyncMigration {
+    public func prepare(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .deleteField("senderName")
+            .update()
+    }
+
+    public func revert(on db: any Database) async throws {
+        // no op
+    }
+}
+
 public struct CreateAlertSeriesModel: AsyncMigration {
     public init() {}
     

@@ -115,8 +115,19 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     public let ugcCodes: [String]
 
     // Human-facing metadata
+    @available(*, deprecated, message: "Use event or headline instead")
     public let title: String?
     public let areaDesc: String?
+   
+    public let category: String?
+    public let event: String?
+    public let senderName: String?
+    public let headline: String?
+    public let description: String?
+    public let instructions: String?
+    public let response: String?
+    
+    public let status: String?
 
     // Raw payload reference
     public let rawRef: String?
@@ -143,7 +154,15 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         ugcCodes: [String],
         title: String?,
         areaDesc: String?,
-        rawRef: String?
+        rawRef: String?,
+        category: String?,
+        event: String?,
+        senderName: String?,
+        headline: String?,
+        description: String?,
+        instructions: String?,
+        response: String?,
+        status: String?
     ) {
         self.id = urn
         self.source = source
@@ -167,6 +186,14 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         self.title = title
         self.areaDesc = areaDesc
         self.rawRef = rawRef
+        self.category = category
+        self.event = event
+        self.senderName = senderName
+        self.headline = headline
+        self.description = description
+        self.instructions = instructions
+        self.response = response
+        self.status = status
     }
 }
 
@@ -229,7 +256,15 @@ public extension NwsEventFeatureDTO {
             ugcCodes: properties.geocode?.ugc ?? [],
             title: properties.headline ?? properties.event,
             areaDesc: properties.areaDesc,
-            rawRef: rawRef
+            rawRef: rawRef,
+            category: properties.category,
+            event: properties.event,
+            senderName: properties.senderName,
+            headline: properties.headline,
+            description: properties.description,
+            instructions: properties.instruction,
+            response: properties.response,
+            status: properties.status
         )
     }
 
