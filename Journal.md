@@ -338,6 +338,14 @@ War story: this one was like sending food tickets from host stand to kitchen but
 
 War story: this was a train-switch bug. We changed the track gauge (text -> UUID) but one station was still on old rails when the next train (new FK) arrived. Reordering the switch and making it context-aware fixed the derailment.
 
+### Bug squash: APNs environment routing now follows each installation record
+
+- Found a mixed-environment delivery bug in the new notification send path: candidate selection only returned token + installation ID, and APNs sends picked `.development`/`.production` based on process env, not per-device `apns_environment`.
+- Updated candidate queries to include `apns_environment` and route each send to the matching APNs container (`sandbox -> development`, `prod -> production`).
+- Tightened candidate filters to skip inactive installs and empty tokens before attempting ledger claims/sends.
+
+War story: this was shipping-label roulette. The package (token) was right, but we were choosing the destination hub from the warehouse sign instead of the label on the box. Works in single-hub tests, breaks in mixed traffic.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.
