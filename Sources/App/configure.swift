@@ -61,6 +61,9 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateNotificationLedger())
     app.migrations.add(AddCreatedToNotificationLedger())
     app.migrations.add(AddReasonToNotificationOutbox())
+    app.migrations.add(AddRemainingArcusSeriesFields())
+    app.migrations.add(FixArcusSeriesSenderNameField())
+    app.migrations.add(RemoveArcusSeriesSenderNameField())
 }
 
 private func configureAPNs(on app: Application) async throws {
