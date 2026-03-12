@@ -14,6 +14,7 @@ import Vapor
 struct NotificationCandidate: Decodable {
     let id: UUID
     let apnsToken: String
+    let apnsEnvironment: String
 }
 
 struct LedgerClaimResult {
@@ -153,7 +154,14 @@ public struct NotificationSendJob: AsyncJob {
                     ]
                 )
                 
-                try await sender.sendNotification(app: context.application, with: alert, to: candidate.apnsToken)
+                // Use per-installation APNs environment so sandbox/prod tokens route correctly.
+                let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
+                try await sender.sendNotification(
+                    app: context.application,
+                    with: alert,
+                    to: candidate.apnsToken,
+                    environment: apnsEnvironment
+                )
                 
             } catch {
                 context.logger.error(
@@ -204,28 +212,30 @@ private extension NotificationSendJob {
         if let freshnessCutoff {
             return try await sql.raw("""
                 SELECT
-                    id,
-                    apns_token AS "apnsToken"
+                    installation_id AS "id",
+                    apns_device_token AS "apnsToken",
+                    apns_environment AS "apnsEnvironment"
                 FROM device_installations
-                WHERE notifications_enabled = TRUE
-                  AND apns_token IS NOT NULL
-                  AND ugc_codes && \(bind: ugcCodes)::text[]
-                  AND last_location_at IS NOT NULL
-                  AND last_location_at >= \(bind: freshnessCutoff)
+                WHERE is_active = TRUE
+                  AND apns_device_token <> ''
+                  AND last_seen_at >= \(bind: freshnessCutoff)
                 """)
                 .all(decoding: NotificationCandidate.self)
         } else {
             return try await sql.raw("""
                 SELECT
                     i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken"
+                    i.apns_device_token AS "apnsToken",
+                    i.apns_environment AS "apnsEnvironment"
                 FROM device_installations i
                 JOIN device_presence p on i.installation_id = p.installation_id
-                WHERE (
+                WHERE i.is_active = TRUE
+                  AND i.apns_device_token <> ''
+                  AND (
                       p.county  = ANY(\(bind: ugcCodes)::text[])
                     OR p.zone  = ANY(\(bind: ugcCodes)::text[])
                     OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
-                )
+                  )
                 """)
                 .all(decoding: NotificationCandidate.self)
         }

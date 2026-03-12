@@ -26,7 +26,12 @@ struct AlertDetails: Sendable, Codable {
 struct APNsClient {
     
     
-    func sendNotification(app: Application, with details: AlertDetails, to device: String) async throws {
+    func sendNotification(
+        app: Application,
+        with details: AlertDetails,
+        to device: String,
+        environment: APNsEnvironment
+    ) async throws {
         // Create push notification Alert
 //        let payload = MyPayload(acme1: "hey", acme2: 2)
         let alert = APNSAlertNotification(
@@ -43,7 +48,7 @@ struct APNsClient {
         )
         
         // Send the notification
-        let env:APNSContainers.ID = (app.environment == .development || app.environment == .testing) ? .development : .production
+        let env: APNSContainers.ID = environment == .sandbox ? .development : .production
         try await app.apns.client(env).sendAlertNotification(
             alert,
             deviceToken: device
