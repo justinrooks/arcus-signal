@@ -304,6 +304,13 @@ extension ArcusEvent {
             let ugcCodes: [String]
             let title: String?
             let areaDesc: String?
+            let category: String?
+            let senderName: String?
+            let headline: String?
+            let description: String?
+            let instructions: String?
+            let response: String?
+            let status: String?
         }
 
         let fingerprint = ArcusEventContentFingerprint(
@@ -320,7 +327,14 @@ extension ArcusEvent {
             geometry: self.geometry,
             ugcCodes: normalizedUGCCodes,
             title: normalizedText(self.title),
-            areaDesc: normalizedText(self.areaDesc)
+            areaDesc: normalizedText(self.areaDesc),
+            category: self.category,
+            senderName: self.senderName,
+            headline: self.headline,
+            description: self.description,
+            instructions: self.instructions,
+            response: self.response,
+            status: self.status
         )
 
         let data = try hashEncoder.encode(fingerprint)
