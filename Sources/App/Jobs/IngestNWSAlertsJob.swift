@@ -367,6 +367,14 @@ private extension IngestNWSAlertsJob {
         series.ugcCodes = event.ugcCodes
         series.title = event.title
         series.areaDesc = event.areaDesc
+        series.category = event.category
+        series.senderName = event.senderName
+        series.headline = event.headline
+        series.description = event.description
+        series.instructions = event.instructions
+        series.response = event.response
+        series.status  = event.status
+        
         series.contentFingerprint = try event.computeContentFingerprint()
     }
     
