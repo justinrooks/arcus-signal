@@ -130,6 +130,9 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
     @OptionalField(key:"status")
     public var status: String?
     
+    @OptionalChild(for: \.$series)
+    var geolocation: ArcusGeolocationModel?
+    
     
     // MARK: Inits
     public init() {}

@@ -72,6 +72,7 @@ public struct NotificationSendJob: AsyncJob {
         
         // Grab the associated series
         let series = try await ArcusSeriesModel.query(on: context.application.db)
+            .with(\.$geolocation)
             .group(.and) { group in
                 group.filter(\.$id == payload.seriesId)
 //                    .filter(\.$ends < .now)
@@ -92,11 +93,19 @@ public struct NotificationSendJob: AsyncJob {
             return
         }
         
-        let candidates = try await loadUGCCandidates(
+        let ugcCandidates = try await loadUGCCandidates(
             ugcCodes: series.ugcCodes,
             freshnessCutoff: nil,
             on: context.application.db
         )
+        
+        let h3Candidates = try await loadH3Candidates(
+            cells: series.geolocation?.h3Cells ?? [],
+            freshnessCutoff: nil,
+            on: context.application.db
+        )
+        
+        let candidates = ugcCandidates + h3Candidates
         
         guard candidates.count > 0 else {
             context.logger.info(
@@ -115,7 +124,7 @@ public struct NotificationSendJob: AsyncJob {
         let alertKind = EventKind.toNwsEventName(series.event)
         
         let title:String = switch payload.reason {
-        case .new: "New weather alert for your area"
+        case .new: series.headline ?? "New weather alert for your area"
         case .update: "Updated weather alert for your area"
         case .cancelInError: "Weather alert for your area has been cancelled"
         case .endedAllClear: "Weather alert as ended for your area"
@@ -236,6 +245,50 @@ private extension NotificationSendJob {
                     OR p.zone  = ANY(\(bind: ugcCodes)::text[])
                     OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
                   )
+                """)
+                .all(decoding: NotificationCandidate.self)
+        }
+    }
+    
+    func loadH3Candidates(
+        cells: [Int64],
+        freshnessCutoff: Date?,
+        on db: any Database
+    ) async throws -> [NotificationCandidate] {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        guard cells.count > 0 else { return [] }
+
+        if let freshnessCutoff {
+            return try await sql.raw("""
+                SELECT
+                    i.installation_id AS "id",
+                    i.apns_device_token AS "apnsToken",
+                    i.apns_environment AS "apnsEnvironment"
+                FROM device_installations i
+                JOIN device_presence p
+                  ON i.installation_id = p.installation_id
+                WHERE i.is_active = TRUE
+                  AND i.apns_device_token <> ''
+                  AND p.h3_cell IS NOT NULL
+                  AND 'p.h3_cell = ANY(\(bind: cells)::bigint[])
+                  AND last_seen_at >= \(bind: freshnessCutoff)
+                """)
+                .all(decoding: NotificationCandidate.self)
+        } else {
+            return try await sql.raw("""
+                SELECT
+                    i.installation_id AS "id",
+                    i.apns_device_token AS "apnsToken",
+                    i.apns_environment AS "apnsEnvironment"
+                FROM device_installations i
+                JOIN device_presence p
+                  ON i.installation_id = p.installation_id
+                WHERE i.is_active = TRUE
+                  AND i.apns_device_token <> ''
+                  AND p.h3_cell IS NOT NULL
+                  AND 'p.h3_cell = ANY(\(bind: cells)::bigint[])
                 """)
                 .all(decoding: NotificationCandidate.self)
         }
