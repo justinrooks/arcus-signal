@@ -121,7 +121,6 @@ public struct NotificationSendJob: AsyncJob {
         }
     
         // Build an alert
-        let alertKind = EventKind.toNwsEventName(series.event)
         
         let title:String = switch payload.reason {
         case .new: series.headline ?? "New weather alert for your area"
@@ -132,7 +131,7 @@ public struct NotificationSendJob: AsyncJob {
         
         let alert: AlertDetails = .init(
             title: title,
-            subTitle: "\(alertKind.sentenceCased) issued",
+            subTitle: "\(series.event.sentenceCased) issued",
             body: series.title ?? "Unknown series"
         )
         
@@ -288,7 +287,7 @@ private extension NotificationSendJob {
                 WHERE i.is_active = TRUE
                   AND i.apns_device_token <> ''
                   AND p.h3_cell IS NOT NULL
-                  AND 'p.h3_cell = ANY(\(bind: cells)::bigint[])
+                  AND p.h3_cell = ANY(\(bind: cells)::bigint[])
                 """)
                 .all(decoding: NotificationCandidate.self)
         }

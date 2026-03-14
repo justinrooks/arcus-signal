@@ -8,22 +8,22 @@ public enum EventSource: String, Codable, Sendable {
     case spc
 }
 
-public enum EventKind: String, Codable, Sendable {
-    // NWS
-    case torWarning
-    case svrTstormWarning
-    case ffWarning
-    case torWatch
-    case svrTstormWatch
-    case winterStormWarning
-    case fireWarning
-    case fireWeatherWatch
-    case extremeFireDanger
-    case redFlagWarning
-
-    // SPC
-    case spcMesoscaleDiscussion
-}
+//public enum EventKind: String, Codable, Sendable {
+//    // NWS
+//    case torWarning
+//    case svrTstormWarning
+//    case ffWarning
+//    case torWatch
+//    case svrTstormWatch
+//    case winterStormWarning
+//    case fireWarning
+//    case fireWeatherWatch
+//    case extremeFireDanger
+//    case redFlagWarning
+//
+//    // SPC
+//    case spcMesoscaleDiscussion
+//}
 
 public enum EventState: String, Codable, Sendable {
     case active
@@ -87,7 +87,7 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     // Identity
     public let id: String      // urn:oid:...
     public let source: EventSource
-    public let kind: EventKind // event property in the message
+    public let kind: String // event property in the message
     public let sourceURL: String
     public let vtec: VTECDescriptor? // Maybe remove, we aren't going to persist. may be used for calculation
     public let messageType: NWSAlertMessageType
@@ -135,7 +135,7 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
     public init(
         urn: String,
         source: EventSource,
-        kind: EventKind,
+        kind: String,
         sourceURL: String,
         vtec: VTECDescriptor?,
         messageType: NWSAlertMessageType,
@@ -221,10 +221,6 @@ public extension NwsEventFeatureDTO {
         revision: Int = 1,
         rawRef: String? = nil
     ) -> ArcusEvent? {
-        guard let kind = EventKind.fromNwsEventName(properties.event) else {
-            return nil
-        }
-
         let messageID = Self.normalizeMessageID(properties.id) ?? Self.normalizeMessageID(id) ?? properties.id
         let endsAt = properties.ends
         let messageType = NWSAlertMessageType.fromNws(properties.messageType)
@@ -237,7 +233,7 @@ public extension NwsEventFeatureDTO {
         return .init(
             urn: messageID,
             source: .nws,
-            kind: kind,
+            kind: properties.event ?? "Unknown",
             sourceURL: id,
             vtec: vtecP ?? nil, // We are specifically only grabbing the first. Its a business decision, we can adjust later
             messageType: NWSAlertMessageType.fromNws(properties.messageType),
@@ -290,7 +286,7 @@ private extension ArcusEvent {
 extension ArcusEvent {
     func computeContentFingerprint() throws -> String {
         struct ArcusEventContentFingerprint: Codable, Sendable {
-            let kind: EventKind
+            let kind: String
             let messageType: NWSAlertMessageType
             let sent: Date?
             let effective: Date?

@@ -210,7 +210,7 @@ public extension ArcusSeriesModel {
     convenience init(from event: ArcusEvent, asOf: Date = .now) throws {
         self.init(
             source: event.source.rawValue,
-            event: event.kind.rawValue,
+            event: event.kind,
             sourceURL: event.sourceURL,
             currentRevisionUrn: event.id,
             currentRevisionSent: event.sent,
@@ -247,10 +247,6 @@ public extension ArcusSeriesModel {
             throw ArcusEventModelError.invalidEnum(field: "source", value: source)
         }
         
-        guard let kind = EventKind(rawValue: event) else {
-            throw ArcusEventModelError.invalidEnum(field: "kind", value: event)
-        }
-        
         guard let severity = EventSeverity(rawValue: severity) else {
             throw ArcusEventModelError.invalidEnum(field: "severity", value: severity)
         }
@@ -274,7 +270,7 @@ public extension ArcusSeriesModel {
         return .init(
             urn: currentRevisionUrn,
             source: source,
-            kind: kind,
+            kind: event,
             sourceURL: sourceURL,
             vtec: nil, // Just nil, since we don't persist
             messageType: messageType,
