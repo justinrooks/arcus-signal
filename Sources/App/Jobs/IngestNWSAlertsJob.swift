@@ -349,7 +349,7 @@ private extension IngestNWSAlertsJob {
         asOf: Date
     ) throws {
         series.source = event.source.rawValue
-        series.event = event.kind.rawValue
+        series.event = event.kind
         series.sourceURL = event.sourceURL
         series.currentRevisionUrn = event.id
         series.currentRevisionSent = event.sent

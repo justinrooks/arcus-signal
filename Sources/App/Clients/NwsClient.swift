@@ -21,8 +21,10 @@ protocol NwsClient: Sendable {
     func fetchActiveAlertsJsonData() async throws -> Data
 }
 
-//https://api.weather.gov/alerts/active?point=39%2C-104
-//https://api.weather.gov/alerts/active?status=actual&message_type=alert,update&point=39%2C-104
+// https://api.weather.gov/alerts/active?status=actual&region_type=land&severity=Extreme,Severe,Moderate
+// https://api.weather.gov/alerts?event=Nuclear%20Power%20Plant%20Warning,Lakeshore%20Flood%20Watch&limit=500
+// https://api.weather.gov/alerts/active?point=39%2C-104
+// https://api.weather.gov/alerts/active?status=actual&message_type=alert,update&point=39%2C-104
 //https://api.weather.gov/alerts/active?status=actual&event=tornado%20warning,severe%20thunderstorm%20warning,flash%20flood%20warning,tornado%20watch,severe%20thunderstorm%20watch,winter%20storm%20warning,extreme%20fire%20danger,fire%20warning,fire%20weather%20watch,red%20flag%20warning&region_type=land
 
 struct NwsHttpClient: NwsClient {
@@ -36,12 +38,12 @@ struct NwsHttpClient: NwsClient {
     
     func fetchActiveAlertsJsonData() async throws -> Data {
         logger.info("NWS request started")
+        let supportedEvents: URLQueryItem = getSupportedEventsQueryParameter()
         let url = try makeNwsUrl(
             path: "/alerts/active",
-            queryItems: [URLQueryItem(name: "status", value: "actual"), URLQueryItem(name: "region_type", value: "land")]
+            queryItems: [supportedEvents, URLQueryItem(name: "status", value: "actual"), URLQueryItem(name: "region_type", value: "land")]
         )
-//        https://api.weather.gov/alerts/active?status=actual&region_type=land&severity=Extreme,Severe,Moderate
-        
+
         return try await fetch(from: url)
     }
 
@@ -130,5 +132,123 @@ struct NwsHttpClient: NwsClient {
         
         guard let url = components.url else { throw NwsError.invalidUrl }
         return url
+    }
+    
+    private func getSupportedEventsQueryParameter() -> URLQueryItem {
+        let supportedEvents: [String] = [
+            //"911 Telephone Outage",
+            //"Administrative Message",
+            //"Air Quality Alert",
+            //"Air Stagnation Advisory",
+            //"Ashfall Advisory",
+            //"Ashfall Warning",
+            //"Avalanche Advisory",
+            //"Avalanche Warning",
+            //"Avalanche Watch",
+            //"Beach Hazards Statement",
+            "Blizzard Warning",
+            //"Blowing Dust Advisory",
+            //"Blowing Dust Warning",
+            //"Blue Alert",
+            //"Brisk Wind Advisory",
+            //"Child Abduction Emergency",
+            //"Civil Danger Warning",
+            //"Civil Emergency Message",
+            //"Coastal Flood Advisory",
+            //"Coastal Flood Statement",
+            //"Coastal Flood Warning",
+            //"Coastal Flood Watch",
+            //"Cold Weather Advisory",
+            //"Dense Fog Advisory",
+            //"Dense Smoke Advisory",
+            //"Dust Advisory",
+            //"Dust Storm Warning",
+            "Earthquake Warning",
+            "Evacuation Immediate",
+            //"Extreme Heat Warning",
+            //"Extreme Heat Watch",
+            //"Extreme Cold Warning",
+            //"Extreme Cold Watch",
+            "Extreme Fire Danger",
+            "Extreme Wind Warning",
+            "Fire Warning",
+            "Fire Weather Watch",
+            "Flash Flood Statement",
+            "Flash Flood Warning",
+            "Flash Flood Watch",
+            //"Flood Advisory",
+            //"Flood Statement",
+            //"Flood Warning",
+            //"Flood Watch",
+            //"Freeze Warning",
+            //"Freeze Watch",
+            //"Freezing Fog Advisory",
+            //"Freezing Spray Advisory",
+            //"Frost Advisory",
+            //"Gale Warning",
+            //"Gale Watch",
+            //"Hazardous Materials Warning",
+            //"Hazardous Seas Warning",
+            //"Hazardous Seas Watch",
+            //"Hazardous Weather Outlook",
+            //"Heat Advisory",
+            //"Heavy Freezing Spray Warning",
+            //"Heavy Freezing Spray Watch",
+            //"High Surf Advisory",
+            //"High Surf Warning",
+            "High Wind Warning",
+            "High Wind Watch",
+            //"Hurricane Force Wind Warning",
+            //"Hurricane Force Wind Watch",
+            //"Hurricane Warning",
+            //"Hurricane Watch",
+            //"Hydrologic Outlook",
+            //"Ice Storm Warning",
+            //"Lake Effect Snow Warning",
+            //"Lake Wind Advisory",
+            //"Lakeshore Flood Advisory",
+            //"Lakeshore Flood Statement",
+            //"Lakeshore Flood Warning",
+            //"Lakeshore Flood Watch",
+            //"Law Enforcement Warning",
+            //"Local Area Emergency",
+            //"Low Water Advisory",
+            //"Marine Weather Statement",
+            "Nuclear Power Plant Warning",
+            //"Radiological Hazard Warning",
+            //"Red Flag Warning",
+            //"Rip Current Statement",
+            "Severe Thunderstorm Warning",
+            "Severe Thunderstorm Watch",
+            "Severe Weather Statement",
+            //"Shelter In Place Warning",
+            //"Short Term Forecast",
+            //"Small Craft Advisory",
+            "Snow Squall Warning",
+            //"Special Marine Warning",
+            //"Special Weather Statement",
+            //"Storm Surge Warning",
+            //"Storm Surge Watch",
+            //"Storm Warning",
+            //"Storm Watch",
+            //"Test",
+            "Tornado Warning",
+            "Tornado Watch",
+            //"Tropical Cyclone Local Statement",
+            //"Tropical Storm Warning",
+            //"Tropical Storm Watch",
+            //"Tsunami Advisory",
+            //"Tsunami Warning",
+            //"Tsunami Watch",
+            //"Typhoon Warning",
+            //"Typhoon Watch",
+            "Volcano Warning",
+//            "Wind Advisory",
+            "Winter Storm Warning",
+            "Winter Storm Watch",
+            "Winter Weather Advisory"
+        ]
+        
+        return .init(name: "event", value: supportedEvents.joined(separator: ","))
     }
 }
