@@ -93,7 +93,9 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
         county: String?,
         zone: String?,
         fireZone: String?,
-        source: LocationSource
+        source: LocationSource,
+        countyLabel: String?,
+        fireZoneLabel: String?
     ) {
         self.id = installationId
         self.capturedAt = capturedAt
@@ -107,6 +109,8 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
         self.zone = zone
         self.fireZone = fireZone
         self.sourceRaw = source.rawValue
+        self.countyLabel = countyLabel
+        self.fireZoneLabel = fireZoneLabel
     }
 
     // MARK: Typed accessors (optional convenience)

@@ -302,6 +302,12 @@ private func upsertDevicePresence(
         if let fireZone = normalizedOptional(payload.fireZone) {
             existing.fireZone = fireZone
         }
+        if let countyLabel = payload.countyLabel {
+            existing.countyLabel = countyLabel
+        }
+        if let fireZoneLabel = payload.fireZoneLabel {
+            existing.fireZoneLabel = fireZoneLabel
+        }
 
         try await existing.update(on: database)
         return .updated
@@ -319,7 +325,9 @@ private func upsertDevicePresence(
         county: normalizedOptional(payload.county),
         zone: normalizedOptional(payload.zone),
         fireZone: normalizedOptional(payload.fireZone),
-        source: locationSource
+        source: locationSource,
+        countyLabel: payload.countyLabel,
+        fireZoneLabel: payload.fireZoneLabel
     )
 
     do {
@@ -356,6 +364,12 @@ private func upsertDevicePresence(
         }
         if let fireZone = normalizedOptional(payload.fireZone) {
             existing.fireZone = fireZone
+        }
+        if let countyLabel = payload.countyLabel {
+            existing.countyLabel = countyLabel
+        }
+        if let fireZoneLabel = payload.fireZoneLabel {
+            existing.fireZoneLabel = fireZoneLabel
         }
 
         try await existing.update(on: database)
