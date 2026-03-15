@@ -133,6 +133,9 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
     @OptionalChild(for: \.$series)
     var geolocation: ArcusGeolocationModel?
     
+    @Children(for: \.$series)
+    var revisions: [ArcusEventRevisionModel]
+    
     
     // MARK: Inits
     public init() {}

@@ -346,6 +346,26 @@ War story: this was a train-switch bug. We changed the track gauge (text -> UUID
 
 War story: this was shipping-label roulette. The package (token) was right, but we were choosing the destination hub from the warehouse sign instead of the label on the box. Works in single-hub tests, breaks in mixed traffic.
 
+### Milestone: deterministic notification engine now speaks in one voice
+
+- Rebuilt `NotificationEngine` as a pure formatter with no extra lookups, no hidden state, and no new inputs.
+- The engine now derives three things in a predictable order:
+  - event display name
+  - location subtitle (`your location`, county label, fire-zone label, or `your area`)
+  - body copy based on alert kind + severity tone + notification reason
+- Added stable wording paths for:
+  - `new`
+  - `update`
+  - `endedAllClear`
+  - `cancelInError`
+- Kept the design intentionally conservative:
+  - H3 notifications say `At your location`
+  - UGC notifications prefer the best existing human label already on the candidate
+  - updates are generic-but-clear because we do **not** yet have change flags or proximity detail in this path
+- Added focused formatter tests for tornado, watch, fire-zone, cancellation, and generic-fallback cases.
+
+War story: notification copy is like cockpit instrumentation. If every dial uses a different language, the pilot wastes precious seconds translating instead of reacting. The fix was not "be more clever." The fix was "be boringly consistent, every single time."
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

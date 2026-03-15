@@ -30,6 +30,9 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable {
     @Field(key: "reason")
     public var reason: String
     
+    @OptionalField(key: "status")
+    public var status: String?
+    
     // Bookkeeping
     @Timestamp(key: "created", on: .create)
     public var created: Date?
@@ -42,7 +45,8 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable {
         series: UUID,
         revisionUrn: String,
         mode: String,
-        reason: String
+        reason: String,
+        status: String?
     ) {
         self.id = id
         self.$deviceInstallation.id = installationId
@@ -50,5 +54,6 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable {
         self.revisionUrn = revisionUrn
         self.mode = mode
         self.reason = reason
+        self.status = status
     }
 }

@@ -1,6 +1,22 @@
 import Fluent
 import SQLKit
 
+struct AddCountyLabelFieldsToDevicePresence: AsyncMigration {
+    func prepare(on db: any Database) async throws {
+        try await db.schema(DevicePresenceModel.schema)
+            .field("county_label", .string)
+            .field("fire_zone_label", .string)
+            .update()
+    }
+
+    func revert(on db: any Database) async throws {
+        try await db.schema(DevicePresenceModel.schema)
+            .deleteField("county_label")
+            .deleteField("fire_zone_label")
+            .update()
+    }
+}
+
 struct CreateDevicePresence: AsyncMigration {
     func prepare(on database: any Database) async throws {
         try await database.schema(DevicePresenceModel.schema)

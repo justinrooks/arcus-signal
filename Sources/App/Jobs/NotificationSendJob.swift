@@ -15,6 +15,10 @@ struct NotificationCandidate: Decodable {
     let id: UUID
     let apnsToken: String
     let apnsEnvironment: String
+    let countyLabel: String?
+    let fireZoneLabel: String?
+//    let matchReason: String
+//    let locality: String?
 }
 
 struct LedgerClaimResult {
@@ -56,6 +60,7 @@ public struct NotificationSendJobPayload: Codable, Sendable {
 public struct NotificationSendJob: AsyncJob {
     public typealias Payload = NotificationSendJobPayload
     private let sender: APNsClient = APNsClient()
+    private let engine: NotificationEngine = NotificationEngine()
     
     public init () {}
     
@@ -70,9 +75,10 @@ public struct NotificationSendJob: AsyncJob {
             ]
         )
         
-        // Grab the associated series
+        // Grab the associated series, revisions, & geometry
         let series = try await ArcusSeriesModel.query(on: context.application.db)
             .with(\.$geolocation)
+            .with(\.$revisions)
             .group(.and) { group in
                 group.filter(\.$id == payload.seriesId)
 //                    .filter(\.$ends < .now)
@@ -93,102 +99,50 @@ public struct NotificationSendJob: AsyncJob {
             return
         }
         
-        let ugcCandidates = try await loadUGCCandidates(
-            ugcCodes: series.ugcCodes,
-            freshnessCutoff: nil,
-            on: context.application.db
-        )
-        
-        let h3Candidates = try await loadH3Candidates(
-            cells: series.geolocation?.h3Cells ?? [],
-            freshnessCutoff: nil,
-            on: context.application.db
-        )
-        
-        let candidates = ugcCandidates + h3Candidates
-        
-        guard candidates.count > 0 else {
-            context.logger.info(
-                "No matching candidates. No notification sent",
-                metadata: [
-                    "seriesId": .string(payload.seriesId.uuidString),
-                    "revisionUrn": .string(payload.revisionUrn),
-                    "mode": .string("\(String.init(reflecting: payload.mode))"),
-                    "reason": .string("\(String.init(reflecting: payload.reason))")
-                ]
-            )
-            return
-        }
-    
-        // Build an alert
-        
-        let title:String = switch payload.reason {
-        case .new: series.headline ?? "New weather alert for your area"
-        case .update: "Updated weather alert for your area"
-        case .cancelInError: "Weather alert for your area has been cancelled"
-        case .endedAllClear: "Weather alert as ended for your area"
-        }
-        
-        let alert: AlertDetails = .init(
-            title: title,
-            subTitle: "\(series.event.sentenceCased) issued",
-            body: series.title ?? "Unknown series"
-        )
-        
-        for candidate in candidates {
-            let claim = try await claimNotificationLedger(
-                installationID: candidate.id,
-                seriesID: payload.seriesId,
-                revisionUrn: payload.revisionUrn,
-                mode: payload.mode,
-                reason: payload.reason,
+        // if mode is h3 and we have cells
+        // right now we aren't falling back to zones... but maybe we should?
+        if payload.mode == .h3 {
+            guard let geo = series.geolocation, geo.h3Cells.count > 0 else {
+                context.logger.warning(
+                    "Missing or incomplete geospacial detail for series. No notification sent",
+                    metadata: [
+                        "seriesId": .string(payload.seriesId.uuidString)
+                    ]
+                )
+                return
+            }
+            
+            // Get our list of candidates
+            let h3Candidates = try await loadH3Candidates(
+                cells: geo.h3Cells,
+                freshnessCutoff: nil,
                 on: context.application.db
             )
             
-            guard claim.inserted else {
-                continue
-            }
-            
-            // Build your notification payload here.
-            
-            do {
-                // Replace this with your actual APNs send call.
-                context.logger.info(
-                    "Sending APNs",
-                    metadata: [
-                        "installationId": .string(candidate.id.uuidString),
-                        "seriesId": .string(payload.seriesId.uuidString),
-                        "revisionUrn": .string(payload.revisionUrn)
-                    ]
-                )
-                
-                // Use per-installation APNs environment so sandbox/prod tokens route correctly.
-                let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
-                try await sender.sendNotification(
-                    app: context.application,
-                    with: alert,
-                    to: candidate.apnsToken,
-                    environment: apnsEnvironment
-                )
-                
-            } catch {
-                context.logger.error(
-                    "APNs send failed",
-                    metadata: [
-                        "installationId": .string(candidate.id.uuidString),
-                        "seriesId": .string(payload.seriesId.uuidString),
-                        "revisionUrn": .string(payload.revisionUrn),
-                        "error": .string(String(describing: error))
-                    ]
-                )
-                
-                // v1: log and move on
-                // later: update ledger status / classify retryable vs permanent
-            }
+            try await dispatchNotifications(
+                to: h3Candidates,
+                with: payload,
+                and: series,
+                using: context
+            )
+        } else {
+            // we only have 2 modes right now, so its ugc
+            let ugcCandidates = try await loadUGCCandidates(
+                ugcCodes: series.ugcCodes,
+                freshnessCutoff: nil,
+                on: context.application.db
+            )
+
+            try await dispatchNotifications(
+                to: ugcCandidates,
+                with: payload,
+                and: series,
+                using: context
+            )
         }
 
         context.logger.info(
-            "Notifications sent",
+            "Notification processing complete",
             metadata: [
                 "seriesId": .string(payload.seriesId.uuidString),
                 "revisionUrn": .string(payload.revisionUrn),
@@ -203,6 +157,7 @@ public struct NotificationSendJob: AsyncJob {
             "NotificationSendJob failed.",
             metadata: ["error": .string(String(describing: error))]
         )
+        // TODO: handle this and throw it back in the pile for reprocessing
     }
 }
 
@@ -220,13 +175,21 @@ private extension NotificationSendJob {
         if let freshnessCutoff {
             return try await sql.raw("""
                 SELECT
-                    installation_id AS "id",
-                    apns_device_token AS "apnsToken",
-                    apns_environment AS "apnsEnvironment"
-                FROM device_installations
-                WHERE is_active = TRUE
-                  AND apns_device_token <> ''
-                  AND last_seen_at >= \(bind: freshnessCutoff)
+                    i.installation_id AS "id",
+                    i.apns_device_token AS "apnsToken",
+                    i.apns_environment AS "apnsEnvironment",
+                    i.county_label as countyLabel,
+                    i.fire_zone_label as fireZoneLabel
+                FROM device_installations i
+                JOIN device_presence p on i.installation_id = p.installation_id
+                WHERE i.is_active = TRUE
+                  AND i.apns_device_token <> ''
+                  AND i.last_seen_at >= \(bind: freshnessCutoff)
+                  AND (
+                      p.county  = ANY(\(bind: ugcCodes)::text[])
+                    OR p.zone  = ANY(\(bind: ugcCodes)::text[])
+                    OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
+                  )
                 """)
                 .all(decoding: NotificationCandidate.self)
         } else {
@@ -234,7 +197,9 @@ private extension NotificationSendJob {
                 SELECT
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment"
+                    i.apns_environment AS "apnsEnvironment",
+                    i.county_label as countyLabel,
+                    i.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p on i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
@@ -264,15 +229,17 @@ private extension NotificationSendJob {
                 SELECT
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment"
+                    i.apns_environment AS "apnsEnvironment",
+                    i.county_label as countyLabel,
+                    i.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p
                   ON i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
                   AND i.apns_device_token <> ''
                   AND p.h3_cell IS NOT NULL
-                  AND 'p.h3_cell = ANY(\(bind: cells)::bigint[])
-                  AND last_seen_at >= \(bind: freshnessCutoff)
+                  AND p.h3_cell = ANY(\(bind: cells)::bigint[])
+                  AND i.last_seen_at >= \(bind: freshnessCutoff)
                 """)
                 .all(decoding: NotificationCandidate.self)
         } else {
@@ -280,7 +247,9 @@ private extension NotificationSendJob {
                 SELECT
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment"
+                    i.apns_environment AS "apnsEnvironment",
+                    i.county_label as countyLabel,
+                    i.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p
                   ON i.installation_id = p.installation_id
@@ -309,7 +278,7 @@ private extension NotificationSendJob {
 
         let row = try await sql.raw("""
             INSERT INTO notification_ledger
-                (id, installation_id, series_id, revision_urn, mode, reason, created)
+                (id, installation_id, series_id, revision_urn, mode, reason, created, status)
             VALUES
                 (\(bind: newID),
                  \(bind: installationID),
@@ -317,7 +286,8 @@ private extension NotificationSendJob {
                  \(bind: revisionUrn),
                  \(bind: mode),
                  \(bind: reason),
-                 NOW())
+                 NOW(),
+                'claimed')
             ON CONFLICT (installation_id, series_id, revision_urn)
             DO NOTHING
             RETURNING id
@@ -329,6 +299,82 @@ private extension NotificationSendJob {
             return LedgerClaimResult(inserted: true, id: returnedID)
         } else {
             return LedgerClaimResult(inserted: false, id: nil)
+        }
+    }
+    
+    func dispatchNotifications(
+        to candidates: [NotificationCandidate],
+        with payload: NotificationSendJobPayload,
+        and series: ArcusSeriesModel,
+        using context: QueueContext
+    ) async throws {
+        guard candidates.count > 0 else {
+            context.logger.info(
+                "No matching candidates. No notification sent",
+                metadata: [
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn),
+                    "mode": .string("\(String.init(reflecting: payload.mode))"),
+                    "reason": .string("\(String.init(reflecting: payload.reason))")
+                ]
+            )
+            return
+        }
+        
+        for candidate in candidates {
+            let claim = try await claimNotificationLedger(
+                installationID: candidate.id,
+                seriesID: payload.seriesId,
+                revisionUrn: payload.revisionUrn,
+                mode: payload.mode,
+                reason: payload.reason,
+                on: context.application.db
+            )
+            
+            guard claim.inserted else {
+                continue
+            }
+            
+            // Build your notification payload here.
+            let alert = engine.buildNotification(for: series, with: payload, on: candidate)
+            do {
+                // Use per-installation APNs environment so sandbox/prod tokens route correctly.
+                let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
+                try await sender.sendNotification(
+                    app: context.application,
+                    with: alert,
+                    to: candidate.apnsToken,
+                    environment: apnsEnvironment
+                )
+
+                context.logger.info(
+                    "Notification sent to device",
+                    metadata: [
+                        "installationId": .string(candidate.id.uuidString),
+                        "seriesId": .string(payload.seriesId.uuidString),
+                        "revisionUrn": .string(payload.revisionUrn)
+                    ]
+                )
+                
+                
+            } catch {
+                context.logger.error(
+                    "APNs send failed",
+                    metadata: [
+                        "installationId": .string(candidate.id.uuidString),
+                        "seriesId": .string(payload.seriesId.uuidString),
+                        "revisionUrn": .string(payload.revisionUrn),
+                        "error": .string(String(describing: error))
+                    ]
+                )
+                guard let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) else {
+                    throw Abort(.notFound)
+                }
+                // TODO: figure out retries
+                // At least we aren't dropping them now
+                existingClaim.status = "failed"
+                try await existingClaim.save(on: context.application.db)
+            }
         }
     }
 }
