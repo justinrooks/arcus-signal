@@ -347,6 +347,11 @@ private extension NotificationSendJob {
                     environment: apnsEnvironment
                 )
 
+                if let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) {
+                    existingClaim.status = "sent"
+                    try await existingClaim.save(on: context.application.db)
+                }
+                
                 context.logger.info(
                     "Notification sent to device",
                     metadata: [

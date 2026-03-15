@@ -57,3 +57,38 @@ struct CreateDeviceInstallations: AsyncMigration {
         try await database.schema(DeviceInstallationModel.schema).delete()
     }
 }
+
+struct AddIsSubscribedToDeviceInstallation: AsyncMigration {
+    func prepare(on db: any Database) async throws {
+        try await db.schema(DeviceInstallationModel.schema)
+            .field("is_subscribed", .bool)
+            .update()
+    }
+
+    func revert(on db: any Database) async throws {
+        try await db.schema(DeviceInstallationModel.schema)
+            .deleteField("is_subscribed")
+            .update()
+    }
+}
+
+struct FixIsSubscribedToDeviceInstallation: AsyncMigration {
+    func prepare(on db: any Database) async throws {
+        guard let sql = db as? any SQLDatabase else { return }
+        
+        try await sql.raw("""
+            UPDATE device_installations
+            SET is_subscribed = true
+            WHERE is_subscribed IS NULL;
+        """).run()
+        
+        try await sql.raw("""
+            ALTER TABLE device_installations
+            ALTER COLUMN is_subscribed SET DEFAULT true;
+        """).run()
+    }
+
+    func revert(on db: any Database) async throws {
+        // intentional no-op
+    }
+}
