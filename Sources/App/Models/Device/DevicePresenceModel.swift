@@ -62,6 +62,12 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
     @Field(key: "fire_zone")
     public var fireZone: String?
 
+    @OptionalField(key: "county_label")
+    public var countyLabel: String?
+    
+    @OptionalField(key: "fire_zone_label")
+    public var fireZoneLabel: String?
+    
     // Capture context
     @Field(key: "source")
     public var sourceRaw: String

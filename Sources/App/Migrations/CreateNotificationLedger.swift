@@ -46,3 +46,15 @@ struct AddCreatedToNotificationLedger: AsyncMigration {
         try await db.schema(NotificationLedgerModel.schema).deleteField("created").update()
     }
 }
+
+struct AddStatusToNotificationLedger: AsyncMigration {
+    func prepare(on db: any Database) async throws {
+        try await db.schema(NotificationLedgerModel.schema)
+            .field("status", .string)     // consider enum later
+            .update()
+    }
+
+    func revert(on db: any Database) async throws {
+        try await db.schema(NotificationLedgerModel.schema).deleteField("status").update()
+    }
+}
