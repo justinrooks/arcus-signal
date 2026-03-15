@@ -178,8 +178,8 @@ private extension NotificationSendJob {
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
                     i.apns_environment AS "apnsEnvironment",
-                    i.county_label as countyLabel,
-                    i.fire_zone_label as fireZoneLabel
+                    p.county_label as countyLabel,
+                    p.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p on i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
@@ -198,8 +198,8 @@ private extension NotificationSendJob {
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
                     i.apns_environment AS "apnsEnvironment",
-                    i.county_label as countyLabel,
-                    i.fire_zone_label as fireZoneLabel
+                    p.county_label as countyLabel,
+                    p.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p on i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
@@ -230,8 +230,8 @@ private extension NotificationSendJob {
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
                     i.apns_environment AS "apnsEnvironment",
-                    i.county_label as countyLabel,
-                    i.fire_zone_label as fireZoneLabel
+                    p.county_label as countyLabel,
+                    p.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p
                   ON i.installation_id = p.installation_id
@@ -248,8 +248,8 @@ private extension NotificationSendJob {
                     i.installation_id AS "id",
                     i.apns_device_token AS "apnsToken",
                     i.apns_environment AS "apnsEnvironment",
-                    i.county_label as countyLabel,
-                    i.fire_zone_label as fireZoneLabel
+                    p.county_label as countyLabel,
+                    p.fire_zone_label as fireZoneLabel
                 FROM device_installations i
                 JOIN device_presence p
                   ON i.installation_id = p.installation_id
