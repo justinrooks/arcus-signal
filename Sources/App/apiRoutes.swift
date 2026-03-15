@@ -104,6 +104,7 @@ func configureAPIRoutes(_ app: Application) throws {
                     buildNumber: payload.buildNumber,
                     locationAuth: locationAuth,
                     lastSeenAt: receivedAt,
+                    isSubscribed: payload.isSubscribed ?? true,
                     on: database
                 )
 
@@ -215,6 +216,7 @@ private func upsertDeviceInstallation(
     buildNumber: String,
     locationAuth: LocationAuth,
     lastSeenAt: Date,
+    isSubscribed: Bool,
     on database: any Database
 ) async throws -> DeviceInstallationModel {
     if let existing = try await DeviceInstallationModel.find(installationId, on: database) {
@@ -226,6 +228,7 @@ private func upsertDeviceInstallation(
         existing.buildNumber = buildNumber
         existing.locationAuth = locationAuth
         existing.isActive = true
+        existing.isSubscribed = isSubscribed
         existing.lastSeenAt = lastSeenAt
         try await existing.update(on: database)
         return existing
@@ -241,7 +244,8 @@ private func upsertDeviceInstallation(
         buildNumber: buildNumber,
         locationAuth: locationAuth,
         isActive: true,
-        lastSeenAt: lastSeenAt
+        lastSeenAt: lastSeenAt,
+        isSubscribed: isSubscribed
     )
 
     do {
@@ -262,6 +266,7 @@ private func upsertDeviceInstallation(
         existing.locationAuth = locationAuth
         existing.isActive = true
         existing.lastSeenAt = lastSeenAt
+        existing.isSubscribed = isSubscribed
         try await existing.update(on: database)
         return existing
     }

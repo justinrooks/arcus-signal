@@ -66,6 +66,8 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(RemoveArcusSeriesSenderNameField())
     app.migrations.add(AddCountyLabelFieldsToDevicePresence())
     app.migrations.add(AddStatusToNotificationLedger())
+    app.migrations.add(AddIsSubscribedToDeviceInstallation())
+    app.migrations.add(FixIsSubscribedToDeviceInstallation())
 }
 
 private func configureAPNs(on app: Application) async throws {

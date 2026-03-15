@@ -43,6 +43,9 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
     // Bookkeeping / lifecycle
     @Field(key: "is_active")
     public var isActive: Bool
+    
+    @Field(key: "is_subscribed")
+    public var isSubscribed: Bool
 
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
@@ -65,7 +68,8 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
         buildNumber: String,
         locationAuth: LocationAuth,
         isActive: Bool = true,
-        lastSeenAt: Date = .now
+        lastSeenAt: Date = .now,
+        isSubscribed: Bool = true
     ) {
         self.id = installationId
         self.apnsDeviceToken = apnsDeviceToken
@@ -77,6 +81,7 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
         self.locationAuthRaw = locationAuth.rawValue
         self.isActive = isActive
         self.lastSeenAt = lastSeenAt
+        self.isSubscribed = isSubscribed
     }
 
     // MARK: Typed accessors (optional convenience)

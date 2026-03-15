@@ -29,4 +29,5 @@ struct LocationSnapshotPushPayload: Content, Sendable {
     let apnsEnvironment: String
     let countyLabel: String?
     let fireZoneLabel: String?
+    let isSubscribed: Bool?
 }
