@@ -29,6 +29,8 @@ Treat these as the source of truth for:
 - Prefer idempotent jobs and DB-enforced uniqueness.
 - Never send APNs directly from targeting; write to outbox.
 - Do not introduce server-side lat/lon storage unless explicitly requested.
+- Keep solutions, code, and suggestions as simple as possible. We are iterating and building
+- Don't over engineer, over architect, or over design solutions or suggestions.
 
 ## Key Architecture Decisions
 

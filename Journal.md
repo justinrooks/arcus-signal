@@ -366,6 +366,26 @@ War story: this was shipping-label roulette. The package (token) was right, but 
 
 War story: notification copy is like cockpit instrumentation. If every dial uses a different language, the pilot wastes precious seconds translating instead of reacting. The fix was not "be more clever." The fix was "be boringly consistent, every single time."
 
+### Gotcha: raw SQL -> Fluent model decoding wants database field keys, not Swift property names
+
+- Added a reusable `ArcusSeriesModel.sqlSelectColumns(...)` helper for joined/raw SQL paths.
+- Key lesson: when decoding a Fluent `Model` from `sql.raw(...)`, the row must expose database column names like `source_url`, `current_revision_urn`, and `ugc_codes`.
+- Translation: this is not normal `Codable` land. Fluent is reading the luggage tags on the database columns, not the nicer names on the Swift suitcases.
+- Follow-on lesson: `ArcusEvent` is the opposite case. Its raw SQL projection aliases into Swift DTO keys like `sourceURL`, `lastSeenActive`, and `ugcCodes`, and it synthesizes non-persisted fields like `references` so plain `Codable` decoding has a complete payload.
+
+### Bug squash: alerts lookup route stopped fighting both Vapor and SQL
+
+- Replaced the half-built `alerts.get` query-builder experiment with a dedicated lookup path that does what the route actually wants: fetch active alerts matching any provided UGC code or H3 cell.
+- Switched from unsafe string interpolation to bound SQL parameters, which means the endpoint now stops treating query strings like trusted house guests.
+- Used `LEFT JOIN` for geolocation so UGC-only alerts still show up even when there is no geometry row.
+- Joined the current revision row as well, so the API DTO can return real `references` instead of an empty stand-in.
+
+### Architecture cleanup: one stable hashing primitive instead of several cousins
+
+- Extracted the sorted-keys SHA256 logic into a shared `StableContentHasher`.
+- Wired `ArcusEvent` content fingerprinting and target-job geometry hashing through the same helper so cache and change-detection rules stop drifting apart.
+- Used that same primitive to build the alerts collection ETag from `(id, currentRevisionUrn, contentFingerprint)`, which keeps the device refresh path cheap without stuffing cache-only fields into the device payload.
+
 ### Aha moments
 
 - Splitting runtime roles early prevents “just this once” logic leaks where APIs start doing worker jobs.

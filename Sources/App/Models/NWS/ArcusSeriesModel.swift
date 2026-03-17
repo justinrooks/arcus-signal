@@ -8,13 +8,12 @@
 import Fluent
 import Foundation
 import Crypto
+import SQLKit
 
 public enum ArcusEventModelError: Error, Sendable {
     case invalidEnum(field: String, value: String)
     case invalidGeometryJSON
 }
-
-//area desc, status, category, event, senderName, headline, description, instructions, response
 
 public final class ArcusSeriesModel: Model, @unchecked Sendable {
     public static let schema = "arcus_series"
@@ -210,6 +209,16 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
 
 // MARK: Extensions
 public extension ArcusSeriesModel {
+    /// Raw SQL decoding for Fluent models uses database field keys, so joined queries should alias
+    /// selected columns back to the underlying column names (`id`, `source_url`, `ugc_codes`, etc.).
+    static func sqlSelectColumns(qualifiedBy tableAlias: String = "s") -> SQLQueryString {
+        Self.keys
+            .map { key in
+                "\(ident: tableAlias).\(ident: key.description) AS \(ident: key.description)"
+            }
+            .joined(separator: ",\n")
+    }
+
     convenience init(from event: ArcusEvent, asOf: Date = .now) throws {
         self.init(
             source: event.source.rawValue,
@@ -242,6 +251,38 @@ public extension ArcusSeriesModel {
             instructions: event.instructions,
             response: event.response,
             status: event.status
+        )
+    }
+    
+    func asDeviceAlertPayload() throws -> DeviceAlertPayload {
+        guard let cleanId = id else { throw DeviceAlertPayloadError.missingRequired(field: "id") }
+        guard let cleanCreate = created else { throw DeviceAlertPayloadError.missingRequired(field: "created") }
+        guard let cleanUpdate = updated else { throw DeviceAlertPayloadError.missingRequired(field: "updated") }
+        
+        return .init(
+            id: cleanId,
+            event: event,
+            currentRevisionUrn: currentRevisionUrn,
+            currentRevisionSent: currentRevisionSent,
+            messageType: messageType,
+            state: state,
+            created: cleanCreate,
+            updated: cleanUpdate,
+            lastSeenActive: lastSeenActive,
+            sent: sent,
+            effective: effective,
+            onset: onset,
+            expires: expires,
+            ends: ends,
+            severity: severity,
+            urgency: urgency,
+            certainty: certainty,
+            areaDesc: areaDesc,
+            senderName: senderName,
+            headline: headline,
+            description: description,
+            instructions: instructions,
+            response: response
         )
     }
     
