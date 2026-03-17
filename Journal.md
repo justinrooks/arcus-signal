@@ -218,6 +218,27 @@ War story: this is the "fingerprint scanner" moment. Instead of asking a dozen q
 
 War story: this is the "conveyor belt labels" bug class. Jobs were moving, but all on the same unlabeled belt (`default`). It works until throughput grows, then debugging turns into "which worker consumed what?" chaos. Naming lanes early is cheap and saves incident time later.
 
+### Architecture decision: cleanup needs a referee before it gets a broom
+
+- We traced the live event model end to end:
+  - `arcus_series` is the mutable head record
+  - `alert_revisions` is immutable history
+  - `arcus_geolocation` is the current derived map overlay
+  - `target_dispatch_outbox` and `notification_outbox` are queue handoff tables
+  - `notification_ledger` is the exactly-once bouncer
+- The big gotcha: `last_seen_active` is currently more like "last time we wrote a newer snapshot" than "last time this alert was still in the active feed."
+- Translation: an unchanged but still-live alert can look stale if we try to clean up by that timestamp alone. That is the kind of bug that quietly turns your janitor into an assassin.
+- The new plan is to split the problem in two:
+  - lifecycle reconciliation: decide whether a series is truly terminal, why, and when
+  - pruning: delete only rows whose terminal state is already explicit and old enough
+- We also captured a deterministic terminal-reason ladder:
+  - explicit cancel in error
+  - explicit issuer cancellation / VTEC cancellation
+  - wall-clock expiry via `ends` or `expires`
+  - missing from the active feed past a short grace window
+
+War story: cleanup work always looks like "just add a cron job" right before it becomes a detective novel. The trick is to promote lifecycle decisions into first-class data before the delete statements show up with a shovel.
+
 ### Milestone: persisted expiration flag for lifecycle filtering
 
 - Added `is_expired` to persisted Arcus events so queries can quickly filter active vs expired alerts without recomputing at read time.
