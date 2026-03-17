@@ -1,4 +1,5 @@
 import Fluent
+import FluentSQL
 import Queues
 import Vapor
 
@@ -11,6 +12,31 @@ func configureAPIRoutes(_ app: Application) throws {
             "ok"
         }
         // TODO: DB endpoint health?
+    }
+    
+    app.group("api", "v1", "alerts") { alerts in
+        alerts.get() { req async throws -> Response in
+            let query = try req.query.decode(AlertLookupQuery.self)
+            let series = try await loadAlertSeries(matching: query, on: req.db)
+            let etag = try computeAlertsETag(for: series)
+
+            if etagMatches(req.headers.first(name: .ifNoneMatch), currentETag: etag) {
+                let response = Response(status: .notModified)
+                response.headers.replaceOrAdd(name: .eTag, value: etag)
+                response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=0, must-revalidate")
+                return response
+            }
+
+            let payload = try series.map { try $0.asDeviceAlertPayload() }
+
+            let response = Response(status: .ok)
+            response.headers.replaceOrAdd(name: .eTag, value: etag)
+            response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=0, must-revalidate")
+            try response.content.encode(payload)
+
+            return response
+
+        }
     }
     
     // MARK: V1 Device APIs
@@ -200,10 +226,99 @@ func configureAPIRoutes(_ app: Application) throws {
     }
 }
 
+private struct AlertLookupQuery: Content {
+    let ugc: String?
+    let fire: String?
+    let h3: Int64?
+}
+
 private enum DevicePresenceUpsertOutcome: String {
     case inserted
     case updated
     case staleIgnored
+}
+
+private struct AlertETagInput: Codable, Sendable {
+    let id: UUID
+    let currentRevisionUrn: String
+    let contentFingerprint: String
+}
+
+private func computeAlertsETag(for series: [ArcusSeriesModel]) throws -> String {
+    let etagInput = try series.map { row in
+        guard let id = row.id else {
+            throw Abort(.internalServerError, reason: "Series row missing id while computing ETag")
+        }
+
+        return AlertETagInput(
+            id: id,
+            currentRevisionUrn: row.currentRevisionUrn,
+            contentFingerprint: row.contentFingerprint
+        )
+    }
+    .sorted {
+        if $0.id != $1.id {
+            return $0.id.uuidString < $1.id.uuidString
+        }
+
+        return $0.currentRevisionUrn < $1.currentRevisionUrn
+    }
+
+    return try StableContentHasher.weakETag(of: etagInput)
+}
+
+private func etagMatches(_ ifNoneMatch: String?, currentETag: String) -> Bool {
+    guard let ifNoneMatch else { return false }
+
+    return ifNoneMatch
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .contains(currentETag)
+}
+
+private func loadAlertSeries(
+    matching query: AlertLookupQuery,
+    on database: any Database
+) async throws -> [ArcusSeriesModel] {
+    guard let sql = database as? any SQLDatabase else {
+        throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+    }
+
+    if let h3 = query.h3, h3 <= 0 {
+        throw Abort(.badRequest, reason: "h3 must be > 0 when provided")
+    }
+
+    var seenUGCCodes = Set<String>()
+    let ugcCodes = [normalizedUGCCode(query.ugc), normalizedUGCCode(query.fire)]
+        .compactMap { $0 }
+        .filter { seenUGCCodes.insert($0).inserted }
+
+    guard !ugcCodes.isEmpty || query.h3 != nil else {
+        throw Abort(.badRequest, reason: "At least one of ugc, fire, or h3 is required")
+    }
+
+    var matchClauses: [SQLQueryString] = ugcCodes.map { code in
+        "\(bind: code) = ANY(\(ident: "s").\(ident: "ugc_codes"))"
+    }
+
+    if let h3 = query.h3 {
+        matchClauses.append("\(bind: h3) = ANY(\(ident: "g").\(ident: "h3_cells"))")
+    }
+
+    let series = try await sql.raw("""
+        SELECT \(ArcusSeriesModel.sqlSelectColumns(qualifiedBy: "s"))
+        FROM \(ident: ArcusSeriesModel.schema) AS \(ident: "s")
+        LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
+          ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
+        WHERE \(ident: "s").\(ident: "state") = \(bind: EventState.active.rawValue)
+          AND (\(matchClauses.joined(separator: " OR ")))
+        ORDER BY \(ident: "s").\(ident: "ends") DESC NULLS LAST,
+                 \(ident: "s").\(ident: "sent") DESC NULLS LAST,
+                 \(ident: "s").\(ident: "id") ASC
+        """)
+        .all(decodingFluent: ArcusSeriesModel.self)
+
+    return series
 }
 
 private func upsertDeviceInstallation(
@@ -388,6 +503,10 @@ private func normalizedOptional(_ value: String?) -> String? {
         return nil
     }
     return trimmed
+}
+
+private func normalizedUGCCode(_ value: String?) -> String? {
+    normalizedOptional(value)?.uppercased()
 }
 
 private func isUniqueConstraintViolation(_ error: any Error) -> Bool {

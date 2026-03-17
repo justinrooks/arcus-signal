@@ -1,4 +1,3 @@
-import Crypto
 import Fluent
 import Foundation
 import Queues
@@ -325,16 +324,11 @@ private extension TargetEventRevisionJob {
             var u = UInt64(bitPattern: v).bigEndian
             withUnsafeBytes(of: &u) { data.append(contentsOf: $0) }
         }
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return StableContentHasher.sha256Hex(of: data)
     }
 
     private func hashGeometry(_ geometry: GeoShape) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(geometry)
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
+        try StableContentHasher.sha256Hex(of: geometry, dateEncodingStrategy: .deferredToDate)
     }
 
     private func geometryType(_ geometry: GeoShape) -> String {

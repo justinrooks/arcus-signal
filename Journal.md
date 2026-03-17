@@ -218,6 +218,27 @@ War story: this is the "fingerprint scanner" moment. Instead of asking a dozen q
 
 War story: this is the "conveyor belt labels" bug class. Jobs were moving, but all on the same unlabeled belt (`default`). It works until throughput grows, then debugging turns into "which worker consumed what?" chaos. Naming lanes early is cheap and saves incident time later.
 
+### Architecture decision: cleanup needs a referee before it gets a broom
+
+- We traced the live event model end to end:
+  - `arcus_series` is the mutable head record
+  - `alert_revisions` is immutable history
+  - `arcus_geolocation` is the current derived map overlay
+  - `target_dispatch_outbox` and `notification_outbox` are queue handoff tables
+  - `notification_ledger` is the exactly-once bouncer
+- The big gotcha: `last_seen_active` is currently more like "last time we wrote a newer snapshot" than "last time this alert was still in the active feed."
+- Translation: an unchanged but still-live alert can look stale if we try to clean up by that timestamp alone. That is the kind of bug that quietly turns your janitor into an assassin.
+- The new plan is to split the problem in two:
+  - lifecycle reconciliation: decide whether a series is truly terminal, why, and when
+  - pruning: delete only rows whose terminal state is already explicit and old enough
+- We also captured a deterministic terminal-reason ladder:
+  - explicit cancel in error
+  - explicit issuer cancellation / VTEC cancellation
+  - wall-clock expiry via `ends` or `expires`
+  - missing from the active feed past a short grace window
+
+War story: cleanup work always looks like "just add a cron job" right before it becomes a detective novel. The trick is to promote lifecycle decisions into first-class data before the delete statements show up with a shovel.
+
 ### Milestone: persisted expiration flag for lifecycle filtering
 
 - Added `is_expired` to persisted Arcus events so queries can quickly filter active vs expired alerts without recomputing at read time.
@@ -365,6 +386,26 @@ War story: this was shipping-label roulette. The package (token) was right, but 
 - Added focused formatter tests for tornado, watch, fire-zone, cancellation, and generic-fallback cases.
 
 War story: notification copy is like cockpit instrumentation. If every dial uses a different language, the pilot wastes precious seconds translating instead of reacting. The fix was not "be more clever." The fix was "be boringly consistent, every single time."
+
+### Gotcha: raw SQL -> Fluent model decoding wants database field keys, not Swift property names
+
+- Added a reusable `ArcusSeriesModel.sqlSelectColumns(...)` helper for joined/raw SQL paths.
+- Key lesson: when decoding a Fluent `Model` from `sql.raw(...)`, the row must expose database column names like `source_url`, `current_revision_urn`, and `ugc_codes`.
+- Translation: this is not normal `Codable` land. Fluent is reading the luggage tags on the database columns, not the nicer names on the Swift suitcases.
+- Follow-on lesson: `ArcusEvent` is the opposite case. Its raw SQL projection aliases into Swift DTO keys like `sourceURL`, `lastSeenActive`, and `ugcCodes`, and it synthesizes non-persisted fields like `references` so plain `Codable` decoding has a complete payload.
+
+### Bug squash: alerts lookup route stopped fighting both Vapor and SQL
+
+- Replaced the half-built `alerts.get` query-builder experiment with a dedicated lookup path that does what the route actually wants: fetch active alerts matching any provided UGC code or H3 cell.
+- Switched from unsafe string interpolation to bound SQL parameters, which means the endpoint now stops treating query strings like trusted house guests.
+- Used `LEFT JOIN` for geolocation so UGC-only alerts still show up even when there is no geometry row.
+- Joined the current revision row as well, so the API DTO can return real `references` instead of an empty stand-in.
+
+### Architecture cleanup: one stable hashing primitive instead of several cousins
+
+- Extracted the sorted-keys SHA256 logic into a shared `StableContentHasher`.
+- Wired `ArcusEvent` content fingerprinting and target-job geometry hashing through the same helper so cache and change-detection rules stop drifting apart.
+- Used that same primitive to build the alerts collection ETag from `(id, currentRevisionUrn, contentFingerprint)`, which keeps the device refresh path cheap without stuffing cache-only fields into the device payload.
 
 ### Aha moments
 

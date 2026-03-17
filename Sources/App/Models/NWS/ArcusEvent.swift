@@ -1,5 +1,4 @@
 import Foundation
-import Crypto
 
 // MARK: - Canonical Domain Model
 
@@ -7,23 +6,6 @@ public enum EventSource: String, Codable, Sendable {
     case nws
     case spc
 }
-
-//public enum EventKind: String, Codable, Sendable {
-//    // NWS
-//    case torWarning
-//    case svrTstormWarning
-//    case ffWarning
-//    case torWatch
-//    case svrTstormWatch
-//    case winterStormWarning
-//    case fireWarning
-//    case fireWeatherWatch
-//    case extremeFireDanger
-//    case redFlagWarning
-//
-//    // SPC
-//    case spcMesoscaleDiscussion
-//}
 
 public enum EventState: String, Codable, Sendable {
     case active
@@ -333,16 +315,7 @@ extension ArcusEvent {
             status: self.status
         )
 
-        let data = try hashEncoder.encode(fingerprint)
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-    
-    private var hashEncoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
+        return try StableContentHasher.sha256Hex(of: fingerprint)
     }
 
     private var normalizedUGCCodes: [String] {
@@ -433,20 +406,6 @@ private extension NWSAlertMessageType {
     }
 }
 
-//private extension Array where Element: Hashable {
-//    func uniquedPreservingOrder() -> [Element] {
-//        var seen: Set<Element> = []
-//        var result: [Element] = []
-//        result.reserveCapacity(count)
-//
-//        for value in self where seen.insert(value).inserted {
-//            result.append(value)
-//        }
-//
-//        return result
-//    }
-//}
-//
 private extension NWSGeometryDTO {
     func toGeoShape() -> GeoShape? {
         switch type.normalizedLowercased {
