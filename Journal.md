@@ -59,6 +59,27 @@ Why this combo? It gives us production-like process boundaries now, without over
 - Updated default `REDIS_URL` in Compose to `redis://redis:6379`.
 - Standardized docs and runbooks on Redis naming to reduce environment confusion.
 
+### Bug squash: alert fetches tripped over Fluent's "don't touch unloaded children" rule
+
+- Symptom: `GET /api/v1/alerts` started failing with `Child relation not eager loaded, use $ prefix to access: Child` right after the response payload learned a new trick: include `ugc` and `h3Cells`.
+- Root cause: the endpoint still decoded raw `arcus_series` rows, but payload mapping began reading `series.geolocation?.h3Cells`. In Fluent land, that is like opening a pantry door that was never stocked; the ORM throws a fit instead of handing you an empty shelf.
+- Fix:
+  - payload mapping now reads the child relation through `$geolocation.value`, which safely distinguishes "loaded and empty" from "never loaded"
+  - the alerts query now batch-loads matching `arcus_geolocation` rows and marks the relation as loaded before serialization, so `h3Cells` still comes back when present
+- Added regression coverage for both cases:
+  - no geolocation loaded -> payload returns empty `h3Cells`
+  - geolocation loaded -> payload includes the expected cells
+
+War story: this was a very ORM-shaped pothole. Adding one innocent response field can secretly promote a plain row-mapping function into a relation access path, and suddenly the code acts like you tried to read the sequel before checking out book one.
+
+### Optimization: alerts endpoint now fetches series + H3 cover in one SQL pass
+
+- We retired the awkward two-step dance where the API loaded `arcus_series` first and then had to separately hydrate geolocation state just so payload serialization could see `h3Cells`.
+- The alerts route now uses a purpose-built SQL projection with a `LEFT JOIN` to `arcus_geolocation`, which is a better fit for this endpoint than pretending a full Fluent model graph was eagerly loaded.
+- `ugc_codes` comes straight from `arcus_series`, and `h3_cells` is selected with `COALESCE(..., '{}'::bigint[])`, so alerts without derived geolocation still serialize as `h3Cells: []` instead of becoming a special-case bug farm.
+
+Lesson learned: read paths are like airport security lines. If all you need is a boarding pass and a backpack, do not route everyone through customs. A small, explicit projection beats a full ORM costume change when the endpoint only needs a carefully chosen slice of data.
+
 ### Bug squash: transient Redis pool timeouts at worker boot
 
 - Symptom: a few startup logs of `timedOutWaitingForConnection`, followed by normal job processing.

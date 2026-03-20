@@ -111,6 +111,42 @@ struct AppTests {
         )
     }
 
+    private func makeAlertSeriesRow(
+        id: UUID = UUID(),
+        now: Date,
+        ugcCodes: [String] = ["COC031"],
+        h3Cells: [Int64] = []
+    ) -> AlertSeriesRow {
+        AlertSeriesRow(
+            id: id,
+            event: "Tornado Warning",
+            currentRevisionUrn: "urn:oid:test-alert",
+            currentRevisionSent: now,
+            messageType: NWSAlertMessageType.alert.rawValue,
+            contentFingerprint: "fingerprint",
+            state: EventState.active.rawValue,
+            created: now,
+            updated: now,
+            lastSeenActive: now,
+            sent: now,
+            effective: now,
+            onset: nil,
+            expires: nil,
+            ends: nil,
+            severity: EventSeverity.severe.rawValue,
+            urgency: EventUrgency.immediate.rawValue,
+            certainty: EventCertainty.observed.rawValue,
+            areaDesc: "Denver County",
+            senderName: "NWS Boulder CO",
+            headline: "Tornado Warning issued",
+            description: "Storm text",
+            instructions: "Take shelter now",
+            response: "Shelter",
+            ugcCodes: ugcCodes,
+            h3Cells: h3Cells
+        )
+    }
+
     @Test("API health endpoint returns ok")
     func apiHealth() async throws {
         try await withApp(mode: .api) { app in
@@ -178,6 +214,116 @@ struct AppTests {
             #expect(abortError.status == .internalServerError)
             #expect(abortError.reason.contains("APNS configuration is incomplete."))
         }
+    }
+
+    @Test("Device alert payload tolerates unloaded geolocation relation")
+    func deviceAlertPayloadAllowsUnloadedGeolocation() throws {
+        let now = isoDate("2026-03-19T16:00:00Z")
+        let seriesID = UUID()
+        let series = ArcusSeriesModel(
+            id: seriesID,
+            source: EventSource.nws.rawValue,
+            event: "Tornado Warning",
+            sourceURL: "https://api.weather.gov/alerts/test-alert",
+            currentRevisionUrn: "urn:oid:test-alert",
+            currentRevisionSent: now,
+            messageType: NWSAlertMessageType.alert.rawValue,
+            contentFingerprint: "fingerprint",
+            state: EventState.active.rawValue,
+            created: now,
+            updated: now,
+            sent: now,
+            effective: now,
+            onset: nil,
+            expires: nil,
+            ends: nil,
+            lastSeenActive: now,
+            severity: EventSeverity.severe.rawValue,
+            urgency: EventUrgency.immediate.rawValue,
+            certainty: EventCertainty.observed.rawValue,
+            ugcCodes: ["COC031"],
+            areaDesc: "Denver County",
+            description: "Storm text"
+        )
+
+        let payload = try series.asDeviceAlertPayload()
+
+        #expect(payload.ugc == ["COC031"])
+        #expect(payload.h3Cells == [])
+    }
+
+    @Test("Device alert payload includes eager-loaded geolocation cells")
+    func deviceAlertPayloadIncludesGeolocationCells() throws {
+        let now = isoDate("2026-03-19T16:00:00Z")
+        let seriesID = UUID()
+        let series = ArcusSeriesModel(
+            id: seriesID,
+            source: EventSource.nws.rawValue,
+            event: "Tornado Warning",
+            sourceURL: "https://api.weather.gov/alerts/test-alert",
+            currentRevisionUrn: "urn:oid:test-alert",
+            currentRevisionSent: now,
+            messageType: NWSAlertMessageType.alert.rawValue,
+            contentFingerprint: "fingerprint",
+            state: EventState.active.rawValue,
+            created: now,
+            updated: now,
+            sent: now,
+            effective: now,
+            onset: nil,
+            expires: nil,
+            ends: nil,
+            lastSeenActive: now,
+            severity: EventSeverity.severe.rawValue,
+            urgency: EventUrgency.immediate.rawValue,
+            certainty: EventCertainty.observed.rawValue,
+            ugcCodes: ["COC031"],
+            areaDesc: "Denver County",
+            description: "Storm text"
+        )
+        series.$geolocation.value = .some(
+            ArcusGeolocationModel(
+                series: seriesID,
+                geometry: .point(lon: -104.9903, lat: 39.7392),
+                geometryHash: "geom-hash",
+                h3Cells: [617700169958293503],
+                h3Resolution: 8,
+                h3Hash: "h3-hash"
+            )
+        )
+
+        let payload = try series.asDeviceAlertPayload()
+
+        #expect(payload.h3Cells == [617700169958293503])
+    }
+
+    @Test("Alert series row maps UGC codes and empty H3 cells into device payload")
+    func alertSeriesRowPayloadAllowsMissingGeolocation() {
+        let now = isoDate("2026-03-19T16:00:00Z")
+        let row = makeAlertSeriesRow(
+            now: now,
+            ugcCodes: ["COC031", "COZ038"]
+        )
+
+        let payload = row.asDeviceAlertPayload()
+
+        #expect(payload.ugc == ["COC031", "COZ038"])
+        #expect(payload.h3Cells == [])
+        #expect(payload.senderName == "NWS Boulder CO")
+    }
+
+    @Test("Alert series row carries joined H3 cells into device payload")
+    func alertSeriesRowPayloadIncludesJoinedH3Cells() {
+        let now = isoDate("2026-03-19T16:00:00Z")
+        let row = makeAlertSeriesRow(
+            now: now,
+            h3Cells: [617700169958293503, 617700170495164415]
+        )
+
+        let payload = row.asDeviceAlertPayload()
+
+        #expect(payload.ugc == ["COC031"])
+        #expect(payload.h3Cells == [617700169958293503, 617700170495164415])
     }
 
     @Test("NWS event JSON decodes polygon geometry coordinates")

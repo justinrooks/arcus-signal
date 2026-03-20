@@ -258,6 +258,14 @@ public extension ArcusSeriesModel {
         guard let cleanId = id else { throw DeviceAlertPayloadError.missingRequired(field: "id") }
         guard let cleanCreate = created else { throw DeviceAlertPayloadError.missingRequired(field: "created") }
         guard let cleanUpdate = updated else { throw DeviceAlertPayloadError.missingRequired(field: "updated") }
+        let h3Cells: [Int64]
+
+        switch $geolocation.value {
+        case .some(let geolocation):
+            h3Cells = geolocation?.h3Cells ?? []
+        case .none:
+            h3Cells = []
+        }
         
         return .init(
             id: cleanId,
@@ -282,7 +290,9 @@ public extension ArcusSeriesModel {
             headline: headline,
             description: description,
             instructions: instructions,
-            response: response
+            response: response,
+            ugc: ugcCodes,
+            h3Cells: h3Cells
         )
     }
     

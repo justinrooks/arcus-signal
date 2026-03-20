@@ -17,8 +17,8 @@ func configureAPIRoutes(_ app: Application) throws {
     app.group("api", "v1", "alerts") { alerts in
         alerts.get() { req async throws -> Response in
             let query = try req.query.decode(AlertLookupQuery.self)
-            let series = try await loadAlertSeries(matching: query, on: req.db)
-            let etag = try computeAlertsETag(for: series)
+            let rows = try await loadAlertSeries(matching: query, on: req.db)
+            let etag = try computeAlertsETag(for: rows)
 
             if etagMatches(req.headers.first(name: .ifNoneMatch), currentETag: etag) {
                 let response = Response(status: .notModified)
@@ -27,7 +27,7 @@ func configureAPIRoutes(_ app: Application) throws {
                 return response
             }
 
-            let payload = try series.map { try $0.asDeviceAlertPayload() }
+            let payload = rows.map { $0.asDeviceAlertPayload() }
 
             let response = Response(status: .ok)
             response.headers.replaceOrAdd(name: .eTag, value: etag)
@@ -238,31 +238,16 @@ private enum DevicePresenceUpsertOutcome: String {
     case staleIgnored
 }
 
-private struct AlertETagInput: Codable, Sendable {
-    let id: UUID
-    let currentRevisionUrn: String
-    let contentFingerprint: String
-}
+private func computeAlertsETag(for series: [AlertSeriesRow]) throws -> String {
+    let etagInput = series
+        .map(\.etagInput)
+        .sorted {
+            if $0.id != $1.id {
+                return $0.id.uuidString < $1.id.uuidString
+            }
 
-private func computeAlertsETag(for series: [ArcusSeriesModel]) throws -> String {
-    let etagInput = try series.map { row in
-        guard let id = row.id else {
-            throw Abort(.internalServerError, reason: "Series row missing id while computing ETag")
+            return $0.currentRevisionUrn < $1.currentRevisionUrn
         }
-
-        return AlertETagInput(
-            id: id,
-            currentRevisionUrn: row.currentRevisionUrn,
-            contentFingerprint: row.contentFingerprint
-        )
-    }
-    .sorted {
-        if $0.id != $1.id {
-            return $0.id.uuidString < $1.id.uuidString
-        }
-
-        return $0.currentRevisionUrn < $1.currentRevisionUrn
-    }
 
     return try StableContentHasher.weakETag(of: etagInput)
 }
@@ -279,7 +264,7 @@ private func etagMatches(_ ifNoneMatch: String?, currentETag: String) -> Bool {
 private func loadAlertSeries(
     matching query: AlertLookupQuery,
     on database: any Database
-) async throws -> [ArcusSeriesModel] {
+) async throws -> [AlertSeriesRow] {
     guard let sql = database as? any SQLDatabase else {
         throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
     }
@@ -302,11 +287,13 @@ private func loadAlertSeries(
     }
 
     if let h3 = query.h3 {
-        matchClauses.append("\(bind: h3) = ANY(\(ident: "g").\(ident: "h3_cells"))")
+        matchClauses.append(
+            "\(bind: h3) = ANY(COALESCE(\(ident: "g").\(ident: "h3_cells"), '{}'::bigint[]))"
+        )
     }
 
-    let series = try await sql.raw("""
-        SELECT \(ArcusSeriesModel.sqlSelectColumns(qualifiedBy: "s"))
+    return try await sql.raw("""
+        SELECT \(AlertSeriesRow.sqlSelectColumns())
         FROM \(ident: ArcusSeriesModel.schema) AS \(ident: "s")
         LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
           ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
@@ -316,9 +303,7 @@ private func loadAlertSeries(
                  \(ident: "s").\(ident: "sent") DESC NULLS LAST,
                  \(ident: "s").\(ident: "id") ASC
         """)
-        .all(decodingFluent: ArcusSeriesModel.self)
-
-    return series
+        .all(decoding: AlertSeriesRow.self)
 }
 
 private func upsertDeviceInstallation(

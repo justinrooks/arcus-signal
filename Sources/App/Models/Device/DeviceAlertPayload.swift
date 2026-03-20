@@ -46,5 +46,8 @@ public struct DeviceAlertPayload: Sendable, Codable, Content {
     let description: String?
     let instructions: String?
     let response: String?
+    
+    let ugc: [String]
+    var h3Cells: [Int64]
 }
 
