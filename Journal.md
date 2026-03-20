@@ -259,6 +259,15 @@ War story: this is one of those small schema choices that pays rent forever. "Ca
   - `expires` is no longer used as an automatic end signal.
 - Tightened revision bumps to tracked property changes only by removing message-identity fields from the content hash.
 
+### Bug squash: opt-out installations were still eligible for sends
+
+- Symptom: the code added `is_subscribed` to `device_installations`, but the actual notification fan-out queries never checked it.
+- Root cause: send candidate selection still filtered only on `is_active` and token presence, so "subscribed" existed in storage but not in enforcement.
+- Fix: added `AND i.is_subscribed = TRUE` to both UGC and H3 candidate SQL paths, including the freshness-filtered variants.
+- Blast radius before the fix: any opted-out installation with a live token and matching presence could still receive alerts, which is the sort of bug that turns a preference toggle into theater.
+
+War story: this is the classic "we installed the lock but forgot to use the key" bug. The schema knew about consent; the query did not. Those are the sneaky ones because the feature looks complete right up until the first unwanted notification lands on someone's phone.
+
 War story: this was a classic "label mismatch" bug. We were grouping by the envelope id while NOAA was shipping updates in brand-new envelopes every time. Once we switched to supersession chains, the ingest line stopped treating updates like strangers.
 
 ### Milestone: geometry storage moved to JSONB-ready schema
