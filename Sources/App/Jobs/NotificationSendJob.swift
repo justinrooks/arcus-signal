@@ -183,6 +183,7 @@ private extension NotificationSendJob {
                 FROM device_installations i
                 JOIN device_presence p on i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
+                  AND i.is_subscribed = TRUE
                   AND i.apns_device_token <> ''
                   AND i.last_seen_at >= \(bind: freshnessCutoff)
                   AND (
@@ -203,6 +204,7 @@ private extension NotificationSendJob {
                 FROM device_installations i
                 JOIN device_presence p on i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
+                  AND i.is_subscribed = TRUE
                   AND i.apns_device_token <> ''
                   AND (
                       p.county  = ANY(\(bind: ugcCodes)::text[])
@@ -236,6 +238,7 @@ private extension NotificationSendJob {
                 JOIN device_presence p
                   ON i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
+                  AND i.is_subscribed = TRUE
                   AND i.apns_device_token <> ''
                   AND p.h3_cell IS NOT NULL
                   AND p.h3_cell = ANY(\(bind: cells)::bigint[])
@@ -254,6 +257,7 @@ private extension NotificationSendJob {
                 JOIN device_presence p
                   ON i.installation_id = p.installation_id
                 WHERE i.is_active = TRUE
+                  AND i.is_subscribed = TRUE
                   AND i.apns_device_token <> ''
                   AND p.h3_cell IS NOT NULL
                   AND p.h3_cell = ANY(\(bind: cells)::bigint[])
