@@ -16,22 +16,24 @@ func configureAPIRoutes(_ app: Application) throws {
     
     app.group("api", "v1", "alerts") { alerts in
         alerts.get() { req async throws -> Response in
+            let age = 25
+            let cacheControl = "private, max-age=\(age)"
             let query = try req.query.decode(AlertLookupQuery.self)
             let rows = try await loadAlertSeries(matching: query, on: req.db)
             let etag = try computeAlertsETag(for: rows)
 
-            if etagMatches(req.headers.first(name: .ifNoneMatch), currentETag: etag) {
-                let response = Response(status: .notModified)
-                response.headers.replaceOrAdd(name: .eTag, value: etag)
-                response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=0, must-revalidate")
-                return response
-            }
+//            if etagMatches(req.headers.first(name: .ifNoneMatch), currentETag: etag) {
+//                let response = Response(status: .notModified)
+//                response.headers.replaceOrAdd(name: .eTag, value: etag)
+//                response.headers.replaceOrAdd(name: .cacheControl, value: cacheControl)
+//                return response
+//            }
 
             let payload = rows.map { $0.asDeviceAlertPayload() }
 
             let response = Response(status: .ok)
-            response.headers.replaceOrAdd(name: .eTag, value: etag)
-            response.headers.replaceOrAdd(name: .cacheControl, value: "private, max-age=0, must-revalidate")
+//            response.headers.replaceOrAdd(name: .eTag, value: etag)
+//            response.headers.replaceOrAdd(name: .cacheControl, value: cacheControl)
             try response.content.encode(payload)
 
             return response
