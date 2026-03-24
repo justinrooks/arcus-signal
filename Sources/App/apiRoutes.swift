@@ -360,7 +360,7 @@ private func upsertDeviceInstallation(
         try await created.create(on: database)
         return created
     } catch {
-        guard isUniqueConstraintViolation(error),
+        guard DbUtils.isUniqueConstraintViolation(error),
               let existing = try await DeviceInstallationModel.find(installationId, on: database) else {
             throw error
         }
@@ -447,7 +447,7 @@ private func upsertDevicePresence(
         try await created.create(on: database)
         return .inserted
     } catch {
-        guard isUniqueConstraintViolation(error),
+        guard DbUtils.isUniqueConstraintViolation(error),
               let existing = try await DevicePresenceModel.find(installationId, on: database) else {
             throw error
         }
@@ -500,11 +500,4 @@ private func normalizedOptional(_ value: String?) -> String? {
 
 private func normalizedUGCCode(_ value: String?) -> String? {
     normalizedOptional(value)?.uppercased()
-}
-
-private func isUniqueConstraintViolation(_ error: any Error) -> Bool {
-    let description = String(describing: error).lowercased()
-    return description.contains("duplicate key value")
-        || description.contains("unique constraint")
-        || description.contains("23505")
 }

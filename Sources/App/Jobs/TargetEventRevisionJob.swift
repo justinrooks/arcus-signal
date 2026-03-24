@@ -183,7 +183,7 @@ private extension TargetEventRevisionJob {
             try await outboxRecord.create(on: database)
             return true
         } catch {
-            if isUniqueConstraintViolation(error) {
+            if DbUtils.isUniqueConstraintViolation(error) {
                 logger.debug(
                     "Notification dispatch already queued for revision.",
                     metadata: ["revisionUrn": .string(revisionUrn)]
@@ -193,14 +193,6 @@ private extension TargetEventRevisionJob {
 
             throw error
         }
-    }
-    
-    func isUniqueConstraintViolation(_ error: any Error) -> Bool {
-        // TODO: resolve the dupe with IngestNWSAlertsJob
-        let description = String(describing: error).lowercased()
-        return description.contains("duplicate key value")
-        || description.contains("unique constraint")
-        || description.contains("23505")
     }
     
     func dispatchPendingNotificationJobs(

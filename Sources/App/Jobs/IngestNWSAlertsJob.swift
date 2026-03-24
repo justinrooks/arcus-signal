@@ -183,13 +183,6 @@ private extension IngestNWSAlertsJob {
             }
         }
     }
-
-    func isUniqueConstraintViolation(_ error: any Error) -> Bool {
-        let description = String(describing: error).lowercased()
-        return description.contains("duplicate key value")
-        || description.contains("unique constraint")
-        || description.contains("23505")
-    }
     
     func persistArcusEvents(
         _ events: [ArcusEvent],
@@ -464,7 +457,7 @@ private extension IngestNWSAlertsJob {
             try await outboxRecord.create(on: database)
             return true
         } catch {
-            if isUniqueConstraintViolation(error) {
+            if DbUtils.isUniqueConstraintViolation(error) {
                 logger.debug(
                     "Target dispatch already queued for revision.",
                     metadata: ["revisionUrn": .string(event.id)]
@@ -503,7 +496,7 @@ private extension IngestNWSAlertsJob {
             try await outboxRecord.create(on: database)
             return true
         } catch {
-            if isUniqueConstraintViolation(error) {
+            if DbUtils.isUniqueConstraintViolation(error) {
                 logger.debug(
                     "Notification dispatch already queued for revision.",
                     metadata: ["revisionUrn": .string(event.id)]
