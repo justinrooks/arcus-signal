@@ -31,6 +31,11 @@ private struct PersistResult {
     let notificationOutboxQueued: Int
 }
 
+private struct CleanupResult {
+    let expiredCount: Int
+    let endedCount: Int
+}
+
 private struct DispatchDrainResult {
     let dispatched: Int
     let failed: Int
@@ -66,7 +71,7 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 context: context
             )
             
-            let result = try await context.application.db.transaction{ database in
+            let result = try await context.application.db.transaction { database in
                 try await persistArcusEvents(ingestEvents, on: database, asOf: runTimestamp, logger: context.logger)
             }
             context.logger.info(
@@ -96,6 +101,17 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 ]
             )
             
+            // MARK: Cleanup
+            let cleanResults = try await context.application.db.transaction { database in
+                try await startEventCleanup(on: database, asOf: runTimestamp, logger: context.logger)
+            }
+            context.logger.info(
+                "Arcus events cleaned up",
+                metadata: [
+                    "Events Ended": .string("\(cleanResults.endedCount)"),
+                    "Events Expired": .string("\(cleanResults.expiredCount)")
+                ])
+            
             context.logger.info("IngestNWSAlertsJob finished")
         } catch {
             context.logger.report(error: error)
@@ -112,6 +128,32 @@ public struct IngestNWSAlertsJob: AsyncJob {
 }
 
 private extension IngestNWSAlertsJob {
+    func startEventCleanup(on database: any Database, asOf: Date, logger: Logger) async throws -> CleanupResult {
+        // Expired
+        let expired = ArcusSeriesModel.query(on: database)
+            .group(.and) { group in
+                group.filter(\.$expires <= asOf)
+                    .filter(\.$ends >= asOf)
+            }
+        let expiredCount = try await expired.count()
+        
+        try await expired
+            .set(\.$state, to: "expired")
+            .update()
+
+        // Ended
+        let ended = ArcusSeriesModel.query(on: database)
+            .filter(\.$ends < asOf)
+        
+        let endedCount = try await ended.count()
+        
+        try await ended
+            .set(\.$state, to: "ended")
+            .update()
+
+        return .init(expiredCount: expiredCount, endedCount: endedCount)
+    }
+    
     func resolveIngestEvents(
         for payload: IngestNWSAlertsPayload,
         context: QueueContext
@@ -348,13 +390,31 @@ private extension IngestNWSAlertsJob {
         to series: ArcusSeriesModel,
         asOf: Date
     ) throws {
+        
+        var stateHolder = event.state
+        if let vtec = event.vtec {
+            if vtec.status.lowercased() == "can" {
+                stateHolder = EventState.cancelled
+            }
+//            NEW  New event
+//            CON  Event continued
+//            EXT  Event extended (time)
+//            EXA  Event extended (area)
+//            EXB  Event extended (both time and area)
+//            UPG  Event upgraded
+//            CAN  Event cancelled
+//            EXP  Event expired
+//            COR  Correction
+//            ROU  Routine
+        }
+        
         series.source = event.source.rawValue
         series.event = event.kind
         series.sourceURL = event.sourceURL
         series.currentRevisionUrn = event.id
         series.currentRevisionSent = event.sent
         series.messageType = event.messageType.rawValue
-        series.state = event.state.rawValue
+        series.state = stateHolder.rawValue
         series.sent = event.sent
         series.effective = event.effective
         series.onset = event.onset

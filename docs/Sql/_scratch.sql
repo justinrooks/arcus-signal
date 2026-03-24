@@ -45,7 +45,17 @@ limit 15
 
 
 
-SELECT *
+SELECT * --id, event, expires, ends, state
 FROM arcus_series
+WHERE state = 'active'
 ORDER BY ends DESC nulls last
 LIMIT 1
+
+-- UPDATE arcus_series SET state = 'active'
+
+-- ALTER TABLE arcus_series
+-- DROP CONSTRAINT alert_series_state_check;
+
+-- ALTER TABLE arcus_series
+-- ADD CONSTRAINT alert_series_state_check
+-- CHECK (state IN ('active', 'cancelled_in_error', 'cancelled', 'ended', 'expired'));
