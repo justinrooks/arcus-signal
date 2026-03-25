@@ -130,20 +130,19 @@ private extension TargetEventRevisionJob {
             existing.h3Hash = cover.hash
             try await existing.update(on: database)
             logger.info("Updated geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
-            return
+        } else {
+            let geoRecord = ArcusGeolocationModel(
+                series: payload.seriesId,
+                geometry: payload.geometry,
+                geometryHash: geometryHash,
+                h3Cells: cover.cells,
+                h3Resolution: h3Resolution,
+                h3Hash: cover.hash
+            )
+            try await geoRecord.create(on: database)
+            logger.info("Created geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
         }
 
-        let geoRecord = ArcusGeolocationModel(
-            series: payload.seriesId,
-            geometry: payload.geometry,
-            geometryHash: geometryHash,
-            h3Cells: cover.cells,
-            h3Resolution: h3Resolution,
-            h3Hash: cover.hash
-        )
-        try await geoRecord.create(on: database)
-        logger.info("Created geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
-        
         if try await DispatchAgent.enqueueNotificationDispatchOutbox(
             revisionUrn: payload.revisionUrn,
             seriesId: payload.seriesId,
@@ -152,7 +151,6 @@ private extension TargetEventRevisionJob {
             on: database,
             logger: logger
         ) {
-//            notificationOutboxQueued += 1
             logger.info("Notification job queued.", metadata: ["seriesId": .stringConvertible(payload.seriesId)])
         }
     }

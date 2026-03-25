@@ -127,6 +127,7 @@ private extension IngestNWSAlertsJob {
         // Expired
         let expired = ArcusSeriesModel.query(on: database)
             .group(.and) { group in
+                group.filter(\.$state == EventState.active.rawValue)
                 group.filter(\.$expires <= asOf)
                     .filter(\.$ends >= asOf)
             }
@@ -138,7 +139,13 @@ private extension IngestNWSAlertsJob {
 
         // Ended
         let ended = ArcusSeriesModel.query(on: database)
-            .filter(\.$ends < asOf)
+            .group(.and) { group in
+                group.group(.or) { states in
+                    states.filter(\.$state == EventState.active.rawValue)
+                    states.filter(\.$state == EventState.expired.rawValue)
+                }
+                group.filter(\.$ends < asOf)
+            }
         
         let endedCount = try await ended.count()
         
