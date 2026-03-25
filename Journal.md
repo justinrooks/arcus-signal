@@ -258,6 +258,18 @@ War story: this is the "conveyor belt labels" bug class. Jobs were moving, but a
   - wall-clock expiry via `ends` or `expires`
   - missing from the active feed past a short grace window
 
+### Bug squash: dedupe refactor briefly unplugged two alert paths
+
+- First pothole: H3 targeting updates could recompute a brand-new geolocation cover and then quietly skip re-enqueuing the notification outbox.
+- Why that mattered: a geometry-changing warning is exactly the moment people most need the update, and the code was acting like a smoke detector that only rings the first time it sees smoke.
+- Fix: `TargetEventRevisionJob` now enqueues the H3 notification outbox after both geolocation creates and geolocation updates, while still bailing out early for true no-op covers.
+
+- Second pothole: the new cleanup pass was a little too enthusiastic and would happily rewrite already-cancelled series into `expired` or `ended` once the clock advanced.
+- Why that mattered: that erases the reason an alert stopped being valid. Operationally, "the issuer cancelled this" and "time ran out naturally" are different stories, and the state machine should not blur them together.
+- Fix: cleanup now only advances lifecycle state from `active -> expired` and from `active|expired -> ended`, leaving explicit terminal states intact.
+
+War story: this was classic "good cleanup, sharp edges." The refactor reduced duplicate logic, but it also moved two tiny gates that carried a lot of meaning. One missing enqueue meant update pushes disappeared; one overly broad cleanup query meant history got rewritten. Small code, big blast radius.
+
 War story: cleanup work always looks like "just add a cron job" right before it becomes a detective novel. The trick is to promote lifecycle decisions into first-class data before the delete statements show up with a shovel.
 
 ### Milestone: persisted expiration flag for lifecycle filtering
