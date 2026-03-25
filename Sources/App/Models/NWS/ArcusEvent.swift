@@ -10,6 +10,8 @@ public enum EventSource: String, Codable, Sendable {
 public enum EventState: String, Codable, Sendable {
     case active
     case expired
+    case ended
+    case cancelled
     case cancelled_in_error
 }
 

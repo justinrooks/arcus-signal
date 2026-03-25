@@ -31,9 +31,9 @@ private struct PersistResult {
     let notificationOutboxQueued: Int
 }
 
-private struct DispatchDrainResult {
-    let dispatched: Int
-    let failed: Int
+private struct CleanupResult {
+    let expiredCount: Int
+    let endedCount: Int
 }
 
 private struct SeriesMergeResult {
@@ -66,7 +66,7 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 context: context
             )
             
-            let result = try await context.application.db.transaction{ database in
+            let result = try await context.application.db.transaction { database in
                 try await persistArcusEvents(ingestEvents, on: database, asOf: runTimestamp, logger: context.logger)
             }
             context.logger.info(
@@ -87,7 +87,7 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 ]
             )
             
-            let drainNotificationsResult = try await dispatchPendingNotificationJobs(context: context)
+            let drainNotificationsResult = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "ugc")
             context.logger.info(
                 "Notification dispatch outbox drain finished",
                 metadata: [
@@ -95,6 +95,17 @@ public struct IngestNWSAlertsJob: AsyncJob {
                     "failed": .stringConvertible(drainNotificationsResult.failed)
                 ]
             )
+            
+            // MARK: Cleanup
+            let cleanResults = try await context.application.db.transaction { database in
+                try await startEventCleanup(on: database, asOf: runTimestamp, logger: context.logger)
+            }
+            context.logger.info(
+                "Arcus events cleaned up",
+                metadata: [
+                    "Events Ended": .string("\(cleanResults.endedCount)"),
+                    "Events Expired": .string("\(cleanResults.expiredCount)")
+                ])
             
             context.logger.info("IngestNWSAlertsJob finished")
         } catch {
@@ -112,6 +123,32 @@ public struct IngestNWSAlertsJob: AsyncJob {
 }
 
 private extension IngestNWSAlertsJob {
+    func startEventCleanup(on database: any Database, asOf: Date, logger: Logger) async throws -> CleanupResult {
+        // Expired
+        let expired = ArcusSeriesModel.query(on: database)
+            .group(.and) { group in
+                group.filter(\.$expires <= asOf)
+                    .filter(\.$ends >= asOf)
+            }
+        let expiredCount = try await expired.count()
+        
+        try await expired
+            .set(\.$state, to: "expired")
+            .update()
+
+        // Ended
+        let ended = ArcusSeriesModel.query(on: database)
+            .filter(\.$ends < asOf)
+        
+        let endedCount = try await ended.count()
+        
+        try await ended
+            .set(\.$state, to: "ended")
+            .update()
+
+        return .init(expiredCount: expiredCount, endedCount: endedCount)
+    }
+    
     func resolveIngestEvents(
         for payload: IngestNWSAlertsPayload,
         context: QueueContext
@@ -140,13 +177,6 @@ private extension IngestNWSAlertsJob {
                 throw Abort(.notFound, reason: "Fixture file not found at path: \(path)")
             }
         }
-    }
-
-    func isUniqueConstraintViolation(_ error: any Error) -> Bool {
-        let description = String(describing: error).lowercased()
-        return description.contains("duplicate key value")
-        || description.contains("unique constraint")
-        || description.contains("23505")
     }
     
     func persistArcusEvents(
@@ -307,10 +337,11 @@ private extension IngestNWSAlertsJob {
             logger.info("Geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
         }
         
-        if try await enqueueNotificationDispatchOutbox(
-            event: event,
+        if try await DispatchAgent.enqueueNotificationDispatchOutbox(
+            revisionUrn: event.id,
             seriesId: seriesId,
             reason: reason,
+            mode: .ugc,
             on: database,
             logger: logger
         ) {
@@ -348,13 +379,31 @@ private extension IngestNWSAlertsJob {
         to series: ArcusSeriesModel,
         asOf: Date
     ) throws {
+        
+        var stateHolder = event.state
+        if let vtec = event.vtec {
+            if vtec.status.lowercased() == "can" {
+                stateHolder = EventState.cancelled
+            }
+//            NEW  New event
+//            CON  Event continued
+//            EXT  Event extended (time)
+//            EXA  Event extended (area)
+//            EXB  Event extended (both time and area)
+//            UPG  Event upgraded
+//            CAN  Event cancelled
+//            EXP  Event expired
+//            COR  Correction
+//            ROU  Routine
+        }
+        
         series.source = event.source.rawValue
         series.event = event.kind
         series.sourceURL = event.sourceURL
         series.currentRevisionUrn = event.id
         series.currentRevisionSent = event.sent
         series.messageType = event.messageType.rawValue
-        series.state = event.state.rawValue
+        series.state = stateHolder.rawValue
         series.sent = event.sent
         series.effective = event.effective
         series.onset = event.onset
@@ -404,7 +453,7 @@ private extension IngestNWSAlertsJob {
             try await outboxRecord.create(on: database)
             return true
         } catch {
-            if isUniqueConstraintViolation(error) {
+            if DbUtils.isUniqueConstraintViolation(error) {
                 logger.debug(
                     "Target dispatch already queued for revision.",
                     metadata: ["revisionUrn": .string(event.id)]
@@ -415,118 +464,7 @@ private extension IngestNWSAlertsJob {
             throw error
         }
     }
-    
-    func enqueueNotificationDispatchOutbox(
-        event: ArcusEvent,
-        seriesId: UUID,
-        reason: NotificationReason,
-        on database: any Database,
-        logger: Logger
-    ) async throws -> Bool {
-        // ensure that we have no geometry so we fall back
-        // to ugc codes
-        guard event.geometry == nil else {
-            return false
-        }
-        
-        let outboxRecord = ArcusNotificationOutboxModel(
-            series: seriesId,
-            revisionUrn: event.id,
-            mode: NotificationTargetMode.ugc.rawValue,
-            reason: reason.rawValue,
-            state: "ready",
-            attempts: 0,
-            availableAt: .now
-        )
-        
-        do {
-            try await outboxRecord.create(on: database)
-            return true
-        } catch {
-            if isUniqueConstraintViolation(error) {
-                logger.debug(
-                    "Notification dispatch already queued for revision.",
-                    metadata: ["revisionUrn": .string(event.id)]
-                )
-                return false
-            }
 
-            throw error
-        }
-    }
-
-    func dispatchPendingNotificationJobs(
-        context: QueueContext,
-        limit: Int = 250
-    ) async throws -> DispatchDrainResult {
-        let now = Date()
-        let pendingRows = try await ArcusNotificationOutboxModel.query(on: context.application.db)
-            .group(.and) { group in
-                group.filter(\.$state == "ready")
-                     .filter(\.$mode == "ugc") // Lock this dispatcher to only send ready ugc notification msgs
-                     .filter(\.$availableAt <= now)
-            }
-            .sort(\.$availableAt, .ascending)
-            .limit(limit)
-            .all()
-
-        guard !pendingRows.isEmpty else {
-            return .init(dispatched: 0, failed: 0)
-        }
-
-        let sendQueue = context.application.queues.queue(ArcusQueueLane.send.queueName)
-        var dispatched = 0
-        var failed = 0
-
-        for row in pendingRows {
-            do {
-                guard let mode = NotificationTargetMode(rawValue: row.mode) else {
-                    throw ArcusEventModelError.invalidEnum(field: "mode", value: row.mode)
-                }
-                guard let reason = NotificationReason(rawValue: row.reason) else {
-                    throw ArcusEventModelError.invalidEnum(field: "reason", value: row.reason)
-                }
-                
-                let pl: NotificationSendJobPayload = .init(
-                    seriesId: row.$series.id,
-                    revisionUrn: row.revisionUrn,
-                    mode: mode,
-                    reason: reason
-                )
-                
-                try await sendQueue.dispatch(NotificationSendJob.self, pl)
-                row.availableAt = Date()
-                row.lastError = nil
-                row.attempts += 1
-                row.state = "done" // Mark as done since we've sent it to the queue
-                
-                try await row.update(on: context.application.db)
-                dispatched += 1
-            } catch {
-                failed += 1
-                row.attempts += 1
-                row.lastError = String(reflecting: error)
-                
-                if row.attempts >= 3 {
-                    row.state = "dead" // Mark is as dead after 3 retries
-                }
-                
-                try? await row.update(on: context.application.db)
-
-                context.logger.error(
-                    "Failed to dispatch notifcation job from outbox.",
-                    metadata: [
-                        "outboxId": .string(row.id?.uuidString ?? "unknown"),
-                        "revisionUrn": .string(row.revisionUrn),
-                        "error": .string(String(reflecting: error))
-                    ]
-                )
-            }
-        }
-
-        return .init(dispatched: dispatched, failed: failed)
-    }
-    
     func dispatchPendingTargetJobs(
         context: QueueContext,
         limit: Int = 250

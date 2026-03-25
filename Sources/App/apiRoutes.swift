@@ -294,12 +294,18 @@ private func loadAlertSeries(
         )
     }
 
+    // TODO: Investigate this more. Removing the filter for state = active and replaced it
+    // it was replaced with state <> cancelled in error. We want to send all the watches
+    // and warnings we have to the device and let the device determine display. It is at
+    // the edge and has the most accurate knowledge of time and location, so allow it to
+    // do its job and determine if the alert should be shown. We have different issues if
+    // its a cancelled in error state.
     return try await sql.raw("""
         SELECT \(AlertSeriesRow.sqlSelectColumns())
         FROM \(ident: ArcusSeriesModel.schema) AS \(ident: "s")
         LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
           ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
-        WHERE \(ident: "s").\(ident: "state") = \(bind: EventState.active.rawValue)
+        WHERE \(ident: "s").\(ident: "state") <> \(bind: EventState.cancelled_in_error.rawValue)
           AND (\(matchClauses.joined(separator: " OR ")))
         ORDER BY \(ident: "s").\(ident: "ends") DESC NULLS LAST,
                  \(ident: "s").\(ident: "sent") DESC NULLS LAST,
@@ -354,7 +360,7 @@ private func upsertDeviceInstallation(
         try await created.create(on: database)
         return created
     } catch {
-        guard isUniqueConstraintViolation(error),
+        guard DbUtils.isUniqueConstraintViolation(error),
               let existing = try await DeviceInstallationModel.find(installationId, on: database) else {
             throw error
         }
@@ -441,7 +447,7 @@ private func upsertDevicePresence(
         try await created.create(on: database)
         return .inserted
     } catch {
-        guard isUniqueConstraintViolation(error),
+        guard DbUtils.isUniqueConstraintViolation(error),
               let existing = try await DevicePresenceModel.find(installationId, on: database) else {
             throw error
         }
@@ -494,11 +500,4 @@ private func normalizedOptional(_ value: String?) -> String? {
 
 private func normalizedUGCCode(_ value: String?) -> String? {
     normalizedOptional(value)?.uppercased()
-}
-
-private func isUniqueConstraintViolation(_ error: any Error) -> Bool {
-    let description = String(describing: error).lowercased()
-    return description.contains("duplicate key value")
-        || description.contains("unique constraint")
-        || description.contains("23505")
 }
