@@ -112,9 +112,42 @@ public struct DispatchAgent {
             return true
         } catch {
             if DbUtils.isUniqueConstraintViolation(error) {
+                if let existing = try await ArcusNotificationOutboxModel.query(on: database)
+                    .group(.and) { group in
+                        group.filter(\.$series.$id == seriesId)
+                             .filter(\.$revisionUrn == revisionUrn)
+                             .filter(\.$mode == mode.rawValue)
+                    }
+                    .first() {
+                    let previousState = existing.state
+                    let shouldResetForDispatch = existing.state != "ready" || existing.availableAt > .now || existing.reason != reason.rawValue
+
+                    if shouldResetForDispatch {
+                        existing.state = "ready"
+                        existing.reason = reason.rawValue
+                        existing.attempts = 0
+                        existing.lastError = nil
+                        existing.availableAt = .now
+                        try await existing.update(on: database)
+
+                        logger.info(
+                            "Notification dispatch re-queued for revision.",
+                            metadata: [
+                                "revisionUrn": .string(revisionUrn),
+                                "mode": .string(mode.rawValue),
+                                "previousState": .string(previousState)
+                            ]
+                        )
+                        return true
+                    }
+                }
+
                 logger.debug(
                     "Notification dispatch already queued for revision.",
-                    metadata: ["revisionUrn": .string(revisionUrn)]
+                    metadata: [
+                        "revisionUrn": .string(revisionUrn),
+                        "mode": .string(mode.rawValue)
+                    ]
                 )
                 return false
             }
