@@ -239,6 +239,17 @@ War story: this is the "fingerprint scanner" moment. Instead of asking a dozen q
 
 War story: this is the "conveyor belt labels" bug class. Jobs were moving, but all on the same unlabeled belt (`default`). It works until throughput grows, then debugging turns into "which worker consumed what?" chaos. Naming lanes early is cheap and saves incident time later.
 
+### Bug squash: notification dispatch outbox can now be revived on replay
+
+- Symptom: the March 25 H3 requeue fix correctly retriggered notification dispatch after geolocation updates, but only if a brand-new `notification_outbox` row could be inserted.
+- Root cause: `notification_outbox` intentionally has a unique constraint on `(series_id, revision_urn, mode)`. Once a row existed in `done` or `dead`, replaying the same revision hit the uniqueness wall and quietly returned `false`, which meant a legitimate retry path was treated like a duplicate no-op.
+- Fix:
+  - keep the unique row, because duplicate protection is still the right rail
+  - when the helper sees that duplicate row, load it and reset it back to `ready` if it is no longer dispatchable
+  - clear retry bookkeeping (`attempts`, `last_error`, `available_at`) so the worker can actually fan the job back out again
+
+War story: this was a classic idempotency trap. The database was doing its job like a very stern nightclub bouncer: "your name is already on the list." The subtle bug was that nobody checked whether the guest had already left the building and needed to come back in for a legitimate second round.
+
 ### Architecture decision: cleanup needs a referee before it gets a broom
 
 - We traced the live event model end to end:
