@@ -6,6 +6,7 @@
 //
 
 import Fluent
+import FluentSQL
 import Foundation
 import Queues
 
@@ -112,13 +113,15 @@ public struct DispatchAgent {
             return true
         } catch {
             if DbUtils.isUniqueConstraintViolation(error) {
-                if let existing = try await ArcusNotificationOutboxModel.query(on: database)
+                let existing = try await ArcusNotificationOutboxModel.query(on: database)
                     .group(.and) { group in
                         group.filter(\.$series.$id == seriesId)
-                             .filter(\.$revisionUrn == revisionUrn)
-                             .filter(\.$mode == mode.rawValue)
+                            .filter(\.$revisionUrn == revisionUrn)
+                            .filter(\.$mode == mode.rawValue)
                     }
-                    .first() {
+                    .first()
+
+                if let existing {
                     let previousState = existing.state
                     let shouldResetForDispatch = existing.state != "ready" || existing.availableAt > .now || existing.reason != reason.rawValue
 
