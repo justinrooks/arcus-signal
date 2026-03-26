@@ -20,6 +20,7 @@ services:
       context: .
     environment:
       <<: *shared_environment
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,6 +41,7 @@ services:
       APNS_PRIVATE_KEY_PATH: ${APNS_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey.p8}
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +58,7 @@ services:
     image: redis:7-alpine
     ports:
       - '6379:6379'
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -68,6 +71,7 @@ services:
       POSTGRES_USER: ${DATABASE_USERNAME:-arcus}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-arcus}
       POSTGRES_DB: ${DATABASE_NAME:-arcus_signal}
+    restart: unless-stopped
     ports:
       - '5432:5432'
     volumes:
