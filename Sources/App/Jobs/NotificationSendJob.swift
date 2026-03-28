@@ -5,6 +5,7 @@
 //  Created by Justin Rooks on 3/3/26.
 //
 
+import APNSCore
 import Fluent
 import FluentSQL
 import Foundation
@@ -364,7 +365,61 @@ private extension NotificationSendJob {
                         "revisionUrn": .string(payload.revisionUrn)
                     ]
                 )
+            } catch let error as APNSError {
+                // Handle specific Apple response codes
+//                switch error.reason {
+//                case .badDeviceToken:
+//                    context.logger.error("Token is invalid. Remove from DB.")
+//                case .unregistered:
+//                    context.logger.error("User deleted app. Delete token.")
+//                case .tooManyRequests:
+//                    context.logger.error("Rate limited. Slow down!")
+//                case .expiredProviderToken:
+//                    context.logger.critical("Check your .p8 file or Team ID settings.")
+//                
+//                default:
+                context.logger.error("APNS rejected request: \(error.reason.debugDescription)")
+//                }
                 
+                guard let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) else {
+                    throw Abort(.notFound)
+                }
+                
+                // TODO: figure out retries
+                // At least we aren't dropping them now
+                if let reason = error.reason {
+                    existingClaim.apnsErrorCode = reason.errorDescription
+                } else {
+                    existingClaim.apnsErrorCode = error.reason.debugDescription
+                }
+
+                existingClaim.status = "failed"
+                try await existingClaim.save(on: context.application.db)
+                
+//
+//                200
+//                Success.
+//                400
+//                Bad request.
+//                403
+//                There was an error with the certificate or with the provider’s authentication token.
+//                404
+//                The request contained an invalid :path value.
+//                405
+//                The request used an invalid :method value. Only POST requests are supported.
+//                410
+//                The device token is no longer active for the topic.
+//                413
+//                The notification payload was too large.
+//                429
+//                The server received too many requests for the same device token.
+//                500
+//                Internal server error.
+//                503
+//                The server is shutting down and unavailable.
+                
+                // You can also check by HTTP status code if preferred
+                // if error.status == .gone { ... }
                 
             } catch {
                 context.logger.error(
