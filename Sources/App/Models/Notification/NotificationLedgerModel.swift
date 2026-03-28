@@ -9,7 +9,7 @@ import Foundation
 import Fluent
 import Vapor
 
-public final class NotificationLedgerModel: Model, @unchecked Sendable {
+public final class NotificationLedgerModel: Model, @unchecked Sendable, Content {
     public static let schema = "notification_ledger"
     
     @ID(key: .id)
@@ -32,6 +32,9 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable {
     
     @OptionalField(key: "status")
     public var status: String?
+    
+    @OptionalField(key: "apns_error_code")
+    public var apnsErrorCode: String?
     
     // Bookkeeping
     @Timestamp(key: "created", on: .create)

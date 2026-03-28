@@ -258,6 +258,17 @@ War story: this was a classic idempotency trap. The database was doing its job l
   - `arcus_geolocation` is the current derived map overlay
   - `target_dispatch_outbox` and `notification_outbox` are queue handoff tables
   - `notification_ledger` is the exactly-once bouncer
+
+### Quality-of-life win: one-command local install bootstrap
+
+- Added a repo-root `install` script that wraps the local bring-up ritual:
+  - `git pull`
+  - `sudo docker compose up -d --build api worker`
+  - `sudo docker compose run --rm api ./Run migrate --env development`
+- The script uses `set -euo pipefail`, which is bash's version of "if something catches fire, stop sprinting deeper into the building."
+- It also normalizes itself to the repo root before running, so it behaves consistently even if it is launched through another path.
+
+Lesson learned: tiny automation pays rent immediately. Repeating a three-command startup dance is fine until you mistype step two on a sleepy morning and spend ten minutes debugging a problem that was really just "human hands are not deterministic."
 - The big gotcha: `last_seen_active` is currently more like "last time we wrote a newer snapshot" than "last time this alert was still in the active feed."
 - Translation: an unchanged but still-live alert can look stale if we try to clean up by that timestamp alone. That is the kind of bug that quietly turns your janitor into an assassin.
 - The new plan is to split the problem in two:

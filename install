@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$repo_root"
+
+echo "Pulling latest changes..."
+git pull
+
+echo "Building and starting api and worker containers..."
+sudo docker compose up -d --build api worker
+
+echo "Running development migrations..."
+sudo docker compose run --rm api ./Run migrate --env development
+
+echo "Dev install complete."

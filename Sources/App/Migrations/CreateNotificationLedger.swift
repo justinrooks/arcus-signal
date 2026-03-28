@@ -58,3 +58,15 @@ struct AddStatusToNotificationLedger: AsyncMigration {
         try await db.schema(NotificationLedgerModel.schema).deleteField("status").update()
     }
 }
+
+struct AddApnsErrorCodeToNotificationLedger: AsyncMigration {
+    func prepare(on db: any Database) async throws {
+        try await db.schema(NotificationLedgerModel.schema)
+            .field("apns_error_code", .string)     // consider enum later
+            .update()
+    }
+
+    func revert(on db: any Database) async throws {
+        try await db.schema(NotificationLedgerModel.schema).deleteField("apns_error_code").update()
+    }
+}
