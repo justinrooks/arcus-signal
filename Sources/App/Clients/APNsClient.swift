@@ -48,8 +48,7 @@ struct APNsClient {
         )
         
         // Send the notification
-//        let env: APNSContainers.ID = environment == .sandbox ? .development : .production
-        let env: APNSContainers.ID = .development
+        let env: APNSContainers.ID = environment == .sandbox ? .development : .production
         try await app.apns.client(env).sendAlertNotification(
             alert,
             deviceToken: device

@@ -1,4 +1,7 @@
 -- Checks the notification ledger
 -- build it out
 
-SELECT * FROM notification_ledger
+
+SElECT *
+FROM notification_ledger
+ORDER BY created desc nulls LAST
