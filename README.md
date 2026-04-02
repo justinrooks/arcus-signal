@@ -38,9 +38,12 @@ Optional tuning:
 
 Worker APNs configuration:
 
-- `APNS_PRIVATE_KEY_PATH` (absolute path to mounted `.p8`)
-- `APNS_KEY_ID` (Apple Key ID)
 - `APNS_TEAM_ID` (Apple Team ID)
+- `APNS_TOPIC` (APNs topic, usually the app bundle identifier)
+- `APNS_SANDBOX_KEY_ID` (Apple Key ID for sandbox APNs auth)
+- `APNS_SANDBOX_PRIVATE_KEY_PATH` (absolute path to mounted sandbox `.p8`)
+- `APNS_PROD_KEY_ID` (Apple Key ID for production APNs auth)
+- `APNS_PROD_PRIVATE_KEY_PATH` (absolute path to mounted production `.p8`)
 
 APNs startup behavior:
 
@@ -67,16 +70,23 @@ Compose sets defaults for queue tuning env vars (`QUEUE_WORKER_COUNT`, `REDIS_PO
 
 Compose APNs wiring (worker only):
 
-- `APNS_PRIVATE_KEY_PATH` defaults to `/run/secrets/apns/AuthKey.p8` inside the worker container.
-- `APNS_P8_HOST_PATH` controls the host-side `.p8` bind mount path (default `./.secrets/apns/AuthKey.p8`).
-- `APNS_KEY_ID` and `APNS_TEAM_ID` are read from environment and passed only to the worker service.
+- `APNS_TOPIC` defaults to `com.skyaware.app`.
+- `APNS_SANDBOX_PRIVATE_KEY_PATH` defaults to `/run/secrets/apns/AuthKey-sandbox.p8` inside the worker container.
+- `APNS_PROD_PRIVATE_KEY_PATH` defaults to `/run/secrets/apns/AuthKey-prod.p8` inside the worker container.
+- `APNS_SANDBOX_P8_HOST_PATH` controls the host-side sandbox `.p8` bind mount path (default `./.secrets/apns/AuthKey-sandbox.p8`).
+- `APNS_PROD_P8_HOST_PATH` controls the host-side production `.p8` bind mount path (default `./.secrets/apns/AuthKey-prod.p8`).
+- `APNS_SANDBOX_KEY_ID`, `APNS_PROD_KEY_ID`, `APNS_TEAM_ID`, and `APNS_TOPIC` are read from environment and passed only to the worker service.
 
 Example:
 
 ```bash
 mkdir -p .secrets/apns
-# copy your real key to .secrets/apns/AuthKey.p8
-APNS_KEY_ID=ABC123DEFG APNS_TEAM_ID=TEAM123456 docker compose up --build
+# copy your real keys to .secrets/apns/AuthKey-sandbox.p8 and .secrets/apns/AuthKey-prod.p8
+APNS_SANDBOX_KEY_ID=ABC123SANDBOX \
+APNS_PROD_KEY_ID=XYZ789PROD \
+APNS_TEAM_ID=TEAM123456 \
+APNS_TOPIC=com.skyaware.app \
+docker compose up --build
 ```
 
 For production deployments, prefer Docker secrets or an external secret manager over direct bind mounts.

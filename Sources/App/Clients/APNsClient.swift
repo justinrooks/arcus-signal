@@ -24,16 +24,26 @@ struct AlertDetails: Sendable, Codable {
 }
 
 struct APNsClient {
-    
-    
     func sendNotification(
         app: Application,
         with details: AlertDetails,
         to device: String,
         environment: APNsEnvironment
     ) async throws {
+        let topic = app.arcusAPNSConfig.topic
         // Create push notification Alert
 //        let payload = MyPayload(acme1: "hey", acme2: 2)
+        
+        
+        let containerID: APNSContainers.ID = switch environment {
+        case .sandbox:
+            .development
+        case .prod:
+            .production
+        }
+
+        let client = await app.apns.client(containerID)
+        
         let alert = APNSAlertNotification(
             alert: .init(
                 title: .raw(details.title),
@@ -42,16 +52,21 @@ struct APNsClient {
             ),
             expiration: .immediately,
             priority: .immediately,
-            topic: "com.skyaware.app",
+            topic: topic,
             payload: EmptyPayload(),
             badge: 0
         )
         
-        // Send the notification
-        let env: APNSContainers.ID = environment == .sandbox ? .development : .production
-        try await app.apns.client(env).sendAlertNotification(
+        try await client.sendAlertNotification(
             alert,
             deviceToken: device
         )
+        
+//        // Send the notification
+//        let env: APNSContainers.ID = environment == .sandbox ? .development : .production
+//        try await app.apns.client(env).sendAlertNotification(
+//            alert,
+//            deviceToken: device
+//        )
     }
 }
