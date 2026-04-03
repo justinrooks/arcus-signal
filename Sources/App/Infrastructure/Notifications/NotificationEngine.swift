@@ -127,7 +127,7 @@ struct NotificationEngine: Sendable {
         case .new:
             return eventName
         case .update:
-            return "\(eventName)"
+            return "\(eventName) Update"
         case .endedAllClear:
             return "\(eventName) Ended"
         case .cancelInError:
