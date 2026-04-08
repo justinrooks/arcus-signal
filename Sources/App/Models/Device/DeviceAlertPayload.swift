@@ -49,5 +49,16 @@ public struct DeviceAlertPayload: Sendable, Codable, Content {
     
     let ugc: [String]
     var h3Cells: [Int64]
+    
+    // CAP Params
+    let tornadoDetection: String?
+    let tornadoDamageThreat: String?
+    let maxWindGust: String?
+    let maxHailSize: String?
+    let windThreat: String?
+    let hailThreat: String?
+    let thunderstormDamageThreat: String?
+    let flashFloodDetection: String?
+    let flashFloodDamageThreat: String?
 }
 

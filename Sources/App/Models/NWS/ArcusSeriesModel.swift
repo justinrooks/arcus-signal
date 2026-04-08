@@ -346,7 +346,16 @@ public extension ArcusSeriesModel {
             instructions: instructions,
             response: response,
             ugc: ugcCodes,
-            h3Cells: h3Cells
+            h3Cells: h3Cells,
+            tornadoDetection: tornadoDetection,
+            tornadoDamageThreat: tornadoDamageThreat,
+            maxWindGust: maxWindGust,
+            maxHailSize: maxHailSize,
+            windThreat: windThreat,
+            hailThreat: hailThreat,
+            thunderstormDamageThreat: thunderstormDamageThreat,
+            flashFloodDetection: flashFloodDetection,
+            flashFloodDamageThreat: flashFloodDamageThreat
         )
     }
     
