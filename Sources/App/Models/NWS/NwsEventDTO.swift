@@ -123,7 +123,7 @@ public struct NwsEventPropertiesDTO: Codable, Sendable {
     public let instruction: String?
     public let response: String?      // e.g. "Shelter"
 
-    public let parameters: [String: [String]]?
+    public let parameters: NWSAlertParameters?
     public let scope: String?
     public let code: String?
     public let language: String?
@@ -191,6 +191,61 @@ public struct NWSReferenceDTO: Codable, Sendable {
         case identifier
         case sender
         case sent
+    }
+}
+
+public struct NWSAlertParameters: Sendable, Codable {
+    // Core lifecycle / motion
+    public let vtec: [String]?
+    public let eventEndingTime: [String]?
+    public let eventMotionDescription: [String]?
+
+    // Severe thunderstorm warning parameters
+    public let maxWindGust: [String]?
+    public let windThreat: [String]?
+    public let maxHailSize: [String]?
+    public let hailThreat: [String]?
+    public let thunderstormDamageThreat: [String]?
+
+    // Tornado / waterspout parameters
+    public let tornadoDetection: [String]?
+    public let tornadoDamageThreat: [String]?
+    public let waterspoutDetection: [String]?
+
+    // Flash flood parameters
+    public let flashFloodDetection: [String]?
+    public let flashFloodDamageThreat: [String]?
+
+    // WEA / dissemination parameters
+    public let weaHandling: [String]?
+    public let cmamText: [String]?
+    public let cmamLongText: [String]?
+    public let easOrg: [String]?
+    public let blockChannels: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case vtec = "VTEC"
+        case eventEndingTime
+        case eventMotionDescription
+
+        case maxWindGust
+        case windThreat
+        case maxHailSize
+        case hailThreat
+        case thunderstormDamageThreat
+
+        case tornadoDetection
+        case tornadoDamageThreat
+        case waterspoutDetection
+
+        case flashFloodDetection
+        case flashFloodDamageThreat
+
+        case weaHandling = "WEAHandling"
+        case cmamText = "CMAMtext"
+        case cmamLongText = "CMAMlongtext"
+        case easOrg = "EAS-ORG"
+        case blockChannels = "BLOCKCHANNEL"
     }
 }
 

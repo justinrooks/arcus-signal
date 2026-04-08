@@ -208,7 +208,7 @@ public extension NwsEventFeatureDTO {
         let messageID = Self.normalizeMessageID(properties.id) ?? Self.normalizeMessageID(id) ?? properties.id
         let endsAt = properties.ends
         let messageType = NWSAlertMessageType.fromNws(properties.messageType)
-        let vtec = properties.parameters?["VTEC"]?.first ?? ""
+        let vtec = properties.parameters?.vtec?.first ?? ""
         let vtecP = vtec.parseVTEC()
         let refs = properties.references?.compactMap{ $0.identifier }
         let geometry = geometry?.toGeoShape()
