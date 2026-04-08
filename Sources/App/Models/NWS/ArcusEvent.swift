@@ -115,6 +115,17 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
 
     // Raw payload reference
     public let rawRef: String?
+    
+    // CAP Params
+    public let tornadoDetection: String?
+    public let tornadoDamageThreat: String?
+    public let maxWindGust: String?
+    public let maxHailSize: String?
+    public let windThreat: String?
+    public let hailThreat: String?
+    public let thunderstormDamageThreat: String?
+    public let flashFloodDetection: String?
+    public let flashFloodDamageThreat: String?
 
     public init(
         urn: String,
@@ -146,7 +157,16 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         description: String?,
         instructions: String?,
         response: String?,
-        status: String?
+        status: String?,
+        tornadoDetection: String?,
+        tornadoDamageThreat: String?,
+        maxWindGust: String?,
+        maxHailSize: String?,
+        windThreat: String?,
+        hailThreat: String?,
+        thunderstormDamageThreat: String?,
+        flashFloodDetection: String?,
+        flashFloodDamageThreat: String?
     ) {
         self.id = urn
         self.source = source
@@ -178,6 +198,15 @@ public struct ArcusEvent: Codable, Sendable, Equatable {
         self.instructions = instructions
         self.response = response
         self.status = status
+        self.tornadoDetection = tornadoDetection
+        self.tornadoDamageThreat = tornadoDamageThreat
+        self.maxWindGust = maxWindGust
+        self.maxHailSize = maxHailSize
+        self.windThreat = windThreat
+        self.hailThreat = hailThreat
+        self.thunderstormDamageThreat = thunderstormDamageThreat
+        self.flashFloodDetection = flashFloodDetection
+        self.flashFloodDamageThreat = flashFloodDamageThreat
     }
 }
 
@@ -213,6 +242,16 @@ public extension NwsEventFeatureDTO {
         let refs = properties.references?.compactMap{ $0.identifier }
         let geometry = geometry?.toGeoShape()
         
+        let tornadoDetectionValue = properties.parameters?.tornadoDetection?.first ?? ""
+        let tornadoDamageThreatValue = properties.parameters?.tornadoDamageThreat?.first ?? ""
+        let maxWindGustValue = properties.parameters?.maxWindGust?.first ?? ""
+        let maxHailSizeValue = properties.parameters?.maxHailSize?.first ?? ""
+        let windThreatValue = properties.parameters?.windThreat?.first ?? ""
+        let hailThreatValue = properties.parameters?.hailThreat?.first ?? ""
+        let thunderstormDamageThreatValue = properties.parameters?.thunderstormDamageThreat?.first ?? ""
+        let flashFloodDetectionValue = properties.parameters?.flashFloodDetection?.first ?? ""
+        let flashFloodDamageThreatValue = properties.parameters?.flashFloodDamageThreat?.first ?? ""
+        
 
         return .init(
             urn: messageID,
@@ -244,7 +283,16 @@ public extension NwsEventFeatureDTO {
             description: properties.description,
             instructions: properties.instruction,
             response: properties.response,
-            status: properties.status
+            status: properties.status,
+            tornadoDetection: tornadoDetectionValue,
+            tornadoDamageThreat: tornadoDamageThreatValue,
+            maxWindGust: maxWindGustValue,
+            maxHailSize: maxHailSizeValue,
+            windThreat: windThreatValue,
+            hailThreat: hailThreatValue,
+            thunderstormDamageThreat: thunderstormDamageThreatValue,
+            flashFloodDetection: flashFloodDetectionValue,
+            flashFloodDamageThreat: flashFloodDamageThreatValue
         )
     }
 
@@ -291,6 +339,15 @@ extension ArcusEvent {
             let instructions: String?
             let response: String?
             let status: String?
+            let tornadoDetection: String?
+            let tornadoDamageThreat: String?
+            let maxWindGust: String?
+            let maxHailSize: String?
+            let windThreat: String?
+            let hailThreat: String?
+            let thunderstormDamageThreat: String?
+            let flashFloodDetection: String?
+            let flashFloodDamageThreat: String?
         }
 
         let fingerprint = ArcusEventContentFingerprint(
@@ -314,7 +371,16 @@ extension ArcusEvent {
             description: self.description,
             instructions: self.instructions,
             response: self.response,
-            status: self.status
+            status: self.status,
+            tornadoDetection: self.tornadoDetection,
+            tornadoDamageThreat: self.tornadoDamageThreat,
+            maxWindGust: self.maxWindGust,
+            maxHailSize: self.maxHailSize,
+            windThreat: self.windThreat,
+            hailThreat: self.hailThreat,
+            thunderstormDamageThreat: self.thunderstormDamageThreat,
+            flashFloodDetection: self.flashFloodDetection,
+            flashFloodDamageThreat: self.flashFloodDamageThreat
         )
 
         return try StableContentHasher.sha256Hex(of: fingerprint)
