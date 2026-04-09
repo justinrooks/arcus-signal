@@ -65,49 +65,50 @@ struct AppTests {
     }
 
     private func makeEvent(
-        key: String,
-        revision: Int = 1,
-        expiresAt: Date? = nil,
-        title: String? = nil
+        urn: String = "urn:oid:test-event",
+        sourceURL: String = "https://api.weather.gov/alerts/test-event",
+        title: String? = "Tornado Warning for Test Area"
     ) -> ArcusEvent {
-        let sourceURL = key.hasPrefix("http") ? key : "https://api.weather.gov/alerts/\(key)"
-        return ArcusEvent(
-            eventKey: key,
+        ArcusEvent(
+            urn: urn,
             source: .nws,
-            kind: .torWarning,
+            kind: "Tornado Warning",
             sourceURL: sourceURL,
-            status: .active,
-            revision: revision,
-            issuedAt: isoDate("2026-02-21T16:00:00Z"),
-            effectiveAt: isoDate("2026-02-21T16:05:00Z"),
-            expiresAt: expiresAt,
-            severity: .warning,
+            vtec: nil,
+            messageType: .alert,
+            state: .active,
+            references: [],
+            sent: isoDate("2026-02-21T16:00:00Z"),
+            effective: isoDate("2026-02-21T16:05:00Z"),
+            onset: isoDate("2026-02-21T16:10:00Z"),
+            expires: isoDate("2026-02-21T17:00:00Z"),
+            ends: nil,
+            lastSeenActive: isoDate("2026-02-21T16:30:00Z"),
+            severity: .severe,
             urgency: .immediate,
             certainty: .observed,
             geometry: nil,
-            ugcCodes: [],
-            h3Resolution: nil,
-            h3CoverHash: nil,
+            ugcCodes: ["COC031"],
             title: title,
             areaDesc: "Test Area",
-            rawRef: nil
-        )
-    }
-
-    private func makeIngestEvent(
-        key: String,
-        revision: Int = 1,
-        expiresAt: Date? = nil,
-        title: String? = nil,
-        messageType: NWSAlertMessageType = .alert,
-        sentAt: Date? = nil,
-        supersededEventKeys: [String] = []
-    ) -> ArcusIngestEvent {
-        ArcusIngestEvent(
-            event: makeEvent(key: key, revision: revision, expiresAt: expiresAt, title: title),
-            messageType: messageType,
-            sentAt: sentAt,
-            supersededEventKeys: supersededEventKeys
+            rawRef: nil,
+            category: "Met",
+            event: "Tornado Warning",
+            senderName: "NWS Boulder CO",
+            headline: title,
+            description: "Storm text",
+            instructions: "Take shelter now",
+            response: "Shelter",
+            status: "Actual",
+            tornadoDetection: "observed",
+            tornadoDamageThreat: nil,
+            maxWindGust: nil,
+            maxHailSize: nil,
+            windThreat: nil,
+            hailThreat: nil,
+            thunderstormDamageThreat: nil,
+            flashFloodDetection: nil,
+            flashFloodDamageThreat: nil
         )
     }
 
@@ -143,7 +144,16 @@ struct AppTests {
             instructions: "Take shelter now",
             response: "Shelter",
             ugcCodes: ugcCodes,
-            h3Cells: h3Cells
+            h3Cells: h3Cells,
+            tornadoDetection: nil,
+            tornadoDamageThreat: nil,
+            maxWindGust: nil,
+            maxHailSize: nil,
+            windThreat: nil,
+            hailThreat: nil,
+            thunderstormDamageThreat: nil,
+            flashFloodDetection: nil,
+            flashFloodDamageThreat: nil
         )
     }
 
@@ -152,7 +162,7 @@ struct AppTests {
         try await withApp(mode: .api) { app in
             try await app.testing().test(.GET, "health", afterResponse: { res async in
                 #expect(res.status == .ok)
-                #expect(res.body.string == "ok")
+                #expect(res.body.string == "")
             })
         }
     }
@@ -170,9 +180,12 @@ struct AppTests {
     @Test("Worker testing bootstrap allows missing APNS config")
     func workerTestingBootstrapAllowsMissingAPNSConfig() async throws {
         try await withEnvironment([
-            "APNS_PRIVATE_KEY_PATH": nil,
-            "APNS_KEY_ID": nil,
-            "APNS_TEAM_ID": nil
+            "APNS_TEAM_ID": nil,
+            "APNS_TOPIC": nil,
+            "APNS_SANDBOX_KEY_ID": nil,
+            "APNS_SANDBOX_PRIVATE_KEY_PATH": nil,
+            "APNS_PROD_KEY_ID": nil,
+            "APNS_PROD_PRIVATE_KEY_PATH": nil
         ]) {
             try await withApp(mode: .worker) { app in
                 let productionContainer = await app.apns.containers.container(for: .production)
@@ -188,9 +201,12 @@ struct AppTests {
         try await withEnvironment([
             "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable",
             "REDIS_URL": "redis://127.0.0.1:6379",
-            "APNS_PRIVATE_KEY_PATH": nil,
-            "APNS_KEY_ID": nil,
-            "APNS_TEAM_ID": nil
+            "APNS_TEAM_ID": nil,
+            "APNS_TOPIC": nil,
+            "APNS_SANDBOX_KEY_ID": nil,
+            "APNS_SANDBOX_PRIVATE_KEY_PATH": nil,
+            "APNS_PROD_KEY_ID": nil,
+            "APNS_PROD_PRIVATE_KEY_PATH": nil
         ]) {
             let app = try await Application.make(.production)
             var capturedError: (any Error)?
@@ -410,7 +426,7 @@ struct AppTests {
         }
     }
 
-    @Test("NWS feature maps to canonical ArcusEvent")
+    @Test("NWS feature maps to current ArcusEvent fields")
     func nwsFeatureMapsToArcusEvent() throws {
         let json = """
         {
@@ -456,16 +472,16 @@ struct AppTests {
             return
         }
 
-        #expect(event.eventKey == "https://api.weather.gov/alerts/abc123")
+        #expect(event.id == "https://api.weather.gov/alerts/abc123")
         #expect(event.source == .nws)
-        #expect(event.kind == .torWarning)
-        #expect(event.sourceURL == "https://api.weather.gov/alerts/abc123")
-        #expect(event.status == .active)
-        #expect(event.severity == .warning)
+        #expect(event.kind == "Tornado Warning")
+        #expect(event.sourceURL == "urn:oid:abc123")
+        #expect(event.state == .active)
+        #expect(event.severity == .severe)
         #expect(event.urgency == .immediate)
         #expect(event.certainty == .observed)
         #expect(event.areaDesc == "Denver County")
-        #expect(event.title == "Tornado Warning for Denver County")
+        #expect(event.headline == "Tornado Warning for Denver County")
         #expect(event.ugcCodes == ["COC031", "COC005"])
 
         switch event.geometry {
@@ -477,7 +493,7 @@ struct AppTests {
         }
     }
 
-    @Test("NWS mapper marks event ended when message is cancel")
+    @Test("NWS mapper marks cancel messages as cancelled in error")
     func nwsMapperMarksEndedWhenCancel() throws {
         let json = """
         {
@@ -508,10 +524,10 @@ struct AppTests {
         let events = decoded.toArcusEvents(now: now)
 
         #expect(events.count == 1)
-        #expect(events.first?.status == .ended)
+        #expect(events.first?.state == .cancelled_in_error)
     }
 
-    @Test("NWS mapper converts polygon geometry and filters unsupported events")
+    @Test("NWS mapper keeps supported and unsupported events while preserving polygon geometry")
     func nwsMapperConvertsPolygonAndFiltersUnsupported() throws {
         let json = """
         {
@@ -558,10 +574,16 @@ struct AppTests {
         let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
         let events = decoded.toArcusEvents(now: isoDate("2026-02-21T16:30:00Z"))
 
-        #expect(events.count == 1)
-        #expect(events.first?.kind == .ffWarning)
+        #expect(events.count == 2)
+        #expect(events.map(\.kind).contains("Flash Flood Warning"))
+        #expect(events.map(\.kind).contains("Special Weather Statement"))
 
-        switch events.first?.geometry {
+        guard let polygonEvent = events.first(where: { $0.kind == "Flash Flood Warning" }) else {
+            Issue.record("Expected polygon event in mapped results.")
+            return
+        }
+
+        switch polygonEvent.geometry {
         case .polygon(let rings):
             #expect(rings.isEmpty == false)
             #expect(rings.first?.isEmpty == false)
@@ -600,10 +622,10 @@ struct AppTests {
         let events = decoded.toArcusEvents(now: isoDate("2026-02-21T16:30:00Z"))
 
         #expect(events.count == 1)
-        #expect(events.first?.status == .active)
+        #expect(events.first?.state == .active)
     }
 
-    @Test("NWS mapper preserves superseded event keys for ingest linkage")
+    @Test("NWS mapper preserves reference identifiers on ArcusEvent")
     func nwsMapperPreservesReferenceSourceURLs() throws {
         let json = """
         {
@@ -637,26 +659,32 @@ struct AppTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
-        let ingestEvents = decoded.toArcusIngestEvents(now: isoDate("2026-02-21T16:30:00Z"))
+        let events = decoded.toArcusEvents(now: isoDate("2026-02-21T16:30:00Z"))
 
-        #expect(ingestEvents.count == 1)
-        #expect(ingestEvents.first?.supersededEventKeys == ["https://api.weather.gov/alerts/update-1"])
-        #expect(ingestEvents.first?.event.sourceURL == "https://api.weather.gov/alerts/update-2")
+        #expect(events.count == 1)
+        #expect(events.first?.id == "https://api.weather.gov/alerts/update-2")
+        #expect(events.first?.sourceURL == "urn:oid:update-2")
+        #expect(events.first?.references == ["ABC-123"])
     }
 
-    @Test("ArcusEventModel round-trips canonical event")
+    @Test("ArcusSeriesModel round-trips canonical event fields")
     func arcusEventModelRoundTrip() throws {
         let domain = ArcusEvent(
-            eventKey: "nws:urn:oid:roundtrip-1",
+            urn: "urn:oid:roundtrip-1",
             source: .nws,
-            kind: .torWarning,
+            kind: "Tornado Warning",
             sourceURL: "https://api.weather.gov/alerts/roundtrip-1",
-            status: .active,
-            revision: 2,
-            issuedAt: isoDate("2026-02-21T16:00:00Z"),
-            effectiveAt: isoDate("2026-02-21T16:05:00Z"),
-            expiresAt: isoDate("2026-02-21T17:00:00Z"),
-            severity: .warning,
+            vtec: nil,
+            messageType: .alert,
+            state: .active,
+            references: [],
+            sent: isoDate("2026-02-21T16:00:00Z"),
+            effective: isoDate("2026-02-21T16:05:00Z"),
+            onset: isoDate("2026-02-21T16:06:00Z"),
+            expires: isoDate("2026-02-21T17:00:00Z"),
+            ends: nil,
+            lastSeenActive: isoDate("2026-02-21T16:30:00Z"),
+            severity: .severe,
             urgency: .immediate,
             certainty: .observed,
             geometry: .polygon(
@@ -667,109 +695,58 @@ struct AppTests {
                 ]]
             ),
             ugcCodes: ["COC031", "COC005"],
-            h3Resolution: 8,
-            h3CoverHash: "test-cover-hash",
             title: "Round trip test",
             areaDesc: "Denver Metro",
-            rawRef: "raw/nws/roundtrip-1.json"
+            rawRef: nil,
+            category: "Met",
+            event: "Tornado Warning",
+            senderName: "NWS Boulder CO",
+            headline: "Round trip headline",
+            description: "Round trip description",
+            instructions: "Round trip instruction",
+            response: "Shelter",
+            status: "Actual",
+            tornadoDetection: "observed",
+            tornadoDamageThreat: "considerable",
+            maxWindGust: "80",
+            maxHailSize: "1.75",
+            windThreat: "observed",
+            hailThreat: "radar indicated",
+            thunderstormDamageThreat: "destructive",
+            flashFloodDetection: "observed",
+            flashFloodDamageThreat: "considerable"
         )
 
-        let model = try ArcusEventModel(from: domain, asOf: isoDate("2026-02-21T16:30:00Z"))
-        #expect(model.isExpired == false)
-
-        let expiredModel = try ArcusEventModel(from: domain, asOf: isoDate("2026-02-21T18:00:00Z"))
-        #expect(expiredModel.isExpired == true)
-
+        let model = try ArcusSeriesModel(from: domain, asOf: domain.lastSeenActive)
         let roundTrip = try model.asDomain()
 
         #expect(roundTrip == domain)
     }
 
-    @Test("Ingest deduplicator ignores duplicates and keeps latest payload")
-    func ingestDeduplicatorKeepsLatest() throws {
-        let first = makeIngestEvent(key: "nws:dup-1", revision: 1, title: "First")
-        let second = makeIngestEvent(key: "nws:dup-1", revision: 99, title: "Second")
-        let distinct = makeIngestEvent(key: "nws:dup-2", revision: 1, title: "Distinct")
-
-        let deduped = ArcusIngestMessageDeduplicator.deduplicate([first, second, distinct])
-
-        #expect(deduped.events.count == 2)
-        #expect(deduped.duplicatesIgnored == 1)
-        #expect(deduped.events[0].event.eventKey == "nws:dup-1")
-        #expect(deduped.events[0].event.title == "Second")
-        #expect(deduped.events[1].event.eventKey == "nws:dup-2")
-    }
-
-    @Test("Ingest lineage resolver keeps only final superseding message in a chain")
-    func ingestLineageResolverKeepsLatestSupersedingMessage() {
-        let alert = makeIngestEvent(
-            key: "https://api.weather.gov/alerts/a",
-            sentAt: isoDate("2026-02-21T16:00:00Z")
-        )
-        let update1 = makeIngestEvent(
-            key: "https://api.weather.gov/alerts/b",
-            messageType: .update,
-            sentAt: isoDate("2026-02-21T16:05:00Z"),
-            supersededEventKeys: ["https://api.weather.gov/alerts/a"]
-        )
-        let update2 = makeIngestEvent(
-            key: "https://api.weather.gov/alerts/c",
-            messageType: .update,
-            sentAt: isoDate("2026-02-21T16:10:00Z"),
-            supersededEventKeys: [
-                "https://api.weather.gov/alerts/a",
-                "https://api.weather.gov/alerts/b"
-            ]
-        )
-
-        let resolved = ArcusIngestLineageResolver.resolve(
-            events: [alert, update1, update2],
-            existingByEventKey: [:]
-        )
-
-        #expect(resolved.count == 1)
-        #expect(resolved.first?.winner.event.eventKey == "https://api.weather.gov/alerts/c")
-        #expect(resolved.first?.supersededInRun == 2)
-    }
-
-    @Test("Ingest lineage resolver links update chain to existing event key")
-    func ingestLineageResolverLinksToExistingEvent() throws {
-        let existingEventKey = "https://api.weather.gov/alerts/existing-a"
-        let existingModel = try ArcusEventModel(
-            from: makeEvent(key: existingEventKey, title: "Existing"),
-            asOf: isoDate("2026-02-21T16:00:00Z")
-        )
-
-        let incomingUpdate = makeIngestEvent(
-            key: "https://api.weather.gov/alerts/existing-b",
-            messageType: .update,
-            sentAt: isoDate("2026-02-21T16:05:00Z"),
-            supersededEventKeys: [existingEventKey]
-        )
-
-        let resolved = ArcusIngestLineageResolver.resolve(
-            events: [incomingUpdate],
-            existingByEventKey: [existingEventKey: existingModel]
-        )
-
-        #expect(resolved.count == 1)
-        #expect(resolved.first?.existing?.eventKey == existingEventKey)
-        #expect(resolved.first?.winner.event.eventKey == "https://api.weather.gov/alerts/existing-b")
-    }
-
-    @Test("ArcusEventModel content hash ignores revision but tracks payload changes")
+    @Test("ArcusEvent fingerprint ignores identifiers but tracks payload changes")
     func arcusEventContentHashSemantics() throws {
-        let base = makeEvent(key: "nws:hash-1", revision: 1, title: "Title A")
-        let samePayloadDifferentRevision = makeEvent(key: "nws:hash-1", revision: 42, title: "Title A")
-        let changedPayload = makeEvent(key: "nws:hash-1", revision: 1, title: "Title B")
+        let base = makeEvent(
+            urn: "urn:oid:hash-1",
+            sourceURL: "https://api.weather.gov/alerts/hash-1",
+            title: "Title A"
+        )
+        let samePayloadDifferentIdentifiers = makeEvent(
+            urn: "urn:oid:hash-2",
+            sourceURL: "https://api.weather.gov/alerts/hash-2",
+            title: "Title A"
+        )
+        let changedPayload = makeEvent(
+            urn: "urn:oid:hash-1",
+            sourceURL: "https://api.weather.gov/alerts/hash-1",
+            title: "Title B"
+        )
 
-        let asOf = isoDate("2026-02-21T16:30:00Z")
-        let baseModel = try ArcusEventModel(from: base, asOf: asOf)
-        let samePayloadModel = try ArcusEventModel(from: samePayloadDifferentRevision, asOf: asOf)
-        let changedPayloadModel = try ArcusEventModel(from: changedPayload, asOf: asOf)
+        let baseHash = try base.computeContentFingerprint()
+        let sameHash = try samePayloadDifferentIdentifiers.computeContentFingerprint()
+        let changedHash = try changedPayload.computeContentFingerprint()
 
-        #expect(baseModel.contentHash == samePayloadModel.contentHash)
-        #expect(baseModel.contentHash != changedPayloadModel.contentHash)
+        #expect(baseHash == sameHash)
+        #expect(baseHash != changedHash)
     }
 
     @Test("Scheduler dispatches ingest job to ingest lane")

@@ -12,7 +12,7 @@ struct ArcusEventFingerprintTests {
         ArcusEvent(
             urn: "urn:oid:test-fingerprint",
             source: .nws,
-            kind: .torWarning,
+            kind: "Tornado Warning",
             sourceURL: "https://api.weather.gov/alerts/test-fingerprint",
             vtec: nil,
             messageType: .alert,
@@ -29,11 +29,26 @@ struct ArcusEventFingerprintTests {
             certainty: .observed,
             geometry: nil,
             ugcCodes: ugcCodes,
-            h3Resolution: nil,
-            h3CoverHash: nil,
             title: title,
             areaDesc: areaDesc,
-            rawRef: nil
+            rawRef: nil,
+            category: "Met",
+            event: "Tornado Warning",
+            senderName: "NWS Boulder CO",
+            headline: "Tornado Warning for Test County",
+            description: "Storm text",
+            instructions: "Take shelter now",
+            response: "Shelter",
+            status: "Actual",
+            tornadoDetection: nil,
+            tornadoDamageThreat: nil,
+            maxWindGust: nil,
+            maxHailSize: nil,
+            windThreat: nil,
+            hailThreat: nil,
+            thunderstormDamageThreat: nil,
+            flashFloodDetection: nil,
+            flashFloodDamageThreat: nil
         )
     }
 

@@ -137,7 +137,7 @@ struct NotificationEngineTests {
             with: makePayload(mode: .ugc, reason: .update)
         )
 
-        #expect(details.title == "Severe Thunderstorm Watch Update")
+        #expect(details.title == "Severe Thunderstorm Watch - Update")
         #expect(details.subTitle == "Updated for your area")
         #expect(details.body == "Severe storm risk continues for your area.")
     }
