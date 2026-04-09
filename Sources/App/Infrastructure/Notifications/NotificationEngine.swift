@@ -75,12 +75,80 @@ struct NotificationEngine: Sendable {
         let eventName = deriveEventName(for: series)
         let tone = deriveTone(for: series)
         let eventKind = NotificationEventKind(eventName: eventName)
+        let severeTags = deriveSevereTags(for: series, of: eventKind)
 
-        return .init(
-            title: deriveTitle(for: eventName, reason: payload.reason),
-            subTitle: deriveSubtitle(with: payload, on: device),
-            body: deriveBody(for: eventKind, tone: tone, reason: payload.reason)
+        
+        let title = deriveTitle(for: eventName, reason: payload.reason)
+        let subTitle = deriveSubtitle(with: payload, on: device)
+        let body = deriveBody(
+            for: eventKind,
+            tone: tone,
+            reason: payload.reason,
+            severeTags: severeTags
         )
+        
+        return .init(
+            title: title,
+            subTitle: subTitle,
+            body: body
+        )
+    }
+    
+    private func deriveSevereTags(
+        for series: ArcusSeriesModel,
+        of kind: NotificationEventKind
+    ) -> [String] {
+        var tags: [String] = []
+
+        switch kind {
+        case .severeThunderstormWarning:
+            if normalizedCategory(series.tornadoDetection) == "possible" {
+                tags.append("Tornado possible")
+            }
+
+            if let damageThreat = severeThunderstormDamageThreatTag(series.thunderstormDamageThreat) {
+                tags.append(damageThreat)
+            }
+
+            if let windGust = windGustTag(series.maxWindGust) {
+                tags.append(windGust)
+            }
+
+            if let hailSize = hailSizeTag(series.maxHailSize) {
+                tags.append(hailSize)
+            }
+
+            if let hailThreat = hazardThreatTag(series.hailThreat, noun: "severe hail") {
+                tags.append(hailThreat)
+            }
+
+            if let windThreat = hazardThreatTag(series.windThreat, noun: "severe winds") {
+                tags.append(windThreat)
+            }
+
+        case .tornadoWarning:
+            if let detection = tornadoDetectionTag(series.tornadoDetection) {
+                tags.append(detection)
+            }
+
+            if let damageThreat = tornadoDamageThreatTag(series.tornadoDamageThreat) {
+                tags.append(damageThreat)
+            }
+
+        case .flashFloodWarning:
+            if let detection = floodDetectionTag(series.flashFloodDetection) {
+                tags.append(detection)
+            }
+
+            if let damageThreat = flashFloodDamageThreatTag(series.flashFloodDamageThreat) {
+                tags.append(damageThreat)
+            }
+
+        default:
+            break
+        }
+
+        return tags
     }
 
     private func deriveTone(for series: ArcusSeriesModel) -> NotificationTone {
@@ -139,148 +207,315 @@ struct NotificationEngine: Sendable {
         with payload: NotificationSendJobPayload,
         on device: NotificationCandidate
     ) -> String {
-        let location = locationTarget(for: payload.mode, on: device)
-
         switch payload.reason {
         case .new:
-            if payload.mode == .h3 {
-                return "At \(location)"
-            }
-
-            return "For \(location)"
+            return payload.mode == .h3 ? "Includes your location" : "For your area"
         case .update:
-            return "Updated for \(location)"
+            return "Updated for your area"
         case .endedAllClear:
-            return "No longer affecting \(location)"
+            return "No longer affecting your area"
         case .cancelInError:
-            return "Cancelled for \(location)"
+            return "Cancelled for your area"
         }
     }
 
     private func deriveBody(
         for eventKind: NotificationEventKind,
         tone: NotificationTone,
-        reason: NotificationReason
+        reason: NotificationReason,
+        severeTags: [String]
     ) -> String {
-        let action: String
-
         switch reason {
         case .new:
-            action = newAction(for: eventKind, tone: tone)
+            return newAction(for: eventKind, tone: tone, severeTags: severeTags)
         case .update:
-            action = updateAction(for: eventKind, tone: tone)
+            return updateAction(for: eventKind, tone: tone, severeTags: severeTags)
         case .endedAllClear:
-            action = "This alert is no longer active."
+            return endedAction(for: eventKind)
         case .cancelInError:
-            action = "This alert was cancelled by the issuer."
-        }
-
-        return "\(action) Tap for details."
-    }
-
-    private func locationTarget(
-        for mode: NotificationTargetMode,
-        on device: NotificationCandidate
-    ) -> String {
-        switch mode {
-        case .h3:
-            return "your location"
-        case .ugc:
-            if let countyLabel = trimmedNonEmpty(device.countyLabel) {
-                return countyLabel
-            }
-            if let fireZoneLabel = trimmedNonEmpty(device.fireZoneLabel) {
-                return fireZoneLabel
-            }
-            return "your area"
+            return cancelledAction(for: eventKind)
         }
     }
+
+    // locationTarget(for:on:) function removed
 
     private func newAction(
         for eventKind: NotificationEventKind,
-        tone: NotificationTone
+        tone: NotificationTone,
+        severeTags: [String]
     ) -> String {
         switch eventKind {
         case .tornadoWarning:
-            return "Take shelter now."
+            return tornadoWarningBody(reason: .new, severeTags: severeTags)
         case .tornadoWatch:
-            return "Conditions are favorable for tornadoes. Stay ready to act."
+            return "Conditions are favorable for tornadoes in your area."
         case .severeThunderstormWarning:
-            return "Move indoors and protect yourself from dangerous weather."
+            return severeThunderstormWarningBody(reason: .new, severeTags: severeTags)
         case .severeThunderstormWatch:
-            return "Conditions are favorable for severe storms. Stay ready to act."
+            return "Conditions are favorable for severe storms in your area."
         case .flashFloodWarning:
-            return "Move to higher ground and avoid flooded roads."
+            return flashFloodWarningBody(reason: .new, severeTags: severeTags)
         case .blizzardWarning:
-            return "Travel may become dangerous very quickly."
+            return "Blizzard conditions expected in your area."
         case .winterStormWarning:
-            return "Travel conditions may deteriorate quickly."
-        case .fireWarning:
-            return "Be ready to act quickly if fire conditions worsen."
+            return "Dangerous winter weather expected in your area."
+        case .fireWarning, .redFlagWarning:
+            return "Critical fire weather conditions in your area."
         case .fireWeatherWatch:
-            return "Fire conditions may develop. Avoid anything that can start a fire."
-        case .extremeFireDanger, .redFlagWarning:
-            return "Fire danger is high. Avoid anything that can start a fire."
+            return "Critical fire weather conditions may develop in your area."
+        case .extremeFireDanger:
+            return "Extreme fire danger in your area today."
         case .genericWarning:
-            return warningAction(for: tone)
+            return genericWarningBody(for: tone)
         case .genericWatch:
-            return "Conditions are favorable. Stay ready."
+            return "Weather conditions may become hazardous in your area."
         case .generic:
-            return genericAction(for: tone)
+            return genericInformationalBody(for: tone)
         }
     }
 
     private func updateAction(
         for eventKind: NotificationEventKind,
-        tone: NotificationTone
+        tone: NotificationTone,
+        severeTags: [String]
     ) -> String {
         switch eventKind {
         case .tornadoWarning:
-            return "Take shelter now if threatened."
-        case .tornadoWatch, .severeThunderstormWatch:
-            return "Stay ready to act quickly."
+            return tornadoWarningBody(reason: .update, severeTags: severeTags)
+        case .tornadoWatch:
+            return "Tornado risk continues for your area."
         case .severeThunderstormWarning:
-            return "Stay indoors and protect yourself from dangerous weather."
+            return severeThunderstormWarningBody(reason: .update, severeTags: severeTags)
+        case .severeThunderstormWatch:
+            return "Severe storm risk continues for your area."
         case .flashFloodWarning:
-            return "Avoid flooded roads and low-lying areas."
-        case .blizzardWarning, .winterStormWarning:
-            return "Travel conditions may still worsen."
-        case .fireWarning, .fireWeatherWatch, .extremeFireDanger, .redFlagWarning:
-            return "Fire danger may still increase quickly."
+            return flashFloodWarningBody(reason: .update, severeTags: severeTags)
+        case .blizzardWarning:
+            return "Blizzard conditions continue in your area."
+        case .winterStormWarning:
+            return "Dangerous winter weather continues in your area."
+        case .fireWarning, .redFlagWarning:
+            return "Critical fire weather conditions continue in your area."
+        case .fireWeatherWatch:
+            return "Fire weather risk continues for your area."
+        case .extremeFireDanger:
+            return "Extreme fire danger continues in your area."
         case .genericWarning:
-            return warningAction(for: tone)
+            return "Weather alert updated for your area."
         case .genericWatch:
-            return "Stay ready for changing conditions."
+            return "Weather risk continues for your area."
         case .generic:
-            return genericAction(for: tone)
+            return genericUpdateBody(for: tone)
         }
     }
 
-    private func warningAction(for tone: NotificationTone) -> String {
-        switch tone {
-        case .critical:
-            return "Take action now."
-        case .high:
-            return "Be ready to act quickly."
-        case .elevated:
-            return "Use caution and stay alert."
-        case .informational:
-            return "Stay aware of changing conditions."
+    private func endedAction(for eventKind: NotificationEventKind) -> String {
+        switch eventKind {
+        case .tornadoWarning:
+            return "This tornado warning is no longer active."
+        case .tornadoWatch:
+            return "This tornado watch has ended."
+        case .severeThunderstormWarning:
+            return "This severe thunderstorm warning is no longer active."
+        case .severeThunderstormWatch:
+            return "This severe thunderstorm watch has ended."
+        case .flashFloodWarning:
+            return "This flash flood warning is no longer active."
+        case .blizzardWarning:
+            return "This blizzard warning is no longer active."
+        case .winterStormWarning:
+            return "This winter storm warning is no longer active."
+        case .fireWarning, .redFlagWarning:
+            return "This red flag warning is no longer active."
+        case .fireWeatherWatch:
+            return "This fire weather watch has ended."
+        case .extremeFireDanger:
+            return "Extreme fire danger is no longer indicated for your area."
+        case .genericWarning, .generic:
+            return "This weather alert is no longer active."
+        case .genericWatch:
+            return "This weather watch has ended."
         }
     }
 
-    private func genericAction(for tone: NotificationTone) -> String {
-        switch tone {
-        case .critical:
-            return "Take action now."
-        case .high:
-            return "Stay alert and be ready to act quickly."
-        case .elevated:
-            return "Stay alert."
-        case .informational:
-            return "Monitor conditions."
+    private func cancelledAction(for eventKind: NotificationEventKind) -> String {
+        switch eventKind {
+        case .tornadoWarning:
+            return "This tornado warning was cancelled by the issuer."
+        case .tornadoWatch:
+            return "This tornado watch was cancelled by the issuer."
+        case .severeThunderstormWarning:
+            return "This severe thunderstorm warning was cancelled by the issuer."
+        case .severeThunderstormWatch:
+            return "This severe thunderstorm watch was cancelled by the issuer."
+        case .flashFloodWarning:
+            return "This flash flood warning was cancelled by the issuer."
+        case .blizzardWarning:
+            return "This blizzard warning was cancelled by the issuer."
+        case .winterStormWarning:
+            return "This winter storm warning was cancelled by the issuer."
+        case .fireWarning, .redFlagWarning:
+            return "This red flag warning was cancelled by the issuer."
+        case .fireWeatherWatch:
+            return "This fire weather watch was cancelled by the issuer."
+        case .extremeFireDanger, .genericWarning, .genericWatch, .generic:
+            return "This weather alert was cancelled by the issuer."
         }
     }
+
+    private func tornadoWarningBody(reason: NotificationReason, severeTags: [String]) -> String {
+        if severeTags.contains("Catastrophic tornado damage possible") {
+            return reason == .update
+                ? "Catastrophic tornado damage remains possible in your area."
+                : "Catastrophic tornado damage possible in your area."
+        }
+
+        if severeTags.contains("Considerable tornado damage possible") {
+            return reason == .update
+                ? "Considerable tornado damage remains possible in your area."
+                : "Considerable tornado damage possible in your area."
+        }
+
+        if severeTags.contains("Observed tornado") {
+            return reason == .update
+                ? "Observed tornado still indicated in your area."
+                : "Observed tornado in your area."
+        }
+
+        if severeTags.contains("Radar-indicated tornado") {
+            return reason == .update
+                ? "Radar-indicated tornado still indicated in your area."
+                : "Radar-indicated tornado in your area."
+        }
+
+        return reason == .update
+            ? "Tornado warning continues for your area."
+            : "Tornado danger in your area."
+    }
+
+    private func severeThunderstormWarningBody(reason: NotificationReason, severeTags: [String]) -> String {
+        if severeTags.contains("Tornado possible") {
+            return reason == .update
+                ? "Tornado possible remains in this warning."
+                : "Tornado possible in this warning."
+        }
+
+        if severeTags.contains("Destructive winds possible") {
+            return reason == .update
+                ? "Destructive winds remain possible in your area."
+                : "Destructive winds possible in your area."
+        }
+
+        if severeTags.contains("Considerable damage possible") {
+            return reason == .update
+                ? "Considerable damage remains possible in your area."
+                : "Considerable damage possible in your area."
+        }
+
+        if let magnitude = severeThunderstormMagnitudeDetail(from: severeTags) {
+            let prefix = reason == .update ? "remain possible" : "possible"
+            return "\(magnitude) \(prefix) in your area."
+        }
+
+        return reason == .update
+            ? "Severe thunderstorm warning continues for your area."
+            : "Damaging winds or large hail possible in your area."
+    }
+
+    private func flashFloodWarningBody(reason: NotificationReason, severeTags: [String]) -> String {
+        if severeTags.contains("Catastrophic flash flooding possible") {
+            return reason == .update
+                ? "Catastrophic flash flooding remains possible in your area."
+                : "Catastrophic flash flooding possible in your area."
+        }
+
+        if severeTags.contains("Considerable flash flooding possible") {
+            return reason == .update
+                ? "Considerable flash flooding remains possible in your area."
+                : "Considerable flash flooding possible in your area."
+        }
+
+        if severeTags.contains("Observed flooding") {
+            return reason == .update
+                ? "Observed flooding continues in your area."
+                : "Observed flooding in your area."
+        }
+
+        if severeTags.contains("Radar-indicated flooding") {
+            return reason == .update
+                ? "Radar-indicated flooding continues in your area."
+                : "Radar-indicated flooding in your area."
+        }
+
+        return reason == .update
+            ? "Flash flood warning continues for your area."
+            : "Flash flooding expected in your area."
+    }
+
+    private func severeThunderstormMagnitudeDetail(from severeTags: [String]) -> String? {
+        let preferred = severeTags.filter {
+            $0.hasPrefix("Wind gusts up to") || $0.hasPrefix("Hail up to")
+        }
+
+        guard preferred.isEmpty == false else {
+            return nil
+        }
+
+        if preferred.count == 1 {
+            return preferred[0]
+        }
+
+        let wind = preferred.first { $0.hasPrefix("Wind gusts up to") }
+        let hail = preferred.first { $0.hasPrefix("Hail up to") }
+
+        switch (wind, hail) {
+        case let (wind?, hail?):
+            let windValue = wind.replacingOccurrences(of: "Wind gusts up to ", with: "")
+            let hailValue = hail.replacingOccurrences(of: "Hail up to ", with: "")
+            return "Wind gusts up to \(windValue) and hail up to \(hailValue)"
+        case let (wind?, nil):
+            return wind
+        case let (nil, hail?):
+            return hail
+        default:
+            return preferred[0]
+        }
+    }
+
+    private func genericWarningBody(for tone: NotificationTone) -> String {
+        switch tone {
+        case .critical:
+            return "Dangerous weather alert for your area."
+        case .high:
+            return "Significant weather alert for your area."
+        case .elevated:
+            return "Weather alert for your area."
+        case .informational:
+            return "Weather information for your area."
+        }
+    }
+
+    private func genericInformationalBody(for tone: NotificationTone) -> String {
+        switch tone {
+        case .critical:
+            return "Dangerous weather conditions indicated for your area."
+        case .high:
+            return "Significant weather conditions indicated for your area."
+        case .elevated:
+            return "Weather conditions indicated for your area."
+        case .informational:
+            return "Weather information for your area."
+        }
+    }
+
+    private func genericUpdateBody(for tone: NotificationTone) -> String {
+        switch tone {
+        case .critical, .high, .elevated, .informational:
+            return "Weather information updated for your area."
+        }
+    }
+
+    // message, conciseSecondaryDetail, warningAction, genericAction functions removed
 
     private func trimmedNonEmpty(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -289,5 +524,115 @@ struct NotificationEngine: Sendable {
         }
 
         return trimmed
+    }
+
+    private func normalizedCategory(_ value: String?) -> String? {
+        guard let trimmed = trimmedNonEmpty(value) else {
+            return nil
+        }
+
+        let normalized = trimmed.normalizedLowercased
+        guard normalized.isEmpty == false,
+              normalized != "none",
+              normalized != "unknown",
+              normalized != "n/a" else {
+            return nil
+        }
+
+        return normalized
+    }
+
+    private func severeThunderstormDamageThreatTag(_ value: String?) -> String? {
+        switch normalizedCategory(value) {
+        case "considerable":
+            return "Considerable damage possible"
+        case "destructive":
+            return "Destructive winds possible"
+        default:
+            return nil
+        }
+    }
+
+    private func tornadoDamageThreatTag(_ value: String?) -> String? {
+        switch normalizedCategory(value) {
+        case "considerable":
+            return "Considerable tornado damage possible"
+        case "catastrophic":
+            return "Catastrophic tornado damage possible"
+        default:
+            return nil
+        }
+    }
+
+    private func flashFloodDamageThreatTag(_ value: String?) -> String? {
+        switch normalizedCategory(value) {
+        case "considerable":
+            return "Considerable flash flooding possible"
+        case "catastrophic":
+            return "Catastrophic flash flooding possible"
+        default:
+            return nil
+        }
+    }
+
+    private func tornadoDetectionTag(_ value: String?) -> String? {
+        switch normalizedCategory(value) {
+        case "observed":
+            return "Observed tornado"
+        case "radar indicated":
+            return "Radar-indicated tornado"
+        case "possible":
+            return "Tornado possible"
+        default:
+            return nil
+        }
+    }
+
+    private func floodDetectionTag(_ value: String?) -> String? {
+        switch normalizedCategory(value) {
+        case "observed":
+            return "Observed flooding"
+        case "radar indicated":
+            return "Radar-indicated flooding"
+        default:
+            return nil
+        }
+    }
+
+    private func hazardThreatTag(_ value: String?, noun: String) -> String? {
+        switch normalizedCategory(value) {
+        case "observed":
+            return "Observed \(noun)"
+        case "radar indicated":
+            return "Radar-indicated \(noun)"
+        default:
+            return nil
+        }
+    }
+
+    private func windGustTag(_ value: String?) -> String? {
+        guard let trimmed = trimmedNonEmpty(value) else {
+            return nil
+        }
+
+        let normalized = trimmed.normalizedLowercased
+        if normalized.contains("mph") {
+            return "Wind gusts up to \(trimmed)"
+        }
+
+        return "Wind gusts up to \(trimmed) mph"
+    }
+
+    private func hailSizeTag(_ value: String?) -> String? {
+        guard let trimmed = trimmedNonEmpty(value) else {
+            return nil
+        }
+
+        let normalized = trimmed.normalizedLowercased
+        if normalized.contains("inch") || normalized.contains("in.") || normalized.contains("\"") {
+            return "Hail up to \(trimmed)"
+        }
+
+        return "Hail up to \(trimmed) in"
     }
 }
