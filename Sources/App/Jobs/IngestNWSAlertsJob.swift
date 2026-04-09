@@ -430,6 +430,15 @@ private extension IngestNWSAlertsJob {
         series.instructions = event.instructions
         series.response = event.response
         series.status  = event.status
+        series.tornadoDetection = event.tornadoDetection
+        series.tornadoDamageThreat = event.tornadoDamageThreat
+        series.maxWindGust = event.maxWindGust
+        series.maxHailSize = event.maxHailSize
+        series.windThreat = event.windThreat
+        series.hailThreat = event.hailThreat
+        series.thunderstormDamageThreat = event.thunderstormDamageThreat
+        series.flashFloodDetection = event.flashFloodDetection
+        series.flashFloodDamageThreat = event.flashFloodDamageThreat
         
         series.contentFingerprint = try event.computeContentFingerprint()
     }

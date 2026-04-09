@@ -129,6 +129,33 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
     @OptionalField(key:"status")
     public var status: String?
     
+    @OptionalField(key:"tornado_detection")
+    public var tornadoDetection: String?
+    
+    @OptionalField(key:"tornado_damage_threat")
+    public var tornadoDamageThreat: String?
+    
+    @OptionalField(key:"max_wind_gust")
+    public var maxWindGust: String?
+    
+    @OptionalField(key:"max_hail_size")
+    public var maxHailSize: String?
+    
+    @OptionalField(key:"wind_threat")
+    public var windThreat: String?
+    
+    @OptionalField(key:"hail_threat")
+    public var hailThreat: String?
+    
+    @OptionalField(key:"thunderstorm_damage_threat")
+    public var thunderstormDamageThreat: String?
+    
+    @OptionalField(key:"flash_flood_detection")
+    public var flashFloodDetection: String?
+    
+    @OptionalField(key:"flash_flood_damage_threat")
+    public var flashFloodDamageThreat: String?
+    
     @OptionalChild(for: \.$series)
     var geolocation: ArcusGeolocationModel?
     
@@ -170,7 +197,16 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
         description: String? = nil,
         instructions: String? = nil,
         response: String? = nil,
-        status: String? = nil
+        status: String? = nil,
+        tornadoDetection: String? = nil,
+        tornadoDamageThreat: String? = nil,
+        maxWindGust: String? = nil,
+        maxHailSize: String? = nil,
+        windThreat: String? = nil,
+        hailThreat: String? = nil,
+        thunderstormDamageThreat: String? = nil,
+        flashFloodDetection: String? = nil,
+        flashFloodDamageThreat: String? = nil
     ) {
         self.id = id
         self.source = source
@@ -203,6 +239,15 @@ public final class ArcusSeriesModel: Model, @unchecked Sendable {
         self.instructions = instructions
         self.response = response
         self.status = status
+        self.tornadoDetection = tornadoDetection
+        self.tornadoDamageThreat = tornadoDamageThreat
+        self.maxWindGust = maxWindGust
+        self.maxHailSize = maxHailSize
+        self.windThreat = windThreat
+        self.hailThreat = hailThreat
+        self.thunderstormDamageThreat = thunderstormDamageThreat
+        self.flashFloodDetection = flashFloodDetection
+        self.flashFloodDamageThreat = flashFloodDamageThreat
     }
 }
 
@@ -250,7 +295,16 @@ public extension ArcusSeriesModel {
             description: event.description,
             instructions: event.instructions,
             response: event.response,
-            status: event.status
+            status: event.status,
+            tornadoDetection: event.tornadoDetection,
+            tornadoDamageThreat: event.tornadoDamageThreat,
+            maxWindGust: event.maxWindGust,
+            maxHailSize: event.maxHailSize,
+            windThreat: event.windThreat,
+            hailThreat: event.hailThreat,
+            thunderstormDamageThreat: event.thunderstormDamageThreat,
+            flashFloodDetection: event.flashFloodDetection,
+            flashFloodDamageThreat: event.flashFloodDamageThreat,
         )
     }
     
@@ -292,7 +346,16 @@ public extension ArcusSeriesModel {
             instructions: instructions,
             response: response,
             ugc: ugcCodes,
-            h3Cells: h3Cells
+            h3Cells: h3Cells,
+            tornadoDetection: tornadoDetection,
+            tornadoDamageThreat: tornadoDamageThreat,
+            maxWindGust: maxWindGust,
+            maxHailSize: maxHailSize,
+            windThreat: windThreat,
+            hailThreat: hailThreat,
+            thunderstormDamageThreat: thunderstormDamageThreat,
+            flashFloodDetection: flashFloodDetection,
+            flashFloodDamageThreat: flashFloodDamageThreat
         )
     }
     
@@ -351,7 +414,16 @@ public extension ArcusSeriesModel {
             description: description,
             instructions: instructions,
             response: response,
-            status: status
+            status: status,
+            tornadoDetection: tornadoDetection,
+            tornadoDamageThreat: tornadoDamageThreat,
+            maxWindGust: maxWindGust,
+            maxHailSize: maxHailSize,
+            windThreat: windThreat,
+            hailThreat: hailThreat,
+            thunderstormDamageThreat: thunderstormDamageThreat,
+            flashFloodDetection: flashFloodDetection,
+            flashFloodDamageThreat: flashFloodDamageThreat
         )
     }
 }

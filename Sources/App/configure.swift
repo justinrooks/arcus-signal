@@ -70,6 +70,8 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(FixIsSubscribedToDeviceInstallation())
     app.migrations.add(UpdateArcusSeriesConstraints())
     app.migrations.add(AddApnsErrorCodeToNotificationLedger())
+    app.migrations.add(AddCAPParamFields())
+    app.migrations.add(CreateNotificationDebug())
 }
 
 private func configureAPNs(on app: Application) async throws {

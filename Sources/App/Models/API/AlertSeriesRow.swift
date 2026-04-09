@@ -36,6 +36,15 @@ struct AlertSeriesRow: Decodable, Sendable {
     let response: String?
     let ugcCodes: [String]
     let h3Cells: [Int64]
+    let tornadoDetection: String?
+    let tornadoDamageThreat: String?
+    let maxWindGust: String?
+    let maxHailSize: String?
+    let windThreat: String?
+    let hailThreat: String?
+    let thunderstormDamageThreat: String?
+    let flashFloodDetection: String?
+    let flashFloodDamageThreat: String?
 
     func asDeviceAlertPayload() -> DeviceAlertPayload {
         .init(
@@ -63,7 +72,16 @@ struct AlertSeriesRow: Decodable, Sendable {
             instructions: instructions,
             response: response,
             ugc: ugcCodes,
-            h3Cells: h3Cells
+            h3Cells: h3Cells,
+            tornadoDetection: tornadoDetection,
+            tornadoDamageThreat: tornadoDamageThreat,
+            maxWindGust: maxWindGust,
+            maxHailSize: maxHailSize,
+            windThreat: windThreat,
+            hailThreat: hailThreat,
+            thunderstormDamageThreat: thunderstormDamageThreat,
+            flashFloodDetection: flashFloodDetection,
+            flashFloodDamageThreat: flashFloodDamageThreat
         )
     }
 }
@@ -99,6 +117,15 @@ extension AlertSeriesRow {
             "\(ident: seriesAlias).\(ident: "instructions") AS \(ident: "instructions")",
             "\(ident: seriesAlias).\(ident: "response") AS \(ident: "response")",
             "\(ident: seriesAlias).\(ident: "ugc_codes") AS \(ident: "ugcCodes")",
+            "\(ident: seriesAlias).\(ident: "tornado_detection") AS \(ident: "tornadoDetection")",
+            "\(ident: seriesAlias).\(ident: "tornado_damage_threat") AS \(ident: "tornadoDamageThreat")",
+            "\(ident: seriesAlias).\(ident: "max_wind_gust") AS \(ident: "maxWindGust")",
+            "\(ident: seriesAlias).\(ident: "max_hail_size") AS \(ident: "maxHailSize")",
+            "\(ident: seriesAlias).\(ident: "wind_threat") AS \(ident: "windThreat")",
+            "\(ident: seriesAlias).\(ident: "hail_threat") AS \(ident: "hailThreat")",
+            "\(ident: seriesAlias).\(ident: "thunderstorm_damage_threat") AS \(ident: "thunderstormDamageThreat")",
+            "\(ident: seriesAlias).\(ident: "flash_flood_detection") AS \(ident: "flashFloodDetection")",
+            "\(ident: seriesAlias).\(ident: "flash_flood_damage_threat") AS \(ident: "flashFloodDamageThreat")",
             "COALESCE(\(ident: geolocationAlias).\(ident: "h3_cells"), '{}'::bigint[]) AS \(ident: "h3Cells")"
         ]
         .joined(separator: ",\n")

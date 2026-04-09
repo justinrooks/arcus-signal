@@ -58,7 +58,7 @@ struct NotificationEngineTests {
         )
     }
 
-    @Test("H3 tornado warning notifications stay direct and minimal")
+    @Test("H3 tornado warning notifications use the current generic location wording")
     func h3TornadoWarning() {
         let details = engine.buildNotification(
             for: makeSeries(event: "Tornado Warning", severity: "extreme"),
@@ -67,11 +67,11 @@ struct NotificationEngineTests {
         )
 
         #expect(details.title == "Tornado Warning")
-        #expect(details.subTitle == "At your location")
-        #expect(details.body == "Take shelter now. Tap for details.")
+        #expect(details.subTitle == "Includes your location")
+        #expect(details.body == "Tornado danger in your area.")
     }
 
-    @Test("UGC updates use the best available local label")
+    @Test("UGC updates use the current generic area wording")
     func ugcUpdateUsesCountyLabel() {
         let details = engine.buildNotification(
             for: makeSeries(event: "Severe Thunderstorm Watch"),
@@ -79,12 +79,12 @@ struct NotificationEngineTests {
             on: makeCandidate(countyLabel: "  Boulder County  ", fireZoneLabel: "Zone 217")
         )
 
-        #expect(details.title == "Severe Thunderstorm Watch Update")
-        #expect(details.subTitle == "Updated for Boulder County")
-        #expect(details.body == "Stay ready to act quickly. Tap for details.")
+        #expect(details.title == "Severe Thunderstorm Watch - Update")
+        #expect(details.subTitle == "Updated for your area")
+        #expect(details.body == "Severe storm risk continues for your area.")
     }
 
-    @Test("UGC fire alerts fall back to fire zone labels when needed")
+    @Test("UGC fire alerts keep generic area wording")
     func ugcFireAlertUsesFireZoneLabel() {
         let details = engine.buildNotification(
             for: makeSeries(event: "Fire Warning"),
@@ -93,8 +93,8 @@ struct NotificationEngineTests {
         )
 
         #expect(details.title == "Fire Warning")
-        #expect(details.subTitle == "For Fire Weather Zone 217")
-        #expect(details.body == "Be ready to act quickly if fire conditions worsen. Tap for details.")
+        #expect(details.subTitle == "For your area")
+        #expect(details.body == "Critical fire weather conditions in your area.")
     }
 
     @Test("Cancellation messaging is explicit")
@@ -106,8 +106,8 @@ struct NotificationEngineTests {
         )
 
         #expect(details.title == "Tornado Warning Cancelled")
-        #expect(details.subTitle == "Cancelled for your location")
-        #expect(details.body == "This alert was cancelled by the issuer. Tap for details.")
+        #expect(details.subTitle == "Cancelled for your area")
+        #expect(details.body == "This tornado warning was cancelled by the issuer.")
     }
 
     @Test("Generic alerts fall back to trimmed headline or title text")
@@ -127,6 +127,18 @@ struct NotificationEngineTests {
 
         #expect(details.title == "Hazardous Weather Outlook")
         #expect(details.subTitle == "For your area")
-        #expect(details.body == "Monitor conditions. Tap for details.")
+        #expect(details.body == "Weather information for your area.")
+    }
+
+    @Test("Preview notifications stay generic when there are no candidates")
+    func previewNotificationUsesGenericUGCFallback() {
+        let details = engine.buildPreviewNotification(
+            for: makeSeries(event: "Severe Thunderstorm Watch"),
+            with: makePayload(mode: .ugc, reason: .update)
+        )
+
+        #expect(details.title == "Severe Thunderstorm Watch - Update")
+        #expect(details.subTitle == "Updated for your area")
+        #expect(details.body == "Severe storm risk continues for your area.")
     }
 }

@@ -314,6 +314,19 @@ private extension NotificationSendJob {
         using context: QueueContext
     ) async throws {
         guard candidates.count > 0 else {
+            let preview = engine.buildPreviewNotification(for: series, with: payload)
+            await saveNotificationDebugSnapshot(
+                seriesID: payload.seriesId,
+                installationID: nil,
+                notificationLedgerID: nil,
+                revisionUrn: payload.revisionUrn,
+                mode: payload.mode,
+                reason: payload.reason,
+                recordKind: .previewNoCandidates,
+                alert: preview,
+                using: context
+            )
+
             context.logger.info(
                 "No matching candidates. No notification sent",
                 metadata: [
@@ -340,8 +353,19 @@ private extension NotificationSendJob {
                 continue
             }
             
-            // Build your notification payload here.
             let alert = engine.buildNotification(for: series, with: payload, on: candidate)
+            await saveNotificationDebugSnapshot(
+                seriesID: payload.seriesId,
+                installationID: candidate.id,
+                notificationLedgerID: claim.id,
+                revisionUrn: payload.revisionUrn,
+                mode: payload.mode,
+                reason: payload.reason,
+                recordKind: .candidate,
+                alert: alert,
+                using: context
+            )
+
             do {
                 // Use per-installation APNs environment so sandbox/prod tokens route correctly.
                 let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
@@ -439,6 +463,59 @@ private extension NotificationSendJob {
                 existingClaim.status = "failed"
                 try await existingClaim.save(on: context.application.db)
             }
+        }
+    }
+
+    func saveNotificationDebugSnapshot(
+        seriesID: UUID,
+        installationID: UUID?,
+        notificationLedgerID: UUID?,
+        revisionUrn: String,
+        mode: NotificationTargetMode,
+        reason: NotificationReason,
+        recordKind: NotificationDebugRecordKind,
+        alert: AlertDetails,
+        using context: QueueContext
+    ) async {
+        let snapshot = NotificationDebugModel(
+            seriesID: seriesID,
+            installationID: installationID,
+            notificationLedgerID: notificationLedgerID,
+            revisionUrn: revisionUrn,
+            mode: mode.rawValue,
+            reason: reason.rawValue,
+            recordKind: recordKind,
+            title: alert.title,
+            subtitle: alert.subTitle,
+            body: alert.body
+        )
+
+        do {
+            try await snapshot.create(on: context.application.db)
+        } catch {
+            if DbUtils.isUniqueConstraintViolation(error) {
+                context.logger.debug(
+                    "Notification debug snapshot already recorded.",
+                    metadata: [
+                        "seriesId": .string(seriesID.uuidString),
+                        "revisionUrn": .string(revisionUrn),
+                        "mode": .string(mode.rawValue),
+                        "recordKind": .string(recordKind.rawValue)
+                    ]
+                )
+                return
+            }
+
+            context.logger.error(
+                "Failed to save notification debug snapshot.",
+                metadata: [
+                    "seriesId": .string(seriesID.uuidString),
+                    "revisionUrn": .string(revisionUrn),
+                    "mode": .string(mode.rawValue),
+                    "recordKind": .string(recordKind.rawValue),
+                    "error": .string(String(reflecting: error))
+                ]
+            )
         }
     }
 }

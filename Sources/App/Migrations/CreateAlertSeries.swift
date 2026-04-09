@@ -116,3 +116,33 @@ public struct CreateAlertSeriesModel: AsyncMigration {
         try await database.schema(ArcusSeriesModel.schema).delete()
     }
 }
+
+public struct AddCAPParamFields: AsyncMigration {
+    public func prepare(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .field("tornado_detection", .string)
+            .field("tornado_damage_threat", .string)
+            .field("max_wind_gust", .string)
+            .field("max_hail_size", .string)
+            .field("wind_threat", .string)
+            .field("hail_threat", .string)
+            .field("thunderstorm_damage_threat", .string)
+            .field("flash_flood_detection", .string)
+            .field("flash_flood_damage_threat", .string)
+            .update()
+    }
+
+    public func revert(on db: any Database) async throws {
+        try await db.schema(ArcusSeriesModel.schema)
+            .deleteField("tornado_detection")
+            .deleteField("tornado_damage_threat")
+            .deleteField("max_wind_gust")
+            .deleteField("max_hail_size")
+            .deleteField("wind_threat")
+            .deleteField("hail_threat")
+            .deleteField("thunderstorm_damage_threat")
+            .deleteField("flash_flood_detection")
+            .deleteField("flash_flood_damage_threat")
+            .update()
+    }
+}
