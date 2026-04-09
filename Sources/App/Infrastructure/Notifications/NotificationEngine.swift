@@ -72,12 +72,26 @@ struct NotificationEngine: Sendable {
         with payload: NotificationSendJobPayload,
         on device: NotificationCandidate
     ) -> AlertDetails {
+        buildAlertDetails(for: series, with: payload, on: device)
+    }
+
+    func buildPreviewNotification(
+        for series: ArcusSeriesModel,
+        with payload: NotificationSendJobPayload
+    ) -> AlertDetails {
+        buildAlertDetails(for: series, with: payload, on: nil)
+    }
+
+    private func buildAlertDetails(
+        for series: ArcusSeriesModel,
+        with payload: NotificationSendJobPayload,
+        on device: NotificationCandidate?
+    ) -> AlertDetails {
         let eventName = deriveEventName(for: series)
         let tone = deriveTone(for: series)
         let eventKind = NotificationEventKind(eventName: eventName)
         let severeTags = deriveSevereTags(for: series, of: eventKind)
 
-        
         let title = deriveTitle(for: eventName, reason: payload.reason)
         let subTitle = deriveSubtitle(with: payload, on: device)
         let body = deriveBody(
@@ -195,7 +209,7 @@ struct NotificationEngine: Sendable {
         case .new:
             return eventName
         case .update:
-            return "\(eventName) Update"
+            return "\(eventName) - Update"
         case .endedAllClear:
             return "\(eventName) Ended"
         case .cancelInError:
@@ -205,8 +219,10 @@ struct NotificationEngine: Sendable {
 
     private func deriveSubtitle(
         with payload: NotificationSendJobPayload,
-        on device: NotificationCandidate
+        on device: NotificationCandidate?
     ) -> String {
+        _ = device
+
         switch payload.reason {
         case .new:
             return payload.mode == .h3 ? "Includes your location" : "For your area"
@@ -299,7 +315,7 @@ struct NotificationEngine: Sendable {
         case .fireWeatherWatch:
             return "Fire weather risk continues for your area."
         case .extremeFireDanger:
-            return "Extreme fire danger continues in your area."
+            return "Extreme fire danger continues for your area."
         case .genericWarning:
             return "Weather alert updated for your area."
         case .genericWatch:
