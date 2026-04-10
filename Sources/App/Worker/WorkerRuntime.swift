@@ -60,5 +60,16 @@ public final class WorkerRuntime: LifecycleHandler, @unchecked Sendable {
         }
         try app.queues.startScheduledJobs()
         app.logger.info("Worker scheduled jobs started.")
+
+        Task {
+            do {
+                try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true)
+            } catch {
+                app.logger.error(
+                    "Failed to bootstrap operator dashboard snapshot.",
+                    metadata: ["error": .string(String(reflecting: error))]
+                )
+            }
+        }
     }
 }

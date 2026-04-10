@@ -40,6 +40,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         configureWorkerQueueSettings(on: app)
         configureWorkerRuntime(on: app)
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)
+        app.queues.schedule(RefreshOperatorDashboardSnapshotScheduledJob()).every(seconds: OperatorDashboardConfig.fastRefreshIntervalSeconds)
         app.logger.info("Configured scheduled ingestion dispatch (every 60 seconds).")
         try configureWorkerRoutes(app)
     }
@@ -72,6 +73,11 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddApnsErrorCodeToNotificationLedger())
     app.migrations.add(AddCAPParamFields())
     app.migrations.add(CreateNotificationDebug())
+    app.migrations.add(CreateIngestSweepRuns())
+    app.migrations.add(AddCompletedAtToNotificationLedger())
+    app.migrations.add(AddCompletionFieldsToTargetDispatchOutbox())
+    app.migrations.add(CreateNotificationSendAttempts())
+    app.migrations.add(CreateOperatorDashboardSnapshots())
 }
 
 private func configureAPNs(on app: Application) async throws {

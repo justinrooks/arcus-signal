@@ -58,7 +58,8 @@ public struct IngestNWSAlertsJob: AsyncJob {
                 "runLabel": .string(payload.runLabel ?? "none")
             ]
         )
-        let runTimestamp = Date()
+        let startedAt = Date()
+        let runTimestamp = startedAt
 
         do {
             let ingestEvents = try await resolveIngestEvents(
@@ -106,9 +107,30 @@ public struct IngestNWSAlertsJob: AsyncJob {
                     "Events Ended": .string("\(cleanResults.endedCount)"),
                     "Events Expired": .string("\(cleanResults.expiredCount)")
                 ])
+
+            await recordIngestSweepRun(
+                context: context,
+                payload: payload,
+                status: .succeeded,
+                startedAt: startedAt,
+                completedAt: Date(),
+                eventCount: ingestEvents.count,
+                persistResult: result,
+                errorMessage: nil
+            )
             
             context.logger.info("IngestNWSAlertsJob finished")
         } catch {
+            await recordIngestSweepRun(
+                context: context,
+                payload: payload,
+                status: .failed,
+                startedAt: startedAt,
+                completedAt: Date(),
+                eventCount: nil,
+                persistResult: nil,
+                errorMessage: String(reflecting: error)
+            )
             context.logger.report(error: error)
             throw error
         }
@@ -123,6 +145,44 @@ public struct IngestNWSAlertsJob: AsyncJob {
 }
 
 private extension IngestNWSAlertsJob {
+    func recordIngestSweepRun(
+        context: QueueContext,
+        payload: Payload,
+        status: IngestSweepRunStatus,
+        startedAt: Date,
+        completedAt: Date,
+        eventCount: Int?,
+        persistResult: PersistResult?,
+        errorMessage: String?
+    ) async {
+        let run = IngestSweepRunModel(
+            source: payload.source.rawValue,
+            fixtureName: payload.fixtureName,
+            runLabel: payload.runLabel,
+            status: status,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            eventCount: eventCount,
+            newSeriesCount: persistResult?.newSeriesCreated,
+            newRevisionCount: persistResult?.newRevisionsCreated,
+            targetOutboxQueuedCount: persistResult?.targetOutboxQueued,
+            notificationOutboxQueuedCount: persistResult?.notificationOutboxQueued,
+            errorMessage: errorMessage
+        )
+
+        do {
+            try await run.create(on: context.application.db)
+        } catch {
+            context.logger.warning(
+                "Failed to record ingest sweep run.",
+                metadata: [
+                    "status": .string(status.rawValue),
+                    "error": .string(String(reflecting: error))
+                ]
+            )
+        }
+    }
+
     func startEventCleanup(on database: any Database, asOf: Date, logger: Logger) async throws -> CleanupResult {
         // Expired
         let expired = ArcusSeriesModel.query(on: database)

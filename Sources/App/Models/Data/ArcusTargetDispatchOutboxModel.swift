@@ -28,6 +28,12 @@ public final class ArcusTargetDispatchOutboxModel: Model, @unchecked Sendable {
     @OptionalField(key: "dispatched")
     public var dispatched: Date?
 
+    @OptionalField(key: "completed")
+    public var completed: Date?
+
+    @OptionalField(key: "result")
+    public var result: String?
+
     public init() {}
 
     public init(
@@ -38,7 +44,9 @@ public final class ArcusTargetDispatchOutboxModel: Model, @unchecked Sendable {
         attemptCount: Int = 0,
         lastError: String? = nil,
         created: Date = .now,
-        dispatched: Date? = nil
+        dispatched: Date? = nil,
+        completed: Date? = nil,
+        result: String? = nil
     ) {
         self.id = id
         self.revisionUrn = revisionUrn
@@ -48,5 +56,7 @@ public final class ArcusTargetDispatchOutboxModel: Model, @unchecked Sendable {
         self.lastError = lastError
         self.created = created
         self.dispatched = dispatched
+        self.completed = completed
+        self.result = result
     }
 }
