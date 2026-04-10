@@ -394,13 +394,13 @@ struct NotificationEngine: Sendable {
 
         if severeTags.contains("Observed tornado") {
             return reason == .update
-                ? "Observed tornado still indicated in your area."
+                ? "Observed tornado still in your area."
                 : "Observed tornado in your area."
         }
 
         if severeTags.contains("Radar-indicated tornado") {
             return reason == .update
-                ? "Radar-indicated tornado still indicated in your area."
+                ? "Radar-indicated tornado still detected in your area."
                 : "Radar-indicated tornado in your area."
         }
 

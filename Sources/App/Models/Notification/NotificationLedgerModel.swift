@@ -35,6 +35,9 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
     
     @OptionalField(key: "apns_error_code")
     public var apnsErrorCode: String?
+
+    @OptionalField(key: "completed_at")
+    public var completedAt: Date?
     
     // Bookkeeping
     @Timestamp(key: "created", on: .create)
@@ -49,7 +52,8 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
         revisionUrn: String,
         mode: String,
         reason: String,
-        status: String?
+        status: String?,
+        completedAt: Date? = nil
     ) {
         self.id = id
         self.$deviceInstallation.id = installationId
@@ -58,5 +62,6 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
         self.mode = mode
         self.reason = reason
         self.status = status
+        self.completedAt = completedAt
     }
 }

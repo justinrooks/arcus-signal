@@ -27,6 +27,15 @@ struct LedgerClaimResult {
     let id: UUID?
 }
 
+struct DispatchNotificationsResult {
+    let candidateResolutionReached: Bool
+    let candidateCount: Int
+    let claimedCount: Int
+    let sentCount: Int
+    let failedCount: Int
+    let noOpReason: NotificationSendNoOpReason?
+}
+
 public enum NotificationTargetMode: String, Codable, Sendable {
     case h3
     case ugc
@@ -75,6 +84,7 @@ public struct NotificationSendJob: AsyncJob {
                 "reason": .string("\(String.init(reflecting: payload.reason))")
             ]
         )
+        let attemptedAt = Date()
         
         // Grab the associated series, revisions, & geometry
         let series = try await ArcusSeriesModel.query(on: context.application.db)
@@ -97,6 +107,19 @@ public struct NotificationSendJob: AsyncJob {
                     "reason": .string("\(String.init(reflecting: payload.reason))")
                 ]
             )
+            await recordAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: .init(
+                    candidateResolutionReached: false,
+                    candidateCount: 0,
+                    claimedCount: 0,
+                    sentCount: 0,
+                    failedCount: 0,
+                    noOpReason: .staleRevisionMismatch
+                )
+            )
             return
         }
         
@@ -110,6 +133,19 @@ public struct NotificationSendJob: AsyncJob {
                         "seriesId": .string(payload.seriesId.uuidString)
                     ]
                 )
+                await recordAttempt(
+                    context: context,
+                    payload: payload,
+                    attemptedAt: attemptedAt,
+                    summary: .init(
+                        candidateResolutionReached: false,
+                        candidateCount: 0,
+                        claimedCount: 0,
+                        sentCount: 0,
+                        failedCount: 0,
+                        noOpReason: .missingGeolocation
+                    )
+                )
                 return
             }
             
@@ -120,11 +156,17 @@ public struct NotificationSendJob: AsyncJob {
                 on: context.application.db
             )
             
-            try await dispatchNotifications(
+            let summary = try await dispatchNotifications(
                 to: h3Candidates,
                 with: payload,
                 and: series,
                 using: context
+            )
+            await recordAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: summary
             )
         } else {
             // we only have 2 modes right now, so its ugc
@@ -134,11 +176,17 @@ public struct NotificationSendJob: AsyncJob {
                 on: context.application.db
             )
 
-            try await dispatchNotifications(
+            let summary = try await dispatchNotifications(
                 to: ugcCandidates,
                 with: payload,
                 and: series,
                 using: context
+            )
+            await recordAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: summary
             )
         }
 
@@ -312,7 +360,7 @@ private extension NotificationSendJob {
         with payload: NotificationSendJobPayload,
         and series: ArcusSeriesModel,
         using context: QueueContext
-    ) async throws {
+    ) async throws -> DispatchNotificationsResult {
         guard candidates.count > 0 else {
             let preview = engine.buildPreviewNotification(for: series, with: payload)
             await saveNotificationDebugSnapshot(
@@ -336,9 +384,20 @@ private extension NotificationSendJob {
                     "reason": .string("\(String.init(reflecting: payload.reason))")
                 ]
             )
-            return
+            return .init(
+                candidateResolutionReached: true,
+                candidateCount: 0,
+                claimedCount: 0,
+                sentCount: 0,
+                failedCount: 0,
+                noOpReason: .zeroCandidates
+            )
         }
-        
+
+        var claimedCount = 0
+        var sentCount = 0
+        var failedCount = 0
+
         for candidate in candidates {
             let claim = try await claimNotificationLedger(
                 installationID: candidate.id,
@@ -352,6 +411,8 @@ private extension NotificationSendJob {
             guard claim.inserted else {
                 continue
             }
+
+            claimedCount += 1
             
             let alert = engine.buildNotification(for: series, with: payload, on: candidate)
             await saveNotificationDebugSnapshot(
@@ -378,8 +439,10 @@ private extension NotificationSendJob {
 
                 if let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) {
                     existingClaim.status = "sent"
+                    existingClaim.completedAt = .now
                     try await existingClaim.save(on: context.application.db)
                 }
+                sentCount += 1
                 
                 context.logger.info(
                     "Notification sent to device",
@@ -418,7 +481,9 @@ private extension NotificationSendJob {
                 }
 
                 existingClaim.status = "failed"
+                existingClaim.completedAt = .now
                 try await existingClaim.save(on: context.application.db)
+                failedCount += 1
                 
 //
 //                200
@@ -461,9 +526,27 @@ private extension NotificationSendJob {
                 // TODO: figure out retries
                 // At least we aren't dropping them now
                 existingClaim.status = "failed"
+                existingClaim.completedAt = .now
                 try await existingClaim.save(on: context.application.db)
+                failedCount += 1
             }
         }
+
+        let noOpReason: NotificationSendNoOpReason?
+        if sentCount == 0 && failedCount == 0 {
+            noOpReason = .allCandidatesPreviouslyClaimed
+        } else {
+            noOpReason = nil
+        }
+
+        return .init(
+            candidateResolutionReached: true,
+            candidateCount: candidates.count,
+            claimedCount: claimedCount,
+            sentCount: sentCount,
+            failedCount: failedCount,
+            noOpReason: noOpReason
+        )
     }
 
     func saveNotificationDebugSnapshot(
@@ -513,6 +596,50 @@ private extension NotificationSendJob {
                     "revisionUrn": .string(revisionUrn),
                     "mode": .string(mode.rawValue),
                     "recordKind": .string(recordKind.rawValue),
+                    "error": .string(String(reflecting: error))
+                ]
+            )
+        }
+    }
+
+    func recordAttempt(
+        context: QueueContext,
+        payload: NotificationSendJobPayload,
+        attemptedAt: Date,
+        summary: DispatchNotificationsResult
+    ) async {
+        let outcome: NotificationSendAttemptOutcome
+        if summary.noOpReason != nil {
+            outcome = .noOp
+        } else if summary.sentCount > 0 {
+            outcome = .delivered
+        } else {
+            outcome = .failed
+        }
+
+        let attempt = NotificationSendAttemptModel(
+            seriesID: payload.seriesId,
+            revisionUrn: payload.revisionUrn,
+            mode: payload.mode,
+            reason: payload.reason,
+            outcome: outcome,
+            noOpReason: summary.noOpReason,
+            candidateResolutionReached: summary.candidateResolutionReached,
+            candidateCount: summary.candidateCount,
+            claimedCount: summary.claimedCount,
+            sentCount: summary.sentCount,
+            failedCount: summary.failedCount,
+            attemptedAt: attemptedAt
+        )
+
+        do {
+            try await attempt.create(on: context.application.db)
+        } catch {
+            context.logger.warning(
+                "Failed to record notification send attempt.",
+                metadata: [
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn),
                     "error": .string(String(reflecting: error))
                 ]
             )

@@ -53,19 +53,36 @@ public struct TargetEventRevisionJob: AsyncJob {
                 "reason": .string(payload.reason.rawValue)
             ]
         )
-        
-        try await context.application.db.transaction { database in
-            try await persistGeolocation(payload, on: database, logger: context.logger)
+
+        do {
+            let result = try await context.application.db.transaction { database in
+                try await persistGeolocation(payload, on: database, logger: context.logger)
+            }
+
+            try await markDispatchResult(
+                payload: payload,
+                result: result.rawValue,
+                errorMessage: nil,
+                on: context.application.db
+            )
+
+            let drainNotificationsResult = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "h3")
+            context.logger.info(
+                "Notification dispatch outbox drain finished for h3",
+                metadata: [
+                    "dispatched": .stringConvertible(drainNotificationsResult.dispatched),
+                    "failed": .stringConvertible(drainNotificationsResult.failed)
+                ]
+            )
+        } catch {
+            try? await markDispatchResult(
+                payload: payload,
+                result: TargetDispatchCompletionResult.failed.rawValue,
+                errorMessage: String(reflecting: error),
+                on: context.application.db
+            )
+            throw error
         }
-        
-        let drainNotificationsResult = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "h3")
-        context.logger.info(
-            "Notification dispatch outbox drain finished for h3",
-            metadata: [
-                "dispatched": .stringConvertible(drainNotificationsResult.dispatched),
-                "failed": .stringConvertible(drainNotificationsResult.failed)
-            ]
-        )
     }
 
     public func error(_ context: QueueContext, _ error: any Error, _ payload: Payload) async throws {
@@ -82,11 +99,17 @@ public struct TargetEventRevisionJob: AsyncJob {
 }
 
 private extension TargetEventRevisionJob {
+    enum TargetDispatchCompletionResult: String {
+        case succeeded
+        case unsupportedGeometry = "unsupported_geometry"
+        case failed
+    }
+
     func persistGeolocation(
         _ payload: TargetEventRevisionPayload,
         on database: any Database,
         logger: Logger
-    ) async throws {
+    ) async throws -> TargetDispatchCompletionResult {
         let cover = try buildH3Cover(for: payload.geometry)
 
         guard let cover else {
@@ -94,7 +117,7 @@ private extension TargetEventRevisionJob {
                 "No polygon geometry available; skipping H3 persistence",
                 metadata: ["seriesId": .string(payload.seriesId.uuidString)]
             )
-            return
+            return .unsupportedGeometry
         }
 
         let geometryHash = try hashGeometry(payload.geometry)
@@ -120,7 +143,7 @@ private extension TargetEventRevisionJob {
                     "Geolocation unchanged; skipping update.",
                     metadata: ["seriesId": .string(payload.seriesId.uuidString)]
                 )
-                return
+                return .succeeded
             }
 
             existing.geometry = payload.geometry
@@ -153,6 +176,26 @@ private extension TargetEventRevisionJob {
         ) {
             logger.info("Notification job queued.", metadata: ["seriesId": .stringConvertible(payload.seriesId)])
         }
+
+        return .succeeded
+    }
+
+    func markDispatchResult(
+        payload: TargetEventRevisionPayload,
+        result: String,
+        errorMessage: String?,
+        on database: any Database
+    ) async throws {
+        guard let row = try await ArcusTargetDispatchOutboxModel.query(on: database)
+            .filter(\.$revisionUrn == payload.revisionUrn)
+            .first() else {
+            return
+        }
+
+        row.completed = .now
+        row.result = result
+        row.lastError = errorMessage
+        try await row.update(on: database)
     }
     
     // MARK: H3 HASHING
