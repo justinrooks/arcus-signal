@@ -1,4 +1,5 @@
 @testable import App
+import FluentSQL
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -116,7 +117,8 @@ struct AppTests {
         id: UUID = UUID(),
         now: Date,
         ugcCodes: [String] = ["COC031"],
-        h3Cells: [Int64] = []
+        h3Cells: [Int64] = [],
+        geometry: GeoShape? = nil
     ) -> AlertSeriesRow {
         AlertSeriesRow(
             id: id,
@@ -145,6 +147,7 @@ struct AppTests {
             response: "Shelter",
             ugcCodes: ugcCodes,
             h3Cells: h3Cells,
+            geometry: geometry,
             tornadoDetection: nil,
             tornadoDamageThreat: nil,
             maxWindGust: nil,
@@ -311,6 +314,82 @@ struct AppTests {
         let payload = try series.asDeviceAlertPayload()
 
         #expect(payload.h3Cells == [617700169958293503])
+        #expect(payload.geometry == nil)
+    }
+
+    @Test("Device alert payload includes eager-loaded polygon geometry")
+    func deviceAlertPayloadIncludesGeolocationGeometry() throws {
+        let now = isoDate("2026-03-19T16:00:00Z")
+        let seriesID = UUID()
+        let series = ArcusSeriesModel(
+            id: seriesID,
+            source: EventSource.nws.rawValue,
+            event: "Tornado Warning",
+            sourceURL: "https://api.weather.gov/alerts/test-alert",
+            currentRevisionUrn: "urn:oid:test-alert",
+            currentRevisionSent: now,
+            messageType: NWSAlertMessageType.alert.rawValue,
+            contentFingerprint: "fingerprint",
+            state: EventState.active.rawValue,
+            created: now,
+            updated: now,
+            sent: now,
+            effective: now,
+            onset: nil,
+            expires: nil,
+            ends: nil,
+            lastSeenActive: now,
+            severity: EventSeverity.severe.rawValue,
+            urgency: EventUrgency.immediate.rawValue,
+            certainty: EventCertainty.observed.rawValue,
+            ugcCodes: ["COC031"],
+            areaDesc: "Denver County",
+            description: "Storm text"
+        )
+        series.$geolocation.value = .some(
+            ArcusGeolocationModel(
+                series: seriesID,
+                geometry: .polygon(
+                    rings: [[
+                        .init(lon: -104.0, lat: 39.0),
+                        .init(lon: -103.5, lat: 39.5),
+                        .init(lon: -104.0, lat: 39.0)
+                    ]]
+                ),
+                geometryHash: "geom-hash",
+                h3Cells: [617700169958293503],
+                h3Resolution: 8,
+                h3Hash: "h3-hash"
+            )
+        )
+
+        let payload = try series.asDeviceAlertPayload()
+
+        #expect(payload.h3Cells == [617700169958293503])
+        #expect(payload.geometry == .polygon(rings: [[
+            .init(longitude: -104.0, latitude: 39.0),
+            .init(longitude: -103.5, latitude: 39.5),
+            .init(longitude: -104.0, latitude: 39.0)
+        ]]))
+    }
+
+    @Test("Device alert geometry converts multipolygon server geometry")
+    func deviceAlertGeometryConvertsMultipolygonGeoShape() {
+        let geometry = DeviceAlertGeometry(
+            geoShape: .multiPolygon(
+                polygons: [[[
+                    .init(lon: -104.0, lat: 39.0),
+                    .init(lon: -103.5, lat: 39.5),
+                    .init(lon: -104.0, lat: 39.0)
+                ]]]
+            )
+        )
+
+        #expect(geometry == .multiPolygon(polygons: [[[
+            .init(longitude: -104.0, latitude: 39.0),
+            .init(longitude: -103.5, latitude: 39.5),
+            .init(longitude: -104.0, latitude: 39.0)
+        ]]]))
     }
 
     @Test("Alert series row maps UGC codes and empty H3 cells into device payload")
@@ -325,6 +404,7 @@ struct AppTests {
 
         #expect(payload.ugc == ["COC031", "COZ038"])
         #expect(payload.h3Cells == [])
+        #expect(payload.geometry == nil)
         #expect(payload.senderName == "NWS Boulder CO")
     }
 
@@ -340,6 +420,42 @@ struct AppTests {
 
         #expect(payload.ugc == ["COC031"])
         #expect(payload.h3Cells == [617700169958293503, 617700170495164415])
+    }
+
+    @Test("Alert series row carries joined polygon geometry into device payload")
+    func alertSeriesRowPayloadIncludesJoinedGeometry() {
+        let now = isoDate("2026-03-19T16:00:00Z")
+        let row = makeAlertSeriesRow(
+            now: now,
+            geometry: .polygon(rings: [[
+                .init(lon: -104.0, lat: 39.0),
+                .init(lon: -103.5, lat: 39.5),
+                .init(lon: -104.0, lat: 39.0)
+            ]])
+        )
+
+        let payload = row.asDeviceAlertPayload()
+
+        #expect(payload.geometry == .polygon(rings: [[
+            .init(longitude: -104.0, latitude: 39.0),
+            .init(longitude: -103.5, latitude: 39.5),
+            .init(longitude: -104.0, latitude: 39.0)
+        ]]))
+    }
+
+    @Test("Alert series row selects geolocation geometry instead of deprecated series geometry")
+    func alertSeriesRowSelectsJoinedGeolocationGeometry() async throws {
+        try await withApp(mode: .api) { app in
+            guard let sql = app.db as? any SQLDatabase else {
+                Issue.record("Expected configured app database to support SQL serialization.")
+                return
+            }
+
+            let columns = sql.serialize(AlertSeriesRow.sqlSelectColumns()).sql
+
+            #expect(columns.contains(#""g"."geometry" AS "geometry""#))
+            #expect(!columns.contains(#""s"."geometry" AS "geometry""#))
+        }
     }
 
     @Test("NWS event JSON decodes polygon geometry coordinates")

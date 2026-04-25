@@ -312,14 +312,17 @@ public extension ArcusSeriesModel {
         guard let cleanId = id else { throw DeviceAlertPayloadError.missingRequired(field: "id") }
         guard let cleanCreate = created else { throw DeviceAlertPayloadError.missingRequired(field: "created") }
         guard let cleanUpdate = updated else { throw DeviceAlertPayloadError.missingRequired(field: "updated") }
-        let h3Cells: [Int64]
+        let geolocation: ArcusGeolocationModel?
 
         switch $geolocation.value {
-        case .some(let geolocation):
-            h3Cells = geolocation?.h3Cells ?? []
+        case .some(let loadedGeolocation):
+            geolocation = loadedGeolocation
         case .none:
-            h3Cells = []
+            geolocation = nil
         }
+
+        let h3Cells = geolocation?.h3Cells ?? []
+        let geometry = geolocation.flatMap { DeviceAlertGeometry(geoShape: $0.geometry) }
         
         return .init(
             id: cleanId,
@@ -347,6 +350,7 @@ public extension ArcusSeriesModel {
             response: response,
             ugc: ugcCodes,
             h3Cells: h3Cells,
+            geometry: geometry,
             tornadoDetection: tornadoDetection,
             tornadoDamageThreat: tornadoDamageThreat,
             maxWindGust: maxWindGust,
