@@ -36,6 +36,7 @@ struct AlertSeriesRow: Decodable, Sendable {
     let response: String?
     let ugcCodes: [String]
     let h3Cells: [Int64]
+    let geometry: GeoShape?
     let tornadoDetection: String?
     let tornadoDamageThreat: String?
     let maxWindGust: String?
@@ -73,6 +74,7 @@ struct AlertSeriesRow: Decodable, Sendable {
             response: response,
             ugc: ugcCodes,
             h3Cells: h3Cells,
+            geometry: geometry.flatMap(DeviceAlertGeometry.init(geoShape:)),
             tornadoDetection: tornadoDetection,
             tornadoDamageThreat: tornadoDamageThreat,
             maxWindGust: maxWindGust,
@@ -126,7 +128,8 @@ extension AlertSeriesRow {
             "\(ident: seriesAlias).\(ident: "thunderstorm_damage_threat") AS \(ident: "thunderstormDamageThreat")",
             "\(ident: seriesAlias).\(ident: "flash_flood_detection") AS \(ident: "flashFloodDetection")",
             "\(ident: seriesAlias).\(ident: "flash_flood_damage_threat") AS \(ident: "flashFloodDamageThreat")",
-            "COALESCE(\(ident: geolocationAlias).\(ident: "h3_cells"), '{}'::bigint[]) AS \(ident: "h3Cells")"
+            "COALESCE(\(ident: geolocationAlias).\(ident: "h3_cells"), '{}'::bigint[]) AS \(ident: "h3Cells")",
+            "\(ident: geolocationAlias).\(ident: "geometry") AS \(ident: "geometry")"
         ]
         .joined(separator: ",\n")
     }
