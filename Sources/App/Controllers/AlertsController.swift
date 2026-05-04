@@ -9,45 +9,47 @@ import Fluent
 import FluentSQL
 import Vapor
 
-private struct AlertLookupQuery: Content {
+private struct AlertLookupQueryV1: Content {
     let ugc: String?
+    let fire: String?
+    let h3: Int64?
+}
+
+private struct AlertLookupQueryV2: Content {
+    let county: String?
+    let forecast: String?
     let fire: String?
     let h3: Int64?
 }
 
 struct AlertsController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let alerts = routes.grouped("api", "v1", "alerts")
-        alerts.get(use: index)
+        routes.grouped("api", "v1", "alerts").get(use: indexV1)
+        routes.grouped("api", "v2", "alerts").get(use: indexV2)
     }
 
-    func index(req: Request) async throws -> Response {
-        let age = 25
-        let cacheControl = "private, max-age=\(age)"
-        let query = try req.query.decode(AlertLookupQuery.self)
-        let rows = try await loadAlertSeries(matching: query, on: req.db)
-        let etag = try computeAlertsETag(for: rows)
+    func indexV1(req: Request) async throws -> Response {
+        let query = try req.query.decode(AlertLookupQueryV1.self)
+        let rows = try await loadAlertSeriesV1(matching: query, on: req.db)
+        return try encodePayloadResponse(rows: rows)
+    }
 
-//            if etagMatches(req.headers.first(name: .ifNoneMatch), currentETag: etag) {
-//                let response = Response(status: .notModified)
-//                response.headers.replaceOrAdd(name: .eTag, value: etag)
-//                response.headers.replaceOrAdd(name: .cacheControl, value: cacheControl)
-//                return response
-//            }
+    func indexV2(req: Request) async throws -> Response {
+        let query = try req.query.decode(AlertLookupQueryV2.self)
+        let rows = try await loadAlertSeriesV2(matching: query, on: req.db)
+        return try encodePayloadResponse(rows: rows)
+    }
 
+    private func encodePayloadResponse(rows: [AlertSeriesRow]) throws -> Response {
         let payload = rows.map { $0.asDeviceAlertPayload() }
-
         let response = Response(status: .ok)
-//            response.headers.replaceOrAdd(name: .eTag, value: etag)
-//            response.headers.replaceOrAdd(name: .cacheControl, value: cacheControl)
         try response.content.encode(payload)
-
         return response
     }
 }
 
-private func loadAlertSeries(
-    matching query: AlertLookupQuery,
+private func loadAlertSeriesV1(
+    matching query: AlertLookupQueryV1,
     on database: any Database
 ) async throws -> [AlertSeriesRow] {
     guard let sql = database as? any SQLDatabase else {
@@ -58,20 +60,47 @@ private func loadAlertSeries(
         throw Abort(.badRequest, reason: "h3 must be > 0 when provided")
     }
 
-    var seenUGCCodes = Set<String>()
-    let ugcCodes = [normalizedUGCCode(query.ugc), normalizedUGCCode(query.fire)]
-        .compactMap { $0 }
-        .filter { seenUGCCodes.insert($0).inserted }
+    let ugcCodes = uniqueUGCCodes([query.ugc, query.fire])
 
     guard !ugcCodes.isEmpty || query.h3 != nil else {
         throw Abort(.badRequest, reason: "At least one of ugc, fire, or h3 is required")
     }
 
+    return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: query.h3)
+}
+
+private func loadAlertSeriesV2(
+    matching query: AlertLookupQueryV2,
+    on database: any Database
+) async throws -> [AlertSeriesRow] {
+    guard let sql = database as? any SQLDatabase else {
+        throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+    }
+
+    if let h3 = query.h3, h3 <= 0 {
+        throw Abort(.badRequest, reason: "h3 must be > 0 when provided")
+    }
+
+    let ugcCodes = uniqueUGCCodes([query.county, query.forecast, query.fire])
+
+    guard !ugcCodes.isEmpty || query.h3 != nil else {
+        throw Abort(.badRequest, reason: "At least one of county, forecast, fire, or h3 is required")
+    }
+
+    return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: query.h3)
+}
+
+private func loadAlertSeries(
+    sql: any SQLDatabase,
+    ugcCodes: [String],
+    h3: Int64?
+) async throws -> [AlertSeriesRow] {
+
     var matchClauses: [SQLQueryString] = ugcCodes.map { code in
         "\(bind: code) = ANY(\(ident: "s").\(ident: "ugc_codes"))"
     }
 
-    if let h3 = query.h3 {
+    if let h3 {
         matchClauses.append(
             "\(bind: h3) = ANY(COALESCE(\(ident: "g").\(ident: "h3_cells"), '{}'::bigint[]))"
         )
@@ -95,6 +124,14 @@ private func loadAlertSeries(
                  \(ident: "s").\(ident: "id") ASC
         """)
         .all(decoding: AlertSeriesRow.self)
+}
+
+private func uniqueUGCCodes(_ values: [String?]) -> [String] {
+    var seenUGCCodes = Set<String>()
+    return values
+        .map(normalizedUGCCode)
+        .compactMap { $0 }
+        .filter { seenUGCCodes.insert($0).inserted }
 }
 
 private func normalizedUGCCode(_ value: String?) -> String? {
