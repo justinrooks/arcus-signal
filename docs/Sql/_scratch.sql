@@ -101,6 +101,12 @@ ORDER BY created desc
 WHERE description ~~* '%Tornado%' AND event <> 'Tornado Warning' AND event <> 'Tornado Watch'
 ORDER BY created DESC
 
+
+SELECT *
+FROM arcus_series
+WHERE 'COZ045' = ANY (ugc_codes)
+ORDER BY created DESC
+
 SELECT * from alert_revisions
 WHERE series_id = '32e7a79b-3599-4a39-a60e-ce7e961f3016'
 
