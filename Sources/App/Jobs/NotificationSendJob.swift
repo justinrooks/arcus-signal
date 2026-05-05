@@ -392,7 +392,9 @@ private extension NotificationSendJob {
                 evaluatedAt: evaluatedAt
             )
 
-            if case let .skipStale(freshnessDecision) = disposition {
+            let freshnessDecision: LocationFreshnessDecision
+            switch disposition {
+            case let .skipStale(staleDecision):
                 _ = try await missedDecisionStore.insertStaleMissDecision(
                     .init(
                         installationID: candidate.id,
@@ -400,7 +402,7 @@ private extension NotificationSendJob {
                         revisionUrn: payload.revisionUrn,
                         mode: payload.mode,
                         reason: payload.reason,
-                        freshnessState: freshnessDecision.state,
+                        freshnessState: staleDecision.state,
                         missReason: .staleLocation,
                         permissionMode: candidate.locationAuth,
                         capturedAt: candidate.capturedAt,
@@ -410,6 +412,8 @@ private extension NotificationSendJob {
                     on: context.application.db
                 )
                 continue
+            case let .deliver(deliveryDecision):
+                freshnessDecision = deliveryDecision
             }
 
             let claim = try await claimNotificationLedger(
@@ -427,7 +431,12 @@ private extension NotificationSendJob {
 
             claimedCount += 1
             
-            let alert = engine.buildNotification(for: series, with: payload, on: candidate)
+            let alert = engine.buildNotification(
+                for: series,
+                with: payload,
+                on: candidate,
+                freshnessState: freshnessDecision.state
+            )
             await saveNotificationDebugSnapshot(
                 seriesID: payload.seriesId,
                 installationID: candidate.id,

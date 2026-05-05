@@ -279,7 +279,7 @@ Related GitHub issues:
 ## Issue 4 - Select push subtitle by freshness state
 
 ### Status
-- Not started
+- Completed (2026-05-05)
 
 ### Scope
 - Centralize subtitle selection based on freshness state.
@@ -294,9 +294,31 @@ Related GitHub issues:
 - `Acceptance criteria`
 
 ### Handoff notes
-- `NotificationEngine` currently has no freshness input.
-- Avoid threading raw presence models into `NotificationEngine`; pass only derived decision state needed for copy.
-- Stale candidates should not reach push composition for delivery.
+- Threaded only derived freshness context (`LocationFreshnessState`) into notification composition.
+- `NotificationEngine.buildNotification(...)` now accepts optional `freshnessState` so copy remains centralized in `NotificationEngine` without passing raw presence models.
+- `NotificationSendJob` now forwards the already-computed freshness decision from Issue 3 when building sendable notifications.
+- Subtitle selection decision implemented for `.new` warning/watch notifications:
+  - `fresh` -> `Includes your location`
+  - `degraded` -> `For your last known area`
+  - `stale` -> `preconditionFailure` guard because stale candidates should have been filtered before composition in Issue 3.
+- Existing subtitle copy for `.update`, `.endedAllClear`, and `.cancelInError` is intentionally preserved unchanged.
+- Notification body composition remains unchanged and focused on event content.
+- Existing fallback copy for cases without freshness context (e.g., preview/no-candidate flows) is preserved.
+
+### Files changed
+- `Sources/App/Infrastructure/Notifications/NotificationEngine.swift`
+- `Sources/App/Jobs/NotificationSendJob.swift`
+- `Tests/AppTests/NotificationEngineTests.swift`
+- `docs/plans/FB-019-progress.md`
+
+### Tests run
+- `swift test --filter NotificationEngine`
+- `swift test --filter LocationFreshness`
+- `swift test`
+
+### Deferred
+- Delivered freshness-state persistence remains deferred to Issue 5.
+- Freshness observability/dashboard additions remain deferred to Issue 6 / GitHub #56.
 
 ---
 

@@ -70,9 +70,15 @@ struct NotificationEngine: Sendable {
     func buildNotification(
         for series: ArcusSeriesModel,
         with payload: NotificationSendJobPayload,
-        on device: NotificationCandidate
+        on device: NotificationCandidate,
+        freshnessState: LocationFreshnessState? = nil
     ) -> AlertDetails {
-        buildAlertDetails(for: series, with: payload, on: device)
+        buildAlertDetails(
+            for: series,
+            with: payload,
+            on: device,
+            freshnessState: freshnessState
+        )
     }
 
     func buildPreviewNotification(
@@ -85,7 +91,8 @@ struct NotificationEngine: Sendable {
     private func buildAlertDetails(
         for series: ArcusSeriesModel,
         with payload: NotificationSendJobPayload,
-        on device: NotificationCandidate?
+        on device: NotificationCandidate?,
+        freshnessState: LocationFreshnessState? = nil
     ) -> AlertDetails {
         let eventName = deriveEventName(for: series)
         let tone = deriveTone(for: series)
@@ -93,7 +100,12 @@ struct NotificationEngine: Sendable {
         let severeTags = deriveSevereTags(for: series, of: eventKind)
 
         let title = deriveTitle(for: eventName, reason: payload.reason)
-        let subTitle = deriveSubtitle(with: payload, on: device)
+        let subTitle = deriveSubtitle(
+            with: payload,
+            eventKind: eventKind,
+            on: device,
+            freshnessState: freshnessState
+        )
         let body = deriveBody(
             for: eventKind,
             tone: tone,
@@ -219,12 +231,24 @@ struct NotificationEngine: Sendable {
 
     private func deriveSubtitle(
         with payload: NotificationSendJobPayload,
-        on device: NotificationCandidate?
+        eventKind: NotificationEventKind,
+        on device: NotificationCandidate?,
+        freshnessState: LocationFreshnessState?
     ) -> String {
         _ = device
 
         switch payload.reason {
         case .new:
+            if eventKind.isWarningOrWatch, let freshnessState {
+                switch freshnessState {
+                case .fresh:
+                    return "Includes your location"
+                case .degraded:
+                    return "For your last known area"
+                case .stale:
+                    preconditionFailure("Stale candidates should never reach notification composition")
+                }
+            }
             return payload.mode == .h3 ? "Includes your location" : "For your area"
         case .update:
             return "Updated for your area"
@@ -650,5 +674,27 @@ struct NotificationEngine: Sendable {
         }
 
         return "Hail up to \(trimmed) in"
+    }
+}
+
+private extension NotificationEventKind {
+    var isWarningOrWatch: Bool {
+        switch self {
+        case .tornadoWarning,
+             .tornadoWatch,
+             .severeThunderstormWarning,
+             .severeThunderstormWatch,
+             .flashFloodWarning,
+             .blizzardWarning,
+             .winterStormWarning,
+             .fireWarning,
+             .fireWeatherWatch,
+             .redFlagWarning,
+             .genericWarning,
+             .genericWatch:
+            return true
+        case .extremeFireDanger, .generic:
+            return false
+        }
     }
 }

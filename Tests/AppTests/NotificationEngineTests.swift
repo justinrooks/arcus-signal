@@ -66,7 +66,8 @@ struct NotificationEngineTests {
         let details = engine.buildNotification(
             for: makeSeries(event: "Tornado Warning", severity: "extreme"),
             with: makePayload(mode: .h3, reason: .new),
-            on: makeCandidate()
+            on: makeCandidate(),
+            freshnessState: .fresh
         )
 
         #expect(details.title == "Tornado Warning")
@@ -98,6 +99,34 @@ struct NotificationEngineTests {
         #expect(details.title == "Fire Warning")
         #expect(details.subTitle == "For your area")
         #expect(details.body == "Critical fire weather conditions in your area.")
+    }
+
+    @Test("Degraded warning notifications use last-known-area subtitle")
+    func degradedWarningUsesLastKnownAreaSubtitle() {
+        let details = engine.buildNotification(
+            for: makeSeries(event: "Severe Thunderstorm Warning"),
+            with: makePayload(mode: .h3, reason: .new),
+            on: makeCandidate(),
+            freshnessState: .degraded
+        )
+
+        #expect(details.title == "Severe Thunderstorm Warning")
+        #expect(details.subTitle == "For your last known area")
+        #expect(details.body == "Damaging winds or large hail possible in your area.")
+    }
+
+    @Test("Non-new copy remains unchanged even when degraded")
+    func degradedUpdatePreservesExistingSubtitleCopy() {
+        let details = engine.buildNotification(
+            for: makeSeries(event: "Tornado Watch"),
+            with: makePayload(mode: .ugc, reason: .update),
+            on: makeCandidate(),
+            freshnessState: .degraded
+        )
+
+        #expect(details.title == "Tornado Watch - Update")
+        #expect(details.subTitle == "Updated for your area")
+        #expect(details.body == "Tornado risk continues for your area.")
     }
 
     @Test("Cancellation messaging is explicit")
