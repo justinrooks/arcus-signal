@@ -53,6 +53,9 @@ struct NotificationEngineTests {
             id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
             apnsToken: "token",
             apnsEnvironment: "sandbox",
+            locationAuthRaw: LocationAuth.whenInUse.rawValue,
+            capturedAt: Date(timeIntervalSince1970: 1_710_000_000),
+            receivedAt: Date(timeIntervalSince1970: 1_710_000_001),
             countyLabel: countyLabel,
             fireZoneLabel: fireZoneLabel
         )

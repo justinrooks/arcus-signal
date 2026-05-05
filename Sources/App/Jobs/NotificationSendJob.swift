@@ -16,10 +16,15 @@ struct NotificationCandidate: Decodable {
     let id: UUID
     let apnsToken: String
     let apnsEnvironment: String
+    let locationAuthRaw: String
+    let capturedAt: Date
+    let receivedAt: Date
     let countyLabel: String?
     let fireZoneLabel: String?
-//    let matchReason: String
-//    let locality: String?
+
+    var locationAuth: LocationAuth {
+        LocationAuth(rawValue: locationAuthRaw) ?? .unknown
+    }
 }
 
 struct LedgerClaimResult {
@@ -34,6 +39,11 @@ struct DispatchNotificationsResult {
     let sentCount: Int
     let failedCount: Int
     let noOpReason: NotificationSendNoOpReason?
+}
+
+enum NotificationCandidateDeliveryDisposition: Sendable, Equatable {
+    case deliver(LocationFreshnessDecision)
+    case skipStale(LocationFreshnessDecision)
 }
 
 public enum NotificationTargetMode: String, Codable, Sendable {
@@ -71,8 +81,27 @@ public struct NotificationSendJob: AsyncJob {
     public typealias Payload = NotificationSendJobPayload
     private let sender: APNsClient = APNsClient()
     private let engine: NotificationEngine = NotificationEngine()
+    private let freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy()
+    private let missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore()
     
     public init () {}
+
+    func deliveryDisposition(
+        for candidate: NotificationCandidate,
+        evaluatedAt: Date
+    ) -> NotificationCandidateDeliveryDisposition {
+        let freshness = freshnessPolicy.decide(
+            capturedAt: candidate.capturedAt,
+            locationAuth: candidate.locationAuth,
+            now: evaluatedAt
+        )
+        switch freshness.state {
+        case .stale:
+            return .skipStale(freshness)
+        case .fresh, .degraded:
+            return .deliver(freshness)
+        }
+    }
     
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
         context.logger.info(
@@ -152,7 +181,6 @@ public struct NotificationSendJob: AsyncJob {
             // Get our list of candidates
             let h3Candidates = try await loadH3Candidates(
                 cells: geo.h3Cells,
-                freshnessCutoff: nil,
                 on: context.application.db
             )
             
@@ -172,7 +200,6 @@ public struct NotificationSendJob: AsyncJob {
             // we only have 2 modes right now, so its ugc
             let ugcCandidates = try await loadUGCCandidates(
                 ugcCodes: series.ugcCodes,
-                freshnessCutoff: nil,
                 on: context.application.db
             )
 
@@ -214,60 +241,38 @@ public struct NotificationSendJob: AsyncJob {
 private extension NotificationSendJob {
     func loadUGCCandidates(
         ugcCodes: [String],
-        freshnessCutoff: Date?,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
 
-        if let freshnessCutoff {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p on i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND i.last_seen_at >= \(bind: freshnessCutoff)
-                  AND (
-                      p.county  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.zone  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
-                  )
-                """)
-                .all(decoding: NotificationCandidate.self)
-        } else {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p on i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND (
-                      p.county  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.zone  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
-                  )
-                """)
-                .all(decoding: NotificationCandidate.self)
-        }
+        return try await sql.raw("""
+            SELECT
+                i.installation_id AS "id",
+                i.apns_device_token AS "apnsToken",
+                i.apns_environment AS "apnsEnvironment",
+                i.location_auth AS "locationAuthRaw",
+                p.captured_at AS "capturedAt",
+                p.received_at AS "receivedAt",
+                p.county_label as countyLabel,
+                p.fire_zone_label as fireZoneLabel
+            FROM device_installations i
+            JOIN device_presence p on i.installation_id = p.installation_id
+            WHERE i.is_active = TRUE
+              AND i.is_subscribed = TRUE
+              AND i.apns_device_token <> ''
+              AND (
+                  p.county  = ANY(\(bind: ugcCodes)::text[])
+                OR p.zone  = ANY(\(bind: ugcCodes)::text[])
+                OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
+              )
+            """)
+            .all(decoding: NotificationCandidate.self)
     }
     
     func loadH3Candidates(
         cells: [Int64],
-        freshnessCutoff: Date?,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
@@ -275,44 +280,26 @@ private extension NotificationSendJob {
         }
         guard cells.count > 0 else { return [] }
 
-        if let freshnessCutoff {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p
-                  ON i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND p.h3_cell IS NOT NULL
-                  AND p.h3_cell = ANY(\(bind: cells)::bigint[])
-                  AND i.last_seen_at >= \(bind: freshnessCutoff)
-                """)
-                .all(decoding: NotificationCandidate.self)
-        } else {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p
-                  ON i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND p.h3_cell IS NOT NULL
-                  AND p.h3_cell = ANY(\(bind: cells)::bigint[])
-                """)
-                .all(decoding: NotificationCandidate.self)
-        }
+        return try await sql.raw("""
+            SELECT
+                i.installation_id AS "id",
+                i.apns_device_token AS "apnsToken",
+                i.apns_environment AS "apnsEnvironment",
+                i.location_auth AS "locationAuthRaw",
+                p.captured_at AS "capturedAt",
+                p.received_at AS "receivedAt",
+                p.county_label as countyLabel,
+                p.fire_zone_label as fireZoneLabel
+            FROM device_installations i
+            JOIN device_presence p
+              ON i.installation_id = p.installation_id
+            WHERE i.is_active = TRUE
+              AND i.is_subscribed = TRUE
+              AND i.apns_device_token <> ''
+              AND p.h3_cell IS NOT NULL
+              AND p.h3_cell = ANY(\(bind: cells)::bigint[])
+            """)
+            .all(decoding: NotificationCandidate.self)
     }
     
     func claimNotificationLedger(
@@ -398,7 +385,33 @@ private extension NotificationSendJob {
         var sentCount = 0
         var failedCount = 0
 
+        let evaluatedAt = Date()
         for candidate in candidates {
+            let disposition = deliveryDisposition(
+                for: candidate,
+                evaluatedAt: evaluatedAt
+            )
+
+            if case let .skipStale(freshnessDecision) = disposition {
+                _ = try await missedDecisionStore.insertStaleMissDecision(
+                    .init(
+                        installationID: candidate.id,
+                        seriesID: payload.seriesId,
+                        revisionUrn: payload.revisionUrn,
+                        mode: payload.mode,
+                        reason: payload.reason,
+                        freshnessState: freshnessDecision.state,
+                        missReason: .staleLocation,
+                        permissionMode: candidate.locationAuth,
+                        capturedAt: candidate.capturedAt,
+                        receivedAt: candidate.receivedAt,
+                        evaluatedAt: evaluatedAt
+                    ),
+                    on: context.application.db
+                )
+                continue
+            }
+
             let claim = try await claimNotificationLedger(
                 installationID: candidate.id,
                 seriesID: payload.seriesId,

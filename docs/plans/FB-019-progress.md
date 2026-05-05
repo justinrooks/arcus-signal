@@ -227,7 +227,7 @@ Related GitHub issues:
 ## Issue 3 - Integrate freshness into notification candidate decisions
 
 ### Status
-- Not started
+- Completed (2026-05-05)
 
 ### Scope
 - Load candidate presence `captured_at` and installation `location_auth` for H3 and UGC candidates.
@@ -243,10 +243,36 @@ Related GitHub issues:
 - `Done means`
 
 ### Handoff notes
-- The current `freshnessCutoff` parameter in candidate loaders filters `i.last_seen_at`; it should not be used as-is for FB-019 freshness.
-- Prefer one clear candidate shape that carries freshness inputs into the decision point.
-- Preserve idempotent behavior on job retry.
-- Ensure zero-candidate/no-op metrics distinguish no matching candidates from stale-suppressed candidates when practical.
+- Integrated freshness evaluation in `NotificationSendJob.dispatchNotifications(...)` immediately after candidate selection and before `claimNotificationLedger(...)`.
+- Enriched `NotificationCandidate` to carry freshness inputs:
+  - `locationAuthRaw` (`device_installations.location_auth`)
+  - `capturedAt` (`device_presence.captured_at`)
+  - `receivedAt` (`device_presence.received_at`)
+- Updated both candidate loaders (`loadH3Candidates`, `loadUGCCandidates`) to select these columns.
+- Removed the legacy `freshnessCutoff` argument/branches that filtered on `device_installations.last_seen_at` so FB-019 freshness is exclusively `captured_at` policy-driven.
+- Added a small decision seam `deliveryDisposition(for:evaluatedAt:)` in `NotificationSendJob`:
+  - `.skipStale` -> persist stale/missed via `NotificationMissedDecisionStore.insertStaleMissDecision(...)`, then skip send path.
+  - `.deliver` (fresh/degraded) -> continue unchanged through ledger claim and APNs send.
+- Stale/missed writes are idempotent through #53 uniqueness and `ON CONFLICT DO NOTHING`; retries do not duplicate stale rows.
+- Existing notification ledger dedupe/idempotency remains intact; stale candidates are evaluated before ledger claim so no stale claims/sends are created.
+- Delivered-decision freshness state is currently carried in local decision flow only and not persisted to `notification_ledger` in this slice to avoid widening schema/scope; follow-up remains for downstream usage (#55/#56).
+
+### Files changed
+- `Sources/App/Jobs/NotificationSendJob.swift`
+- `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`
+- `Tests/AppTests/NotificationEngineTests.swift`
+- `docs/plans/FB-019-progress.md`
+
+### Tests run
+- `swift test --filter LocationFreshness`
+- `swift test --filter Notification`
+- `swift test --filter Missed`
+- `swift test`
+
+### Deferred
+- Subtitle wording changes are still deferred (no push copy changes introduced in this issue).
+- Delivered freshness-state persistence is deferred to later FB-019 slices (#55/#56) to keep this issue narrow.
+- Additional stale-suppression observability/dashboard expansion is deferred.
 
 ---
 
