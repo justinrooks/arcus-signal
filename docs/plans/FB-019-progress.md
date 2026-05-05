@@ -167,7 +167,7 @@ Related GitHub issues:
 ## Issue 2 - Add missed notification decision persistence
 
 ### Status
-- Not started
+- Completed (2026-05-05)
 
 ### Scope
 - Add a dedicated table/model/migration for stale or missed notification decisions.
@@ -182,10 +182,45 @@ Related GitHub issues:
 - `Open questions`
 
 ### Handoff notes
-- Open design question: exact schema and unique constraint.
-- Candidate identity should likely include installation, series, revision, mode, reason, and missed reason.
-- Keep this separate from sent-delivery ledger unless the current implementation proves a unified ledger is cleaner without weakening semantics.
-- Do not delete stale presence records in this slice.
+- Added a dedicated stale/missed table: `notification_missed_decisions`.
+- Kept delivery ledger semantics unchanged; stale misses persist separately from `notification_ledger`.
+- Identity decision finalized as:
+  - `UNIQUE (installation_id, series_id, revision_urn, mode, reason, miss_reason)`
+  - This mirrors delivery identity (`installation_id`, `series_id`, `revision_urn`) and extends with decision context (`mode`, `reason`, `miss_reason`) to keep stale-miss inserts idempotent across retries/re-evaluation.
+- Column set implemented:
+  - `id`
+  - `installation_id` FK -> `device_installations.installation_id` (`ON DELETE CASCADE`)
+  - `series_id` FK -> `arcus_series.id` (`ON DELETE CASCADE`)
+  - `revision_urn`
+  - `mode`
+  - `reason`
+  - `freshness_state`
+  - `miss_reason`
+  - `permission_mode`
+  - `captured_at`
+  - `received_at`
+  - `evaluated_at`
+  - `created`
+- Added `NotificationMissedDecisionModel` and `NotificationMissedDecisionStore.insertStaleMissDecision(...)` using SQL `INSERT ... ON CONFLICT DO NOTHING RETURNING id`.
+- Helper returns inserted-vs-existing via `NotificationMissedDecisionInsertResult`.
+- Freshness typing uses existing `LocationFreshnessState` from Issue 1 / dependency #52 (no reimplementation).
+- No integration into `NotificationSendJob` decision flow yet (deferred to Issue 3 by design).
+
+### Files changed
+- `Sources/App/Migrations/CreateNotificationMissedDecisions.swift`
+- `Sources/App/Models/Notification/NotificationMissedDecisionModel.swift`
+- `Sources/App/configure.swift`
+- `Tests/AppTests/NotificationMissedDecisionPersistenceTests.swift`
+- `docs/plans/FB-019-progress.md`
+
+### Tests run
+- `swift test --filter Missed`
+- `swift test`
+
+### Deferred
+- NotificationEngine / send-job integration remains deferred to Issue 3.
+- No subtitle/candidate SQL/push-delivery behavior changes in this slice.
+- No retention/cleanup/metrics changes in this slice.
 
 ---
 

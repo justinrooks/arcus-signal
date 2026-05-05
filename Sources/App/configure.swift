@@ -60,6 +60,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateDevicePresence())
     app.migrations.add(ConvertInstallationIDsToUUID())
     app.migrations.add(CreateNotificationLedger())
+    app.migrations.add(CreateNotificationMissedDecisions())
     app.migrations.add(AddCreatedToNotificationLedger())
     app.migrations.add(AddReasonToNotificationOutbox())
     app.migrations.add(AddRemainingArcusSeriesFields())
