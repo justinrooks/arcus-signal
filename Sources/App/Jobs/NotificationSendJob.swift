@@ -16,10 +16,15 @@ struct NotificationCandidate: Decodable {
     let id: UUID
     let apnsToken: String
     let apnsEnvironment: String
+    let locationAuthRaw: String
+    let capturedAt: Date
+    let receivedAt: Date
     let countyLabel: String?
     let fireZoneLabel: String?
-//    let matchReason: String
-//    let locality: String?
+
+    var locationAuth: LocationAuth {
+        LocationAuth(rawValue: locationAuthRaw) ?? .unknown
+    }
 }
 
 struct LedgerClaimResult {
@@ -30,10 +35,16 @@ struct LedgerClaimResult {
 struct DispatchNotificationsResult {
     let candidateResolutionReached: Bool
     let candidateCount: Int
+    let staleMissedCount: Int
     let claimedCount: Int
     let sentCount: Int
     let failedCount: Int
     let noOpReason: NotificationSendNoOpReason?
+}
+
+enum NotificationCandidateDeliveryDisposition: Sendable, Equatable {
+    case deliver(LocationFreshnessDecision)
+    case skipStale(LocationFreshnessDecision)
 }
 
 public enum NotificationTargetMode: String, Codable, Sendable {
@@ -69,10 +80,46 @@ public struct NotificationSendJobPayload: Codable, Sendable {
 
 public struct NotificationSendJob: AsyncJob {
     public typealias Payload = NotificationSendJobPayload
-    private let sender: APNsClient = APNsClient()
-    private let engine: NotificationEngine = NotificationEngine()
-    
-    public init () {}
+    private let sender: any NotificationSender
+    private let engine: NotificationEngine
+    private let freshnessPolicy: LocationFreshnessPolicy
+    private let missedDecisionStore: NotificationMissedDecisionStore
+
+    public init() {
+        self.sender = APNsClient()
+        self.engine = NotificationEngine()
+        self.freshnessPolicy = LocationFreshnessPolicy()
+        self.missedDecisionStore = NotificationMissedDecisionStore()
+    }
+
+    init(
+        sender: any NotificationSender,
+        engine: NotificationEngine = NotificationEngine(),
+        freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy(),
+        missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore()
+    ) {
+        self.sender = sender
+        self.engine = engine
+        self.freshnessPolicy = freshnessPolicy
+        self.missedDecisionStore = missedDecisionStore
+    }
+
+    func deliveryDisposition(
+        for candidate: NotificationCandidate,
+        evaluatedAt: Date
+    ) -> NotificationCandidateDeliveryDisposition {
+        let freshness = freshnessPolicy.decide(
+            capturedAt: candidate.capturedAt,
+            locationAuth: candidate.locationAuth,
+            now: evaluatedAt
+        )
+        switch freshness.state {
+        case .stale:
+            return .skipStale(freshness)
+        case .fresh, .degraded:
+            return .deliver(freshness)
+        }
+    }
     
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
         context.logger.info(
@@ -114,6 +161,7 @@ public struct NotificationSendJob: AsyncJob {
                 summary: .init(
                     candidateResolutionReached: false,
                     candidateCount: 0,
+                    staleMissedCount: 0,
                     claimedCount: 0,
                     sentCount: 0,
                     failedCount: 0,
@@ -140,6 +188,7 @@ public struct NotificationSendJob: AsyncJob {
                     summary: .init(
                         candidateResolutionReached: false,
                         candidateCount: 0,
+                        staleMissedCount: 0,
                         claimedCount: 0,
                         sentCount: 0,
                         failedCount: 0,
@@ -152,7 +201,6 @@ public struct NotificationSendJob: AsyncJob {
             // Get our list of candidates
             let h3Candidates = try await loadH3Candidates(
                 cells: geo.h3Cells,
-                freshnessCutoff: nil,
                 on: context.application.db
             )
             
@@ -172,7 +220,6 @@ public struct NotificationSendJob: AsyncJob {
             // we only have 2 modes right now, so its ugc
             let ugcCandidates = try await loadUGCCandidates(
                 ugcCodes: series.ugcCodes,
-                freshnessCutoff: nil,
                 on: context.application.db
             )
 
@@ -211,63 +258,41 @@ public struct NotificationSendJob: AsyncJob {
 }
 
 
-private extension NotificationSendJob {
+extension NotificationSendJob {
     func loadUGCCandidates(
         ugcCodes: [String],
-        freshnessCutoff: Date?,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
 
-        if let freshnessCutoff {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p on i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND i.last_seen_at >= \(bind: freshnessCutoff)
-                  AND (
-                      p.county  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.zone  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
-                  )
-                """)
-                .all(decoding: NotificationCandidate.self)
-        } else {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p on i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND (
-                      p.county  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.zone  = ANY(\(bind: ugcCodes)::text[])
-                    OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
-                  )
-                """)
-                .all(decoding: NotificationCandidate.self)
-        }
+        return try await sql.raw("""
+            SELECT
+                i.installation_id AS "id",
+                i.apns_device_token AS "apnsToken",
+                i.apns_environment AS "apnsEnvironment",
+                i.location_auth AS "locationAuthRaw",
+                p.captured_at AS "capturedAt",
+                p.received_at AS "receivedAt",
+                p.county_label as countyLabel,
+                p.fire_zone_label as fireZoneLabel
+            FROM device_installations i
+            JOIN device_presence p on i.installation_id = p.installation_id
+            WHERE i.is_active = TRUE
+              AND i.is_subscribed = TRUE
+              AND i.apns_device_token <> ''
+              AND (
+                  p.county  = ANY(\(bind: ugcCodes)::text[])
+                OR p.zone  = ANY(\(bind: ugcCodes)::text[])
+                OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
+              )
+            """)
+            .all(decoding: NotificationCandidate.self)
     }
     
     func loadH3Candidates(
         cells: [Int64],
-        freshnessCutoff: Date?,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
@@ -275,44 +300,26 @@ private extension NotificationSendJob {
         }
         guard cells.count > 0 else { return [] }
 
-        if let freshnessCutoff {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p
-                  ON i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND p.h3_cell IS NOT NULL
-                  AND p.h3_cell = ANY(\(bind: cells)::bigint[])
-                  AND i.last_seen_at >= \(bind: freshnessCutoff)
-                """)
-                .all(decoding: NotificationCandidate.self)
-        } else {
-            return try await sql.raw("""
-                SELECT
-                    i.installation_id AS "id",
-                    i.apns_device_token AS "apnsToken",
-                    i.apns_environment AS "apnsEnvironment",
-                    p.county_label as countyLabel,
-                    p.fire_zone_label as fireZoneLabel
-                FROM device_installations i
-                JOIN device_presence p
-                  ON i.installation_id = p.installation_id
-                WHERE i.is_active = TRUE
-                  AND i.is_subscribed = TRUE
-                  AND i.apns_device_token <> ''
-                  AND p.h3_cell IS NOT NULL
-                  AND p.h3_cell = ANY(\(bind: cells)::bigint[])
-                """)
-                .all(decoding: NotificationCandidate.self)
-        }
+        return try await sql.raw("""
+            SELECT
+                i.installation_id AS "id",
+                i.apns_device_token AS "apnsToken",
+                i.apns_environment AS "apnsEnvironment",
+                i.location_auth AS "locationAuthRaw",
+                p.captured_at AS "capturedAt",
+                p.received_at AS "receivedAt",
+                p.county_label as countyLabel,
+                p.fire_zone_label as fireZoneLabel
+            FROM device_installations i
+            JOIN device_presence p
+              ON i.installation_id = p.installation_id
+            WHERE i.is_active = TRUE
+              AND i.is_subscribed = TRUE
+              AND i.apns_device_token <> ''
+              AND p.h3_cell IS NOT NULL
+              AND p.h3_cell = ANY(\(bind: cells)::bigint[])
+            """)
+            .all(decoding: NotificationCandidate.self)
     }
     
     func claimNotificationLedger(
@@ -321,6 +328,7 @@ private extension NotificationSendJob {
         revisionUrn: String,
         mode: NotificationTargetMode,
         reason: NotificationReason,
+        freshnessState: LocationFreshnessState,
         on db: any Database
     ) async throws -> LedgerClaimResult {
         guard let sql = db as? any SQLDatabase else {
@@ -331,7 +339,7 @@ private extension NotificationSendJob {
 
         let row = try await sql.raw("""
             INSERT INTO notification_ledger
-                (id, installation_id, series_id, revision_urn, mode, reason, created, status)
+                (id, installation_id, series_id, revision_urn, mode, reason, freshness_state, created, status)
             VALUES
                 (\(bind: newID),
                  \(bind: installationID),
@@ -339,6 +347,7 @@ private extension NotificationSendJob {
                  \(bind: revisionUrn),
                  \(bind: mode),
                  \(bind: reason),
+                 \(bind: freshnessState),
                  NOW(),
                 'claimed')
             ON CONFLICT (installation_id, series_id, revision_urn)
@@ -387,6 +396,7 @@ private extension NotificationSendJob {
             return .init(
                 candidateResolutionReached: true,
                 candidateCount: 0,
+                staleMissedCount: 0,
                 claimedCount: 0,
                 sentCount: 0,
                 failedCount: 0,
@@ -394,17 +404,66 @@ private extension NotificationSendJob {
             )
         }
 
+        var staleMissedCount = 0
         var claimedCount = 0
         var sentCount = 0
         var failedCount = 0
 
+        let evaluatedAt = Date()
         for candidate in candidates {
+            let disposition = deliveryDisposition(
+                for: candidate,
+                evaluatedAt: evaluatedAt
+            )
+
+            let freshnessDecision: LocationFreshnessDecision
+            switch disposition {
+            case let .skipStale(staleDecision):
+                let insertResult = try await missedDecisionStore.insertStaleMissDecision(
+                    .init(
+                        installationID: candidate.id,
+                        seriesID: payload.seriesId,
+                        revisionUrn: payload.revisionUrn,
+                        mode: payload.mode,
+                        reason: payload.reason,
+                        freshnessState: staleDecision.state,
+                        missReason: .staleLocation,
+                        permissionMode: candidate.locationAuth,
+                        capturedAt: candidate.capturedAt,
+                        receivedAt: candidate.receivedAt,
+                        evaluatedAt: evaluatedAt
+                    ),
+                    on: context.application.db
+                )
+                staleMissedCount += 1
+                context.logger.info(
+                    "Notification candidate skipped due to stale location",
+                    metadata: [
+                        "installation_id": .string(candidate.id.uuidString),
+                        "series_id": .string(payload.seriesId.uuidString),
+                        "revision_urn": .string(payload.revisionUrn),
+                        "event_type": .string(series.event),
+                        "mode": .string(payload.mode.rawValue),
+                        "reason": .string(payload.reason.rawValue),
+                        "freshness_state": .string(staleDecision.state.rawValue),
+                        "permission_mode": .string(candidate.locationAuth.rawValue),
+                        "decision_outcome": .string("missed_stale_location"),
+                        "miss_reason": .string(NotificationMissReason.staleLocation.rawValue),
+                        "decision_persisted": .string(insertResult.inserted ? "inserted" : "already_recorded")
+                    ]
+                )
+                continue
+            case let .deliver(deliveryDecision):
+                freshnessDecision = deliveryDecision
+            }
+
             let claim = try await claimNotificationLedger(
                 installationID: candidate.id,
                 seriesID: payload.seriesId,
                 revisionUrn: payload.revisionUrn,
                 mode: payload.mode,
                 reason: payload.reason,
+                freshnessState: freshnessDecision.state,
                 on: context.application.db
             )
             
@@ -414,7 +473,12 @@ private extension NotificationSendJob {
 
             claimedCount += 1
             
-            let alert = engine.buildNotification(for: series, with: payload, on: candidate)
+            let alert = engine.buildNotification(
+                for: series,
+                with: payload,
+                on: candidate,
+                freshnessState: freshnessDecision.state
+            )
             await saveNotificationDebugSnapshot(
                 seriesID: payload.seriesId,
                 installationID: candidate.id,
@@ -534,7 +598,11 @@ private extension NotificationSendJob {
 
         let noOpReason: NotificationSendNoOpReason?
         if sentCount == 0 && failedCount == 0 {
-            noOpReason = .allCandidatesPreviouslyClaimed
+            if staleMissedCount > 0 && claimedCount == 0 {
+                noOpReason = .allCandidatesStaleLocation
+            } else {
+                noOpReason = .allCandidatesPreviouslyClaimed
+            }
         } else {
             noOpReason = nil
         }
@@ -542,6 +610,7 @@ private extension NotificationSendJob {
         return .init(
             candidateResolutionReached: true,
             candidateCount: candidates.count,
+            staleMissedCount: staleMissedCount,
             claimedCount: claimedCount,
             sentCount: sentCount,
             failedCount: failedCount,

@@ -58,11 +58,17 @@ struct CreateNotificationOutbox: AsyncMigration {
 
 struct AddReasonToNotificationOutbox: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(ArcusNotificationOutboxModel.schema)
-            .field("reason", .string)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(ArcusNotificationOutboxModel.schema)
+                .field("reason", .string)
+                .update()
+            return
+        }
 
-        guard let sql = db as? any SQLDatabase else { return }
+        try await sql.raw("""
+            ALTER TABLE notification_outbox
+            ADD COLUMN IF NOT EXISTS reason TEXT;
+            """).run()
 
         try await sql.raw("""
             UPDATE notification_outbox

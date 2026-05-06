@@ -11,6 +11,7 @@ public enum NotificationSendNoOpReason: String, Codable, Sendable {
     case staleRevisionMismatch = "stale_revision_mismatch"
     case missingGeolocation = "missing_geolocation"
     case zeroCandidates = "zero_candidates"
+    case allCandidatesStaleLocation = "all_candidates_stale_location"
     case allCandidatesPreviouslyClaimed = "all_candidates_previously_claimed"
 }
 

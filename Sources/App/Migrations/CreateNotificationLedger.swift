@@ -37,9 +37,17 @@ struct CreateNotificationLedger: AsyncMigration {
 
 struct AddCreatedToNotificationLedger: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(NotificationLedgerModel.schema)
-            .field("created", .datetime, .required)     // consider enum later
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(NotificationLedgerModel.schema)
+                .field("created", .datetime, .required)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS created TIMESTAMPTZ;
+            """).run()
     }
 
     func revert(on db: any Database) async throws {
@@ -49,9 +57,17 @@ struct AddCreatedToNotificationLedger: AsyncMigration {
 
 struct AddStatusToNotificationLedger: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(NotificationLedgerModel.schema)
-            .field("status", .string)     // consider enum later
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(NotificationLedgerModel.schema)
+                .field("status", .string)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS status TEXT;
+            """).run()
     }
 
     func revert(on db: any Database) async throws {
@@ -61,9 +77,17 @@ struct AddStatusToNotificationLedger: AsyncMigration {
 
 struct AddApnsErrorCodeToNotificationLedger: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(NotificationLedgerModel.schema)
-            .field("apns_error_code", .string)     // consider enum later
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(NotificationLedgerModel.schema)
+                .field("apns_error_code", .string)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS apns_error_code TEXT;
+            """).run()
     }
 
     func revert(on db: any Database) async throws {

@@ -23,7 +23,16 @@ struct AlertDetails: Sendable, Codable {
     let body: String
 }
 
-struct APNsClient {
+protocol NotificationSender: Sendable {
+    func sendNotification(
+        app: Application,
+        with details: AlertDetails,
+        to device: String,
+        environment: APNsEnvironment
+    ) async throws
+}
+
+struct APNsClient: NotificationSender {
     func sendNotification(
         app: Application,
         with details: AlertDetails,

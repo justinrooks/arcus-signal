@@ -13,9 +13,19 @@ public struct EnforceContentFingerprintIntegrityOnAlertSeries: AsyncMigration {
             """).run()
 
         try await sql.raw("""
-            ALTER TABLE arcus_series
-              ADD CONSTRAINT arcus_series_content_fingerprint_hex_check
-              CHECK (content_fingerprint ~ '^[0-9a-f]{64}$') NOT VALID;
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'arcus_series_content_fingerprint_hex_check'
+              ) THEN
+                ALTER TABLE arcus_series
+                  ADD CONSTRAINT arcus_series_content_fingerprint_hex_check
+                  CHECK (content_fingerprint ~ '^[0-9a-f]{64}$') NOT VALID;
+              END IF;
+            END
+            $$;
             """).run()
 
         try await sql.raw("""
