@@ -35,6 +35,7 @@ struct LedgerClaimResult {
 struct DispatchNotificationsResult {
     let candidateResolutionReached: Bool
     let candidateCount: Int
+    let staleMissedCount: Int
     let claimedCount: Int
     let sentCount: Int
     let failedCount: Int
@@ -143,6 +144,7 @@ public struct NotificationSendJob: AsyncJob {
                 summary: .init(
                     candidateResolutionReached: false,
                     candidateCount: 0,
+                    staleMissedCount: 0,
                     claimedCount: 0,
                     sentCount: 0,
                     failedCount: 0,
@@ -169,6 +171,7 @@ public struct NotificationSendJob: AsyncJob {
                     summary: .init(
                         candidateResolutionReached: false,
                         candidateCount: 0,
+                        staleMissedCount: 0,
                         claimedCount: 0,
                         sentCount: 0,
                         failedCount: 0,
@@ -374,6 +377,7 @@ private extension NotificationSendJob {
             return .init(
                 candidateResolutionReached: true,
                 candidateCount: 0,
+                staleMissedCount: 0,
                 claimedCount: 0,
                 sentCount: 0,
                 failedCount: 0,
@@ -381,6 +385,7 @@ private extension NotificationSendJob {
             )
         }
 
+        var staleMissedCount = 0
         var claimedCount = 0
         var sentCount = 0
         var failedCount = 0
@@ -395,7 +400,7 @@ private extension NotificationSendJob {
             let freshnessDecision: LocationFreshnessDecision
             switch disposition {
             case let .skipStale(staleDecision):
-                _ = try await missedDecisionStore.insertStaleMissDecision(
+                let insertResult = try await missedDecisionStore.insertStaleMissDecision(
                     .init(
                         installationID: candidate.id,
                         seriesID: payload.seriesId,
@@ -410,6 +415,23 @@ private extension NotificationSendJob {
                         evaluatedAt: evaluatedAt
                     ),
                     on: context.application.db
+                )
+                staleMissedCount += 1
+                context.logger.info(
+                    "Notification candidate skipped due to stale location",
+                    metadata: [
+                        "installation_id": .string(candidate.id.uuidString),
+                        "series_id": .string(payload.seriesId.uuidString),
+                        "revision_urn": .string(payload.revisionUrn),
+                        "event_type": .string(series.event),
+                        "mode": .string(payload.mode.rawValue),
+                        "reason": .string(payload.reason.rawValue),
+                        "freshness_state": .string(staleDecision.state.rawValue),
+                        "permission_mode": .string(candidate.locationAuth.rawValue),
+                        "decision_outcome": .string("missed_stale_location"),
+                        "miss_reason": .string(NotificationMissReason.staleLocation.rawValue),
+                        "decision_persisted": .string(insertResult.inserted ? "inserted" : "already_recorded")
+                    ]
                 )
                 continue
             case let .deliver(deliveryDecision):
@@ -556,7 +578,11 @@ private extension NotificationSendJob {
 
         let noOpReason: NotificationSendNoOpReason?
         if sentCount == 0 && failedCount == 0 {
-            noOpReason = .allCandidatesPreviouslyClaimed
+            if staleMissedCount > 0 && claimedCount == 0 {
+                noOpReason = .allCandidatesStaleLocation
+            } else {
+                noOpReason = .allCandidatesPreviouslyClaimed
+            }
         } else {
             noOpReason = nil
         }
@@ -564,6 +590,7 @@ private extension NotificationSendJob {
         return .init(
             candidateResolutionReached: true,
             candidateCount: candidates.count,
+            staleMissedCount: staleMissedCount,
             claimedCount: claimedCount,
             sentCount: sentCount,
             failedCount: failedCount,

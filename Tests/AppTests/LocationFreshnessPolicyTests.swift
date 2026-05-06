@@ -23,6 +23,18 @@ struct LocationFreshnessPolicyTests {
         #expect(decision.age == 0)
     }
 
+    @Test("Always: now is fresh")
+    func alwaysNowFresh() {
+        let decision = policy.decide(
+            capturedAt: now,
+            locationAuth: .always,
+            now: now
+        )
+
+        #expect(decision.state == .fresh)
+        #expect(decision.age == 0)
+    }
+
     @Test("When In Use: exactly 2 hours is fresh")
     func whenInUseAtTwoHoursFresh() {
         let decision = policy.decide(
@@ -77,6 +89,26 @@ struct LocationFreshnessPolicyTests {
             )
             #expect(decision.state == .degraded)
         }
+    }
+
+    @Test("When In Use: exactly 24 hours is degraded")
+    func whenInUseAtTwentyFourHoursDegraded() {
+        let decision = policy.decide(
+            capturedAt: capturedAt(hoursAgo: 24),
+            locationAuth: .whenInUse,
+            now: now
+        )
+        #expect(decision.state == .degraded)
+    }
+
+    @Test("Always: exactly 24 hours is degraded")
+    func alwaysAtTwentyFourHoursDegraded() {
+        let decision = policy.decide(
+            capturedAt: capturedAt(hoursAgo: 24),
+            locationAuth: .always,
+            now: now
+        )
+        #expect(decision.state == .degraded)
     }
 
     @Test("Both modes: just over 24 hours is stale")

@@ -38,6 +38,21 @@ struct NotificationSendJobFreshnessDecisionTests {
         }
     }
 
+    @Test("stale always-mode candidates are skipped")
+    func staleAlwaysCandidatesAreSkipped() {
+        let candidate = makeCandidate(
+            auth: .always,
+            capturedAt: now.addingTimeInterval(-(24 * 60 * 60) - 1)
+        )
+
+        let disposition = job.deliveryDisposition(for: candidate, evaluatedAt: now)
+        if case .skipStale = disposition {
+            #expect(Bool(true))
+        } else {
+            Issue.record("Expected stale always candidate to be skipped")
+        }
+    }
+
     @Test("fresh candidates continue")
     func freshCandidatesContinue() {
         let candidate = makeCandidate(
@@ -65,6 +80,21 @@ struct NotificationSendJobFreshnessDecisionTests {
             #expect(freshness.state == .degraded)
         } else {
             Issue.record("Expected degraded candidate to continue")
+        }
+    }
+
+    @Test("degraded always-mode candidates continue")
+    func degradedAlwaysCandidatesContinue() {
+        let candidate = makeCandidate(
+            auth: .always,
+            capturedAt: now.addingTimeInterval(-(8 * 60 * 60))
+        )
+
+        let disposition = job.deliveryDisposition(for: candidate, evaluatedAt: now)
+        if case let .deliver(freshness) = disposition {
+            #expect(freshness.state == .degraded)
+        } else {
+            Issue.record("Expected degraded always candidate to continue")
         }
     }
 }

@@ -325,7 +325,7 @@ Related GitHub issues:
 ## Issue 5 - Record freshness state on delivered decisions
 
 ### Status
-- Not started
+- Deferred
 
 ### Scope
 - Persist freshness state used at decision time for delivered or attempted notification decisions.
@@ -339,13 +339,14 @@ Related GitHub issues:
 ### Handoff notes
 - The likely target is `notification_ledger`, but verify against the missed-decision design before committing.
 - Avoid recomputing freshness later from mutable presence for historical reporting.
+- Deferred from this issue scope because #56 final slice targeted observability/tests only and did not require schema expansion.
 
 ---
 
 ## Issue 6 - Add freshness observability and validation
 
 ### Status
-- Not started
+- Completed (2026-05-05)
 
 ### Scope
 - Add metrics/logging/reporting for:
@@ -356,6 +357,47 @@ Related GitHub issues:
 - Update operator dashboard queries only as much as needed.
 - Add or update SQL diagnostic docs.
 - Run end-to-end validation where practical.
+
+### Handoff notes
+- Added structured stale-skip observability logs in `NotificationSendJob` with:
+  - `installation_id`
+  - `series_id`
+  - `revision_urn`
+  - `event_type`
+  - `mode`
+  - `reason`
+  - `freshness_state`
+  - `permission_mode`
+  - `decision_outcome=missed_stale_location`
+  - `miss_reason=stale_location`
+  - `decision_persisted` (`inserted` or `already_recorded`)
+- Updated no-op attempt classification so stale-only candidate runs are distinguishable:
+  - new `notification_send_attempts.no_op_reason` value: `all_candidates_stale_location`
+  - existing `all_candidates_previously_claimed` preserved for dedupe-only no-op runs.
+- Expanded SQL diagnostics in `docs/Sql/NotificationProcessing.sql`:
+  - delivered/failed counts from `notification_ledger`
+  - stale-miss counts from `notification_missed_decisions`
+  - unified decision-outcome query with dimensions (`freshness_state`, `permission_mode`, `event_type`, `mode`, `reason`, `decision_outcome`, `miss_reason`)
+  - attempt-level no-op reason rollup from `notification_send_attempts`
+- Dashboard/API changes intentionally deferred: existing dashboard model would require non-trivial schema/section additions for this slice, and SQL/log diagnostics provide immediate production answerability with minimal risk.
+
+### Files changed
+- `Sources/App/Jobs/NotificationSendJob.swift`
+- `Sources/App/Models/Notification/NotificationSendAttemptModel.swift`
+- `Tests/AppTests/LocationFreshnessPolicyTests.swift`
+- `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`
+- `docs/Sql/NotificationProcessing.sql`
+- `docs/plans/FB-019-progress.md`
+
+### Tests run
+- `swift test --filter LocationFreshness`
+- `swift test --filter NotificationEngine`
+- `swift test --filter Missed`
+- `swift test --filter OperatorDashboard`
+- `swift test`
+
+### Remaining risks / open questions
+- Delivered rows still do not persist decision-time freshness state in `notification_ledger`; reporting freshness for delivered outcomes currently relies on stale-miss table + delivery outcomes, not a single per-candidate unified persistence row.
 
 ### Relevant feature brief sections
 - `Goals`
