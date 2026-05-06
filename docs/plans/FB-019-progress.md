@@ -337,17 +337,17 @@ Related GitHub issues:
 
 ### Handoff notes
 - Added a dedicated ledger migration to persist decision-time freshness on delivery rows:
-  - `AddFreshnessStateToNotificationLedger` adds required `notification_ledger.freshness_state`.
+  - `AddFreshnessStateToNotificationLedger` adds nullable `notification_ledger.freshness_state` so pre-FB-019 rows are not backfilled with synthetic values.
 - Updated `NotificationLedgerModel` with typed freshness access:
   - `freshnessStateRaw` (stored raw string)
-  - computed `freshnessState: LocationFreshnessState`
+  - computed `freshnessState: LocationFreshnessState?`
 - Updated `NotificationSendJob.claimNotificationLedger(...)` to accept `freshnessState: LocationFreshnessState` and write it during claim insert.
 - Freshness is captured once at decision/claim time and no longer depends on mutable `device_presence` for delivered/failed reporting.
 - Stale behavior remains unchanged:
   - stale candidates are still skipped before claim/send
   - stale candidates persist only in `notification_missed_decisions`
   - stale candidates still do not create ledger rows.
-- Updated `docs/Sql/NotificationProcessing.sql` to include/group on `notification_ledger.freshness_state` for delivered and failed outcomes.
+- Updated `docs/Sql/NotificationProcessing.sql` to include/group on `notification_ledger.freshness_state` for delivered and failed outcomes, with `NULL` mapped to `legacy_unknown` for historical rows.
 - Added DB-backed persistence tests for fresh/degraded claim rows and failure-state freshness retention.
 
 ### Files changed

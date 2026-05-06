@@ -30,8 +30,8 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
     @Field(key: "reason")
     public var reason: String
 
-    @Field(key: "freshness_state")
-    public var freshnessStateRaw: String
+    @OptionalField(key: "freshness_state")
+    public var freshnessStateRaw: String?
     
     @OptionalField(key: "status")
     public var status: String?
@@ -70,8 +70,11 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
         self.completedAt = completedAt
     }
 
-    public var freshnessState: LocationFreshnessState {
-        get { LocationFreshnessState(rawValue: freshnessStateRaw) ?? .stale }
-        set { freshnessStateRaw = newValue.rawValue }
+    public var freshnessState: LocationFreshnessState? {
+        get {
+            guard let freshnessStateRaw else { return nil }
+            return LocationFreshnessState(rawValue: freshnessStateRaw)
+        }
+        set { freshnessStateRaw = newValue?.rawValue }
     }
 }
