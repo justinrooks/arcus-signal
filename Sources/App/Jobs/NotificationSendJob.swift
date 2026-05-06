@@ -80,12 +80,29 @@ public struct NotificationSendJobPayload: Codable, Sendable {
 
 public struct NotificationSendJob: AsyncJob {
     public typealias Payload = NotificationSendJobPayload
-    private let sender: APNsClient = APNsClient()
-    private let engine: NotificationEngine = NotificationEngine()
-    private let freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy()
-    private let missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore()
-    
-    public init () {}
+    private let sender: any NotificationSender
+    private let engine: NotificationEngine
+    private let freshnessPolicy: LocationFreshnessPolicy
+    private let missedDecisionStore: NotificationMissedDecisionStore
+
+    public init() {
+        self.sender = APNsClient()
+        self.engine = NotificationEngine()
+        self.freshnessPolicy = LocationFreshnessPolicy()
+        self.missedDecisionStore = NotificationMissedDecisionStore()
+    }
+
+    init(
+        sender: any NotificationSender,
+        engine: NotificationEngine = NotificationEngine(),
+        freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy(),
+        missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore()
+    ) {
+        self.sender = sender
+        self.engine = engine
+        self.freshnessPolicy = freshnessPolicy
+        self.missedDecisionStore = missedDecisionStore
+    }
 
     func deliveryDisposition(
         for candidate: NotificationCandidate,

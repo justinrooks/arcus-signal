@@ -365,6 +365,11 @@ Related GitHub issues:
 - `swift test --filter NotificationMissedDecisionPersistenceTests`
 - `swift test`
 
+### Review follow-up (2026-05-06)
+- Added DB-backed send-path boundary tests in `NotificationSendJobDeliveryBoundaryTests` that execute `NotificationSendJob.dispatchNotifications(...)` with a stub sender (no live APNs) and assert side effects at the real gate/claim boundary.
+- Verified stale candidates are blocked before ledger claim (`notification_ledger` count stays zero) while exactly one stale miss row persists in `notification_missed_decisions` across repeated evaluations.
+- Verified degraded and fresh candidates stay eligible, create ledger claims, and persist `freshness_state` as `degraded` and `fresh` respectively.
+
 ---
 
 ## Issue 6 - Add freshness observability and validation
