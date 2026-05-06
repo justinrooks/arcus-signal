@@ -3,23 +3,42 @@ import SQLKit
 
 struct CreateIngestSweepRuns: AsyncMigration {
     func prepare(on database: any Database) async throws {
-        try await database.schema(IngestSweepRunModel.schema)
-            .id()
-            .field("source", .string, .required)
-            .field("fixture_name", .string)
-            .field("run_label", .string)
-            .field("status", .string, .required)
-            .field("started_at", .datetime, .required)
-            .field("completed_at", .datetime, .required)
-            .field("event_count", .int)
-            .field("new_series_count", .int)
-            .field("new_revision_count", .int)
-            .field("target_outbox_queued_count", .int)
-            .field("notification_outbox_queued_count", .int)
-            .field("error_message", .string)
-            .create()
+        guard let sql = database as? any SQLDatabase else {
+            try await database.schema(IngestSweepRunModel.schema)
+                .id()
+                .field("source", .string, .required)
+                .field("fixture_name", .string)
+                .field("run_label", .string)
+                .field("status", .string, .required)
+                .field("started_at", .datetime, .required)
+                .field("completed_at", .datetime, .required)
+                .field("event_count", .int)
+                .field("new_series_count", .int)
+                .field("new_revision_count", .int)
+                .field("target_outbox_queued_count", .int)
+                .field("notification_outbox_queued_count", .int)
+                .field("error_message", .string)
+                .create()
+            return
+        }
 
-        guard let sql = database as? any SQLDatabase else { return }
+        if try await !tableExists(sql: sql, table: IngestSweepRunModel.schema) {
+            try await database.schema(IngestSweepRunModel.schema)
+                .id()
+                .field("source", .string, .required)
+                .field("fixture_name", .string)
+                .field("run_label", .string)
+                .field("status", .string, .required)
+                .field("started_at", .datetime, .required)
+                .field("completed_at", .datetime, .required)
+                .field("event_count", .int)
+                .field("new_series_count", .int)
+                .field("new_revision_count", .int)
+                .field("target_outbox_queued_count", .int)
+                .field("notification_outbox_queued_count", .int)
+                .field("error_message", .string)
+                .create()
+        }
 
         try await sql.raw("""
             CREATE INDEX IF NOT EXISTS idx_ingest_sweep_runs_completed_at
@@ -43,11 +62,17 @@ struct CreateIngestSweepRuns: AsyncMigration {
 
 struct AddCompletedAtToNotificationLedger: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(NotificationLedgerModel.schema)
-            .field("completed_at", .datetime)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(NotificationLedgerModel.schema)
+                .field("completed_at", .datetime)
+                .update()
+            return
+        }
 
-        guard let sql = db as? any SQLDatabase else { return }
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+            """).run()
 
         try await sql.raw("""
             CREATE INDEX IF NOT EXISTS idx_notification_ledger_status_completed_at
@@ -67,12 +92,19 @@ struct AddCompletedAtToNotificationLedger: AsyncMigration {
 
 struct AddCompletionFieldsToTargetDispatchOutbox: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(ArcusTargetDispatchOutboxModel.schema)
-            .field("completed", .datetime)
-            .field("result", .string)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(ArcusTargetDispatchOutboxModel.schema)
+                .field("completed", .datetime)
+                .field("result", .string)
+                .update()
+            return
+        }
 
-        guard let sql = db as? any SQLDatabase else { return }
+        try await sql.raw("""
+            ALTER TABLE target_dispatch_outbox
+              ADD COLUMN IF NOT EXISTS completed TIMESTAMPTZ,
+              ADD COLUMN IF NOT EXISTS result TEXT;
+            """).run()
 
         try await sql.raw("""
             CREATE INDEX IF NOT EXISTS idx_target_dispatch_outbox_result_completed
@@ -93,24 +125,44 @@ struct AddCompletionFieldsToTargetDispatchOutbox: AsyncMigration {
 
 struct CreateNotificationSendAttempts: AsyncMigration {
     func prepare(on database: any Database) async throws {
-        try await database.schema(NotificationSendAttemptModel.schema)
-            .id()
-            .field("series_id", .uuid, .required,
-                   .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
-            .field("revision_urn", .string, .required)
-            .field("mode", .string, .required)
-            .field("reason", .string, .required)
-            .field("outcome", .string, .required)
-            .field("no_op_reason", .string)
-            .field("candidate_resolution_reached", .bool, .required)
-            .field("candidate_count", .int, .required)
-            .field("claimed_count", .int, .required)
-            .field("sent_count", .int, .required)
-            .field("failed_count", .int, .required)
-            .field("attempted_at", .datetime, .required)
-            .create()
+        guard let sql = database as? any SQLDatabase else {
+            try await database.schema(NotificationSendAttemptModel.schema)
+                .id()
+                .field("series_id", .uuid, .required,
+                       .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
+                .field("revision_urn", .string, .required)
+                .field("mode", .string, .required)
+                .field("reason", .string, .required)
+                .field("outcome", .string, .required)
+                .field("no_op_reason", .string)
+                .field("candidate_resolution_reached", .bool, .required)
+                .field("candidate_count", .int, .required)
+                .field("claimed_count", .int, .required)
+                .field("sent_count", .int, .required)
+                .field("failed_count", .int, .required)
+                .field("attempted_at", .datetime, .required)
+                .create()
+            return
+        }
 
-        guard let sql = database as? any SQLDatabase else { return }
+        if try await !tableExists(sql: sql, table: NotificationSendAttemptModel.schema) {
+            try await database.schema(NotificationSendAttemptModel.schema)
+                .id()
+                .field("series_id", .uuid, .required,
+                       .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
+                .field("revision_urn", .string, .required)
+                .field("mode", .string, .required)
+                .field("reason", .string, .required)
+                .field("outcome", .string, .required)
+                .field("no_op_reason", .string)
+                .field("candidate_resolution_reached", .bool, .required)
+                .field("candidate_count", .int, .required)
+                .field("claimed_count", .int, .required)
+                .field("sent_count", .int, .required)
+                .field("failed_count", .int, .required)
+                .field("attempted_at", .datetime, .required)
+                .create()
+        }
 
         try await sql.raw("""
             CREATE INDEX IF NOT EXISTS idx_notification_send_attempts_attempted_at
@@ -140,15 +192,38 @@ struct CreateNotificationSendAttempts: AsyncMigration {
 
 struct CreateOperatorDashboardSnapshots: AsyncMigration {
     func prepare(on database: any Database) async throws {
-        try await database.schema(OperatorDashboardSnapshotModel.schema)
-            .field("id", .string, .identifier(auto: false))
-            .field("snapshot", .dictionary, .required)
-            .field("created_at", .datetime)
-            .field("updated_at", .datetime)
-            .create()
+        guard let sql = database as? any SQLDatabase else {
+            try await database.schema(OperatorDashboardSnapshotModel.schema)
+                .field("id", .string, .identifier(auto: false))
+                .field("snapshot", .dictionary, .required)
+                .field("created_at", .datetime)
+                .field("updated_at", .datetime)
+                .create()
+            return
+        }
+
+        if try await !tableExists(sql: sql, table: OperatorDashboardSnapshotModel.schema) {
+            try await database.schema(OperatorDashboardSnapshotModel.schema)
+                .field("id", .string, .identifier(auto: false))
+                .field("snapshot", .dictionary, .required)
+                .field("created_at", .datetime)
+                .field("updated_at", .datetime)
+                .create()
+        }
     }
 
     func revert(on database: any Database) async throws {
         try await database.schema(OperatorDashboardSnapshotModel.schema).delete()
     }
+}
+
+private func tableExists(sql: any SQLDatabase, table: String) async throws -> Bool {
+    let row = try await sql.raw("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = \(bind: table)
+        ) AS exists;
+        """).first()
+    return try row?.decode(column: "exists", as: Bool.self) ?? false
 }

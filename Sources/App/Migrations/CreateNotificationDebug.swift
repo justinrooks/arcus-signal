@@ -10,26 +10,48 @@ import SQLKit
 
 struct CreateNotificationDebug: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(NotificationDebugModel.schema)
-            .field("id", .uuid, .identifier(auto: false))
-            .field("series_id", .uuid, .required,
-                   .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
-            .field("installation_id", .uuid,
-                   .references(DeviceInstallationModel.schema, "installation_id", onDelete: .setNull))
-            .field("notification_ledger_id", .uuid,
-                   .references(NotificationLedgerModel.schema, "id", onDelete: .setNull))
-            .field("revision_urn", .string, .required)
-            .field("mode", .string, .required)
-            .field("reason", .string, .required)
-            .field("record_kind", .string, .required)
-            .field("title", .string, .required)
-            .field("subtitle", .string, .required)
-            .field("body", .string, .required)
-            .field("created", .datetime)
-            .unique(on: "notification_ledger_id")
-            .create()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(NotificationDebugModel.schema)
+                .field("id", .uuid, .identifier(auto: false))
+                .field("series_id", .uuid, .required,
+                       .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
+                .field("installation_id", .uuid,
+                       .references(DeviceInstallationModel.schema, "installation_id", onDelete: .setNull))
+                .field("notification_ledger_id", .uuid,
+                       .references(NotificationLedgerModel.schema, "id", onDelete: .setNull))
+                .field("revision_urn", .string, .required)
+                .field("mode", .string, .required)
+                .field("reason", .string, .required)
+                .field("record_kind", .string, .required)
+                .field("title", .string, .required)
+                .field("subtitle", .string, .required)
+                .field("body", .string, .required)
+                .field("created", .datetime)
+                .unique(on: "notification_ledger_id")
+                .create()
+            return
+        }
 
-        guard let sql = db as? any SQLDatabase else { return }
+        if try await !tableExists(sql: sql, table: NotificationDebugModel.schema) {
+            try await db.schema(NotificationDebugModel.schema)
+                .field("id", .uuid, .identifier(auto: false))
+                .field("series_id", .uuid, .required,
+                       .references(ArcusSeriesModel.schema, "id", onDelete: .cascade))
+                .field("installation_id", .uuid,
+                       .references(DeviceInstallationModel.schema, "installation_id", onDelete: .setNull))
+                .field("notification_ledger_id", .uuid,
+                       .references(NotificationLedgerModel.schema, "id", onDelete: .setNull))
+                .field("revision_urn", .string, .required)
+                .field("mode", .string, .required)
+                .field("reason", .string, .required)
+                .field("record_kind", .string, .required)
+                .field("title", .string, .required)
+                .field("subtitle", .string, .required)
+                .field("body", .string, .required)
+                .field("created", .datetime)
+                .unique(on: "notification_ledger_id")
+                .create()
+        }
 
         try await sql.raw("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_debug_preview_unique
@@ -51,4 +73,15 @@ struct CreateNotificationDebug: AsyncMigration {
 
         try await db.schema(NotificationDebugModel.schema).delete()
     }
+}
+
+private func tableExists(sql: any SQLDatabase, table: String) async throws -> Bool {
+    let row = try await sql.raw("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = \(bind: table)
+        ) AS exists;
+        """).first()
+    return try row?.decode(column: "exists", as: Bool.self) ?? false
 }

@@ -60,9 +60,17 @@ struct CreateDeviceInstallations: AsyncMigration {
 
 struct AddIsSubscribedToDeviceInstallation: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(DeviceInstallationModel.schema)
-            .field("is_subscribed", .bool)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(DeviceInstallationModel.schema)
+                .field("is_subscribed", .bool)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE device_installations
+            ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN;
+            """).run()
     }
 
     func revert(on db: any Database) async throws {

@@ -17,13 +17,23 @@ public struct UpdateArcusSeriesConstraints: AsyncMigration {
         
         try await sql.raw("""
                     ALTER TABLE arcus_series
-                      DROP CONSTRAINT alert_series_state_check;
+                      DROP CONSTRAINT IF EXISTS alert_series_state_check;
                     """).run()
         
         try await sql.raw("""
-                    ALTER TABLE arcus_series
-                      ADD CONSTRAINT alert_series_state_check
-                      CHECK (state IN ('active', 'cancelled_in_error', 'cancelled', 'ended', 'expired'));
+                    DO $$
+                    BEGIN
+                      IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'alert_series_state_check'
+                      ) THEN
+                        ALTER TABLE arcus_series
+                          ADD CONSTRAINT alert_series_state_check
+                          CHECK (state IN ('active', 'cancelled_in_error', 'cancelled', 'ended', 'expired'));
+                      END IF;
+                    END
+                    $$;
                     """).run()
     }
     

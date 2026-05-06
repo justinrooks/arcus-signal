@@ -3,10 +3,19 @@ import SQLKit
 
 struct AddCountyLabelFieldsToDevicePresence: AsyncMigration {
     func prepare(on db: any Database) async throws {
-        try await db.schema(DevicePresenceModel.schema)
-            .field("county_label", .string)
-            .field("fire_zone_label", .string)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(DevicePresenceModel.schema)
+                .field("county_label", .string)
+                .field("fire_zone_label", .string)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE device_presence
+              ADD COLUMN IF NOT EXISTS county_label TEXT,
+              ADD COLUMN IF NOT EXISTS fire_zone_label TEXT;
+            """).run()
     }
 
     func revert(on db: any Database) async throws {

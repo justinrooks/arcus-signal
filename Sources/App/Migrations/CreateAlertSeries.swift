@@ -3,15 +3,29 @@ import SQLKit
 
 public struct AddRemainingArcusSeriesFields: AsyncMigration {
     public func prepare(on db: any Database) async throws {
-        try await db.schema(ArcusSeriesModel.schema)
-            .field("category", .string)
-            .field("senderName", .string)
-            .field("headline", .string)
-            .field("description", .string)
-            .field("instructions", .string)
-            .field("response", .string)
-            .field("status", .string)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(ArcusSeriesModel.schema)
+                .field("category", .string)
+                .field("senderName", .string)
+                .field("headline", .string)
+                .field("description", .string)
+                .field("instructions", .string)
+                .field("response", .string)
+                .field("status", .string)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE arcus_series
+              ADD COLUMN IF NOT EXISTS category TEXT,
+              ADD COLUMN IF NOT EXISTS "senderName" TEXT,
+              ADD COLUMN IF NOT EXISTS headline TEXT,
+              ADD COLUMN IF NOT EXISTS description TEXT,
+              ADD COLUMN IF NOT EXISTS instructions TEXT,
+              ADD COLUMN IF NOT EXISTS response TEXT,
+              ADD COLUMN IF NOT EXISTS status TEXT;
+            """).run()
     }
 
     public func revert(on db: any Database) async throws {
@@ -29,9 +43,17 @@ public struct AddRemainingArcusSeriesFields: AsyncMigration {
 
 public struct FixArcusSeriesSenderNameField: AsyncMigration {
     public func prepare(on db: any Database) async throws {
-        try await db.schema(ArcusSeriesModel.schema)
-            .field("sender_name", .string)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(ArcusSeriesModel.schema)
+                .field("sender_name", .string)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE arcus_series
+            ADD COLUMN IF NOT EXISTS sender_name TEXT;
+            """).run()
     }
 
     public func revert(on db: any Database) async throws {
@@ -43,9 +65,19 @@ public struct FixArcusSeriesSenderNameField: AsyncMigration {
 
 public struct RemoveArcusSeriesSenderNameField: AsyncMigration {
     public func prepare(on db: any Database) async throws {
-        try await db.schema(ArcusSeriesModel.schema)
-            .deleteField("senderName")
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(ArcusSeriesModel.schema)
+                .deleteField("senderName")
+                .update()
+            return
+        }
+
+        // Some environments never created the legacy camelCase column.
+        // Use IF EXISTS so the migration is idempotent across schema histories.
+        try await sql.raw("""
+            ALTER TABLE arcus_series
+            DROP COLUMN IF EXISTS "senderName";
+            """).run()
     }
 
     public func revert(on db: any Database) async throws {
@@ -119,17 +151,33 @@ public struct CreateAlertSeriesModel: AsyncMigration {
 
 public struct AddCAPParamFields: AsyncMigration {
     public func prepare(on db: any Database) async throws {
-        try await db.schema(ArcusSeriesModel.schema)
-            .field("tornado_detection", .string)
-            .field("tornado_damage_threat", .string)
-            .field("max_wind_gust", .string)
-            .field("max_hail_size", .string)
-            .field("wind_threat", .string)
-            .field("hail_threat", .string)
-            .field("thunderstorm_damage_threat", .string)
-            .field("flash_flood_detection", .string)
-            .field("flash_flood_damage_threat", .string)
-            .update()
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(ArcusSeriesModel.schema)
+                .field("tornado_detection", .string)
+                .field("tornado_damage_threat", .string)
+                .field("max_wind_gust", .string)
+                .field("max_hail_size", .string)
+                .field("wind_threat", .string)
+                .field("hail_threat", .string)
+                .field("thunderstorm_damage_threat", .string)
+                .field("flash_flood_detection", .string)
+                .field("flash_flood_damage_threat", .string)
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE arcus_series
+              ADD COLUMN IF NOT EXISTS tornado_detection TEXT,
+              ADD COLUMN IF NOT EXISTS tornado_damage_threat TEXT,
+              ADD COLUMN IF NOT EXISTS max_wind_gust TEXT,
+              ADD COLUMN IF NOT EXISTS max_hail_size TEXT,
+              ADD COLUMN IF NOT EXISTS wind_threat TEXT,
+              ADD COLUMN IF NOT EXISTS hail_threat TEXT,
+              ADD COLUMN IF NOT EXISTS thunderstorm_damage_threat TEXT,
+              ADD COLUMN IF NOT EXISTS flash_flood_detection TEXT,
+              ADD COLUMN IF NOT EXISTS flash_flood_damage_threat TEXT;
+            """).run()
     }
 
     public func revert(on db: any Database) async throws {
