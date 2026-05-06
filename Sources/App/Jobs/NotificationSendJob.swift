@@ -241,7 +241,7 @@ public struct NotificationSendJob: AsyncJob {
 }
 
 
-private extension NotificationSendJob {
+extension NotificationSendJob {
     func loadUGCCandidates(
         ugcCodes: [String],
         on db: any Database
@@ -311,6 +311,7 @@ private extension NotificationSendJob {
         revisionUrn: String,
         mode: NotificationTargetMode,
         reason: NotificationReason,
+        freshnessState: LocationFreshnessState,
         on db: any Database
     ) async throws -> LedgerClaimResult {
         guard let sql = db as? any SQLDatabase else {
@@ -321,7 +322,7 @@ private extension NotificationSendJob {
 
         let row = try await sql.raw("""
             INSERT INTO notification_ledger
-                (id, installation_id, series_id, revision_urn, mode, reason, created, status)
+                (id, installation_id, series_id, revision_urn, mode, reason, freshness_state, created, status)
             VALUES
                 (\(bind: newID),
                  \(bind: installationID),
@@ -329,6 +330,7 @@ private extension NotificationSendJob {
                  \(bind: revisionUrn),
                  \(bind: mode),
                  \(bind: reason),
+                 \(bind: freshnessState),
                  NOW(),
                 'claimed')
             ON CONFLICT (installation_id, series_id, revision_urn)
@@ -444,6 +446,7 @@ private extension NotificationSendJob {
                 revisionUrn: payload.revisionUrn,
                 mode: payload.mode,
                 reason: payload.reason,
+                freshnessState: freshnessDecision.state,
                 on: context.application.db
             )
             

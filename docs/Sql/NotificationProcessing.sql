@@ -7,13 +7,14 @@ SELECT
     l.mode,
     l.reason,
     COALESCE(s.event, 'unknown') AS event_type,
+    l.freshness_state,
     l.status AS decision_outcome,
     COUNT(*) AS count
 FROM notification_ledger l
 LEFT JOIN arcus_series s ON s.id = l.series_id
 WHERE l.status IN ('sent', 'failed')
-GROUP BY l.mode, l.reason, COALESCE(s.event, 'unknown'), l.status
-ORDER BY count DESC, l.mode, l.reason, event_type, decision_outcome;
+GROUP BY l.mode, l.reason, COALESCE(s.event, 'unknown'), l.freshness_state, l.status
+ORDER BY count DESC, l.mode, l.reason, event_type, l.freshness_state, decision_outcome;
 
 -- 2) Stale-location misses (candidate-level) from notification_missed_decisions.
 -- This answers: how many candidate pushes were skipped because location was stale?
@@ -38,7 +39,7 @@ WITH delivered AS (
         l.mode,
         l.reason,
         COALESCE(s.event, 'unknown') AS event_type,
-        NULL::text AS freshness_state,
+        l.freshness_state,
         NULL::text AS permission_mode,
         NULL::text AS miss_reason,
         CASE
@@ -50,7 +51,7 @@ WITH delivered AS (
     FROM notification_ledger l
     LEFT JOIN arcus_series s ON s.id = l.series_id
     WHERE l.status IN ('sent', 'failed')
-    GROUP BY l.mode, l.reason, COALESCE(s.event, 'unknown'), l.status
+    GROUP BY l.mode, l.reason, COALESCE(s.event, 'unknown'), l.freshness_state, l.status
 ), stale_missed AS (
     SELECT
         m.mode,

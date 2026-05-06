@@ -317,7 +317,6 @@ Related GitHub issues:
 - `swift test`
 
 ### Deferred
-- Delivered freshness-state persistence remains deferred to Issue 5.
 - Freshness observability/dashboard additions remain deferred to Issue 6 / GitHub #56.
 
 ---
@@ -325,7 +324,7 @@ Related GitHub issues:
 ## Issue 5 - Record freshness state on delivered decisions
 
 ### Status
-- Deferred
+- Completed (2026-05-06)
 
 ### Scope
 - Persist freshness state used at decision time for delivered or attempted notification decisions.
@@ -337,9 +336,34 @@ Related GitHub issues:
 - `Done means`
 
 ### Handoff notes
-- The likely target is `notification_ledger`, but verify against the missed-decision design before committing.
-- Avoid recomputing freshness later from mutable presence for historical reporting.
-- Deferred from this issue scope because #56 final slice targeted observability/tests only and did not require schema expansion.
+- Added a dedicated ledger migration to persist decision-time freshness on delivery rows:
+  - `AddFreshnessStateToNotificationLedger` adds required `notification_ledger.freshness_state`.
+- Updated `NotificationLedgerModel` with typed freshness access:
+  - `freshnessStateRaw` (stored raw string)
+  - computed `freshnessState: LocationFreshnessState`
+- Updated `NotificationSendJob.claimNotificationLedger(...)` to accept `freshnessState: LocationFreshnessState` and write it during claim insert.
+- Freshness is captured once at decision/claim time and no longer depends on mutable `device_presence` for delivered/failed reporting.
+- Stale behavior remains unchanged:
+  - stale candidates are still skipped before claim/send
+  - stale candidates persist only in `notification_missed_decisions`
+  - stale candidates still do not create ledger rows.
+- Updated `docs/Sql/NotificationProcessing.sql` to include/group on `notification_ledger.freshness_state` for delivered and failed outcomes.
+- Added DB-backed persistence tests for fresh/degraded claim rows and failure-state freshness retention.
+
+### Files changed
+- `Sources/App/Migrations/AddFreshnessStateToNotificationLedger.swift`
+- `Sources/App/configure.swift`
+- `Sources/App/Models/Notification/NotificationLedgerModel.swift`
+- `Sources/App/Jobs/NotificationSendJob.swift`
+- `Tests/AppTests/NotificationLedgerFreshnessPersistenceTests.swift`
+- `Tests/AppTests/NotificationMissedDecisionPersistenceTests.swift`
+- `docs/Sql/NotificationProcessing.sql`
+- `docs/plans/FB-019-progress.md`
+
+### Tests run
+- `swift test --filter NotificationLedgerFreshnessPersistenceTests`
+- `swift test --filter NotificationMissedDecisionPersistenceTests`
+- `swift test`
 
 ---
 
@@ -397,7 +421,7 @@ Related GitHub issues:
 - `swift test`
 
 ### Remaining risks / open questions
-- Delivered rows still do not persist decision-time freshness state in `notification_ledger`; reporting freshness for delivered outcomes currently relies on stale-miss table + delivery outcomes, not a single per-candidate unified persistence row.
+- Dashboard stale-presence slices still use their existing thresholding surface; this issue only closes delivered/failed ledger freshness persistence and SQL diagnostics grouping.
 
 ### Relevant feature brief sections
 - `Goals`

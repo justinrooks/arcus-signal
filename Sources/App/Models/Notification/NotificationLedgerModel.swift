@@ -29,6 +29,9 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
     
     @Field(key: "reason")
     public var reason: String
+
+    @Field(key: "freshness_state")
+    public var freshnessStateRaw: String
     
     @OptionalField(key: "status")
     public var status: String?
@@ -52,6 +55,7 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
         revisionUrn: String,
         mode: String,
         reason: String,
+        freshnessState: LocationFreshnessState,
         status: String?,
         completedAt: Date? = nil
     ) {
@@ -61,7 +65,13 @@ public final class NotificationLedgerModel: Model, @unchecked Sendable, Content 
         self.revisionUrn = revisionUrn
         self.mode = mode
         self.reason = reason
+        self.freshnessStateRaw = freshnessState.rawValue
         self.status = status
         self.completedAt = completedAt
+    }
+
+    public var freshnessState: LocationFreshnessState {
+        get { LocationFreshnessState(rawValue: freshnessStateRaw) ?? .stale }
+        set { freshnessStateRaw = newValue.rawValue }
     }
 }

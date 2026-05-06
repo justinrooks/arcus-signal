@@ -6,8 +6,8 @@ import FluentSQL
 import Testing
 import Vapor
 
-@Suite("Notification missed decision persistence", .serialized)
-struct NotificationMissedDecisionPersistenceTests {
+@Suite("Notification ledger freshness persistence", .serialized)
+struct NotificationLedgerFreshnessPersistenceTests {
     private func withApp(test: (Application) async throws -> Void) async throws {
         let app = try await Application.make(.testing)
         do {
@@ -68,30 +68,6 @@ struct NotificationMissedDecisionPersistenceTests {
             """).run()
 
         try await sql.raw("""
-            CREATE TABLE IF NOT EXISTS notification_missed_decisions (
-                id UUID PRIMARY KEY,
-                installation_id UUID NOT NULL REFERENCES device_installations(installation_id) ON DELETE CASCADE,
-                series_id UUID NOT NULL REFERENCES arcus_series(id) ON DELETE CASCADE,
-                revision_urn TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                freshness_state TEXT NOT NULL,
-                miss_reason TEXT NOT NULL,
-                permission_mode TEXT NOT NULL,
-                captured_at TIMESTAMP NOT NULL,
-                received_at TIMESTAMP NOT NULL,
-                evaluated_at TIMESTAMP NOT NULL,
-                created TIMESTAMP NOT NULL
-            );
-            """).run()
-
-        try await sql.raw("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_missed_decisions_identity
-            ON notification_missed_decisions
-            (installation_id, series_id, revision_urn, mode, reason, miss_reason);
-            """).run()
-
-        try await sql.raw("""
             CREATE TABLE IF NOT EXISTS notification_ledger (
                 id UUID PRIMARY KEY,
                 installation_id UUID NOT NULL REFERENCES device_installations(installation_id) ON DELETE CASCADE,
@@ -101,8 +77,30 @@ struct NotificationMissedDecisionPersistenceTests {
                 reason TEXT NOT NULL,
                 freshness_state TEXT NOT NULL,
                 status TEXT,
+                apns_error_code TEXT,
+                completed_at TIMESTAMP,
                 created TIMESTAMP NOT NULL
             );
+            """).run()
+
+        try await sql.raw("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_ledger_identity
+            ON notification_ledger (installation_id, series_id, revision_urn);
+            """).run()
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS status TEXT;
+            """).run()
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS apns_error_code TEXT;
+            """).run()
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+            ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
             """).run()
 
         try await sql.raw("""
@@ -126,7 +124,7 @@ struct NotificationMissedDecisionPersistenceTests {
             """).run()
     }
 
-    private func seedSeries(id: UUID, revisionUrn _: String, on db: any Database) async throws {
+    private func seedSeries(id: UUID, on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
@@ -143,98 +141,96 @@ struct NotificationMissedDecisionPersistenceTests {
             """).run()
     }
 
-    @Test("stale missed decision can be inserted")
-    func insertsStaleMissDecision() async throws {
+    @Test("fresh candidate claim persists fresh freshness_state")
+    func freshClaimPersistsFreshness() async throws {
         try await withApp { app in
+            let job = NotificationSendJob()
             let installationID = UUID()
             let seriesID = UUID()
-            let revisionUrn = "urn:oid:test-revision"
-            let now = Date()
-            let capturedAt = now.addingTimeInterval(-3_600)
-            let receivedAt = now.addingTimeInterval(-3_500)
+            let revisionUrn = "urn:oid:fresh-claim"
 
             try await seedInstallation(id: installationID, on: app.db)
-            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedSeries(id: seriesID, on: app.db)
 
-            let store = NotificationMissedDecisionStore()
-            let result = try await store.insertStaleMissDecision(
-                .init(
-                    installationID: installationID,
-                    seriesID: seriesID,
-                    revisionUrn: revisionUrn,
-                    mode: .h3,
-                    reason: .new,
-                    freshnessState: .stale,
-                    missReason: .staleLocation,
-                    permissionMode: .whenInUse,
-                    capturedAt: capturedAt,
-                    receivedAt: receivedAt,
-                    evaluatedAt: now
-                ),
+            let claim = try await job.claimNotificationLedger(
+                installationID: installationID,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new,
+                freshnessState: .fresh,
                 on: app.db
             )
 
-            #expect(result.inserted)
-            #expect(result.id != nil)
-
-            let row = try await NotificationMissedDecisionModel.query(on: app.db)
-                .filter(\.$revisionUrn == revisionUrn)
-                .first()
-            #expect(row != nil)
-            #expect(row?.freshnessState == .stale)
-            #expect(row?.permissionMode == .whenInUse)
-            #expect(row?.missReason == .staleLocation)
-
-            let ledgerCount = try await NotificationLedgerModel.query(on: app.db)
-                .filter(\.$deviceInstallation.$id == installationID)
-                .filter(\.$series.$id == seriesID)
-                .filter(\.$revisionUrn == revisionUrn)
-                .count()
-            #expect(ledgerCount == 0)
+            #expect(claim.inserted)
+            let ledger = try await NotificationLedgerModel.find(claim.id, on: app.db)
+            #expect(ledger?.freshnessState == .fresh)
+            #expect(ledger?.status == "claimed")
         }
     }
 
-    @Test("duplicate logical stale misses are ignored")
-    func ignoresDuplicateLogicalMiss() async throws {
+    @Test("degraded candidate claim persists degraded freshness_state")
+    func degradedClaimPersistsFreshness() async throws {
         try await withApp { app in
+            let job = NotificationSendJob()
             let installationID = UUID()
             let seriesID = UUID()
-            let revisionUrn = "urn:oid:test-revision"
-            let now = Date()
-            let capturedAt = now.addingTimeInterval(-3_600)
-            let receivedAt = now.addingTimeInterval(-3_500)
+            let revisionUrn = "urn:oid:degraded-claim"
 
             try await seedInstallation(id: installationID, on: app.db)
-            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedSeries(id: seriesID, on: app.db)
 
-            let store = NotificationMissedDecisionStore()
-            let input = NotificationMissedDecisionInsertInput(
+            let claim = try await job.claimNotificationLedger(
                 installationID: installationID,
                 seriesID: seriesID,
                 revisionUrn: revisionUrn,
                 mode: .ugc,
                 reason: .update,
-                freshnessState: .stale,
-                missReason: .staleLocation,
-                permissionMode: .always,
-                capturedAt: capturedAt,
-                receivedAt: receivedAt,
-                evaluatedAt: now
+                freshnessState: .degraded,
+                on: app.db
             )
 
-            let first = try await store.insertStaleMissDecision(input, on: app.db)
-            let second = try await store.insertStaleMissDecision(input, on: app.db)
+            #expect(claim.inserted)
+            let ledger = try await NotificationLedgerModel.find(claim.id, on: app.db)
+            #expect(ledger?.freshnessState == .degraded)
+            #expect(ledger?.status == "claimed")
+        }
+    }
 
-            #expect(first.inserted)
-            #expect(second.inserted == false)
+    @Test("failed claimed send keeps original persisted freshness_state")
+    func failedClaimKeepsOriginalFreshness() async throws {
+        try await withApp { app in
+            let job = NotificationSendJob()
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:failed-claim"
 
-            let count = try await NotificationMissedDecisionModel.query(on: app.db)
-                .filter(\.$deviceInstallation.$id == installationID)
-                .filter(\.$series.$id == seriesID)
-                .filter(\.$revisionUrn == revisionUrn)
-                .count()
+            try await seedInstallation(id: installationID, on: app.db)
+            try await seedSeries(id: seriesID, on: app.db)
 
-            #expect(count == 1)
+            let claim = try await job.claimNotificationLedger(
+                installationID: installationID,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new,
+                freshnessState: .degraded,
+                on: app.db
+            )
+
+            #expect(claim.inserted)
+
+            guard let existing = try await NotificationLedgerModel.find(claim.id, on: app.db) else {
+                Issue.record("Missing claimed ledger row")
+                return
+            }
+            existing.status = "failed"
+            existing.completedAt = Date()
+            try await existing.save(on: app.db)
+
+            let refreshed = try await NotificationLedgerModel.find(claim.id, on: app.db)
+            #expect(refreshed?.status == "failed")
+            #expect(refreshed?.freshnessState == .degraded)
         }
     }
 }
