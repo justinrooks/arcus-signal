@@ -18,6 +18,8 @@ services:
     image: arcus-signal:latest
     build:
       context: .
+      args:
+        SWIFT_VERSION: ${SWIFT_VERSION:-6.3.0}
     environment:
       <<: *shared_environment
     restart: unless-stopped
@@ -36,6 +38,8 @@ services:
     image: arcus-signal:latest
     build:
       context: .
+      args:
+        SWIFT_VERSION: ${SWIFT_VERSION:-6.3.0}
     environment:
       <<: *shared_environment
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}

@@ -1,7 +1,8 @@
 # ================================
 # Build image
 # ================================
-FROM swift:6.1-noble AS build
+ARG SWIFT_VERSION=6.3.0
+FROM swift:${SWIFT_VERSION}-noble AS build
 
 # Install OS updates
 RUN export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
