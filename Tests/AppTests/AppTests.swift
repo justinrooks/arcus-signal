@@ -11,6 +11,7 @@ import Testing
 import Vapor
 import VaporTesting
 import XCTQueues
+import ArcusCore
 
 @Suite("Arcus Signal bootstrap tests", .serialized)
 struct AppTests {
@@ -373,17 +374,13 @@ struct AppTests {
         ]]))
     }
 
-    @Test("Device alert geometry converts multipolygon server geometry")
-    func deviceAlertGeometryConvertsMultipolygonGeoShape() {
-        let geometry = DeviceAlertGeometry(
-            geoShape: .multiPolygon(
-                polygons: [[[
-                    .init(lon: -104.0, lat: 39.0),
-                    .init(lon: -103.5, lat: 39.5),
-                    .init(lon: -104.0, lat: 39.0)
-                ]]]
-            )
-        )
+    @Test("Device alert geometry uses multipolygon wire shape")
+    func deviceAlertGeometryUsesMultipolygonWireShape() {
+        let geometry: DeviceAlertGeometry = .multiPolygon(polygons: [[[
+            .init(longitude: -104.0, latitude: 39.0),
+            .init(longitude: -103.5, latitude: 39.5),
+            .init(longitude: -104.0, latitude: 39.0)
+        ]]])
 
         #expect(geometry == .multiPolygon(polygons: [[[
             .init(longitude: -104.0, latitude: 39.0),

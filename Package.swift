@@ -25,6 +25,8 @@ let package = Package(
         .package(url: "https://github.com/pawelmajcher/SwiftyH3.git", from: "0.5.0"),
         // 📩 APNs push notifications
         .package(url: "https://github.com/vapor/apns.git", from: "5.0.0"),
+        // ArcusCore
+        .package(url: "https://github.com/justinrooks/ArcusCore.git", from: "0.1.0"),
     ],
     targets: [
         .target(
@@ -36,7 +38,8 @@ let package = Package(
                 .product(name: "Queues", package: "queues"),
                 .product(name: "QueuesRedisDriver", package: "queues-redis-driver"),
                 .product(name: "SwiftyH3", package: "SwiftyH3"),
-                .product(name: "VaporAPNS", package: "apns")
+                .product(name: "VaporAPNS", package: "apns"),
+                .product(name: "ArcusCore", package: "ArcusCore"),
             ],
             swiftSettings: swiftSettings
         ),

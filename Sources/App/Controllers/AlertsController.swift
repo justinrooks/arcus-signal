@@ -8,6 +8,7 @@
 import Fluent
 import FluentSQL
 import Vapor
+import ArcusCore
 
 private struct AlertLookupQueryV1: Content {
     let ugc: String?
@@ -43,7 +44,8 @@ struct AlertsController: RouteCollection {
     private func encodePayloadResponse(rows: [AlertSeriesRow]) throws -> Response {
         let payload = rows.map { $0.asDeviceAlertPayload() }
         let response = Response(status: .ok)
-        try response.content.encode(payload)
+        response.headers.contentType = .json
+        response.body = try .init(data: JSONEncoder().encode(payload))
         return response
     }
 }

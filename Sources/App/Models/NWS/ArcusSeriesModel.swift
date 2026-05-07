@@ -9,10 +9,15 @@ import Fluent
 import Foundation
 import Crypto
 import SQLKit
+import ArcusCore
 
 public enum ArcusEventModelError: Error, Sendable {
     case invalidEnum(field: String, value: String)
     case invalidGeometryJSON
+}
+
+public enum DeviceAlertPayloadValidationError: Error, Sendable {
+    case missingRequired(field: String)
 }
 
 public final class ArcusSeriesModel: Model, @unchecked Sendable {
@@ -309,9 +314,9 @@ public extension ArcusSeriesModel {
     }
     
     func asDeviceAlertPayload() throws -> DeviceAlertPayload {
-        guard let cleanId = id else { throw DeviceAlertPayloadError.missingRequired(field: "id") }
-        guard let cleanCreate = created else { throw DeviceAlertPayloadError.missingRequired(field: "created") }
-        guard let cleanUpdate = updated else { throw DeviceAlertPayloadError.missingRequired(field: "updated") }
+        guard let cleanId = id else { throw DeviceAlertPayloadValidationError.missingRequired(field: "id") }
+        guard let cleanCreate = created else { throw DeviceAlertPayloadValidationError.missingRequired(field: "created") }
+        guard let cleanUpdate = updated else { throw DeviceAlertPayloadValidationError.missingRequired(field: "updated") }
         let geolocation: ArcusGeolocationModel?
 
         switch $geolocation.value {
@@ -322,7 +327,26 @@ public extension ArcusSeriesModel {
         }
 
         let h3Cells = geolocation?.h3Cells ?? []
-        let geometry = geolocation.flatMap { DeviceAlertGeometry(geoShape: $0.geometry) }
+        let geometry = geolocation.flatMap { geolocation -> DeviceAlertGeometry? in
+            switch geolocation.geometry {
+            case .point:
+                return nil
+            case .polygon(let rings):
+                return .polygon(
+                    rings: rings.map { ring in
+                        ring.map { .init(longitude: $0.lon, latitude: $0.lat) }
+                    }
+                )
+            case .multiPolygon(let polygons):
+                return .multiPolygon(
+                    polygons: polygons.map { polygon in
+                        polygon.map { ring in
+                            ring.map { .init(longitude: $0.lon, latitude: $0.lat) }
+                        }
+                    }
+                )
+            }
+        }
         
         return .init(
             id: cleanId,

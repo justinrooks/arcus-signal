@@ -8,6 +8,7 @@
 import Foundation
 import Fluent
 import FluentSQL
+import ArcusCore
 
 struct AlertSeriesRow: Decodable, Sendable {
     let id: UUID
@@ -74,7 +75,26 @@ struct AlertSeriesRow: Decodable, Sendable {
             response: response,
             ugc: ugcCodes,
             h3Cells: h3Cells,
-            geometry: geometry.flatMap(DeviceAlertGeometry.init(geoShape:)),
+            geometry: geometry.flatMap { shape in
+                switch shape {
+                case .point:
+                    return nil
+                case .polygon(let rings):
+                    return .polygon(
+                        rings: rings.map { ring in
+                            ring.map { .init(longitude: $0.lon, latitude: $0.lat) }
+                        }
+                    )
+                case .multiPolygon(let polygons):
+                    return .multiPolygon(
+                        polygons: polygons.map { polygon in
+                            polygon.map { ring in
+                                ring.map { .init(longitude: $0.lon, latitude: $0.lat) }
+                            }
+                        }
+                    )
+                }
+            },
             tornadoDetection: tornadoDetection,
             tornadoDamageThreat: tornadoDamageThreat,
             maxWindGust: maxWindGust,
