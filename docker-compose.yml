@@ -15,7 +15,7 @@ x-shared_environment: &shared_environment
 
 services:
   api:
-    image: arcus-signal:latest
+    image: ghcr.io/justinrooks/arcus-signal:latest
     build:
       context: .
       args:
@@ -35,7 +35,7 @@ services:
     command: ["./Run", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8080"]
 
   worker:
-    image: arcus-signal:latest
+    image: ghcr.io/justinrooks/arcus-signal:latest
     build:
       context: .
       args:

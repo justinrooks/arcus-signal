@@ -4,13 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$repo_root"
 
-echo "Pulling latest changes..."
-git pull
+echo "Pulling latest repo changes..."
+git pull --ff-only
 
-echo "Building and starting api and worker containers..."
-sudo docker compose up -d --build api worker
+echo "Pulling latest image from github..."
+sudo docker compose --env-file .env pull api worker
 
-echo "Running development migrations..."
-sudo docker compose run --rm api ./Run migrate --env development
+echo "Starting api/worker from pulled images..."
+sudo docker compose --env-file .env up -d --no-build api worker
 
-echo "Dev install complete."
+echo "Running database migrations..."
+sudo docker compose --env-file .env run --rm api ./Run migrate --env development
+
+echo "Done."
