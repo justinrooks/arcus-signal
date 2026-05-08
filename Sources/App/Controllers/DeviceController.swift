@@ -7,6 +7,7 @@
 
 import Fluent
 import Vapor
+import ArcusCore
 
 private enum DevicePresenceUpsertOutcome: String {
     case inserted
@@ -24,6 +25,9 @@ struct DeviceController: RouteCollection {
     func create(req: Request) async throws -> LocationSnapshotAcceptedResponse {
         let payload = try req.content.decode(LocationSnapshotPushPayload.self)
         let installationId = payload.installationId
+        guard let installationUUID = UUID(uuidString: installationId) else {
+            throw Abort(.badRequest, reason: "installationId must be a valid UUID")
+        }
         let apnsDeviceToken = payload.apnsDeviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // Validate enums
@@ -97,7 +101,7 @@ struct DeviceController: RouteCollection {
         
         let presenceOutcome = try await req.db.transaction { database in
             _ = try await upsertDeviceInstallation(
-                installationId: installationId,
+                installationId: installationUUID,
                 apnsDeviceToken: apnsDeviceToken,
                 apnsEnvironment: apnsEnvironment,
                 platform: platform,
@@ -111,7 +115,7 @@ struct DeviceController: RouteCollection {
             )
             
             return try await upsertDevicePresence(
-                installationId: installationId,
+                installationId: installationUUID,
                 payload: payload,
                 cellScheme: cellScheme,
                 locationSource: locationSource,
@@ -134,7 +138,7 @@ struct DeviceController: RouteCollection {
                 "zone": .string(payload.zone ?? "N/A"),
                 "fireZone": .string(payload.fireZone ?? "N/A"),
                 "apnsDeviceTokenSuffix": .string(String(apnsDeviceToken.suffix(8))),
-                "installationId": .string(installationId.uuidString),
+                "installationId": .string(installationId),
                 "source": .string(payload.source),
                 "auth": .string(payload.auth),
                 "appVersion": .string(payload.appVersion),
