@@ -1,0 +1,19 @@
+$kind: http-request
+name: GET /dashboard
+url: "{{apiBaseUrl}}/dashboard"
+method: GET
+description: |-
+  Runtime: API
+  
+  Purpose: Return operator dashboard HTML.
+  
+  Expected: 200 (HTML) when snapshot exists, 503 (HTML unavailable page) when missing.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 200 or 503', function () { pm.expect([200,503]).to.include(pm.response.code); });
+      pm.test('response content-type contains text/html', function () {
+        pm.expect(pm.response.headers.get('Content-Type') || '').to.include('text/html');
+      });
+    language: text/javascript
+order: 2000

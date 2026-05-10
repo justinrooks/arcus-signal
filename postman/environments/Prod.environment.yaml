@@ -1,0 +1,6 @@
+name: Prod
+values:
+  - key: apiBaseUrl
+    value: ''
+  - key: workerBaseUrl
+    value: ''

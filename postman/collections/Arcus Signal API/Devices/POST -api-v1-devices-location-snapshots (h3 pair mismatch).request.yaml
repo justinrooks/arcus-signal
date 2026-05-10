@@ -1,0 +1,38 @@
+$kind: http-request
+name: POST /api/v1/devices/location-snapshots (h3 pair mismatch)
+url: "{{apiBaseUrl}}/api/v1/devices/location-snapshots"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "capturedAt": "{{capturedAtNow}}",
+      "locationAgeSeconds": 2.5,
+      "horizontalAccuracyMeters": 18.2,
+      "cellScheme": "h3",
+      "h3Cell": {{validH3Cell}},
+      "h3Resolution": null,
+      "county": "{{sampleCounty}}",
+      "zone": "{{sampleForecast}}",
+      "fireZone": "{{sampleFire}}",
+      "apnsDeviceToken": "{{apnsDeviceToken}}",
+      "installationId": "{{installationId}}",
+      "source": "foreground",
+      "auth": "always",
+      "appVersion": "1.0.0",
+      "buildNumber": "100",
+      "platform": "iOS",
+      "osVersion": "26.0",
+      "apnsEnvironment": "sandbox"
+    }
+description: |-
+  Negative test. `h3Cell` and `h3Resolution` must either both be set or both be null.
+  
+  Expected: 400 Bad Request.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 400', function () { pm.response.to.have.status(400); });
+    language: text/javascript
+order: 6000

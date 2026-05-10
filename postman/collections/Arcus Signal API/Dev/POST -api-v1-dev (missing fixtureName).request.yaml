@@ -1,0 +1,25 @@
+$kind: http-request
+name: POST /api/v1/dev (missing fixtureName)
+url: "{{apiBaseUrl}}/api/v1/dev"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "fixtureName": "   ",
+      "runLabel": "postman-negative"
+    }
+description: |-
+  Negative test. `fixtureName` is required after trimming.
+  
+  Environment behavior: non-production returns 400; production returns 404.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 400 in non-prod, 404 in prod', function () {
+        pm.expect([400, 404]).to.include(pm.response.code);
+      });
+    language: text/javascript
+order: 2000

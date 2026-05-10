@@ -1,0 +1,20 @@
+$kind: http-request
+name: GET /v1/metrics
+url: "{{apiBaseUrl}}/v1/metrics"
+method: GET
+description: |-
+  Runtime: API
+  
+  Purpose: Return operator dashboard snapshot JSON.
+  
+  Expected: 200 when snapshot exists, 503 when unavailable.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 200 or 503', function () { pm.expect([200,503]).to.include(pm.response.code); });
+      if (pm.response.code === 200) {
+        const body = pm.response.json();
+        pm.test('metrics response has renderedAt', function () { pm.expect(body.renderedAt).to.be.a('string'); });
+      }
+    language: text/javascript
+order: 1000

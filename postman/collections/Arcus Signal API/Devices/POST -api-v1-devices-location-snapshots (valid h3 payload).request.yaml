@@ -1,0 +1,49 @@
+$kind: http-request
+name: POST /api/v1/devices/location-snapshots (valid h3 payload)
+url: "{{apiBaseUrl}}/api/v1/devices/location-snapshots"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "capturedAt": "{{capturedAtNow}}",
+      "locationAgeSeconds": 2.5,
+      "horizontalAccuracyMeters": 18.2,
+      "cellScheme": "h3",
+      "h3Cell": {{validH3Cell}},
+      "h3Resolution": {{validH3Resolution}},
+      "county": "{{sampleCounty}}",
+      "zone": "{{sampleForecast}}",
+      "fireZone": "{{sampleFire}}",
+      "apnsDeviceToken": "{{apnsDeviceToken}}",
+      "installationId": "{{installationId}}",
+      "source": "foreground",
+      "auth": "always",
+      "appVersion": "1.0.0",
+      "buildNumber": "100",
+      "platform": "iOS",
+      "osVersion": "26.0",
+      "apnsEnvironment": "sandbox",
+      "countyLabel": "Boulder County",
+      "fireZoneLabel": "Front Range",
+      "isSubscribed": true
+    }
+description: |-
+  Runtime: API
+  
+  Purpose: Upsert device installation and latest location presence.
+  
+  Validation highlights: UUID `installationId`, enum values, non-empty APNS token/app/build/os fields, `locationAgeSeconds >= 0`, `horizontalAccuracyMeters >= 0`, h3 pair required together, `h3Resolution` in 0...15, and `capturedAt` <= now + 5 minutes.
+  
+  Expected: 200 OK with `{ status: "ok", receivedAt: ISO8601 }`.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 200', function () { pm.response.to.have.status(200); });
+      const body = pm.response.json();
+      pm.test('response status=ok', function () { pm.expect(body.status).to.eql('ok'); });
+      pm.test('response includes receivedAt', function () { pm.expect(body.receivedAt).to.be.a('string'); });
+    language: text/javascript
+order: 2000

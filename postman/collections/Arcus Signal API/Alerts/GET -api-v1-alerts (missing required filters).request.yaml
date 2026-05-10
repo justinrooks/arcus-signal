@@ -1,0 +1,13 @@
+$kind: http-request
+name: GET /api/v1/alerts (missing required filters)
+url: "{{apiBaseUrl}}/api/v1/alerts"
+method: GET
+description: |-
+  Negative test. At least one of `ugc`, `fire`, or `h3` is required.
+  
+  Expected: 400 Bad Request.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 400', function () { pm.response.to.have.status(400); });
+    language: text/javascript
+order: 3000

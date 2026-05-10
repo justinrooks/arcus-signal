@@ -1,0 +1,6 @@
+name: Local
+values:
+  - key: apiBaseUrl
+    value: ''
+  - key: workerBaseUrl
+    value: ''

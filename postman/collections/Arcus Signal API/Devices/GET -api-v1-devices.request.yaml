@@ -1,0 +1,17 @@
+$kind: http-request
+name: GET /api/v1/devices
+url: "{{apiBaseUrl}}/api/v1/devices"
+method: GET
+description: |-
+  Runtime: API
+  
+  Purpose: Placeholder device endpoint.
+  
+  Expected: 200 with reason phrase `fetch the devices`.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 200', function () { pm.response.to.have.status(200); });
+      pm.test('reason phrase is custom', function () { pm.expect(pm.response.reason()).to.eql('fetch the devices'); });
+    language: text/javascript
+order: 1000

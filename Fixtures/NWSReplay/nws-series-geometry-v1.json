@@ -8,12 +8,12 @@
         "type": "Polygon",
         "coordinates": [
           [
-            [-104.95, 39.70],
-            [-104.75, 39.80],
-            [-104.60, 39.70],
-            [-104.70, 39.55],
-            [-104.90, 39.50],
-            [-104.95, 39.70]
+            [-107.95, 41.70],
+            [-107.75, 41.80],
+            [-107.60, 41.70],
+            [-107.70, 41.55],
+            [-107.90, 41.50],
+            [-107.95, 41.70]
           ]
         ]
       },
@@ -21,7 +21,7 @@
         "id": "urn:oid:2.49.0.1.840.0.replay.alert.001",
         "areaDesc": "Replay County Alpha",
         "geocode": {
-          "UGC": ["COC001", "COC031"],
+          "UGC": ["COTC001", "COTC031"],
           "SAME": ["08001", "08031"]
         },
         "sent": "2026-03-02T15:00:00Z",
@@ -35,12 +35,12 @@
         "severity": "Severe",
         "certainty": "Observed",
         "urgency": "Immediate",
-        "event": "Tornado Warning",
+        "event": "Tornado Warning - TEST",
         "sender": "w-nws.webmaster@noaa.gov",
         "senderName": "NWS Replay Office",
         "headline": "Replay Tornado Warning",
         "description": "Replay fixture initial message.",
-        "instruction": "Seek shelter immediately.",
+        "instruction": "Seek shelter immediately. - TEST",
         "response": "Shelter",
         "parameters": {
           "VTEC": ["/O.NEW.KBOU.TO.W.0001.260302T1500Z-260302T1620Z/"]
@@ -54,12 +54,12 @@
         "type": "Polygon",
         "coordinates": [
           [
-            [-104.98, 39.72],
-            [-104.72, 39.84],
-            [-104.52, 39.72],
-            [-104.66, 39.48],
-            [-104.92, 39.44],
-            [-104.98, 39.72]
+            [-106.98, 41.72],
+            [-106.72, 41.84],
+            [-106.52, 41.72],
+            [-106.66, 41.48],
+            [-106.92, 41.44],
+            [-106.98, 41.72]
           ]
         ]
       },
@@ -67,7 +67,7 @@
         "id": "urn:oid:2.49.0.1.840.0.replay.alert.002",
         "areaDesc": "Replay County Alpha, Replay County Beta",
         "geocode": {
-          "UGC": ["COC001", "COC031", "COC005"],
+          "UGC": ["COTC001", "COTC031", "COTC005"],
           "SAME": ["08001", "08031", "08005"]
         },
         "references": [
@@ -89,12 +89,12 @@
         "severity": "Severe",
         "certainty": "Observed",
         "urgency": "Immediate",
-        "event": "Tornado Warning",
+        "event": "Tornado Warning - TEST",
         "sender": "w-nws.webmaster@noaa.gov",
         "senderName": "NWS Replay Office",
         "headline": "Replay Tornado Warning (Updated Polygon)",
         "description": "Replay fixture update message with expanded polygon.",
-        "instruction": "Remain in shelter.",
+        "instruction": "Remain in shelter. - TEST",
         "response": "Shelter",
         "parameters": {
           "VTEC": ["/O.CON.KBOU.TO.W.0001.260302T1500Z-260302T1640Z/"]

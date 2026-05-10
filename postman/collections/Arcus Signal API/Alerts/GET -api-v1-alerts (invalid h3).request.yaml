@@ -1,0 +1,15 @@
+$kind: http-request
+name: GET /api/v1/alerts (invalid h3)
+url: "{{apiBaseUrl}}/api/v1/alerts?h3=0"
+method: GET
+queryParams:
+  h3: "0"
+description: |-
+  Negative test. `h3` must be > 0 when provided.
+  
+  Expected: 400 Bad Request.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 400', function () { pm.response.to.have.status(400); });
+    language: text/javascript
+order: 4000

@@ -1,0 +1,17 @@
+$kind: http-request
+name: GET /api/v2/alerts (h3)
+url: "{{apiBaseUrl}}/api/v2/alerts?h3={{validH3Cell}}"
+method: GET
+queryParams:
+  h3: "{{validH3Cell}}"
+description: |-
+  Runtime: API
+  
+  Query options: `county`, `forecast`, `fire`, `h3`. `h3` must be > 0 when provided.
+  
+  Expected: 200 OK with JSON array.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 6000

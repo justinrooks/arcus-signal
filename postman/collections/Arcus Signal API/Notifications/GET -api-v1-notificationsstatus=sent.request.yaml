@@ -1,0 +1,17 @@
+$kind: http-request
+name: GET /api/v1/notifications?status=sent
+url: "{{apiBaseUrl}}/api/v1/notifications?status=sent"
+method: GET
+queryParams:
+  status: "sent"
+description: |-
+  Runtime: API
+  
+  Allowed status filters: `claimed`, `sent`, `failed`, `all`.
+  
+  Expected: 200 OK.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 3000

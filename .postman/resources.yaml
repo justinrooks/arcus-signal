@@ -1,0 +1,12 @@
+# Use this workspace to collaborate
+workspace:
+  id: cf119fa9-628a-459d-8ffb-fe8063be69e9
+
+localResources:
+  collections:
+    - ../docs/postman/arcus-signal.postman_collection.json
+
+# Each entry here maps a local resource to one or more corresponding objects in Postman Cloud
+
+cloudResources:
+  collections: {}

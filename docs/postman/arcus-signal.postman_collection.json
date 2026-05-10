@@ -1,0 +1,682 @@
+{
+  "info": {
+    "name": "Arcus Signal API",
+    "description": "Comprehensive endpoint coverage for Arcus Signal API and worker health routes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('installationId')) {",
+          "  pm.collectionVariables.set('installationId', pm.variables.replaceIn('{{$guid}}'));",
+          "}",
+          "pm.collectionVariables.set('capturedAtNow', new Date().toISOString());",
+          "pm.collectionVariables.set('capturedAtFuture10m', new Date(Date.now() + 10 * 60 * 1000).toISOString());"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "apiBaseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "workerBaseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "installationId",
+      "value": ""
+    },
+    {
+      "key": "apnsDeviceToken",
+      "value": "test-token-1234567890abcdef"
+    },
+    {
+      "key": "validH3Cell",
+      "value": "622236750694711295"
+    },
+    {
+      "key": "validH3Resolution",
+      "value": "9"
+    },
+    {
+      "key": "sampleCounty",
+      "value": "COC001"
+    },
+    {
+      "key": "sampleForecast",
+      "value": "COZ041"
+    },
+    {
+      "key": "sampleFire",
+      "value": "COC001"
+    },
+    {
+      "key": "capturedAtNow",
+      "value": ""
+    },
+    {
+      "key": "capturedAtFuture10m",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "API Health GET /health",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: Liveness check for the API process.\n\nExpected: 200 OK."
+        },
+        {
+          "name": "Worker Health GET /health",
+          "request": {
+            "method": "GET",
+            "url": "{{workerBaseUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: Worker\n\nPurpose: Liveness check for the worker process.\n\nExpected: 200 OK with body `ok`."
+        }
+      ]
+    },
+    {
+      "name": "Devices",
+      "item": [
+        {
+          "name": "GET /api/v1/devices",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/devices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('reason phrase is custom', function () { pm.expect(pm.response.reason()).to.eql('fetch the devices'); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: Placeholder device endpoint.\n\nExpected: 200 with reason phrase `fetch the devices`."
+        },
+        {
+          "name": "POST /api/v1/devices/location-snapshots (valid h3 payload)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/devices/location-snapshots",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"capturedAt\": \"{{capturedAtNow}}\",\n  \"locationAgeSeconds\": 2.5,\n  \"horizontalAccuracyMeters\": 18.2,\n  \"cellScheme\": \"h3\",\n  \"h3Cell\": {{validH3Cell}},\n  \"h3Resolution\": {{validH3Resolution}},\n  \"county\": \"{{sampleCounty}}\",\n  \"zone\": \"{{sampleForecast}}\",\n  \"fireZone\": \"{{sampleFire}}\",\n  \"apnsDeviceToken\": \"{{apnsDeviceToken}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"source\": \"foreground\",\n  \"auth\": \"always\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"100\",\n  \"platform\": \"iOS\",\n  \"osVersion\": \"26.0\",\n  \"apnsEnvironment\": \"sandbox\",\n  \"countyLabel\": \"Boulder County\",\n  \"fireZoneLabel\": \"Front Range\",\n  \"isSubscribed\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('response status=ok', function () { pm.expect(body.status).to.eql('ok'); });",
+                  "pm.test('response includes receivedAt', function () { pm.expect(body.receivedAt).to.be.a('string'); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: Upsert device installation and latest location presence.\n\nValidation highlights: UUID `installationId`, enum values, non-empty APNS token/app/build/os fields, `locationAgeSeconds >= 0`, `horizontalAccuracyMeters >= 0`, h3 pair required together, `h3Resolution` in 0...15, and `capturedAt` <= now + 5 minutes.\n\nExpected: 200 OK with `{ status: \"ok\", receivedAt: ISO8601 }`."
+        },
+        {
+          "name": "POST /api/v1/devices/location-snapshots (invalid installationId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/devices/location-snapshots",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"capturedAt\": \"{{capturedAtNow}}\",\n  \"locationAgeSeconds\": 2.5,\n  \"horizontalAccuracyMeters\": 18.2,\n  \"cellScheme\": \"h3\",\n  \"h3Cell\": {{validH3Cell}},\n  \"h3Resolution\": {{validH3Resolution}},\n  \"county\": \"{{sampleCounty}}\",\n  \"zone\": \"{{sampleForecast}}\",\n  \"fireZone\": \"{{sampleFire}}\",\n  \"apnsDeviceToken\": \"{{apnsDeviceToken}}\",\n  \"installationId\": \"not-a-uuid\",\n  \"source\": \"foreground\",\n  \"auth\": \"always\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"100\",\n  \"platform\": \"iOS\",\n  \"osVersion\": \"26.0\",\n  \"apnsEnvironment\": \"sandbox\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `installationId` must be a valid UUID.\n\nExpected: 400 Bad Request."
+        },
+        {
+          "name": "POST /api/v1/devices/location-snapshots (invalid enum: apnsEnvironment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/devices/location-snapshots",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"capturedAt\": \"{{capturedAtNow}}\",\n  \"locationAgeSeconds\": 2.5,\n  \"horizontalAccuracyMeters\": 18.2,\n  \"cellScheme\": \"h3\",\n  \"h3Cell\": {{validH3Cell}},\n  \"h3Resolution\": {{validH3Resolution}},\n  \"county\": \"{{sampleCounty}}\",\n  \"zone\": \"{{sampleForecast}}\",\n  \"fireZone\": \"{{sampleFire}}\",\n  \"apnsDeviceToken\": \"{{apnsDeviceToken}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"source\": \"foreground\",\n  \"auth\": \"always\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"100\",\n  \"platform\": \"iOS\",\n  \"osVersion\": \"26.0\",\n  \"apnsEnvironment\": \"staging\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `apnsEnvironment` must be `prod` or `sandbox`.\n\nExpected: 400 Bad Request."
+        },
+        {
+          "name": "POST /api/v1/devices/location-snapshots (future capturedAt rejected)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/devices/location-snapshots",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"capturedAt\": \"{{capturedAtFuture10m}}\",\n  \"locationAgeSeconds\": 2.5,\n  \"horizontalAccuracyMeters\": 18.2,\n  \"cellScheme\": \"h3\",\n  \"h3Cell\": {{validH3Cell}},\n  \"h3Resolution\": {{validH3Resolution}},\n  \"county\": \"{{sampleCounty}}\",\n  \"zone\": \"{{sampleForecast}}\",\n  \"fireZone\": \"{{sampleFire}}\",\n  \"apnsDeviceToken\": \"{{apnsDeviceToken}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"source\": \"foreground\",\n  \"auth\": \"always\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"100\",\n  \"platform\": \"iOS\",\n  \"osVersion\": \"26.0\",\n  \"apnsEnvironment\": \"sandbox\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `capturedAt` cannot be more than 5 minutes in the future.\n\nExpected: 400 Bad Request."
+        },
+        {
+          "name": "POST /api/v1/devices/location-snapshots (h3 pair mismatch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/devices/location-snapshots",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"capturedAt\": \"{{capturedAtNow}}\",\n  \"locationAgeSeconds\": 2.5,\n  \"horizontalAccuracyMeters\": 18.2,\n  \"cellScheme\": \"h3\",\n  \"h3Cell\": {{validH3Cell}},\n  \"h3Resolution\": null,\n  \"county\": \"{{sampleCounty}}\",\n  \"zone\": \"{{sampleForecast}}\",\n  \"fireZone\": \"{{sampleFire}}\",\n  \"apnsDeviceToken\": \"{{apnsDeviceToken}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"source\": \"foreground\",\n  \"auth\": \"always\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"100\",\n  \"platform\": \"iOS\",\n  \"osVersion\": \"26.0\",\n  \"apnsEnvironment\": \"sandbox\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `h3Cell` and `h3Resolution` must either both be set or both be null.\n\nExpected: 400 Bad Request."
+        }
+      ]
+    },
+    {
+      "name": "Alerts",
+      "item": [
+        {
+          "name": "GET /api/v1/alerts (ugc)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/alerts?ugc={{sampleCounty}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('response is array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nQuery options: `ugc`, `fire`, `h3`. At least one is required.\n\nExpected: 200 OK with JSON array."
+        },
+        {
+          "name": "GET /api/v1/alerts (h3)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/alerts?h3={{validH3Cell}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nQuery options: `ugc`, `fire`, `h3`. `h3` must be > 0 when provided.\n\nExpected: 200 OK with JSON array."
+        },
+        {
+          "name": "GET /api/v1/alerts (missing required filters)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/alerts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. At least one of `ugc`, `fire`, or `h3` is required.\n\nExpected: 400 Bad Request."
+        },
+        {
+          "name": "GET /api/v1/alerts (invalid h3)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/alerts?h3=0"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `h3` must be > 0 when provided.\n\nExpected: 400 Bad Request."
+        },
+        {
+          "name": "GET /api/v2/alerts (county + forecast + fire)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v2/alerts?county={{sampleCounty}}&forecast={{sampleForecast}}&fire={{sampleFire}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('response is array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nQuery options: `county`, `forecast`, `fire`, `h3`. At least one is required.\n\nExpected: 200 OK with JSON array."
+        },
+        {
+          "name": "GET /api/v2/alerts (h3)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v2/alerts?h3={{validH3Cell}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nQuery options: `county`, `forecast`, `fire`, `h3`. `h3` must be > 0 when provided.\n\nExpected: 200 OK with JSON array."
+        },
+        {
+          "name": "GET /api/v2/alerts (missing required filters)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v2/alerts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. At least one of `county`, `forecast`, `fire`, or `h3` is required.\n\nExpected: 400 Bad Request."
+        },
+        {
+          "name": "GET /api/v2/alerts (invalid h3)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v2/alerts?h3=-1"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `h3` must be > 0 when provided.\n\nExpected: 400 Bad Request."
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "GET /api/v1/notifications",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/notifications"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('response is array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: List notification ledger rows.\n\nBehavior: No `status` query returns all rows.\n\nExpected: 200 OK with JSON array."
+        },
+        {
+          "name": "GET /api/v1/notifications?status=all",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/notifications?status=all"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nBehavior: `status=all` returns all rows.\n\nExpected: 200 OK."
+        },
+        {
+          "name": "GET /api/v1/notifications?status=sent",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/notifications?status=sent"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nAllowed status filters: `claimed`, `sent`, `failed`, `all`.\n\nExpected: 200 OK."
+        },
+        {
+          "name": "GET /api/v1/notifications?status=claimed",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/notifications?status=claimed"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nAllowed status filters: `claimed`, `sent`, `failed`, `all`.\n\nExpected: 200 OK."
+        },
+        {
+          "name": "GET /api/v1/notifications?status=failed",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/notifications?status=failed"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nAllowed status filters: `claimed`, `sent`, `failed`, `all`.\n\nExpected: 200 OK."
+        },
+        {
+          "name": "GET /api/v1/notifications?status=bad-value",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/api/v1/notifications?status=bad-value"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. Unsupported `status` filter should fail.\n\nExpected: 400 Bad Request."
+        }
+      ]
+    },
+    {
+      "name": "Dev",
+      "item": [
+        {
+          "name": "POST /api/v1/dev (fixture replay)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/dev",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fixtureName\": \"nws-series-geometry-v1\",\n  \"runLabel\": \"postman-smoke\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 in non-prod, 404 in prod', function () {",
+                  "  pm.expect([202, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: Enqueue fixture ingest replay (`IngestNWSAlertsJob`) for non-production environments.\n\nEnvironment behavior: production returns 404; non-production returns 202 with accepted payload."
+        },
+        {
+          "name": "POST /api/v1/dev (missing fixtureName)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{apiBaseUrl}}/api/v1/dev",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fixtureName\": \"   \",\n  \"runLabel\": \"postman-negative\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400 in non-prod, 404 in prod', function () {",
+                  "  pm.expect([400, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "description": "Negative test. `fixtureName` is required after trimming.\n\nEnvironment behavior: non-production returns 400; production returns 404."
+        }
+      ]
+    },
+    {
+      "name": "Operator Dashboard",
+      "item": [
+        {
+          "name": "GET /v1/metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/v1/metrics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 503', function () { pm.expect([200,503]).to.include(pm.response.code); });",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('metrics response has renderedAt', function () { pm.expect(body.renderedAt).to.be.a('string'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: Return operator dashboard snapshot JSON.\n\nExpected: 200 when snapshot exists, 503 when unavailable."
+        },
+        {
+          "name": "GET /dashboard",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/dashboard"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 503', function () { pm.expect([200,503]).to.include(pm.response.code); });",
+                  "pm.test('response content-type contains text/html', function () {",
+                  "  pm.expect(pm.response.headers.get('Content-Type') || '').to.include('text/html');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "description": "Runtime: API\n\nPurpose: Return operator dashboard HTML.\n\nExpected: 200 (HTML) when snapshot exists, 503 (HTML unavailable page) when missing."
+        }
+      ]
+    }
+  ]
+}
