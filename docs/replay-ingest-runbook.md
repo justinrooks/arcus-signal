@@ -16,7 +16,7 @@ Use this runbook to manually exercise the NWS ingest pipeline with a known fixtu
 ## 2) Trigger replay ingest
 
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/dev/replay-ingest \
+curl -i -X POST http://localhost:8080/api/v1/dev \
   -H "Content-Type: application/json" \
   -d '{
     "fixtureName": "nws-series-geometry-v1",
@@ -114,7 +114,7 @@ Expected:
 Replay same fixture again with a new run label:
 
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/dev/replay-ingest \
+curl -i -X POST http://localhost:8080/api/v1/dev \
   -H "Content-Type: application/json" \
   -d '{
     "fixtureName": "nws-series-geometry-v1",

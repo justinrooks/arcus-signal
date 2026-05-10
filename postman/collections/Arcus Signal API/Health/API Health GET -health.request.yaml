@@ -1,0 +1,15 @@
+$kind: http-request
+name: API Health GET /health
+url: "{{apiBaseUrl}}/health"
+method: GET
+description: |-
+  Runtime: API
+  
+  Purpose: Liveness check for the API process.
+  
+  Expected: 200 OK.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 1000

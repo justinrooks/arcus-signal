@@ -1,0 +1,19 @@
+$kind: http-request
+name: GET /api/v1/alerts (ugc)
+url: "{{apiBaseUrl}}/api/v1/alerts?ugc={{sampleCounty}}"
+method: GET
+queryParams:
+  ugc: "{{sampleCounty}}"
+description: |-
+  Runtime: API
+  
+  Query options: `ugc`, `fire`, `h3`. At least one is required.
+  
+  Expected: 200 OK with JSON array.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 200', function () { pm.response.to.have.status(200); });
+      pm.test('response is array', function () { pm.expect(pm.response.json()).to.be.an('array'); });
+    language: text/javascript
+order: 1000

@@ -1,0 +1,15 @@
+$kind: http-request
+name: GET /api/v1/notifications?status=bad-value
+url: "{{apiBaseUrl}}/api/v1/notifications?status=bad-value"
+method: GET
+queryParams:
+  status: "bad-value"
+description: |-
+  Negative test. Unsupported `status` filter should fail.
+  
+  Expected: 400 Bad Request.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 400', function () { pm.response.to.have.status(400); });
+    language: text/javascript
+order: 6000

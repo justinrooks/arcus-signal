@@ -99,3 +99,7 @@ Services:
 - `postgres` on `:5432`
 
 The worker uses Vapor Queues scheduled jobs to dispatch `IngestNWSAlertsJob` every 60 seconds (`minutely().at(0)`).
+
+## Endpoint Docs
+
+Detailed endpoint behavior, validation rules, and examples are documented in [docs/api-endpoints.md](docs/api-endpoints.md).

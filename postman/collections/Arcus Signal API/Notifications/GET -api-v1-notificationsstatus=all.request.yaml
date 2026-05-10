@@ -1,0 +1,17 @@
+$kind: http-request
+name: GET /api/v1/notifications?status=all
+url: "{{apiBaseUrl}}/api/v1/notifications?status=all"
+method: GET
+queryParams:
+  status: "all"
+description: |-
+  Runtime: API
+  
+  Behavior: `status=all` returns all rows.
+  
+  Expected: 200 OK.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 2000

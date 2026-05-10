@@ -1,0 +1,27 @@
+$kind: http-request
+name: POST /api/v1/dev (fixture replay)
+url: "{{apiBaseUrl}}/api/v1/dev"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "fixtureName": "nws-series-geometry-v1",
+      "runLabel": "postman-smoke"
+    }
+description: |-
+  Runtime: API
+  
+  Purpose: Enqueue fixture ingest replay (`IngestNWSAlertsJob`) for non-production environments.
+  
+  Environment behavior: production returns 404; non-production returns 202 with accepted payload.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 202 in non-prod, 404 in prod', function () {
+        pm.expect([202, 404]).to.include(pm.response.code);
+      });
+    language: text/javascript
+order: 1000
