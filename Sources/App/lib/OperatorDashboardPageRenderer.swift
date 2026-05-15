@@ -36,7 +36,13 @@ enum OperatorDashboardPageRenderer {
             .shell {
               width: min(1320px, calc(100vw - 32px));
               margin: 0 auto;
-              padding: 28px 0 40px;
+              padding: 28px max(env(safe-area-inset-right), 0px) calc(40px + env(safe-area-inset-bottom)) max(env(safe-area-inset-left), 0px);
+            }
+            @media (min-width: 721px) and (max-width: 1120px) {
+              .shell {
+                width: min(1080px, calc(100vw - 28px));
+                padding: 20px 0 32px;
+              }
             }
             .hero {
               display: flex;
@@ -142,6 +148,15 @@ enum OperatorDashboardPageRenderer {
               padding: 0;
               overflow: hidden;
             }
+            .table-wrap {
+              position: relative;
+              width: 100%;
+              overflow-x: auto;
+              -webkit-overflow-scrolling: touch;
+            }
+            .stream-table {
+              min-width: 720px;
+            }
             table {
               width: 100%;
               border-collapse: collapse;
@@ -185,16 +200,186 @@ enum OperatorDashboardPageRenderer {
               padding: 18px 16px;
               color: var(--muted);
             }
+            .stream-table tbody tr {
+              opacity: 1;
+              transform: translateY(0);
+            }
+            .stream-table tbody tr.stream-row {
+              opacity: 0;
+              transform: translateY(8px);
+              animation: streamIn 380ms cubic-bezier(0.2, 0.68, 0.22, 0.99) forwards;
+            }
+            @keyframes streamIn {
+              to {
+                opacity: 1;
+                transform: translateY(0);
+              }
+            }
+            @media (min-width: 721px) and (max-width: 1120px) {
+              .grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+              }
+              th, td {
+                padding: 11px 12px;
+              }
+              td {
+                font-size: 0.9rem;
+              }
+              .micro-mono {
+                font-size: 0.6rem;
+              }
+            }
             @media (max-width: 720px) {
+              .shell {
+                width: calc(100vw - 18px);
+                padding-top: 16px;
+                padding-bottom: calc(28px + env(safe-area-inset-bottom));
+              }
+              .section {
+                margin-top: 18px;
+              }
+              .section h2 {
+                margin-bottom: 10px;
+                font-size: 0.92rem;
+                letter-spacing: 0.1em;
+              }
               .hero {
+                padding: 16px;
+                border-radius: 18px;
                 flex-direction: column;
                 align-items: stretch;
               }
+              .hero h1 {
+                font-size: clamp(1.5rem, 8vw, 2rem);
+                letter-spacing: -0.02em;
+              }
+              .hero p {
+                margin-top: 8px;
+                font-size: 0.92rem;
+                line-height: 1.4;
+              }
               .hero-meta {
                 text-align: left;
+                font-size: 0.86rem;
+              }
+              .card {
+                padding: 14px;
+                border-radius: 16px;
+              }
+              .card h3 {
+                font-size: 0.82rem;
+              }
+              .primary {
+                margin: 10px 0 5px;
+                font-size: 1.6rem;
+              }
+              .grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+              }
+              .stack {
+                gap: 12px;
+              }
+              .meta-list {
+                margin-top: 10px;
+              }
+              .meta-list li {
+                gap: 10px;
+                padding: 8px 0;
+                font-size: 0.86rem;
+              }
+              .subtle {
+                font-size: 0.84rem;
+              }
+              .pill {
+                font-size: 0.72rem;
+                padding: 3px 8px;
               }
               th, td {
                 padding: 12px;
+              }
+              .stream-table {
+                min-width: 640px;
+              }
+              .inline-mobile-table {
+                min-width: 0;
+                width: 100%;
+                border-collapse: separate;
+                border-spacing: 0;
+              }
+              .inline-mobile-table thead {
+                display: none;
+              }
+              .inline-mobile-table tbody {
+                display: grid;
+                gap: 14px;
+                padding: 12px 12px 14px;
+              }
+              .inline-mobile-table tbody tr {
+                display: grid;
+                gap: 9px;
+                padding: 12px;
+                border: 1px solid rgba(117, 165, 196, 0.24);
+                border-radius: 12px;
+                background: linear-gradient(180deg, rgba(19, 40, 63, 0.34), rgba(12, 27, 45, 0.2));
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 20px rgba(1, 8, 16, 0.35);
+              }
+              .inline-mobile-table tbody td {
+                display: grid;
+                grid-template-columns: minmax(96px, 34%) 1fr;
+                gap: 10px;
+                padding: 0;
+                border: 0;
+                font-size: 0.86rem;
+              }
+              .inline-mobile-table tbody td + td {
+                padding-top: 3px;
+                border-top: 1px solid rgba(117, 165, 196, 0.14);
+              }
+            .inline-mobile-table tbody td::before {
+                content: attr(data-label);
+                color: var(--muted);
+                font-size: 0.72rem;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+            }
+              .inline-mobile-table .narrow-truncate {
+                display: inline-block;
+                max-width: 15ch;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                direction: rtl;
+                text-align: left;
+                vertical-align: bottom;
+              }
+            }
+            @media (max-width: 430px) {
+              .shell {
+                width: calc(100vw - 12px);
+                padding-top: 12px;
+              }
+              .hero {
+                padding: 14px;
+                border-radius: 14px;
+              }
+              .section h2 {
+                font-size: 0.84rem;
+              }
+              .card {
+                padding: 12px;
+              }
+              .primary {
+                font-size: 1.45rem;
+              }
+              .meta-list li {
+                font-size: 0.82rem;
+              }
+              .mono {
+                font-size: 0.72rem;
+              }
+              .micro-mono {
+                font-size: 0.5rem;
               }
             }
           </style>
@@ -319,10 +504,12 @@ enum OperatorDashboardPageRenderer {
         <script>
         (function() {
           const pollIntervalMs = \#(pollIntervalMilliseconds);
+          const hiddenPollIntervalMs = Math.max(pollIntervalMs * 3, pollIntervalMs + 5_000);
           const state = {
             inFlight: false,
             lastGeneratedAtMs: \#(initialGeneratedAtMilliseconds),
-            refreshKeys: Object.create(null)
+            refreshKeys: Object.create(null),
+            timerHandle: null
           };
 
           function parseDateValue(value) {
@@ -373,8 +560,25 @@ enum OperatorDashboardPageRenderer {
             if (!date) {
               return 'n/a';
             }
+            const now = new Date();
+            const dateDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+            const nowDayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+            const dayDifference = Math.floor((nowDayStart - dateDayStart) / 86_400_000);
+            const hour = date.getHours();
+            const minute = pad(date.getMinutes());
+            const isPM = hour >= 12;
+            const twelveHour = hour % 12 === 0 ? 12 : hour % 12;
+            const timeText = `${twelveHour}:${minute} ${isPM ? 'PM' : 'AM'}`;
 
-            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${timeZoneAbbreviation(date)}`;
+            if (dayDifference <= 0) {
+              return `Today ${timeText}`;
+            }
+
+            if (dayDifference === 1) {
+              return `Yesterday ${timeText}`;
+            }
+
+            return `${dayDifference} days ago ${timeText}`;
           }
 
           function formatDuration(value) {
@@ -522,21 +726,21 @@ enum OperatorDashboardPageRenderer {
           function renderRecentDebugRow(entry) {
             return `
               <tr>
-                <td>${escapeHtml(formatDate(entry.createdAt))}</td>
-                <td>
+                <td data-label="Time">${escapeHtml(formatDate(entry.createdAt))}</td>
+                <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
                   <div class="subtle mono">${escapeHtml(entry.seriesID)}</div>
                 </td>
-                <td>
+                <td data-label="Mode / reason">
                   <span class="pill">${escapeHtml(entry.mode)}</span>
                   <div class="subtle">${escapeHtml(entry.reason)} / ${escapeHtml(entry.recordKind)}</div>
                 </td>
-                <td>
+                <td data-label="Message">
                   <div><strong>${escapeHtml(entry.title)}</strong></div>
                   <div class="subtle">${escapeHtml(entry.subtitle)}</div>
                   <div class="subtle">${escapeHtml(entry.body)}</div>
                 </td>
-                <td>
+                <td data-label="Outcome">
                   <div>${escapeHtml(entry.ledgerStatus ?? 'preview')}</div>
                   <div class="subtle">${escapeHtml(entry.apnsErrorCode ?? 'none')}</div>
                 </td>
@@ -548,7 +752,7 @@ enum OperatorDashboardPageRenderer {
             const body = !Array.isArray(metric.entries) || metric.entries.length === 0
               ? '<div class="empty">No recent notification debug entries.</div>'
               : `
-                <table>
+                <table class="stream-table inline-mobile-table">
                   <thead>
                     <tr>
                       <th>Time</th>
@@ -578,16 +782,16 @@ enum OperatorDashboardPageRenderer {
           function renderTouchedSeriesRow(entry) {
             return `
               <tr>
-                <td>${escapeHtml(formatDate(entry.touchedAt))}</td>
-                <td>
+                <td data-label="Touched">${escapeHtml(formatDate(entry.touchedAt))}</td>
+                <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
                   <div class="subtle mono">${escapeHtml(entry.seriesID)}</div>
-                  <div class="subtle micro-mono">${escapeHtml(entry.currentRevisionUrn)}</div>
+                  <div class="subtle micro-mono narrow-truncate" title="${escapeHtml(entry.currentRevisionUrn)}">${escapeHtml(entry.currentRevisionUrn)}</div>
                 </td>
-                <td><span class="pill">${escapeHtml(entry.state)}</span></td>
-                <td>${escapeHtml(entry.tornadoDetection ?? 'none')}</td>
-                <td>${escapeHtml(entry.tornadoDamageThreat ?? 'none')}</td>
-                <td class="mono">${escapeHtml(joinedCodes(entry.ugcCodes))}</td>
+                <td data-label="State"><span class="pill">${escapeHtml(entry.state)}</span></td>
+                <td data-label="Tornado detection">${escapeHtml(entry.tornadoDetection ?? 'none')}</td>
+                <td data-label="Tornado damage">${escapeHtml(entry.tornadoDamageThreat ?? 'none')}</td>
+                <td data-label="ugc_codes" class="mono">${escapeHtml(joinedCodes(entry.ugcCodes))}</td>
               </tr>
             `;
           }
@@ -596,7 +800,7 @@ enum OperatorDashboardPageRenderer {
             const body = !Array.isArray(metric.entries) || metric.entries.length === 0
               ? '<div class="empty">No recently touched series.</div>'
               : `
-                <table>
+                <table class="stream-table inline-mobile-table">
                   <thead>
                     <tr>
                       <th>Touched</th>
@@ -628,7 +832,15 @@ enum OperatorDashboardPageRenderer {
             return value ?? 'none';
           }
 
-          function swapHTML(id, html) {
+          function streamRows(node, delayStepMs) {
+            const rows = node.querySelectorAll('tbody tr');
+            rows.forEach((row, index) => {
+              row.classList.add('stream-row');
+              row.style.animationDelay = `${Math.min(index * delayStepMs, 360)}ms`;
+            });
+          }
+
+          function swapHTML(id, html, options) {
             const node = document.getElementById(id);
             if (!node) {
               return;
@@ -636,16 +848,19 @@ enum OperatorDashboardPageRenderer {
 
             node.classList.add('is-updating');
             node.innerHTML = html;
+            if (options && options.streamRows) {
+              streamRows(node, options.streamDelayStepMs ?? 32);
+            }
             window.requestAnimationFrame(() => node.classList.remove('is-updating'));
           }
 
-          function updateSlot(id, key, html) {
+          function updateSlot(id, key, html, options) {
             if (state.refreshKeys[id] === key) {
               return;
             }
 
             state.refreshKeys[id] = key;
-            swapHTML(id, html);
+            swapHTML(id, html, options);
           }
 
           function updateHero(snapshot) {
@@ -672,8 +887,18 @@ enum OperatorDashboardPageRenderer {
             updateSlot('zero-candidate-card', refreshKey(snapshot.deliveryKPIs.zeroCandidateRevisionRate.refreshedAt), renderZeroCandidateCard(snapshot.deliveryKPIs.zeroCandidateRevisionRate));
             updateSlot('coverage-card', refreshKey(snapshot.audienceTargeting.freshTargetableInstallationCoverage.refreshedAt), renderCoverageCard(snapshot.audienceTargeting.freshTargetableInstallationCoverage));
             updateSlot('h3-card', refreshKey(snapshot.audienceTargeting.alertsWithGeographyAndH3Success.refreshedAt), renderH3Card(snapshot.audienceTargeting.alertsWithGeographyAndH3Success));
-            updateSlot('recent-debug-table', refreshKey(snapshot.operatorContext.recentNotificationDebugEntries.refreshedAt), renderRecentDebugTable(snapshot.operatorContext.recentNotificationDebugEntries));
-            updateSlot('touched-series-table', refreshKey(snapshot.operatorContext.lastTouchedSeries.refreshedAt), renderTouchedSeriesTable(snapshot.operatorContext.lastTouchedSeries));
+            updateSlot(
+              'recent-debug-table',
+              refreshKey(snapshot.operatorContext.recentNotificationDebugEntries.refreshedAt),
+              renderRecentDebugTable(snapshot.operatorContext.recentNotificationDebugEntries),
+              { streamRows: true, streamDelayStepMs: 26 }
+            );
+            updateSlot(
+              'touched-series-table',
+              refreshKey(snapshot.operatorContext.lastTouchedSeries.refreshedAt),
+              renderTouchedSeriesTable(snapshot.operatorContext.lastTouchedSeries),
+              { streamRows: true, streamDelayStepMs: 34 }
+            );
           }
 
           async function fetchSnapshot() {
@@ -703,14 +928,26 @@ enum OperatorDashboardPageRenderer {
             } catch (_) {
             } finally {
               state.inFlight = false;
+              scheduleNextPoll();
             }
           }
 
-          window.setInterval(fetchSnapshot, pollIntervalMs);
+          function scheduleNextPoll() {
+            if (state.timerHandle !== null) {
+              window.clearTimeout(state.timerHandle);
+            }
+
+            const isVisible = document.visibilityState === 'visible';
+            const nextDelay = isVisible ? pollIntervalMs : hiddenPollIntervalMs;
+            state.timerHandle = window.setTimeout(fetchSnapshot, nextDelay);
+          }
+
           window.addEventListener('focus', fetchSnapshot);
           document.addEventListener('visibilitychange', function() {
             if (document.visibilityState === 'visible') {
               fetchSnapshot();
+            } else {
+              scheduleNextPoll();
             }
           });
           fetchSnapshot();
@@ -880,7 +1117,8 @@ enum OperatorDashboardPageRenderer {
             body = #"<div class="empty">No recent notification debug entries.</div>"#
         } else {
             body = """
-            <table>
+            <div class="table-wrap">
+            <table class="stream-table inline-mobile-table">
               <thead>
                 <tr>
                   <th>Time</th>
@@ -894,6 +1132,7 @@ enum OperatorDashboardPageRenderer {
                 \(metric.entries.map(renderDebugRow).joined())
               </tbody>
             </table>
+            </div>
             """
         }
 
@@ -914,7 +1153,8 @@ enum OperatorDashboardPageRenderer {
             body = #"<div class="empty">No recently touched series.</div>"#
         } else {
             body = """
-            <table>
+            <div class="table-wrap">
+            <table class="stream-table inline-mobile-table">
               <thead>
                 <tr>
                   <th>Touched</th>
@@ -929,6 +1169,7 @@ enum OperatorDashboardPageRenderer {
                 \(metric.entries.map(renderTouchedSeriesRow).joined())
               </tbody>
             </table>
+            </div>
             """
         }
 
@@ -946,21 +1187,21 @@ enum OperatorDashboardPageRenderer {
     private static func renderDebugRow(_ entry: RecentNotificationDebugEntryResponse) -> String {
         """
         <tr>
-          <td>\(escape(formatDate(entry.createdAt)))</td>
-          <td>
+          <td data-label="Time">\(escape(formatDate(entry.createdAt)))</td>
+          <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
             <div class="subtle mono">\(escape(entry.seriesID.uuidString))</div>
           </td>
-          <td>
+          <td data-label="Mode / reason">
             <span class="pill">\(escape(entry.mode))</span>
             <div class="subtle">\(escape(entry.reason)) / \(escape(entry.recordKind))</div>
           </td>
-          <td>
+          <td data-label="Message">
             <div><strong>\(escape(entry.title))</strong></div>
             <div class="subtle">\(escape(entry.subtitle))</div>
             <div class="subtle">\(escape(entry.body))</div>
           </td>
-          <td>
+          <td data-label="Outcome">
             <div>\(escape(entry.ledgerStatus ?? "preview"))</div>
             <div class="subtle">\(escape(entry.apnsErrorCode ?? "none"))</div>
           </td>
@@ -971,16 +1212,16 @@ enum OperatorDashboardPageRenderer {
     private static func renderTouchedSeriesRow(_ entry: TouchedSeriesEntryResponse) -> String {
         """
         <tr>
-          <td>\(escape(formatDate(entry.touchedAt)))</td>
-          <td>
+          <td data-label="Touched">\(escape(formatDate(entry.touchedAt)))</td>
+          <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
             <div class="subtle mono">\(escape(entry.seriesID.uuidString))</div>
-            <div class="subtle micro-mono">\(escape(entry.currentRevisionUrn))</div>
+            <div class="subtle micro-mono narrow-truncate" title="\(escape(entry.currentRevisionUrn))">\(escape(entry.currentRevisionUrn))</div>
           </td>
-          <td><span class="pill">\(escape(entry.state))</span></td>
-          <td>\(escape(entry.tornadoDetection ?? "none"))</td>
-          <td>\(escape(entry.tornadoDamageThreat ?? "none"))</td>
-          <td class="mono">\(escape(joinedCodes(entry.ugcCodes)))</td>
+          <td data-label="State"><span class="pill">\(escape(entry.state))</span></td>
+          <td data-label="Tornado detection">\(escape(entry.tornadoDetection ?? "none"))</td>
+          <td data-label="Tornado damage">\(escape(entry.tornadoDamageThreat ?? "none"))</td>
+          <td data-label="ugc_codes" class="mono">\(escape(joinedCodes(entry.ugcCodes)))</td>
         </tr>
         """
     }
@@ -1029,7 +1270,24 @@ enum OperatorDashboardPageRenderer {
     }
 
     private static func formatDate(_ date: Date) -> String {
-        DateFormatter.dashboardDateFormatter.string(from: date)
+        let calendar = Calendar.current
+        let now = Date()
+        let dayDifference = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: date),
+            to: calendar.startOfDay(for: now)
+        ).day ?? 0
+
+        let timeText = DateFormatter.dashboardTimeFormatter.string(from: date)
+        if dayDifference <= 0 {
+            return "Today \(timeText)"
+        }
+
+        if dayDifference == 1 {
+            return "Yesterday \(timeText)"
+        }
+
+        return "\(dayDifference) days ago \(timeText)"
     }
 
     private static func formatPercent(_ value: Double) -> String {
@@ -1068,11 +1326,11 @@ enum OperatorDashboardPageRenderer {
 }
 
 private extension DateFormatter {
-    static let dashboardDateFormatter: DateFormatter = {
+    static let dashboardTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss z"
+        formatter.dateFormat = "h:mm a"
         return formatter
     }()
 }
