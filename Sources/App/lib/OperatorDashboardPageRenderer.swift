@@ -1118,7 +1118,7 @@ enum OperatorDashboardPageRenderer {
         } else {
             body = """
             <div class="table-wrap">
-            <table class="stream-table">
+            <table class="stream-table inline-mobile-table">
               <thead>
                 <tr>
                   <th>Time</th>
@@ -1154,7 +1154,7 @@ enum OperatorDashboardPageRenderer {
         } else {
             body = """
             <div class="table-wrap">
-            <table class="stream-table">
+            <table class="stream-table inline-mobile-table">
               <thead>
                 <tr>
                   <th>Touched</th>
