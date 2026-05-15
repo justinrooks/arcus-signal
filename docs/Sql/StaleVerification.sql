@@ -43,6 +43,7 @@ FROM device_installations i
 JOIN device_presence p ON p.installation_id = i.installation_id
 WHERE i.installation_id = '131c8480-c74a-47c2-8cec-8d10ee6dc19f';
 
+-- SEND SYNTHETIC EVENT
 
 -- Verify suppression
 SELECT
@@ -91,11 +92,11 @@ ORDER BY attempted_at DESC
 LIMIT 20;
 
 -- Restore
--- UPDATE device_presence
--- SET captured_at = NOW(), 
---     received_at = NOW(),
---     county = 'COC001',
---     zone = 'COZ045',
---     fire_zone = 'COZ245',
---     h3_cell = '613167714648719359'
--- WHERE installation_id = '131c8480-c74a-47c2-8cec-8d10ee6dc19f';
+UPDATE device_presence
+SET captured_at = NOW(), 
+    received_at = NOW(),
+    county = 'COC001',
+    zone = 'COZ045',
+    fire_zone = 'COZ245',
+    h3_cell = '613167714648719359'
+WHERE installation_id = '131c8480-c74a-47c2-8cec-8d10ee6dc19f';
