@@ -144,6 +144,21 @@ public struct IngestNWSAlertsJob: AsyncJob {
     }
 }
 
+extension IngestNWSAlertsJob {
+    func shouldQueueUGCNotificationDispatch(for event: ArcusEvent) -> Bool {
+        guard let geometry = event.geometry else {
+            return true
+        }
+
+        switch geometry {
+        case .polygon, .multiPolygon:
+            return false
+        case .point:
+            return true
+        }
+    }
+}
+
 private extension IngestNWSAlertsJob {
     func recordIngestSweepRun(
         context: QueueContext,
@@ -404,16 +419,18 @@ private extension IngestNWSAlertsJob {
             logger.info("Geometry job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
         }
         
-        if try await DispatchAgent.enqueueNotificationDispatchOutbox(
-            revisionUrn: event.id,
-            seriesId: seriesId,
-            reason: reason,
-            mode: .ugc,
-            on: database,
-            logger: logger
-        ) {
-            notificationOutboxQueued += 1
-            logger.info("Notification job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
+        if shouldQueueUGCNotificationDispatch(for: event) {
+            if try await DispatchAgent.enqueueNotificationDispatchOutbox(
+                revisionUrn: event.id,
+                seriesId: seriesId,
+                reason: reason,
+                mode: .ugc,
+                on: database,
+                logger: logger
+            ) {
+                notificationOutboxQueued += 1
+                logger.info("Notification job queued.", metadata: ["seriesId": .stringConvertible(seriesId)])
+            }
         }
         
         return (outboxQueued, notificationOutboxQueued)
