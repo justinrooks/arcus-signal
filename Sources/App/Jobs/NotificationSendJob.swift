@@ -11,6 +11,7 @@ import FluentSQL
 import Foundation
 import Queues
 import Vapor
+import ArcusCore
 
 struct NotificationCandidate: Decodable {
     let id: UUID
@@ -498,8 +499,7 @@ extension NotificationSendJob {
                     app: context.application,
                     with: alert,
                     hotAlertPayload: .init(
-                        alertID: payload.seriesId.uuidString,
-                        seriesId: payload.seriesId.uuidString,
+                        arcusAlertId: payload.seriesId.uuidString,
                         revisionSent: series.currentRevisionSent
                     ),
                     to: candidate.apnsToken,

@@ -1,5 +1,4 @@
 @testable import App
-import ArcusCore
 import Fluent
 import FluentPostgresDriver
 import FluentSQL
@@ -7,6 +6,7 @@ import Foundation
 import Queues
 import Testing
 import Vapor
+import ArcusCore
 
 @Suite("Notification send job delivery boundary", .serialized)
 struct NotificationSendJobDeliveryBoundaryTests {
