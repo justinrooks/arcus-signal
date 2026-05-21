@@ -353,7 +353,7 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("CONSIDERABLE"))
                 #expect(res.body.string.contains("urn:oid:series-1"))
                 #expect(res.body.string.contains("fetch('/v1/metrics'"))
-                #expect(res.body.string.contains("window.setInterval(fetchSnapshot, pollIntervalMs)"))
+                #expect(res.body.string.contains("window.setTimeout(fetchSnapshot, nextDelay)"))
                 #expect(res.body.string.contains("The page polls the canonical"))
                 #expect(res.body.string.contains("hero-rendered-at"))
                 #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
