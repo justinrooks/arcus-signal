@@ -497,6 +497,11 @@ extension NotificationSendJob {
                 try await sender.sendNotification(
                     app: context.application,
                     with: alert,
+                    hotAlertPayload: .init(
+                        alertID: payload.seriesId.uuidString,
+                        seriesId: payload.seriesId.uuidString,
+                        revisionSent: series.currentRevisionSent
+                    ),
                     to: candidate.apnsToken,
                     environment: apnsEnvironment
                 )

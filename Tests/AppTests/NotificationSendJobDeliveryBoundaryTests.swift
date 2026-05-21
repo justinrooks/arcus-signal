@@ -1,4 +1,5 @@
 @testable import App
+import ArcusCore
 import Fluent
 import FluentPostgresDriver
 import FluentSQL
@@ -363,6 +364,7 @@ private actor RecordingNotificationSender: NotificationSender {
     func sendNotification(
         app _: Application,
         with _: AlertDetails,
+        hotAlertPayload _: HotAlertAPNsPayload,
         to _: String,
         environment _: APNsEnvironment
     ) async throws {

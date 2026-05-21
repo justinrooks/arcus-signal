@@ -10,6 +10,7 @@ import APNS
 import VaporAPNS
 import APNSCore
 import Vapor
+import ArcusCore
 
 // Custom Codable Payload
 struct MyPayload: Codable {
@@ -27,6 +28,7 @@ protocol NotificationSender: Sendable {
     func sendNotification(
         app: Application,
         with details: AlertDetails,
+        hotAlertPayload: HotAlertAPNsPayload,
         to device: String,
         environment: APNsEnvironment
     ) async throws
@@ -36,6 +38,7 @@ struct APNsClient: NotificationSender {
     func sendNotification(
         app: Application,
         with details: AlertDetails,
+        hotAlertPayload: HotAlertAPNsPayload,
         to device: String,
         environment: APNsEnvironment
     ) async throws {
@@ -62,7 +65,7 @@ struct APNsClient: NotificationSender {
             expiration: .immediately,
             priority: .immediately,
             topic: topic,
-            payload: EmptyPayload(),
+            payload: hotAlertPayload,
             badge: 0
         )
         
