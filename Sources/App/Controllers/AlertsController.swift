@@ -17,10 +17,17 @@ private struct AlertLookupQueryV1: Content {
 }
 
 private struct AlertLookupQueryV2: Content {
+    let id: String?
+    let sent: String?
     let county: String?
     let forecast: String?
     let fire: String?
     let h3: Int64?
+}
+
+private enum AlertLookupModeV2 {
+    case targeted(id: UUID, sent: String?)
+    case collection(ugcCodes: [String], h3: Int64?)
 }
 
 struct AlertsController: RouteCollection {
@@ -79,6 +86,34 @@ private func loadAlertSeriesV2(
         throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
     }
 
+    switch try parseLookupModeV2(query) {
+    case .targeted(let id, let sent):
+        return try await loadAlertSeries(sql: sql, id: id, sent: sent)
+    case .collection(let ugcCodes, let h3):
+        return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: h3)
+    }
+}
+
+private func hasLocationFilters(_ query: AlertLookupQueryV2) -> Bool {
+    normalizedOptional(query.county) != nil ||
+    normalizedOptional(query.forecast) != nil ||
+    normalizedOptional(query.fire) != nil ||
+    query.h3 != nil
+}
+
+private func parseLookupModeV2(_ query: AlertLookupQueryV2) throws -> AlertLookupModeV2 {
+    if let id = normalizedOptional(query.id) {
+        if hasLocationFilters(query) {
+            throw Abort(.badRequest, reason: "id cannot be combined with county, forecast, fire, or h3")
+        }
+
+        guard let seriesID = UUID(uuidString: id) else {
+            throw Abort(.badRequest, reason: "id must be a valid UUID")
+        }
+
+        return .targeted(id: seriesID, sent: query.sent)
+    }
+
     if let h3 = query.h3, h3 <= 0 {
         throw Abort(.badRequest, reason: "h3 must be > 0 when provided")
     }
@@ -89,7 +124,7 @@ private func loadAlertSeriesV2(
         throw Abort(.badRequest, reason: "At least one of county, forecast, fire, or h3 is required")
     }
 
-    return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: query.h3)
+    return .collection(ugcCodes: ugcCodes, h3: query.h3)
 }
 
 private func loadAlertSeries(
@@ -126,6 +161,27 @@ private func loadAlertSeries(
                  \(ident: "s").\(ident: "id") ASC
         """)
         .all(decoding: AlertSeriesRow.self)
+}
+
+private func loadAlertSeries(
+    sql: any SQLDatabase,
+    id: UUID,
+    sent _: String?
+) async throws -> [AlertSeriesRow] {
+    guard let row = try await sql.raw("""
+        SELECT \(AlertSeriesRow.sqlSelectColumns())
+        FROM \(ident: ArcusSeriesModel.schema) AS \(ident: "s")
+        LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
+          ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
+        WHERE \(ident: "s").\(ident: "id") = \(bind: id)
+          AND \(ident: "s").\(ident: "state") <> \(bind: EventState.cancelled_in_error.rawValue)
+        LIMIT 1
+        """)
+        .first(decoding: AlertSeriesRow.self) else {
+        throw Abort(.notFound)
+    }
+
+    return [row]
 }
 
 private func uniqueUGCCodes(_ values: [String?]) -> [String] {

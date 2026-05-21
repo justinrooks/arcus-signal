@@ -110,18 +110,33 @@ curl -i "http://localhost:8080/api/v1/alerts?ugc=COC001"
 
 - Runtime: API
 - Query params:
+  - `id` (optional, Arcus series UUID; maps to `arcus_series.id` / APNs hot-alert `arcusAlertId`)
+  - `sent` (optional; currently ignored for lookup behavior)
   - `county` (optional)
   - `forecast` (optional)
   - `fire` (optional)
   - `h3` (optional, must be `> 0` when present)
-- At least one of `county`, `forecast`, `fire`, `h3` is required.
+- Lookup modes:
+  - Targeted lookup: provide `id` only (plus optional `sent`) to fetch exactly one current alert by `arcus_series.id`.
+  - Collection lookup: provide one or more of `county`, `forecast`, `fire`, `h3`.
+  - `id` is mutually exclusive with `county`, `forecast`, `fire`, `h3`.
 - Response: `200 OK` JSON array of alert payloads.
-- Error: `400 Bad Request` when no filter is provided or `h3 <= 0`.
+- Error:
+  - `400 Bad Request` when no valid filter is provided.
+  - `400 Bad Request` when `h3 <= 0`.
+  - `400 Bad Request` when `id` is malformed or combined with location filters.
+  - `404 Not Found` when targeted `id` does not match an existing series.
 
 Example:
 
 ```bash
 curl -i "http://localhost:8080/api/v2/alerts?county=COC001&forecast=COZ041"
+```
+
+Targeted example:
+
+```bash
+curl -i "http://localhost:8080/api/v2/alerts?id=11111111-1111-1111-1111-111111111111"
 ```
 
 ## `GET /api/v1/notifications`

@@ -1,0 +1,23 @@
+$kind: http-request
+name: GET /api/v2/alerts (targeted id)
+url: "{{apiBaseUrl}}/api/v2/alerts?id={{sampleArcusSeriesId}}&sent={{capturedAtNow}}"
+method: GET
+queryParams:
+  id: "{{sampleArcusSeriesId}}"
+  sent: "{{capturedAtNow}}"
+description: |-
+  Targeted lookup by Arcus series UUID (`arcus_series.id`).
+  
+  `id` maps to APNs hot-alert payload `arcusAlertId`.
+  
+  Set `sampleArcusSeriesId` to an existing series UUID to validate the success path.
+  
+  Expected: 200 OK with JSON array containing one `DeviceAlertPayload`.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('status is 200', function () { pm.response.to.have.status(200); });
+      pm.test('response is array', function () { pm.expect(pm.response.json()).to.be.an('array'); });
+      pm.test('response has one payload', function () { pm.expect(pm.response.json().length).to.eql(1); });
+    language: text/javascript
+order: 5500
