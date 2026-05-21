@@ -66,12 +66,41 @@ public struct TargetEventRevisionJob: AsyncJob {
                 on: context.application.db
             )
 
-            let drainNotificationsResult = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "h3")
+            if result == .unsupportedGeometry {
+                if try await DispatchAgent.enqueueNotificationDispatchOutbox(
+                    revisionUrn: payload.revisionUrn,
+                    seriesId: payload.seriesId,
+                    reason: payload.reason,
+                    mode: .ugc,
+                    on: context.application.db,
+                    logger: context.logger
+                ) {
+                    context.logger.info(
+                        "Queued UGC fallback notification dispatch after unsupported H3 geometry.",
+                        metadata: [
+                            "seriesId": .string(payload.seriesId.uuidString),
+                            "revisionUrn": .string(payload.revisionUrn)
+                        ]
+                    )
+                }
+
+                let drainUGCResult = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "ugc")
+                context.logger.info(
+                    "Notification dispatch outbox drain finished for ugc fallback",
+                    metadata: [
+                        "dispatched": .stringConvertible(drainUGCResult.dispatched),
+                        "failed": .stringConvertible(drainUGCResult.failed)
+                    ]
+                )
+                return
+            }
+
+            let drainH3Result = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "h3")
             context.logger.info(
                 "Notification dispatch outbox drain finished for h3",
                 metadata: [
-                    "dispatched": .stringConvertible(drainNotificationsResult.dispatched),
-                    "failed": .stringConvertible(drainNotificationsResult.failed)
+                    "dispatched": .stringConvertible(drainH3Result.dispatched),
+                    "failed": .stringConvertible(drainH3Result.failed)
                 ]
             )
         } catch {
@@ -110,7 +139,20 @@ private extension TargetEventRevisionJob {
         on database: any Database,
         logger: Logger
     ) async throws -> TargetDispatchCompletionResult {
-        let cover = try buildH3Cover(for: payload.geometry)
+        let cover: (cells: [Int64], hash: String)?
+        do {
+            cover = try buildH3Cover(for: payload.geometry)
+        } catch {
+            logger.warning(
+                "H3 cover computation failed; falling back to UGC notification dispatch.",
+                metadata: [
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn),
+                    "error": .string(String(reflecting: error))
+                ]
+            )
+            return .unsupportedGeometry
+        }
 
         guard let cover else {
             logger.debug(
