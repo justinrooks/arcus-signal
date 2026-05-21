@@ -1,0 +1,13 @@
+$kind: http-request
+name: GET /api/v2/alerts (targeted id missing series)
+url: "{{apiBaseUrl}}/api/v2/alerts?id=00000000-0000-0000-0000-000000000000"
+method: GET
+description: |-
+  Negative test for targeted lookup when series does not exist.
+  
+  Expected: 404 Not Found.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 404', function () { pm.response.to.have.status(404); });
+    language: text/javascript
+order: 8700

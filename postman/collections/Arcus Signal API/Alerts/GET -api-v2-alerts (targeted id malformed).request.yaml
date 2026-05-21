@@ -1,0 +1,15 @@
+$kind: http-request
+name: GET /api/v2/alerts (targeted id malformed)
+url: "{{apiBaseUrl}}/api/v2/alerts?id=not-a-uuid"
+method: GET
+description: |-
+  Negative test for targeted lookup.
+  
+  `id` must be a valid UUID.
+  
+  Expected: 400 Bad Request.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 400', function () { pm.response.to.have.status(400); });
+    language: text/javascript
+order: 8500

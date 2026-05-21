@@ -1,0 +1,18 @@
+$kind: http-request
+name: GET /api/v2/alerts (targeted id mixed filters)
+url: "{{apiBaseUrl}}/api/v2/alerts?id={{sampleArcusSeriesId}}&county={{sampleCounty}}"
+method: GET
+queryParams:
+  id: "{{sampleArcusSeriesId}}"
+  county: "{{sampleCounty}}"
+description: |-
+  Negative test for mutually exclusive lookup modes.
+  
+  `id` cannot be combined with `county`, `forecast`, `fire`, or `h3`.
+  
+  Expected: 400 Bad Request.
+scripts:
+  - type: afterResponse
+    code: pm.test('status is 400', function () { pm.response.to.have.status(400); });
+    language: text/javascript
+order: 8600

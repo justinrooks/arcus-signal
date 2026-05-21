@@ -6,6 +6,7 @@ import Foundation
 import Queues
 import Testing
 import Vapor
+import ArcusCore
 
 @Suite("Notification send job delivery boundary", .serialized)
 struct NotificationSendJobDeliveryBoundaryTests {
@@ -363,6 +364,7 @@ private actor RecordingNotificationSender: NotificationSender {
     func sendNotification(
         app _: Application,
         with _: AlertDetails,
+        hotAlertPayload _: HotAlertAPNsPayload,
         to _: String,
         environment _: APNsEnvironment
     ) async throws {

@@ -11,6 +11,7 @@ variables:
   sampleCounty: "COC001"
   sampleForecast: "COZ041"
   sampleFire: "COC001"
+  sampleArcusSeriesId: ""
   capturedAtNow: ""
   capturedAtFuture10m: ""
 scripts:

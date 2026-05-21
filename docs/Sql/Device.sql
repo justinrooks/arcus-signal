@@ -7,7 +7,7 @@ SELECT * FROM device_presence;
 SELECT d.location_auth, d.app_version,p.*
 FROM device_presence p
 LEFT JOIN device_installations d ON d.installation_id = p.installation_id
-WHERE d.apns_environment = 'prod'
+WHERE d.apns_environment = 'prod' AND p.county NOT LIKE 'CA%'
 ORDER BY p.updated_at DESC
 
 
