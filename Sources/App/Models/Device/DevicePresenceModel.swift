@@ -8,18 +8,11 @@
 import Foundation
 import Fluent
 import Vapor
+import ArcusCore
 
 public enum CellScheme: String, Codable, Sendable {
     case h3
     case ugcOnly = "ugc-only"
-}
-
-public enum LocationSource: String, Codable, Sendable {
-    case foreground
-    case backgroundRefresh
-    case significantChange
-    case manual
-    case unknown
 }
 
 public final class DevicePresenceModel: Model, @unchecked Sendable {
@@ -93,7 +86,7 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
         county: String?,
         zone: String?,
         fireZone: String?,
-        source: LocationSource,
+        source: LocationUploadSource,
         countyLabel: String?,
         fireZoneLabel: String?
     ) {
@@ -119,8 +112,8 @@ public final class DevicePresenceModel: Model, @unchecked Sendable {
         set { cellSchemeRaw = newValue.rawValue }
     }
 
-    public var source: LocationSource {
-        get { LocationSource(rawValue: sourceRaw) ?? .unknown }
+    public var source: LocationUploadSource {
+        get { LocationUploadSource(rawValue: sourceRaw) ?? .unknown}
         set { sourceRaw = newValue.rawValue }
     }
 }

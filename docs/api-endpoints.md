@@ -89,6 +89,53 @@ Common errors:
 
 - `400 Bad Request` on enum mismatch, UUID parse failure, bounds issues, pair mismatch.
 
+## `POST /api/v1/devices/preferences`
+
+- Runtime: API
+- Purpose: sync device installation notification/subscription preferences without location payloads
+- Success response: `200 OK`
+
+```json
+{
+  "status": "ok",
+  "receivedAt": "2026-05-26T22:00:00Z"
+}
+```
+
+Required body schema (`application/json`):
+
+- `installationId` (UUID string)
+- `apnsDeviceToken` (non-empty after trimming)
+- `apnsEnvironment` (`prod|sandbox`)
+- `platform` (`iOS|watchOS`)
+- `osVersion` (non-empty)
+- `appVersion` (non-empty)
+- `buildNumber` (non-empty)
+- `auth` (`always|whenInUse|denied|restricted|notDetermined|unknown`)
+- `isSubscribed` (`true|false`)
+
+Optional:
+
+- `source` (diagnostic string)
+- `reason` (diagnostic string)
+
+Validation behavior:
+
+- `installationId` must be a valid UUID.
+- `apnsDeviceToken`, `osVersion`, `appVersion`, and `buildNumber` must be non-empty after trimming.
+- `apnsEnvironment`, `platform`, and `auth` must match supported enum values.
+
+Behavior notes:
+
+- Updates `device_installations` only (insert-or-update semantics).
+- Does not create or update `device_presence`.
+- Existing location presence rows remain unchanged.
+
+Privacy/logging note:
+
+- API logs only APNs token suffix metadata and never logs the full token.
+- This endpoint accepts no location fields and therefore does not log location data.
+
 ## `GET /api/v1/alerts`
 
 - Runtime: API
