@@ -20,6 +20,7 @@ struct DeviceController: RouteCollection {
         let devices = routes.grouped("api", "v1", "devices")
         devices.get(use: index)
         devices.post("location-snapshots", use: create)
+        devices.post("preferences", use: createPreferences)
     }
     
     func create(req: Request) async throws -> LocationSnapshotAcceptedResponse {
@@ -163,6 +164,77 @@ struct DeviceController: RouteCollection {
         //    }
         //        }
         //        }
+    }
+
+    func createPreferences(req: Request) async throws -> DevicePreferenceSyncAcceptedResponse {
+        let payload = try req.content.decode(DevicePreferenceSyncRequestPayload.self)
+
+        guard let installationUUID = UUID(uuidString: payload.installationId) else {
+            throw Abort(.badRequest, reason: "installationId must be a valid UUID")
+        }
+
+        let apnsDeviceToken = payload.apnsDeviceToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apnsDeviceToken.isEmpty else {
+            throw Abort(.badRequest, reason: "Missing apnsDeviceToken")
+        }
+
+        guard let apnsEnvironment = APNsEnvironment(rawValue: payload.apnsEnvironment) else {
+            throw Abort(.badRequest, reason: "Invalid enum value for apnsEnvironment")
+        }
+        guard let platform = Platform(rawValue: payload.platform) else {
+            throw Abort(.badRequest, reason: "Invalid enum value for platform")
+        }
+        guard let locationAuth = LocationAuth(rawValue: payload.auth) else {
+            throw Abort(.badRequest, reason: "Invalid enum value for locationAuth")
+        }
+
+        let osVersion = payload.osVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appVersion = payload.appVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let buildNumber = payload.buildNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !osVersion.isEmpty else {
+            throw Abort(.badRequest, reason: "Missing osVersion")
+        }
+        guard !appVersion.isEmpty else {
+            throw Abort(.badRequest, reason: "Missing appVersion")
+        }
+        guard !buildNumber.isEmpty else {
+            throw Abort(.badRequest, reason: "Missing buildNumber")
+        }
+
+        let receivedAt = Date()
+
+        _ = try await req.db.transaction { database in
+            try await upsertDeviceInstallation(
+                installationId: installationUUID,
+                apnsDeviceToken: apnsDeviceToken,
+                apnsEnvironment: apnsEnvironment,
+                platform: platform,
+                osVersion: osVersion,
+                appVersion: appVersion,
+                buildNumber: buildNumber,
+                locationAuth: locationAuth,
+                lastSeenAt: receivedAt,
+                isSubscribed: payload.isSubscribed,
+                on: database
+            )
+        }
+
+        req.logger.info(
+            "Device preferences synced.",
+            metadata: [
+                "installationId": .string(payload.installationId),
+                "apnsDeviceTokenSuffix": .string(String(apnsDeviceToken.suffix(8))),
+                "apnsEnvironment": .string(payload.apnsEnvironment),
+                "platform": .string(payload.platform),
+                "auth": .string(payload.auth),
+                "isSubscribed": .string(String(payload.isSubscribed)),
+                "source": .string(payload.source),
+                "reason": .string(payload.reason)
+            ]
+        )
+
+        return .init(status: "ok", receivedAt: receivedAt)
     }
 }
 
