@@ -221,7 +221,7 @@ struct DevicePreferencesControllerTests {
                 county: "COC013",
                 zone: "COZ041",
                 fireZone: "COF241",
-                source: .foreground,
+                source: .foregroundPrime,
                 countyLabel: "Boulder County",
                 fireZoneLabel: "Front Range"
             )

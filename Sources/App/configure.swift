@@ -67,6 +67,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(FixArcusSeriesSenderNameField())
     app.migrations.add(RemoveArcusSeriesSenderNameField())
     app.migrations.add(AddCountyLabelFieldsToDevicePresence())
+    app.migrations.add(UpdateDevicePresenceSourceConstraintForExpandedLocationUploadSources())
     app.migrations.add(AddStatusToNotificationLedger())
     app.migrations.add(AddFreshnessStateToNotificationLedger())
     app.migrations.add(AddIsSubscribedToDeviceInstallation())
