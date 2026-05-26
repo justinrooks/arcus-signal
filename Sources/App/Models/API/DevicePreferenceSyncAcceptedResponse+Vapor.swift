@@ -1,3 +1,4 @@
 import Vapor
+import ArcusCore
 
-extension DevicePreferenceSyncAcceptedResponse: Content {}
+extension DevicePreferenceSyncAcceptedResponse: @retroactive Content {}

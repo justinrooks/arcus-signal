@@ -44,7 +44,7 @@ struct DeviceController: RouteCollection {
         guard let cellScheme = CellScheme(rawValue: payload.cellScheme) else {
             throw Abort(.badRequest, reason: "Invalid enum value for cellScheme")
         }
-        guard let locationSource = LocationSource(rawValue: payload.source) else {
+        guard let locationSource = LocationUploadSource(rawValue: payload.source) else {
             throw Abort(.badRequest, reason: "Invalid enum value for locationSource")
         }
         
@@ -167,7 +167,7 @@ struct DeviceController: RouteCollection {
     }
 
     func createPreferences(req: Request) async throws -> DevicePreferenceSyncAcceptedResponse {
-        let payload = try req.content.decode(DevicePreferenceSyncRequestPayload.self)
+        let payload = try req.content.decode(DevicePreferenceSyncPayload.self)
 
         guard let installationUUID = UUID(uuidString: payload.installationId) else {
             throw Abort(.badRequest, reason: "installationId must be a valid UUID")
@@ -308,7 +308,7 @@ private func upsertDevicePresence(
     installationId: UUID,
     payload: LocationSnapshotPushPayload,
     cellScheme: CellScheme,
-    locationSource: LocationSource,
+    locationSource: LocationUploadSource,
     receivedAt: Date,
     on database: any Database
 ) async throws -> DevicePresenceUpsertOutcome {
