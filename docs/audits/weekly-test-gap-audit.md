@@ -13,3 +13,15 @@
 - Watchlist:
   - targeted `/api/v2/alerts?id=...&sent=...` currently accepts `sent` but server-side targeted query does not filter by it; likely intentional, but contract expectation should be clarified before adding strict tests
 - Implementation recommended: Yes (tests only; no production code changes in this automation)
+
+## 2026-06-02
+- Repos scanned: `project-arcus` (SkyAware), `arcus-signal`, `ArcusCore`
+- Commit window: since last automation run (`2026-05-26T15:00:38Z` to `2026-06-02T00:00:00-06:00`)
+- High-risk areas inspected:
+  - `arcus-signal` device preference sync endpoint and expanded `device_presence.source` constraint (`DeviceController`, `UpdateDevicePresenceSourceConstraintForExpandedLocationUploadSources`)
+  - `project-arcus` location/preference upload reliability, explicit-source fallback, SPC batch persistence, mesoscale notification copy, and `MdDTO` Codable compatibility
+  - `ArcusCore` shared device preference DTOs and `LocationUploadSource`
+- Top recommended test: add an `arcus-signal` endpoint test proving `POST /api/v1/devices/location-snapshots` accepts newly introduced `LocationUploadSource` values and persists them without triggering the client’s legacy `"unknown"` fallback path
+- Watchlist:
+  - `project-arcus` `HTTPDevicePreferenceSyncUploader` still treats 2xx response decoding as best-effort; current evidence does not justify a stricter test yet because the client ignores malformed success bodies by design
+- Implementation recommended: Yes (targeted tests only; no production code changes in this automation)
