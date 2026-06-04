@@ -43,7 +43,22 @@ struct UpdateDevicePresenceSourceConstraintForExpandedLocationUploadSources: Asy
         try await sql.raw("""
             ALTER TABLE device_presence
             ADD CONSTRAINT device_presence_source_check
-            CHECK (source IN ('foreground', 'backgroundRefresh', 'significantChange', 'manual', 'unknown'));
+            CHECK (
+                source IN (
+                    'foreground',
+                    'backgroundRefresh',
+                    'significantChange',
+                    'manual',
+                    'foregroundPrime',
+                    'foregroundActivate',
+                    'foregroundLocationChange',
+                    'manualRefresh',
+                    'backgroundLocationChange',
+                    'onboarding',
+                    'settingsPreference',
+                    'unknown'
+                )
+            );
             """).run()
     }
 }

@@ -108,6 +108,9 @@
 ### 7. Implementation recommendation
 - Implementation is recommended for the migration rollback bug.
 
+### 8. Implementation status
+- Fixed on `2026-06-04` by making the rollback constraint match the expanded allow-list and adding a regression test in `Tests/AppTests/DevicePresenceMigrationTests.swift`.
+
 ### Audit entry (short)
 - Date: `2026-05-28`
 - Workflow reviewed: weekly bug scan (commits since last automation run marker)
