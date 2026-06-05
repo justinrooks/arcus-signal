@@ -43,6 +43,9 @@
 ### 7. Implementation recommendation
 - Implementation is recommended for the APNs `alertID` payload correction.
 
+### 8. Implementation status
+- Marked stale on 2026-06-04 after re-checking the shared contract: `ArcusCore/Sources/ArcusCore/HotAlertAPNsPayload.swift` defines `arcusAlertId` as the canonical hot-alert identifier, `project-arcus/docs/audits/weekly-contract-drift-audit.md` already records that contract as resolved, and the current `NotificationSendJob` payload mapping still matches that series-id contract. No backend code change is recommended for this audit item.
+
 ### Audit entry (short)
 - Date: `2026-05-21`
 - Workflow reviewed: weekly bug scan (commits since last run marker)
@@ -56,7 +59,7 @@
   - `/Users/justin/Code/project-arcus/Sources/Repos/AlertRepo.swift`
 - Top finding: APNs payload `alertID` is currently set to `seriesId` UUID instead of canonical alert id.
 - Best next fix: map canonical alert id into APNs `alertID` and add contract assertions.
-- Implementation recommended: `yes`
+- Implementation recommended: `no` - stale after contract re-check on 2026-06-04
 
 ## 2026-05-28
 
