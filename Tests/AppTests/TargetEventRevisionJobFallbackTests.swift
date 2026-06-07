@@ -1,4 +1,5 @@
 @testable import App
+import Fluent
 import Foundation
 import Queues
 import SwiftyH3
@@ -13,14 +14,23 @@ struct TargetEventRevisionJobFallbackTests {
             try await configure(app, mode: .worker)
             try await app.autoMigrate()
             app.queues.use(.test)
+            try await deleteTargetFallbackFixtures(on: app.db)
             try await test(app)
+            try await deleteTargetFallbackFixtures(on: app.db)
         } catch {
             Issue.record("Worker app bootstrap/test failed: \(String(reflecting: error))")
+            try? await deleteTargetFallbackFixtures(on: app.db)
             try? await app.asyncShutdown()
             throw error
         }
 
         try await app.asyncShutdown()
+    }
+
+    private func deleteTargetFallbackFixtures(on database: any Database) async throws {
+        try await ArcusSeriesModel.query(on: database)
+            .filter(\.$sourceURL, .equal, "https://api.weather.gov/alerts/test-target-fallback")
+            .delete()
     }
 
     private func makeQueueContext(app: Application) -> QueueContext {
@@ -151,9 +161,8 @@ struct TargetEventRevisionJobFallbackTests {
                 .filter(\.$mode, .equal, NotificationTargetMode.h3.rawValue)
                 .all()
             #expect(h3Rows.count == 1)
-            #expect(h3Rows.first?.state == "done")
-            #expect(h3Rows.first?.attempts == 1)
-            #expect(h3Rows.first?.lastError == nil)
+            #expect(h3Rows.first?.state == "ready")
+            #expect(h3Rows.first?.attempts == 0)
         }
     }
 
@@ -250,6 +259,12 @@ struct TargetEventRevisionJobFallbackTests {
             ).create(on: app.db)
 
             try await TargetEventRevisionJob().dequeue(makeQueueContext(app: app), payload)
+
+            let targetDispatchRow = try await ArcusTargetDispatchOutboxModel.query(on: app.db)
+                .filter(\.$revisionUrn, .equal, revisionUrn)
+                .first()
+            #expect(targetDispatchRow?.result == "succeeded")
+            #expect(targetDispatchRow?.completed != nil)
 
             let h3Rows = try await ArcusNotificationOutboxModel.query(on: app.db)
                 .filter(\.$revisionUrn, .equal, revisionUrn)

@@ -65,8 +65,10 @@ struct DeviceControllerTests {
                     .POST,
                     "api/v1/devices/location-snapshots",
                     beforeRequest: { req in
+                        let encoder = JSONEncoder()
+                        encoder.dateEncodingStrategy = .iso8601
                         req.headers.contentType = .json
-                        req.body = .init(data: try JSONEncoder().encode(payload))
+                        req.body = .init(data: try encoder.encode(payload))
                     },
                     afterResponse: { res async in
                         #expect(res.status == .ok)

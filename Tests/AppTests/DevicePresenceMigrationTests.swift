@@ -21,7 +21,7 @@ struct DevicePresenceMigrationTests {
     @Test("rollback keeps expanded source values valid")
     func revertPreservesExpandedSources() async throws {
         try await withApp { app in
-            let installationID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+            let installationID = UUID()
             let now = Date(timeIntervalSince1970: 1_717_513_600)
 
             try await DeviceInstallationModel(
