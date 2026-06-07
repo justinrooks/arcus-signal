@@ -33,6 +33,9 @@ struct StormSetupWgrib2ClientTests {
     func makeArgumentsIncludesOptionalMatchOnlyWhenProvided() throws {
         let client = Wgrib2Client(
             configuration: .init(
+                gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
+                gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
+                gribSubsetMaximumByteCount: 25 * 1024 * 1024,
                 wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/wgrib2"),
                 wgrib2TimeoutSeconds: 15
             )

@@ -71,6 +71,7 @@ Related GitHub issues:
 - Issue `#69` is complete.
 - Issue `#70` is complete.
 - Issue `#71` is complete.
+- Issue `#72` is complete.
 - No later Storm Setup issue has been started.
 
 ---
@@ -282,7 +283,7 @@ Related GitHub issues:
 - `#72` - https://github.com/justinrooks/arcus-signal/issues/72
 
 ### Status
-- Not started
+- Complete
 
 ### Scope
 - Add local filesystem cache for GRIB2 subset files.
@@ -298,19 +299,39 @@ Related GitHub issues:
 - `NOMADS HRRR 2D GRIB test URL`
 
 ### Handoff notes
-- None yet.
+- `GribSubsetCache` now owns the GRIB subset filesystem cache and validates cache entries before reuse.
+- Cache hits return existing file metadata without redownloading; cache misses download from the NOMADS subset URL produced by issue `#71`.
+- Cache entries are written atomically with a JSON sidecar that stores the source metadata, byte size, checksum, fetch time, and expiry.
+- Corrupt, truncated, missing, expired, oversized, empty, and obvious HTML/text responses are rejected and never treated as valid cache entries.
+- `NomadsGribDownloader` walks ordered HRRR candidates and returns the first usable subset, surfacing aggregate failure detail if all candidates fail.
+- Cache root decision: `FileManager.default.temporaryDirectory/arcus-signal/storm-setup/grib-subsets` via `StormSetupConfiguration.localGribSubsetCacheRootURL`.
+- Max byte-size decision: `25 MiB` (`25 * 1024 * 1024` bytes).
+- Cache retention decision: `12 hours` for local development.
+- Fallback behavior: try candidates in the order provided by issue `#71`; the first successful HTTP 2xx, non-empty, non-HTML subset wins.
+- Issue `#73` should consume `GribSubsetCacheResult.localFileURL` / `byteSize` / `fetchedAt` / `expiresAt` and not assume the GRIB subset is always fresh on first request.
 
 ### Files changed
-- None yet.
+- `Sources/App/StormSetup/GribSubsetCache.swift`
+- `Sources/App/StormSetup/NomadsGribDownloader.swift`
+- `Sources/App/StormSetup/StormSetupCacheKey.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/StormSetupModels.swift`
+- `Tests/AppTests/StormSetupGribSubsetCacheTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
 
 ### Tests run
-- None yet.
+- `swift test --filter StormSetupGribSubsetCacheTests` - passed
+- `swift test --filter StormSetup` - passed
+- `swift test` - passed
+- No live NOMADS download was attempted; network success remains manual-only and is not required for the automated test suite.
 
 ### Deferred
 - Database persistence.
 - Distributed cache.
-- Sampled JSON cache.
-- `wgrib2` sampling orchestration.
+- Sampled JSON cache (`#76`).
+- Raw parameter normalization and `wgrib2` sampling orchestration (`#73`).
+- Assessment/freshness rules (`#74`).
+- End-to-end provider/controller orchestration (`#75`).
 
 ---
 
