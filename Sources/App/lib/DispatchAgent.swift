@@ -123,6 +123,18 @@ public struct DispatchAgent {
 
                 if let existing {
                     let previousState = existing.state
+                    if existing.state == "done" {
+                        logger.debug(
+                            "Notification dispatch already completed for revision.",
+                            metadata: [
+                                "revisionUrn": .string(revisionUrn),
+                                "mode": .string(mode.rawValue),
+                                "previousState": .string(previousState)
+                            ]
+                        )
+                        return false
+                    }
+
                     let shouldResetForDispatch = existing.state != "ready" || existing.availableAt > .now || existing.reason != reason.rawValue
 
                     if shouldResetForDispatch {

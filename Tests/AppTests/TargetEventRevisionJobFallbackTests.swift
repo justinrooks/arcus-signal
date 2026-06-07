@@ -199,4 +199,52 @@ struct TargetEventRevisionJobFallbackTests {
             #expect(h3Rows.first?.attempts == 0)
         }
     }
+
+    @Test("redelivered same-geometry revision does not requeue completed h3 dispatch")
+    func redeliveredSameGeometryRevisionDoesNotRequeueCompletedDispatch() async throws {
+        try await withWorkerApp { app in
+            let now = Date()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:test-redelivered-geometry-\(UUID().uuidString.lowercased())"
+            let geometry = makePolygonGeometry()
+            let cover = try h3Cover(for: geometry)
+            let payload = TargetEventRevisionPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                geometry: geometry,
+                reason: .update
+            )
+
+            try await makeSeries(id: seriesID, revisionUrn: revisionUrn, now: now).create(on: app.db)
+            try await ArcusGeolocationModel(
+                series: seriesID,
+                geometry: geometry,
+                geometryHash: cover.geometryHash,
+                h3Cells: cover.h3Cells,
+                h3Resolution: 8,
+                h3Hash: cover.h3Hash
+            ).create(on: app.db)
+            try await ArcusNotificationOutboxModel(
+                series: seriesID,
+                revisionUrn: revisionUrn,
+                mode: NotificationTargetMode.h3.rawValue,
+                reason: NotificationReason.update.rawValue,
+                state: "done",
+                attempts: 1,
+                availableAt: now
+            ).create(on: app.db)
+
+            try await TargetEventRevisionJob().dequeue(makeQueueContext(app: app), payload)
+
+            let h3Rows = try await ArcusNotificationOutboxModel.query(on: app.db)
+                .filter(\.$revisionUrn, .equal, revisionUrn)
+                .filter(\.$mode, .equal, NotificationTargetMode.h3.rawValue)
+                .all()
+
+            #expect(h3Rows.count == 1)
+            #expect(h3Rows.first?.state == "done")
+            #expect(h3Rows.first?.attempts == 1)
+            #expect(h3Rows.first?.lastError == nil)
+        }
+    }
 }
