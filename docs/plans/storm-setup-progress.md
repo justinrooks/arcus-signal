@@ -69,6 +69,7 @@ Related GitHub issues:
 - Local `wgrib2` executable was verified to exist at:
   - `/Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2`
 - Issue `#69` is complete.
+- Issue `#70` is complete.
 - No later Storm Setup issue has been started.
 
 ---
@@ -162,7 +163,7 @@ Related GitHub issues:
 - `#70` - https://github.com/justinrooks/arcus-signal/issues/70
 
 ### Status
-- Not started
+- Complete
 
 ### Scope
 - Harden the local `ProcessRunner` / `Wgrib2Client` adapter.
@@ -181,19 +182,38 @@ Related GitHub issues:
 - `Proposed HRRR server pipeline`
 
 ### Handoff notes
-- None yet.
+- `ProcessRunner` now executes `wgrib2` by executable URL plus argument array, captures stdout/stderr, enforces a timeout, and reports launch, timeout, and non-zero exit failures with useful diagnostics.
+- Timed-out processes are terminated and force-killed after a short grace window so the adapter does not busy-spin or hang on pipe reads.
+- `Wgrib2Client` now centralizes the local executable path through `StormSetupConfiguration` wiring and builds safe `wgrib2 <file> [-match <pattern>] -lon <lon> <lat>` arguments without shell strings.
+- `Wgrib2PointSample` preserves the inventory line and parses optional `lon=`, `lat=`, and `val=` fields, while tolerating missing or non-numeric `val=` values.
+- The local executable path was verified at `/Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2`.
+- Issue `#71` should start from the config seam and client/parser behavior here; do not rework process execution or point-sample parsing again unless a bug is found.
 
 ### Files changed
-- None yet.
+- `Sources/App/StormSetup/GribAdapter.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/Wgrib2Client.swift`
+- `Sources/App/StormSetup/Wgrib2PointSample.swift`
+- `Sources/App/configure.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
 
 ### Tests run
-- None yet.
+- `test -x /Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2` - passed
+- `swift test --filter StormSetupWgrib2ClientTests` - passed
+- `swift test` - passed
+- Full suite completed with existing unrelated deprecation warnings from other areas of the codebase, but no failures.
 
 ### Deferred
 - Downloading GRIB files.
 - HRRR run selection.
+- NOMADS subset URL construction.
 - Field mapping into `TornadoRawParameters`.
-- Controller integration.
+- Assessment rules.
+- Controller integration beyond the existing route boundary.
+
+### Risks / open questions
+- `ProcessRunner` uses a polling sleep while waiting for process exit, but it no longer busy-spins and it force-kills a process that survives the timeout grace window.
+- `Wgrib2PointSample` now parses nearest-point coordinates when present, but later issues may want a richer type for sampled grid metadata if the output shape expands.
 
 ---
 

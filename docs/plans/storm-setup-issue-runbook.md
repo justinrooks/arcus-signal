@@ -176,6 +176,8 @@ Implement only the current issue's scope.
 - Keep the controller thin.
 - Do not run `Process` directly in routes.
 - Use H3 for model sampling input.
+- Represent H3 cells as `Int64` in server-side Storm Setup models, providers, cache keys, and tests.
+- Accept query input as text only at the HTTP boundary, then validate and convert it to `Int64` before passing it deeper into the StormSetup module.
 - Resolve H3 to centroid latitude/longitude before sampling.
 - Sample HRRR with `wgrib2 -lon` at or near the H3 centroid.
 - Cache source GRIB subsets by source metadata, bbox, and field set.
@@ -402,6 +404,7 @@ Work these slices in order unless the owner explicitly changes the order:
 The local Storm Setup slice is done when:
 - `GET /api/v1/storm-setup/current?h3=<valid-cell>` returns a populated Tornado Ingredient Snapshot locally when NOMADS and `wgrib2` are available.
 - Invalid or missing H3 input returns a useful 400 response.
+- H3 cells are represented as `Int64` after HTTP-boundary validation.
 - H3 input resolves to a centroid and is described as local-area sampling, not exact-location truth.
 - HRRR source metadata includes model, product, run time, forecast hour, valid time, field set, and freshness.
 - GRIB subsets are cached by deterministic source/bbox/field-set keys.

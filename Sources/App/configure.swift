@@ -27,6 +27,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.queues.add(IngestNWSAlertsJob())
     app.queues.add(TargetEventRevisionJob())
     app.queues.add(NotificationSendJob())
+    app.stormSetupConfiguration = .default
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601

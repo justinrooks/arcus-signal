@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Darwin
 
 struct ProcessResult: Sendable {
     let stdout: String
@@ -13,8 +14,9 @@ struct ProcessResult: Sendable {
     let exitCode: Int32
 }
 
-enum ProcessRunnerError: Error {
+enum ProcessRunnerError: Error, Sendable, Equatable {
     case launchFailed(String)
+    case timedOut(timeoutSeconds: TimeInterval, stderr: String)
     case nonZeroExit(code: Int32, stderr: String)
 }
 
@@ -34,17 +36,40 @@ struct ProcessRunner: Sendable {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
-            try process.run()
+            do {
+                try process.run()
+            } catch {
+                throw ProcessRunnerError.launchFailed(
+                    "Failed to launch \(executableURL.path): \(error.localizedDescription)"
+                )
+            }
 
             let deadline = Date().addingTimeInterval(timeoutSeconds)
+            var timedOut = false
 
             while process.isRunning {
                 if Date() > deadline {
+                    timedOut = true
                     process.terminate()
-                    throw ProcessRunnerError.launchFailed("Process timed out")
+                    let graceDeadline = Date().addingTimeInterval(0.5)
+
+                    while process.isRunning && Date() < graceDeadline {
+                        try await Task.sleep(for: .milliseconds(50))
+                    }
+
+                    if process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                        process.waitUntilExit()
+                    }
+
+                    break
                 }
 
-//                Thread.sleep(forTimeInterval: 0.05)
+                try await Task.sleep(for: .milliseconds(50))
+            }
+
+            if process.isRunning {
+                process.waitUntilExit()
             }
 
             let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
@@ -58,6 +83,13 @@ struct ProcessRunner: Sendable {
                 stderr: stderr,
                 exitCode: process.terminationStatus
             )
+
+            if timedOut {
+                throw ProcessRunnerError.timedOut(
+                    timeoutSeconds: timeoutSeconds,
+                    stderr: result.stderr
+                )
+            }
 
             guard result.exitCode == 0 else {
                 throw ProcessRunnerError.nonZeroExit(
