@@ -511,14 +511,14 @@ Related GitHub issues:
 - `#76` - https://github.com/justinrooks/arcus-signal/issues/76
 
 ### Status
-- Not started
+- Completed
 
 ### Scope
 - Add local sampled snapshot cache.
-- Key by H3 cell, model/product, run time, forecast hour, valid time, and rules version.
-- Store response-ready JSON or an internal snapshot model.
-- Include fetched time and expires time.
-- Ignore stale, corrupt, or rules-version-mismatched cache entries safely.
+- Key by H3 cell, model/product, domain when present, run time, forecast hour, valid time, field set version, and rules version.
+- Store an internal `TornadoIngredientSnapshot` wrapper that can be returned directly by #75.
+- Include fetched time, expires time, cache hit/miss, rules version, and source valid time in the returned cache result.
+- Ignore stale, corrupt, unreadable, incomplete, or rules-version-mismatched cache entries safely.
 
 ### Relevant feature brief sections
 - `Caching model`
@@ -526,19 +526,37 @@ Related GitHub issues:
 - `Recommended v1 cache policy`
 
 ### Handoff notes
-- None yet.
+- The sampled cache now lives alongside the GRIB subset cache under the shared temp-root family chosen in #72:
+  - `/tmp/arcus-signal/storm-setup/grib-subsets`
+  - `/tmp/arcus-signal/storm-setup/sampled-snapshots`
+- Cache identity intentionally excludes bbox. That belongs to the GRIB subset cache, not the sampled snapshot cache.
+- Cache identity includes `h3Cell` as signed `Int64`, `model`, `product`, `domain` when present, `runTime`, `forecastHour`, `validTime`, `fieldSetVersion`, and `rulesVersion`.
+- `domain` is normalized to `none` when absent so optional source metadata cannot alias a different concrete domain.
+- `StormSetupSnapshotCache` persists a Codable wrapper with the full snapshot and validates the stored key against both the persisted key and the reconstructed key from the snapshot payload.
+- Expired entries are ignored when `now >= expiresAt`, and unreadable/corrupt/incomplete records are removed on read.
+- Cache writes use atomic file replacement.
+- Issue #75 should use `StormSetupSnapshotCacheKey` and `StormSetupSnapshotCache` directly rather than inventing another cache layer.
 
 ### Files changed
-- None yet.
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/StormSetupRulesVersion.swift`
+- `Sources/App/StormSetup/StormSetupSnapshotCacheKey.swift`
+- `Sources/App/StormSetup/StormSetupSnapshotCache.swift`
+- `Tests/AppTests/StormSetupSnapshotCacheTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
 
 ### Tests run
-- None yet.
+- `swift test --filter StormSetupSnapshotCacheTests` - passed
+- `swift test` - passed
+- Existing unrelated Vapor/deprecation warnings still appear in the broader suite, but there were no failures.
 
 ### Deferred
 - Database-backed sample persistence.
 - Distributed cache coherence.
 - User/device-specific personalization.
 - Push refresh graph integration.
+- Provider/controller orchestration for #75.
+- Any future cache eviction policy beyond source expiration.
 
 ---
 
@@ -572,7 +590,9 @@ Related GitHub issues:
 - `Server architecture decision`
 
 ### Handoff notes
-- None yet.
+- Issue #75 should wire the controller/provider orchestration around the finished cache seam instead of reworking key generation or persistence behavior.
+- The provider path can treat cache hit/miss as a runtime result; the persisted cache record already contains the source and snapshot data needed for a straight return path.
+- Keep bbox ownership in the GRIB subset cache. Do not fold it into the sampled snapshot cache identity.
 
 ### Files changed
 - None yet.

@@ -31,15 +31,15 @@ struct StormSetupWgrib2ClientTests {
 
     @Test("wgrib2 client builds safe arguments with optional match pattern")
     func makeArgumentsIncludesOptionalMatchOnlyWhenProvided() throws {
-        let client = Wgrib2Client(
-            configuration: .init(
-                gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
-                gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
-                gribSubsetMaximumByteCount: 25 * 1024 * 1024,
-                wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/wgrib2"),
-                wgrib2TimeoutSeconds: 15
-            )
+        let configuration = StormSetupConfiguration(
+            gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
+            sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
+            gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
+            gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+            wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/wgrib2"),
+            wgrib2TimeoutSeconds: 15
         )
+        let client = Wgrib2Client(configuration: configuration)
         let fileURL = URL(fileURLWithPath: "/tmp/sample.grib2")
 
         let withoutMatch = client.makeArguments(

@@ -9,10 +9,15 @@ import Foundation
 import Vapor
 
 struct StormSetupConfiguration: Sendable, Equatable {
-    static let localGribSubsetCacheRootURL = FileManager.default.temporaryDirectory
+    static let localStormSetupCacheRootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("arcus-signal", isDirectory: true)
         .appendingPathComponent("storm-setup", isDirectory: true)
+
+    static let localGribSubsetCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("grib-subsets", isDirectory: true)
+
+    static let localSampledSnapshotCacheRootURL = localStormSetupCacheRootURL
+        .appendingPathComponent("sampled-snapshots", isDirectory: true)
 
     static let localWgrib2ExecutableURL = URL(
         fileURLWithPath: "/Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2"
@@ -20,6 +25,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
 
     static let `default` = StormSetupConfiguration(
         gribSubsetCacheRootURL: localGribSubsetCacheRootURL,
+        sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
         gribSubsetMaximumByteCount: 25 * 1024 * 1024,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
@@ -27,6 +33,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
     )
 
     let gribSubsetCacheRootURL: URL
+    let sampledSnapshotCacheRootURL: URL
     let gribSubsetCacheRetentionSeconds: TimeInterval
     let gribSubsetMaximumByteCount: Int
     let wgrib2ExecutableURL: URL
