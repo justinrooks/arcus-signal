@@ -98,6 +98,25 @@ public struct DispatchAgent {
         on database: any Database,
         logger: Logger
     ) async throws -> Bool {
+        let existing = try await ArcusNotificationOutboxModel.query(on: database)
+            .group(.and) { group in
+                group.filter(\.$series.$id == seriesId)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .filter(\.$mode == mode.rawValue)
+            }
+            .first()
+
+        if let existing {
+            return try await handleExistingNotificationDispatchOutbox(
+                existing,
+                revisionUrn: revisionUrn,
+                reason: reason,
+                mode: mode,
+                on: database,
+                logger: logger
+            )
+        }
+
         let outboxRecord = ArcusNotificationOutboxModel(
             series: seriesId,
             revisionUrn: revisionUrn,
@@ -107,7 +126,7 @@ public struct DispatchAgent {
             attempts: 0,
             availableAt: .now
         )
-        
+
         do {
             try await outboxRecord.create(on: database)
             return true
@@ -122,27 +141,14 @@ public struct DispatchAgent {
                     .first()
 
                 if let existing {
-                    let previousState = existing.state
-                    let shouldResetForDispatch = existing.state != "ready" || existing.availableAt > .now || existing.reason != reason.rawValue
-
-                    if shouldResetForDispatch {
-                        existing.state = "ready"
-                        existing.reason = reason.rawValue
-                        existing.attempts = 0
-                        existing.lastError = nil
-                        existing.availableAt = .now
-                        try await existing.update(on: database)
-
-                        logger.info(
-                            "Notification dispatch re-queued for revision.",
-                            metadata: [
-                                "revisionUrn": .string(revisionUrn),
-                                "mode": .string(mode.rawValue),
-                                "previousState": .string(previousState)
-                            ]
-                        )
-                        return true
-                    }
+                    return try await handleExistingNotificationDispatchOutbox(
+                        existing,
+                        revisionUrn: revisionUrn,
+                        reason: reason,
+                        mode: mode,
+                        on: database,
+                        logger: logger
+                    )
                 }
 
                 logger.debug(
@@ -157,5 +163,58 @@ public struct DispatchAgent {
 
             throw error
         }
+    }
+
+    private static func handleExistingNotificationDispatchOutbox(
+        _ existing: ArcusNotificationOutboxModel,
+        revisionUrn: String,
+        reason: NotificationReason,
+        mode: NotificationTargetMode,
+        on database: any Database,
+        logger: Logger
+    ) async throws -> Bool {
+        let previousState = existing.state
+
+        if existing.state == "done" {
+            logger.debug(
+                "Notification dispatch already completed for revision.",
+                metadata: [
+                    "revisionUrn": .string(revisionUrn),
+                    "mode": .string(mode.rawValue),
+                    "previousState": .string(previousState)
+                ]
+            )
+            return false
+        }
+
+        let shouldResetForDispatch = existing.state != "ready" || existing.availableAt > .now || existing.reason != reason.rawValue
+
+        if shouldResetForDispatch {
+            existing.state = "ready"
+            existing.reason = reason.rawValue
+            existing.attempts = 0
+            existing.lastError = nil
+            existing.availableAt = .now
+            try await existing.update(on: database)
+
+            logger.info(
+                "Notification dispatch re-queued for revision.",
+                metadata: [
+                    "revisionUrn": .string(revisionUrn),
+                    "mode": .string(mode.rawValue),
+                    "previousState": .string(previousState)
+                ]
+            )
+            return true
+        }
+
+        logger.debug(
+            "Notification dispatch already queued for revision.",
+            metadata: [
+                "revisionUrn": .string(revisionUrn),
+                "mode": .string(mode.rawValue)
+            ]
+        )
+        return false
     }
 }

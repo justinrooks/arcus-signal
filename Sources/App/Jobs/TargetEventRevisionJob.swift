@@ -185,16 +185,15 @@ private extension TargetEventRevisionJob {
                     "Geolocation unchanged; skipping update.",
                     metadata: ["seriesId": .string(payload.seriesId.uuidString)]
                 )
-                return .succeeded
+            } else {
+                existing.geometry = payload.geometry
+                existing.geometryHash = geometryHash
+                existing.h3Cells = cover.cells
+                existing.h3Resolution = h3Resolution
+                existing.h3Hash = cover.hash
+                try await existing.update(on: database)
+                logger.info("Updated geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
             }
-
-            existing.geometry = payload.geometry
-            existing.geometryHash = geometryHash
-            existing.h3Cells = cover.cells
-            existing.h3Resolution = h3Resolution
-            existing.h3Hash = cover.hash
-            try await existing.update(on: database)
-            logger.info("Updated geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
         } else {
             let geoRecord = ArcusGeolocationModel(
                 series: payload.seriesId,
