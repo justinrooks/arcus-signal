@@ -151,8 +151,9 @@ struct TargetEventRevisionJobFallbackTests {
                 .filter(\.$mode, .equal, NotificationTargetMode.h3.rawValue)
                 .all()
             #expect(h3Rows.count == 1)
-            #expect(h3Rows.first?.state == "ready")
-            #expect(h3Rows.first?.attempts == 0)
+            #expect(h3Rows.first?.state == "done")
+            #expect(h3Rows.first?.attempts == 1)
+            #expect(h3Rows.first?.lastError == nil)
         }
     }
 
@@ -180,6 +181,11 @@ struct TargetEventRevisionJobFallbackTests {
                 h3Resolution: 8,
                 h3Hash: cover.h3Hash
             ).create(on: app.db)
+            try await ArcusTargetDispatchOutboxModel(
+                revisionUrn: revisionUrn,
+                seriesId: seriesID,
+                payload: payload
+            ).create(on: app.db)
 
             try await TargetEventRevisionJob().dequeue(makeQueueContext(app: app), payload)
 
@@ -195,8 +201,9 @@ struct TargetEventRevisionJobFallbackTests {
                 .all()
 
             #expect(h3Rows.count == 1)
-            #expect(h3Rows.first?.state == "ready")
-            #expect(h3Rows.first?.attempts == 0)
+            #expect(h3Rows.first?.state == "done")
+            #expect(h3Rows.first?.attempts == 1)
+            #expect(h3Rows.first?.lastError == nil)
         }
     }
 
@@ -223,6 +230,14 @@ struct TargetEventRevisionJobFallbackTests {
                 h3Cells: cover.h3Cells,
                 h3Resolution: 8,
                 h3Hash: cover.h3Hash
+            ).create(on: app.db)
+            try await ArcusTargetDispatchOutboxModel(
+                revisionUrn: revisionUrn,
+                seriesId: seriesID,
+                payload: payload,
+                attemptCount: 1,
+                completed: now,
+                result: "succeeded"
             ).create(on: app.db)
             try await ArcusNotificationOutboxModel(
                 series: seriesID,
