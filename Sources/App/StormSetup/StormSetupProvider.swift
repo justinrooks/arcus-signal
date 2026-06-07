@@ -29,20 +29,15 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         let runResolution = hrrrRunResolver.resolveRunCandidates()
         let sourceMetadata: StormSetupSourceMetadata
         let freshness: IngredientFreshness
+        let assessment: TornadoIngredientAssessment
+        let raw = TornadoRawParameters.empty
 
         if let candidate = runResolution.primaryCandidate {
             sourceMetadata = hrrrNomadsURLBuilder.makeSourceMetadata(
                 for: candidate,
                 around: resolved.centroid
             )
-            freshness = IngredientFreshness(
-                sourceValidTime: candidate.validTime,
-                modelRunTime: candidate.runTime,
-                forecastHour: candidate.forecastHour,
-                fetchedAt: fetchedAt,
-                expiresAt: nil,
-                isStale: true
-            )
+            freshness = IngredientFreshness.make(source: sourceMetadata, fetchedAt: fetchedAt)
         } else {
             sourceMetadata = StormSetupSourceMetadata(
                 model: nil,
@@ -55,65 +50,17 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 bbox: nil,
                 nomadsURL: nil
             )
-            freshness = IngredientFreshness(
-                sourceValidTime: nil,
-                modelRunTime: nil,
-                forecastHour: nil,
-                fetchedAt: fetchedAt,
-                expiresAt: nil,
-                isStale: true
-            )
+            freshness = IngredientFreshness.make(source: sourceMetadata, fetchedAt: fetchedAt)
         }
+
+        assessment = TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness)
 
         return TornadoIngredientSnapshot(
             h3Cell: resolved.h3Cell,
             centroid: resolved.centroid,
             source: sourceMetadata,
-            raw: TornadoRawParameters(
-                sbcapeJkg: nil,
-                mlcapeJkg: nil,
-                mucapeJkg: nil,
-                mlcinJkg: nil,
-                dcapeJkg: nil,
-                mllclM: nil,
-                temperatureDewpointSpreadF: nil,
-                lclLfcSeparationM: nil,
-                lapseRate03kmCkm: nil,
-                lapseRate700500mbCkm: nil,
-                shear06kmKt: nil,
-                shear03kmKt: nil,
-                shear01kmKt: nil,
-                effectiveShearKt: nil,
-                srh01kmM2s2: nil,
-                srh03kmM2s2: nil,
-                effectiveSrhM2s2: nil,
-                supercellComposite: nil,
-                significantTornadoFixed: nil,
-                significantTornadoEffective: nil,
-                significantHail: nil,
-                bunkersRightMotion: nil,
-                bunkersLeftMotion: nil,
-                stormRelativeWind46km: nil,
-                meanWind850300mb: nil,
-                diagnostics: nil
-            ),
-            assessment: TornadoIngredientAssessment(
-                overall: nil,
-                instability: nil,
-                moisture: nil,
-                cloudBase: nil,
-                capInhibition: nil,
-                deepShear: nil,
-                lowLevelRotation: nil,
-                stormMode: nil,
-                compositeSignal: nil,
-                confidence: nil,
-                trend: nil,
-                stormModeHint: nil,
-                primaryDrivers: nil,
-                limitingFactors: nil,
-                summary: nil
-            ),
+            raw: raw,
+            assessment: assessment,
             freshness: freshness
         )
     }

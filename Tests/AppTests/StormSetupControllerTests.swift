@@ -43,7 +43,12 @@ struct StormSetupControllerTests {
                 #expect(snapshot.source.nomadsURL?.absoluteString.contains("filter_hrrr_2d.pl") == true)
                 #expect(snapshot.freshness.modelRunTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
                 #expect(snapshot.freshness.sourceValidTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-                #expect(snapshot.freshness.isStale)
+                #expect(snapshot.freshness.expiresAt == makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 30))
+                #expect(snapshot.freshness.isStale == false)
+                #expect(snapshot.freshness.isDegraded == false)
+                #expect(snapshot.assessment.overall == .unknown)
+                #expect(snapshot.assessment.confidence == .degraded)
+                #expect(snapshot.assessment.summary.contains("not enough ingredient data"))
             })
         }
     }
@@ -104,8 +109,9 @@ struct StormSetupControllerTests {
                 #expect(snapshot.source.model == .hrrr)
                 #expect(snapshot.source.nomadsURL != nil)
                 #expect(snapshot.raw.sbcapeJkg == nil)
-                #expect(snapshot.assessment.overall == nil)
-                #expect(snapshot.freshness.isStale)
+                #expect(snapshot.assessment.overall == .unknown)
+                #expect(snapshot.assessment.confidence == .degraded)
+                #expect(snapshot.freshness.isStale == false)
             })
         }
     }

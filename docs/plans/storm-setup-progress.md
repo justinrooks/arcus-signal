@@ -427,7 +427,7 @@ Related GitHub issues:
 - `#74` - https://github.com/justinrooks/arcus-signal/issues/74
 
 ### Status
-- Not started
+- Completed
 
 ### Scope
 - Define assessment enums:
@@ -453,19 +453,55 @@ Related GitHub issues:
 - `Example JSON response`
 
 ### Handoff notes
-- None yet.
+- `TornadoIngredientAssessment` is now a stable nonoptional payload with `overall`, per-pillar support values, `confidence`, `trend`, `stormModeHint`, `primaryDrivers`, `limitingFactors`, and a calm summary string.
+- `IngredientFreshness` now derives from source timing metadata and exposes `expiresAt`, `isStale`, and `isDegraded`.
+- The new interpreter keeps `trend` and `stormModeHint` at `unknown` because this slice does not yet have defensible history or storm-mode signals.
+- `DefaultStormSetupProvider` now routes snapshot construction through the new freshness and assessment helpers instead of returning placeholder `nil` assessment fields.
+- The controller contract is unchanged, but the returned JSON now carries explicit unknown/degraded semantics instead of nullable assessment fields.
+- Issue `#76` should consume these stable models and add the sampled snapshot cache around them without changing the interpretation rules again unless a bug is found.
 
 ### Files changed
-- None yet.
+- `Sources/App/StormSetup/StormSetupModels.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/IngredientFreshness.swift`
+- `Sources/App/StormSetup/StormSetupRulesVersion.swift`
+- `Sources/App/StormSetup/TornadoIngredientAssessment.swift`
+- `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
+- `Sources/App/StormSetup/TornadoRawParameters+Empty.swift`
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
 
 ### Tests run
-- None yet.
+- `swift test --filter TornadoIngredientInterpreterTests` - passed
+- `swift test --filter StormSetupControllerTests` - passed
+- `swift test` - passed
+- Full suite completed with existing unrelated Vapor/deprecation warnings elsewhere in the codebase, but no failures.
+
+### Assessment threshold decisions
+- Instability uses the strongest available CAPE signal, with weak/conditional/supportive/strong cutoffs at `<500`, `<1000`, `<2000`, and `>=2000` J/kg.
+- Deep shear uses the strongest available 0-6 km or effective shear signal, with cutoffs at `<30`, `<40`, `<55`, and `>=55` kt.
+- Low-level rotation uses the strongest available SRH signal, with cutoffs at `<75`, `<175`, `<250`, and `>=250` m2/s2.
+- Cloud-base favorability combines MLLCL and temperature/dewpoint spread and stays conservative when either field is missing or high.
+- Overall support only reaches `strong` when multiple core pillars are strong and the composite signal also agrees; `conditional` stays first-class when rotation is merely modest.
+
+### Freshness / degraded decisions
+- Freshness is derived from source valid time, run time, forecast hour, fetched at, and a fixed 90-minute validity window by default.
+- `isStale` flips when the fetched time is beyond the derived expiry.
+- `isDegraded` is reserved for stale timing metadata or missing source timing inputs.
+- Assessment `confidence` becomes `degraded` when freshness is degraded or too few core pillars are available; missing composite data alone now lowers confidence without pretending to know more than we do.
 
 ### Deferred
-- Trend from multi-run comparison unless trivial.
-- Full storm-mode diagnosis.
+- Multi-run trend computation. `trend` remains `unknown` until real history is available.
+- Full storm-mode diagnosis. `stormModeHint` remains `unknown` until a defensible signal exists.
+- Actual sampled raw HRRR data in the provider/controller path. That remains issue `#75`.
+- Sample cache persistence. That is issue `#76`.
 - Push notification wording.
 - SwiftUI presentation.
+
+### Risks / open questions
+- The provider still emits `TornadoRawParameters.empty` until the orchestration issue wires real sampled raw values through the snapshot path.
+- The current rules are deliberately conservative. They are explainable, but they are not a meteorology simulator wearing a fake mustache.
+- If future HRRR fields supply a real storm-mode signal, `stormModeHint` should be updated in one place, not smeared across the controller or cache layers.
 
 ---
 
