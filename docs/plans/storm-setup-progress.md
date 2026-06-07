@@ -70,6 +70,7 @@ Related GitHub issues:
   - `/Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2`
 - Issue `#69` is complete.
 - Issue `#70` is complete.
+- Issue `#71` is complete.
 - No later Storm Setup issue has been started.
 
 ---
@@ -223,7 +224,7 @@ Related GitHub issues:
 - `#71` - https://github.com/justinrooks/arcus-signal/issues/71
 
 ### Status
-- Not started
+- Complete
 
 ### Scope
 - Add deterministic HRRR source selection.
@@ -239,19 +240,39 @@ Related GitHub issues:
 - `Caching model`
 
 ### Handoff notes
-- None yet.
+- Deterministic HRRR source selection now resolves the current-setup target valid hour by rounding the current UTC clock down to the hour, then emits ordered candidate runs from newest plausible to older fallbacks within a six-hour lookback window.
+- The selected candidate now carries explicit HRRR metadata in `StormSetupSourceMetadata`: model, product, domain, run time, forecast hour, valid time, field set version, bbox, and NOMADS URL.
+- `HrrrNomadsURLBuilder` builds the official NOMADS `filter_hrrr_2d.pl` subset URL for `tornado-v1` with the required field and level flags, a small bbox around the H3 centroid, and an encoded `dir` query value.
+- The small bbox assumption is `0.30°` wide by `0.35°` tall around the H3 centroid.
+- The lookup policy is intentionally simple and deterministic. It does not check live NOMADS availability yet; issue `#72` will handle download and cache use.
+- Issue `#72` should consume the ordered candidate list and URL metadata as-is. Do not widen this issue back into download or cache work.
 
 ### Files changed
-- None yet.
+- `Sources/App/StormSetup/HrrrSourceModels.swift`
+- `Sources/App/StormSetup/HrrrRunResolver.swift`
+- `Sources/App/StormSetup/HrrrNomadsURLBuilder.swift`
+- `Sources/App/StormSetup/StormSetupModels.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/configure.swift`
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `Tests/AppTests/StormSetupHrrrSourceTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
 
 ### Tests run
-- None yet.
+- `swift test --filter 'StormSetupHrrrSourceTests|StormSetupControllerTests|StormSetupWgrib2ClientTests'` - passed
+- `swift test` - passed
+- Both runs completed with existing unrelated deprecation warnings elsewhere in the codebase, but no failures.
 
 ### Deferred
 - HTTP download.
 - Filesystem cache.
 - `wgrib2` execution.
 - Assessment rules.
+- Raw parameter normalization.
+
+### Risks / open questions
+- The current selection policy uses the rounded-down UTC hour and a six-hour fallback window. That is conservative for a current-setup slice but not a live availability guarantee.
+- The bbox assumption is intentionally small and local-dev friendly; if the eventual sampled footprint proves too tight or too noisy, issue `#72` or `#73` can widen or tighten it.
 
 ---
 

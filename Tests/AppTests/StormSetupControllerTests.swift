@@ -18,6 +18,36 @@ struct StormSetupControllerTests {
         try await app.asyncShutdown()
     }
 
+    @Test("GET /api/v1/storm-setup/current returns source metadata from the selected HRRR candidate")
+    func currentResponseIncludesSelectedSourceMetadata() async throws {
+        try await withApp { app in
+            let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+            app.stormSetupProvider = DefaultStormSetupProvider(
+                dateProvider: FixedStormSetupDateProvider(nowDate: fixedNow)
+            )
+
+            let inputH3: Int64 = 617700169958293503
+
+            try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=\(inputH3)", afterResponse: { res async throws in
+                #expect(res.status == .ok)
+
+                let snapshot = try res.content.decode(TornadoIngredientSnapshot.self)
+                #expect(snapshot.source.model == .hrrr)
+                #expect(snapshot.source.product == .wrfsfc)
+                #expect(snapshot.source.domain == .conus)
+                #expect(snapshot.source.fieldSetVersion == .tornadoV1)
+                #expect(snapshot.source.runTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(snapshot.source.forecastHour == 0)
+                #expect(snapshot.source.validTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(snapshot.source.bbox != nil)
+                #expect(snapshot.source.nomadsURL?.absoluteString.contains("filter_hrrr_2d.pl") == true)
+                #expect(snapshot.freshness.modelRunTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(snapshot.freshness.sourceValidTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(snapshot.freshness.isStale)
+            })
+        }
+    }
+
     @Test("GET /api/v1/storm-setup/current rejects a missing h3 query parameter")
     func missingH3ReturnsBadRequest() async throws {
         try await withApp { app in
@@ -59,6 +89,10 @@ struct StormSetupControllerTests {
     @Test("GET /api/v1/storm-setup/current encodes the snapshot contract")
     func currentResponseEncodesSuccessfully() async throws {
         try await withApp { app in
+            let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+            app.stormSetupProvider = DefaultStormSetupProvider(
+                dateProvider: FixedStormSetupDateProvider(nowDate: fixedNow)
+            )
             let inputH3: Int64 = 617700169958293503
 
             try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=\(inputH3)", afterResponse: { res async throws in
@@ -67,7 +101,8 @@ struct StormSetupControllerTests {
 
                 let snapshot = try res.content.decode(TornadoIngredientSnapshot.self)
                 #expect(snapshot.h3Cell == inputH3)
-                #expect(snapshot.source.model == nil)
+                #expect(snapshot.source.model == .hrrr)
+                #expect(snapshot.source.nomadsURL != nil)
                 #expect(snapshot.raw.sbcapeJkg == nil)
                 #expect(snapshot.assessment.overall == nil)
                 #expect(snapshot.freshness.isStale)
@@ -80,4 +115,37 @@ private extension Double {
     func isApproximatelyEqual(to other: Double, tolerance: Double = 0.0000000001) -> Bool {
         abs(self - other) <= tolerance
     }
+}
+
+private struct FixedStormSetupDateProvider: StormSetupDateProviding {
+    let nowDate: Date
+
+    func now() -> Date {
+        nowDate
+    }
+}
+
+private func makeUTCDate(
+    year: Int,
+    month: Int,
+    day: Int,
+    hour: Int,
+    minute: Int = 0,
+    second: Int = 0
+) -> Date {
+    let components = DateComponents(
+        timeZone: TimeZone(secondsFromGMT: 0),
+        year: year,
+        month: month,
+        day: day,
+        hour: hour,
+        minute: minute,
+        second: second
+    )
+
+    guard let date = StormSetupUTC.calendar.date(from: components) else {
+        preconditionFailure("Unable to create UTC date for test.")
+    }
+
+    return date
 }

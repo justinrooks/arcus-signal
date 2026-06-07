@@ -56,8 +56,8 @@ struct StormSetupWgrib2ClientTests {
             )
         )
 
-        #expect(withoutMatch == ["/tmp/sample.grib2", "-lon", "-104.4661", "39.7825"])
-        #expect(withMatch == ["/tmp/sample.grib2", "-match", ":CAPE:", "-lon", "-104.4661", "39.7825"])
+        #expect(withoutMatch == ["/tmp/sample.grib2", "-s", "-lon", "-104.4661", "39.7825"])
+        #expect(withMatch == ["/tmp/sample.grib2", "-match", ":CAPE:", "-s", "-lon", "-104.4661", "39.7825"])
     }
 
     @Test("process runner captures stdout and stderr for successful commands")

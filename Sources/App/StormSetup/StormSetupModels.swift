@@ -16,10 +16,15 @@ struct StormSetupCentroid: Content, Sendable {
 }
 
 struct StormSetupSourceMetadata: Content, Sendable {
-    let model: String?
+    let model: HrrrModel?
+    let product: HrrrProduct?
+    let domain: HrrrDomain?
     let runTime: Date?
     let forecastHour: Int?
     let validTime: Date?
+    let fieldSetVersion: HrrrFieldSetVersion?
+    let bbox: StormSetupHrrrBoundingBox?
+    let nomadsURL: URL?
 }
 
 struct TornadoRawParameters: Content, Sendable {
