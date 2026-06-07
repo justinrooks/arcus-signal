@@ -7,6 +7,10 @@
 
 import Foundation
 
+protocol Wgrib2Sampling: Sendable {
+    func samplePoint(_ request: Wgrib2PointRequest) async throws -> [Wgrib2PointSample]
+}
+
 struct Wgrib2Client: Sendable {
     let configuration: StormSetupConfiguration
     let runner: ProcessRunner
@@ -61,3 +65,5 @@ struct Wgrib2Client: Sendable {
         return trimmed.isEmpty ? nil : trimmed
     }
 }
+
+extension Wgrib2Client: Wgrib2Sampling {}

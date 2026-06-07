@@ -31,6 +31,7 @@ struct TornadoRawParameters: Content, Sendable {
     let sbcapeJkg: Double?
     let mlcapeJkg: Double?
     let mucapeJkg: Double?
+    let mlcinJkg: Double?
     let dcapeJkg: Double?
     let mllclM: Double?
     let temperatureDewpointSpreadF: Double?
@@ -52,11 +53,35 @@ struct TornadoRawParameters: Content, Sendable {
     let bunkersLeftMotion: DirectionSpeed?
     let stormRelativeWind46km: DirectionSpeed?
     let meanWind850300mb: DirectionSpeed?
+    let diagnostics: [TornadoRawParameterDiagnostic]?
 }
 
 struct DirectionSpeed: Content, Sendable {
     let directionDegrees: Double
     let speedKt: Double
+}
+
+enum TornadoRawParameterKey: String, Content, Sendable {
+    case sbcapeJkg
+    case mlcapeJkg
+    case mucapeJkg
+    case mlcinJkg
+    case srh01kmM2s2
+    case srh03kmM2s2
+    case effectiveSrhM2s2
+    case shear06kmKt
+    case effectiveShearKt
+    case mllclM
+}
+
+struct TornadoRawParameterDiagnostic: Content, Sendable {
+    let inventory: String
+    let parsedValue: Double?
+    let matchedRawParameterKey: TornadoRawParameterKey?
+    let requestedLongitude: Double
+    let requestedLatitude: Double
+    let nearestLongitude: Double?
+    let nearestLatitude: Double?
 }
 
 struct TornadoIngredientAssessment: Content, Sendable {

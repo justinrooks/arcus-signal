@@ -20,6 +20,10 @@ struct Wgrib2PointSample: Sendable, Codable, Equatable {
     let latitude: Double?
     let value: Double?
 
+    var inventoryDescriptor: Wgrib2InventoryDescriptor? {
+        Wgrib2InventoryDescriptor.parse(from: inventory)
+    }
+
     static func parse(from line: String) -> Wgrib2PointSample {
         Wgrib2PointSample(
             inventory: line,
@@ -44,5 +48,36 @@ struct Wgrib2PointSample: Sendable, Codable, Equatable {
         }
 
         return Double(numericSubstring)
+    }
+}
+
+struct Wgrib2InventoryDescriptor: Sendable, Codable, Equatable {
+    let variable: String
+    let level: String
+    let forecastLabel: String?
+    let rawInventoryPrefix: String
+
+    static func parse(from inventory: String) -> Wgrib2InventoryDescriptor? {
+        let prefix = inventory.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? inventory
+        let components = prefix.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+
+        guard components.count >= 5 else {
+            return nil
+        }
+
+        let variable = components[3].trimmingCharacters(in: .whitespacesAndNewlines)
+        let level = components[4].trimmingCharacters(in: .whitespacesAndNewlines)
+        let forecastLabel = components.dropFirst(5).joined(separator: ":").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !variable.isEmpty, !level.isEmpty else {
+            return nil
+        }
+
+        return Wgrib2InventoryDescriptor(
+            variable: variable,
+            level: level,
+            forecastLabel: forecastLabel.isEmpty ? nil : forecastLabel,
+            rawInventoryPrefix: prefix
+        )
     }
 }

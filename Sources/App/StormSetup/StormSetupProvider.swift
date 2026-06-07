@@ -73,6 +73,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 sbcapeJkg: nil,
                 mlcapeJkg: nil,
                 mucapeJkg: nil,
+                mlcinJkg: nil,
                 dcapeJkg: nil,
                 mllclM: nil,
                 temperatureDewpointSpreadF: nil,
@@ -93,7 +94,8 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 bunkersRightMotion: nil,
                 bunkersLeftMotion: nil,
                 stormRelativeWind46km: nil,
-                meanWind850300mb: nil
+                meanWind850300mb: nil,
+                diagnostics: nil
             ),
             assessment: TornadoIngredientAssessment(
                 overall: nil,

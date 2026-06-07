@@ -341,7 +341,7 @@ Related GitHub issues:
 - `#73` - https://github.com/justinrooks/arcus-signal/issues/73
 
 ### Status
-- Not started
+- Complete
 
 ### Scope
 - Use `Wgrib2Client` against cached GRIB subsets.
@@ -357,19 +357,67 @@ Related GitHub issues:
 - `Example JSON response`
 
 ### Handoff notes
-- None yet.
+- `HrrrFieldSampler` now wraps cached GRIB subset files with the hardened `Wgrib2Client` seam and preserves the requested centroid coordinates alongside each sampled `Wgrib2PointSample`.
+- `GribInventoryFieldMap` performs explicit variable + level matching from wgrib2 inventory text and drives deterministic normalization.
+- `TornadoIngredientNormalizer` produces `TornadoRawParameters` plus raw sample diagnostics without throwing on missing, unmatched, or non-numeric values.
+- Raw diagnostics now preserve inventory text, parsed value, matched raw parameter key, requested lon/lat, and nearest grid lon/lat when wgrib2 provides it.
+- `TornadoRawParameters` now includes `mlcinJkg` and an optional `diagnostics` array so the response shape can carry the raw sampling trail forward into issue `#75`.
+- `VUCSH`/`VVCSH` are converted from m/s to knots for `shear06kmKt` using the explicit factor `1.9438444924406`.
+- `HGT` at the level of adiabatic condensation from surface is carried through as `mllclM` without further conversion.
+- Issue `#74` should start from the normalized raw fields and the current nil surface for unsupported fields. Do not re-open the sampler/normalizer seam unless a field-map bug is proven.
 
 ### Files changed
-- None yet.
+- `Sources/App/StormSetup/GribInventoryFieldMap.swift`
+- `Sources/App/StormSetup/HrrrFieldSampler.swift`
+- `Sources/App/StormSetup/StormSetupModels.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/TornadoIngredientNormalizer.swift`
+- `Sources/App/StormSetup/Wgrib2Client.swift`
+- `Sources/App/StormSetup/Wgrib2PointSample.swift`
+- `Tests/AppTests/StormSetupIngredientNormalizationTests.swift`
 
 ### Tests run
-- None yet.
+- `swift test --filter StormSetupIngredientNormalizationTests` - passed
+- `swift test --filter StormSetup` - passed
+- `swift test` - passed
+- Full suite completed with existing unrelated deprecation warnings only; no failures.
 
 ### Deferred
-- Interpretation/scoring.
+- Interpretation/scoring (`#74`).
+- Provider/controller end-to-end orchestration (`#75`).
+- Sampled JSON cache (`#76`).
 - Database persistence.
 - Full sounding reconstruction.
 - SPC fallback.
+- Effective SRH, effective shear, and storm-motion/vector fields remain nil until the current HRRR 2D slice supports them without guesswork.
+
+### Confirmed field mappings
+- `CAPE:surface` -> `sbcapeJkg`
+- `CAPE:90-0 mb above ground` -> `mlcapeJkg`
+- `CAPE:255-0 mb above ground` -> `mucapeJkg`
+- `CIN:90-0 mb above ground` -> `mlcinJkg`
+- `HLCY:1000-0 m above ground` or `HLCY:0-1 km above ground` -> `srh01kmM2s2`
+- `HLCY:3000-0 m above ground` or `HLCY:0-3 km above ground` -> `srh03kmM2s2`
+- `VUCSH` + `VVCSH` at `0-6000 m above ground` or `0-6 km above ground` -> `shear06kmKt` via vector magnitude and explicit m/s to kt conversion
+- `HGT` at the level of adiabatic condensation from sfc/surface -> `mllclM`
+
+### Uncertain / deferred field mappings
+- `effectiveSrhM2s2`
+- `effectiveShearKt`
+- `bunkersRightMotion`
+- `bunkersLeftMotion`
+- `stormRelativeWind46km`
+- `meanWind850300mb`
+- Any CAPE/CIN layer beyond the explicit inventory combinations above should remain nil unless a later issue proves a deterministic, documented mapping.
+
+### Unit conversion decisions
+- `shear06kmKt` is derived from `VUCSH`/`VVCSH` in m/s using `hypot(u, v) * 1.9438444924406`.
+- `mllclM` uses the HRRR `HGT` height value directly as a meters-like raw field.
+- CAPE/CIN and SRH values are passed through without additional unit conversion.
+
+### Risks / open questions
+- The CAPE/CIN layer semantics are explicit in the current field map and validated by tests, but they remain the most inference-heavy piece of the slice because HRRR exposes them as fixed layer selections rather than labeled parcel types.
+- `#74` should decide how to interpret the raw fields and whether any of the currently nil fields should become part of the assessment model.
 
 ---
 
