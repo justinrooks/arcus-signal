@@ -23,10 +23,14 @@ Related GitHub issues:
 - `#72` - NOMADS GRIB subset download and local filesystem cache
 - `#73` - HRRR field sampling and raw-parameter normalization
 - `#74` - Tornado ingredient assessment and freshness/degraded semantics
-- `#76` - Local sampled snapshot cache keyed by H3/source/rules version
 - `#75` - Provider/controller orchestration for local end-to-end snapshots
+- `#76` - Local sampled snapshot cache keyed by H3/source/rules version
+- `#77` - ProcessRunner stdout/stderr draining
+- `#78` - Lazy/API-scoped provider wiring
 - `#79` - Progress log status, open questions, and verification ledger reconciliation
 - `#80` - Replace production precondition failures with explicit errors
+- `#81` - Package `wgrib2` into Docker image
+- `#82` - Configure Docker runtime paths and caches
 
 ---
 
@@ -63,6 +67,9 @@ Related GitHub issues:
 
 - GitHub parent issue and child issues have been created.
 - Storm Setup runbook and progress documents have been created.
+- The implementation chain through `#75`, `#76`, `#77`, `#78`, and `#80` is complete.
+- Issue `#79` is this reconciliation pass and is complete with this update.
+- The next runtime follow-up is `#81` unless the actual issue tracker still has `#77`, `#78`, or `#80` open.
 - Initial source scaffolding exists in the working tree:
   - `Sources/App/Controllers/StormSetupController.swift`
   - `Sources/App/StormSetup/GribAdapter.swift`
@@ -74,9 +81,22 @@ Related GitHub issues:
 - Issue `#70` is complete.
 - Issue `#71` is complete.
 - Issue `#72` is complete.
+- Issue `#73` is complete.
+- Issue `#74` is complete.
+- Issue `#75` is complete.
+- Issue `#76` is complete.
 - Issue `#77` is complete.
+- Issue `#78` is complete.
 - Issue `#80` is complete.
-- Issue `#79` remains open and unstarted.
+
+## Follow-up Sequence
+
+- `#77` - ProcessRunner stdout/stderr draining: complete.
+- `#78` - Lazy/API-scoped provider wiring: complete.
+- `#79` - Progress log status, open questions, and verification ledger reconciliation: complete.
+- `#80` - Replace production precondition failures with explicit errors: complete.
+- `#81` - Package `wgrib2` into Docker image: next runtime follow-up.
+- `#82` - Configure Docker runtime paths and caches: queued after Docker packaging.
 
 ## Issue #78 - Storm Setup provider wiring stays lazy and API-scoped
 
@@ -115,7 +135,7 @@ Related GitHub issues:
 - If later issues need API-scoped setup, prefer route/controller-local wiring over broad bootstrap changes.
 - Do not reintroduce global provider construction in `configure.swift`; the current ownership boundary is now correct.
 
-## Issue 7 - Production helper traps become explicit errors
+## Issue #80 - Production helper traps become explicit errors
 
 ### GitHub
 - `#80` - https://github.com/justinrooks/arcus-signal/issues/80
@@ -159,9 +179,40 @@ Related GitHub issues:
 - No broader error-model cleanup outside `Sources/App/StormSetup`.
 
 ### Handoff notes for issue #79
-- Use this section as the current verified state for the Storm Setup runtime changes.
-- Issue `#79` should stay focused on progress-log reconciliation only; do not reopen the helper refactor or add more runtime edits as part of that documentation pass.
+- Use this section as the verified state for the Storm Setup runtime changes.
+- Issue `#79` stayed focused on progress-log reconciliation only; the helper refactor was not reopened and no runtime edits were added as part of that documentation pass.
 - The verification commands and file list above are the authoritative references for the completed runtime change.
+
+## Issue #79 - Progress log status, open questions, and verification ledger reconciliation
+
+### GitHub
+- `#79` - https://github.com/justinrooks/arcus-signal/issues/79
+
+### Status
+- Complete
+
+### Scope
+- Reconcile `docs/plans/storm-setup-progress.md` with the completed Storm Setup implementation history.
+- Mark the completed implementation chain accurately for `#69`, `#70`, `#71`, `#72`, `#73`, `#74`, `#76`, and `#75`.
+- Add the follow-up issue sequence for `#77`, `#78`, `#79`, `#80`, `#81`, and `#82`.
+- Remove stale open questions that were resolved by implementation decisions.
+- Replace the stale verification note with the review commands that were actually run.
+
+### Files changed
+- `docs/plans/storm-setup-progress.md`
+
+### Tests / commands run
+- `rg -n "No later Storm Setup issue has been started|No Storm Setup verification has been run yet|Open Questions" docs/plans/storm-setup-progress.md`
+
+### Deferred scope
+- No source code changes.
+- No runbook changes.
+- No additional Storm Setup runtime work.
+
+### Handoff notes for issue #81
+- The runtime implementation chain is complete through `#80`; the next work item should be `#81` unless the tracker still shows `#77`, `#78`, or `#80` incomplete.
+- Keep `docs/plans/storm-setup-progress.md` as the living handoff ledger and only update it when the tracker state changes again.
+- Do not reopen the resolved runtime decisions while packaging `wgrib2` or configuring Docker paths and caches.
 
 ---
 
@@ -772,16 +823,13 @@ Related GitHub issues:
 
 ## Open Questions
 
-1. Should the first route preserve the currently-started `GET /api/v1/storm-setup?h3=<cell>` shape temporarily, or immediately move to `GET /api/v1/storm-setup/current?h3=<cell>`?
-2. What exact local cache root should be used for GRIB subsets and sampled snapshots?
-3. How large should the v1 bbox around the H3 centroid be?
-4. Which HRRR forecast-hour fallback window is acceptable before returning degraded/unavailable?
-5. Which `wgrib2` inventory fields can be reliably mapped to effective shear and mixed-layer values from HRRR 2D products?
-6. Should the first endpoint return partial snapshots with degraded confidence when only some core fields are available, or fail until a minimum field set is present?
-7. Should sampled snapshot cache survive process restarts in v1, or is in-memory plus GRIB cache enough for the earliest local validation?
+- None remain for the completed Storm Setup slices. The remaining work is tracked in the follow-up issues, not in unresolved design questions.
 
 ---
 
 ## Verification Ledger
 
-No Storm Setup verification has been run yet.
+- `swift test --filter StormSetup` - passed during the Storm Setup review pass.
+- `swift build` - passed during the Storm Setup review pass.
+- `swift test` - passed during the Storm Setup review pass.
+- `rg -n "No later Storm Setup issue has been started|No Storm Setup verification has been run yet|Open Questions" docs/plans/storm-setup-progress.md` - passed as the reconciliation smoke check for issue `#79`.
