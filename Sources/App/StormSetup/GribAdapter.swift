@@ -6,7 +6,11 @@
 //
 
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 struct ProcessResult: Sendable {
     let stdout: String

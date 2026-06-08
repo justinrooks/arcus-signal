@@ -69,7 +69,8 @@ Related GitHub issues:
 - Storm Setup runbook and progress documents have been created.
 - The implementation chain through `#75`, `#76`, `#77`, `#78`, and `#80` is complete.
 - Issue `#79` is this reconciliation pass and is complete with this update.
-- The next runtime follow-up is `#81` unless the actual issue tracker still has `#77`, `#78`, or `#80` open.
+- Issue `#81` is complete with Docker packaging only.
+- The next runtime follow-up is `#82`.
 - Initial source scaffolding exists in the working tree:
   - `Sources/App/Controllers/StormSetupController.swift`
   - `Sources/App/StormSetup/GribAdapter.swift`
@@ -95,8 +96,8 @@ Related GitHub issues:
 - `#78` - Lazy/API-scoped provider wiring: complete.
 - `#79` - Progress log status, open questions, and verification ledger reconciliation: complete.
 - `#80` - Replace production precondition failures with explicit errors: complete.
-- `#81` - Package `wgrib2` into Docker image: next runtime follow-up.
-- `#82` - Configure Docker runtime paths and caches: queued after Docker packaging.
+- `#81` - Package `wgrib2` into Docker image: complete.
+- `#82` - Configure Docker runtime paths and caches: next runtime follow-up.
 
 ## Issue #78 - Storm Setup provider wiring stays lazy and API-scoped
 
@@ -183,6 +184,52 @@ Related GitHub issues:
 - Issue `#79` stayed focused on progress-log reconciliation only; the helper refactor was not reopened and no runtime edits were added as part of that documentation pass.
 - The verification commands and file list above are the authoritative references for the completed runtime change.
 
+## Issue #81 - Package `wgrib2` into Docker image
+
+### GitHub
+- `#81` - https://github.com/justinrooks/arcus-signal/issues/81
+
+### Status
+- Complete
+
+### Scope
+- Package `wgrib2` into the Docker image so the runtime container can execute `/usr/local/bin/wgrib2`.
+- Keep the existing build/runtime stage structure and the `vapor` user model intact.
+- Do not change Storm Setup runtime configuration, cache paths, or provider orchestration. That belongs to `#82`.
+
+### Files changed
+- `Dockerfile`
+- `Sources/App/StormSetup/GribAdapter.swift`
+- `Sources/App/StormSetup/GribSubsetCache.swift`
+- `Sources/App/StormSetup/StormSetupCacheKey.swift`
+- `docs/plans/storm-setup-progress.md`
+
+### Tests / commands run
+- `swift build`
+- `swift test --filter StormSetup`
+- `swift test`
+- `docker compose build api`
+- `docker compose run --rm api which wgrib2`
+- `docker compose run --rm api /usr/local/bin/wgrib2 -version`
+
+### Local verification notes
+- The Docker build now compiles `wgrib2` from upstream source in the build stage and copies the executable into the runtime image at `/usr/local/bin/wgrib2`.
+- The runtime container resolves `wgrib2` on `PATH` and also runs it directly from `/usr/local/bin/wgrib2`.
+- Verified runtime output from `wgrib2 -version` was `3.8.0`.
+- The command exited with status `8` after printing the version banner, which is acceptable for this binary and still proves the executable is present and callable in the runtime image.
+- The Docker build surfaced two Linux portability issues in existing Storm Setup support files, so I added conditional imports for `Darwin` vs `Glibc` and `CryptoKit` vs `Crypto` to let the container build succeed without changing runtime behavior.
+
+### Deferred scope
+- Docker runtime configuration for Storm Setup.
+- Container cache paths for GRIB subsets and sampled snapshots.
+- Provider/controller behavior changes.
+- Any HRRR, assessment, or endpoint logic changes.
+
+### Handoff notes for issue #82
+- Wire Storm Setup runtime config to use `/usr/local/bin/wgrib2` inside the container.
+- Move Docker cache roots to container-friendly paths for the GRIB subset cache and sampled snapshot cache.
+- Keep `#81` strictly limited to packaging. The binary is now in the image; the runtime still needs to point at it.
+
 ## Issue #79 - Progress log status, open questions, and verification ledger reconciliation
 
 ### GitHub
@@ -210,7 +257,7 @@ Related GitHub issues:
 - No additional Storm Setup runtime work.
 
 ### Handoff notes for issue #81
-- The runtime implementation chain is complete through `#80`; the next work item should be `#81` unless the tracker still shows `#77`, `#78`, or `#80` incomplete.
+- The runtime implementation chain is complete through `#81`; the next work item should be `#82`.
 - Keep `docs/plans/storm-setup-progress.md` as the living handoff ledger and only update it when the tracker state changes again.
 - Do not reopen the resolved runtime decisions while packaging `wgrib2` or configuring Docker paths and caches.
 
