@@ -200,6 +200,20 @@ struct AppTests {
         }
     }
 
+    @Test("Worker bootstrap preserves an injected Storm Setup provider")
+    func workerBootstrapPreservesInjectedStormSetupProvider() async throws {
+        let app = try await Application.make(.testing)
+        do {
+            app.stormSetupProvider = SentinelStormSetupProvider()
+            try await configure(app, mode: .worker)
+            #expect(app.stormSetupProvider is SentinelStormSetupProvider)
+        } catch {
+            try? await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
     @Test("Worker production bootstrap fails when APNS config is missing")
     func workerProductionBootstrapFailsWithoutAPNSConfig() async throws {
         try await withEnvironment([
@@ -890,6 +904,13 @@ struct AppTests {
         #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: false))
         #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: false, isExpired: false))
         #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: true))
+    }
+}
+
+private final class SentinelStormSetupProvider: StormSetupProviding, @unchecked Sendable {
+    func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot {
+        _ = h3Cell
+        throw Abort(.internalServerError, reason: "Sentinel provider should never be called.")
     }
 }
 

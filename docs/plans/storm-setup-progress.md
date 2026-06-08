@@ -75,6 +75,43 @@ Related GitHub issues:
 - Issue `#77` is complete.
 - No later Storm Setup issue has been started.
 
+## Issue #78 - Storm Setup provider wiring stays lazy and API-scoped
+
+### Status
+- Complete
+
+### Final wiring decision
+- Removed the eager Storm Setup bootstrap from `Sources/App/configure.swift`.
+- Left `Application.stormSetupProvider` as the lazy construction seam.
+- Kept test injection intact by continuing to use `app.stormSetupProvider = ...` in tests.
+- Did not add new Storm Setup wiring in `apiRoutes.swift` because the lazy provider default was already sufficient.
+
+### Files changed
+- `Sources/App/configure.swift`
+- `Tests/AppTests/AppTests.swift`
+- `docs/plans/storm-setup-progress.md`
+
+### Tests / commands run
+- `swift test --filter StormSetup`
+- `swift test`
+- `swift build`
+
+### Local verification notes
+- `swift test --filter StormSetup` passed and exercised the Storm Setup controller, provider, cache, and wgrib2 client suites.
+- `swift test` passed across the full suite.
+- `swift build` passed.
+- The new worker bootstrap test confirmed a pre-injected Storm Setup provider survives worker configuration, which is the practical proof that `configure(..., mode: .worker)` is no longer constructing a default provider eagerly.
+
+### Deferred scope
+- No Storm Setup runtime logic changed.
+- No HRRR sampling, cache, `wgrib2`, Docker, or assessment logic changed.
+- No worker-side Storm Setup feature work was added.
+
+### Handoff notes for issue #80
+- Keep Storm Setup wiring lazy unless a future API-only seam truly needs explicit configuration.
+- If later issues need API-scoped setup, prefer route/controller-local wiring over broad bootstrap changes.
+- Do not reintroduce global provider construction in `configure.swift`; the current ownership boundary is now correct.
+
 ---
 
 ## Codebase Investigation Notes
