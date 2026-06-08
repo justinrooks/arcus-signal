@@ -25,6 +25,8 @@ Related GitHub issues:
 - `#74` - Tornado ingredient assessment and freshness/degraded semantics
 - `#76` - Local sampled snapshot cache keyed by H3/source/rules version
 - `#75` - Provider/controller orchestration for local end-to-end snapshots
+- `#79` - Progress log status, open questions, and verification ledger reconciliation
+- `#80` - Replace production precondition failures with explicit errors
 
 ---
 
@@ -73,7 +75,8 @@ Related GitHub issues:
 - Issue `#71` is complete.
 - Issue `#72` is complete.
 - Issue `#77` is complete.
-- No later Storm Setup issue has been started.
+- Issue `#80` is complete.
+- Issue `#79` remains open and unstarted.
 
 ## Issue #78 - Storm Setup provider wiring stays lazy and API-scoped
 
@@ -111,6 +114,54 @@ Related GitHub issues:
 - Keep Storm Setup wiring lazy unless a future API-only seam truly needs explicit configuration.
 - If later issues need API-scoped setup, prefer route/controller-local wiring over broad bootstrap changes.
 - Do not reintroduce global provider construction in `configure.swift`; the current ownership boundary is now correct.
+
+## Issue 7 - Production helper traps become explicit errors
+
+### GitHub
+- `#80` - https://github.com/justinrooks/arcus-signal/issues/80
+
+### Status
+- Complete
+
+### Scope
+- Replace production `preconditionFailure` usage in Storm Setup date/key/URL helpers with explicit error paths or safe optional construction.
+- Keep valid-path behavior unchanged for HRRR run selection, NOMADS URL composition, and cache key generation.
+- Add focused tests for explicit missing-metadata and missing-URL failure paths.
+
+### Files changed
+- `Sources/App/StormSetup/HrrrSourceModels.swift`
+- `Sources/App/StormSetup/HrrrRunResolver.swift`
+- `Sources/App/StormSetup/HrrrNomadsURLBuilder.swift`
+- `Sources/App/StormSetup/StormSetupCacheKey.swift`
+- `Sources/App/StormSetup/StormSetupSnapshotCacheKey.swift`
+- `Tests/AppTests/StormSetupGribSubsetCacheTests.swift`
+- `Tests/AppTests/StormSetupSnapshotCacheTests.swift`
+- `docs/plans/storm-setup-progress.md`
+
+### Tests / commands run
+- `rg -n "preconditionFailure|fatalError" Sources/App/StormSetup`
+- `swift test --filter StormSetup`
+- `swift test`
+- `swift build`
+
+### Local verification notes
+- `swift test --filter StormSetup` passed and exercised the Storm Setup controller, provider, cache, selection, and wgrib2 client suites.
+- `swift test` passed across the full package test suite.
+- `swift build` passed.
+- The production Storm Setup module now has no `preconditionFailure` or `fatalError` hits.
+- The new tests cover explicit missing source metadata for cache key construction and missing NOMADS URL handling through the GRIB subset cache.
+
+### Deferred scope
+- No HRRR selection policy changes.
+- No NOMADS field-set changes.
+- No cache identity semantic changes.
+- No provider/controller orchestration refactor.
+- No broader error-model cleanup outside `Sources/App/StormSetup`.
+
+### Handoff notes for issue #79
+- Use this section as the current verified state for the Storm Setup runtime changes.
+- Issue `#79` should stay focused on progress-log reconciliation only; do not reopen the helper refactor or add more runtime edits as part of that documentation pass.
+- The verification commands and file list above are the authoritative references for the completed runtime change.
 
 ---
 

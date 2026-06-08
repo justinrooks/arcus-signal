@@ -42,6 +42,27 @@ struct StormSetupGribSubsetCacheTests {
         #expect(keyA.cacheIdentifier != keyC.cacheIdentifier)
     }
 
+    @Test("cache key construction rejects missing source metadata")
+    func cacheKeyRejectsMissingSourceMetadata() {
+        let source = StormSetupSourceMetadata(
+            model: nil,
+            product: .wrfsfc,
+            domain: .conus,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            fieldSetVersion: .tornadoV1,
+            bbox: StormSetupHrrrBoundingBox(
+                around: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+            ),
+            nomadsURL: URL(string: "https://example.com/subset.grib2")
+        )
+
+        #expect(throws: StormSetupCacheKeyError.self) {
+            _ = try StormSetupCacheKey(sourceMetadata: source)
+        }
+    }
+
     @Test("cache miss downloads, writes file, then cache hit skips the downloader")
     func cacheMissWritesThenHitSkipsDownloader() async throws {
         let rootURL = testRootURL()
@@ -102,6 +123,42 @@ struct StormSetupGribSubsetCacheTests {
         } catch let error as GribSubsetCacheError {
             guard case .emptyResponseBody(let returnedSource) = error else {
                 Issue.record("Expected emptyResponseBody, got \(error).")
+                return
+            }
+
+            #expect(returnedSource.model == source.model)
+            #expect(returnedSource.product == source.product)
+            #expect(returnedSource.domain == source.domain)
+            #expect(returnedSource.runTime == source.runTime)
+            #expect(returnedSource.forecastHour == source.forecastHour)
+            #expect(returnedSource.validTime == source.validTime)
+            #expect(returnedSource.fieldSetVersion == source.fieldSetVersion)
+        }
+    }
+
+    @Test("cache rejects source metadata without a NOMADS URL")
+    func cacheRejectsMissingNomadsURL() async throws {
+        let source = StormSetupSourceMetadata(
+            model: .hrrr,
+            product: .wrfsfc,
+            domain: .conus,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            fieldSetVersion: .tornadoV1,
+            bbox: StormSetupHrrrBoundingBox(
+                around: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+            ),
+            nomadsURL: nil
+        )
+        let cache = makeCache(client: StubHTTPClient())
+
+        do {
+            _ = try await cache.loadOrFetch(sourceMetadata: source)
+            Issue.record("Expected a missing NOMADS URL error.")
+        } catch let error as GribSubsetCacheError {
+            guard case .missingNomadsURL(let returnedSource) = error else {
+                Issue.record("Expected missingNomadsURL, got \(error).")
                 return
             }
 

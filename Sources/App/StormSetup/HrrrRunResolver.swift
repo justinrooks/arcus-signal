@@ -45,22 +45,8 @@ struct DefaultHrrrRunResolver: HrrrRunResolving {
 
 private extension Date {
     var stormSetupUTCRoundedDownToHour: Date {
-        let components = StormSetupUTC.calendar.dateComponents([.year, .month, .day, .hour], from: self)
-        guard let hour = components.hour else {
-            preconditionFailure("Expected UTC hour component.")
-        }
-
-        guard let startOfHour = StormSetupUTC.calendar.date(
-            from: DateComponents(
-                year: components.year,
-                month: components.month,
-                day: components.day,
-                hour: hour
-            )
-        ) else {
-            preconditionFailure("Unable to round a date down to the UTC hour.")
-        }
-
-        return startOfHour
+        let hourInterval: TimeInterval = 3600
+        let start = floor(timeIntervalSince1970 / hourInterval) * hourInterval
+        return Date(timeIntervalSince1970: start)
     }
 }

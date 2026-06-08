@@ -162,6 +162,31 @@ struct StormSetupSnapshotCacheTests {
         #expect(loaded == nil)
     }
 
+    @Test("snapshot cache key construction rejects missing source metadata")
+    func snapshotCacheKeyRejectsMissingSourceMetadata() {
+        let source = StormSetupSourceMetadata(
+            model: .hrrr,
+            product: nil,
+            domain: .conus,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            fieldSetVersion: .tornadoV1,
+            bbox: StormSetupHrrrBoundingBox(
+                around: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+            ),
+            nomadsURL: URL(string: "https://example.com/subset.grib2")
+        )
+
+        #expect(throws: StormSetupSnapshotCacheKeyError.self) {
+            _ = try StormSetupSnapshotCacheKey(
+                h3Cell: 882_681_611_511_963_647,
+                sourceMetadata: source,
+                rulesVersion: .current
+            )
+        }
+    }
+
     @Test("fresh cache entry reads successfully and round-trips")
     func freshCacheEntryReadsSuccessfully() async throws {
         let rootURL = testRootURL()

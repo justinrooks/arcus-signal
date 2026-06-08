@@ -114,13 +114,10 @@ struct StormSetupSnapshotCacheKey: Sendable, Hashable, Codable, Equatable {
     }
 
     private static func timestampString(for date: Date) -> String {
-        let components = StormSetupUTC.calendar.dateComponents([.year, .month, .day, .hour], from: date)
-        guard let year = components.year,
-              let month = components.month,
-              let day = components.day,
-              let hour = components.hour else {
-            preconditionFailure("Expected a UTC hour timestamp.")
-        }
+        let year = StormSetupUTC.calendar.component(.year, from: date)
+        let month = StormSetupUTC.calendar.component(.month, from: date)
+        let day = StormSetupUTC.calendar.component(.day, from: date)
+        let hour = StormSetupUTC.calendar.component(.hour, from: date)
 
         return [
             zeroPadded(year, width: 4),

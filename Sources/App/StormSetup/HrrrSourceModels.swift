@@ -57,7 +57,7 @@ struct HrrrRunCandidate: Content, Sendable, Equatable {
         self.domain = domain
         self.runTime = runTime
         self.forecastHour = forecastHour
-        self.validTime = Self.validTime(for: runTime, forecastHour: forecastHour)
+        self.validTime = runTime.addingTimeInterval(TimeInterval(forecastHour) * 3600)
         self.fieldSetVersion = fieldSetVersion
     }
 
@@ -67,14 +67,6 @@ struct HrrrRunCandidate: Content, Sendable, Equatable {
 
     var fileName: String {
         "hrrr.t\(runTime.stormSetupUTCHourString)z.\(product.rawValue)f\(forecastHour.stormSetupTwoDigitString).grib2"
-    }
-
-    private static func validTime(for runTime: Date, forecastHour: Int) -> Date {
-        guard let validTime = StormSetupUTC.calendar.date(byAdding: .hour, value: forecastHour, to: runTime) else {
-            preconditionFailure("Unable to derive HRRR valid time from run time and forecast hour.")
-        }
-
-        return validTime
     }
 }
 
@@ -96,37 +88,17 @@ enum StormSetupUTC {
 }
 
 private extension Date {
-    var stormSetupUTCComponents: DateComponents {
-        StormSetupUTC.calendar.dateComponents([.year, .month, .day, .hour], from: self)
-    }
-
     var stormSetupUTCDateString: String {
-        let components = stormSetupUTCComponents
-        return components.year.stormSetupFourDigitString
-            + components.month.stormSetupTwoDigitString
-            + components.day.stormSetupTwoDigitString
+        let year = StormSetupUTC.calendar.component(.year, from: self)
+        let month = StormSetupUTC.calendar.component(.month, from: self)
+        let day = StormSetupUTC.calendar.component(.day, from: self)
+        return year.stormSetupFourDigitString
+            + month.stormSetupTwoDigitString
+            + day.stormSetupTwoDigitString
     }
 
     var stormSetupUTCHourString: String {
-        stormSetupUTCComponents.hour.stormSetupTwoDigitString
-    }
-}
-
-private extension Optional where Wrapped == Int {
-    var stormSetupTwoDigitString: String {
-        guard let value = self else {
-            preconditionFailure("Expected a UTC date component.")
-        }
-
-        return value.stormSetupTwoDigitString
-    }
-
-    var stormSetupFourDigitString: String {
-        guard let value = self else {
-            preconditionFailure("Expected a UTC year component.")
-        }
-
-        return value.stormSetupFourDigitString
+        StormSetupUTC.calendar.component(.hour, from: self).stormSetupTwoDigitString
     }
 }
 

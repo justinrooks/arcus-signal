@@ -38,18 +38,13 @@ struct HrrrNomadsURLBuilder: Sendable {
         )
     }
 
-    func makeURL(for candidate: HrrrRunCandidate, bbox: StormSetupHrrrBoundingBox) -> URL {
+    func makeURL(for candidate: HrrrRunCandidate, bbox: StormSetupHrrrBoundingBox) -> URL? {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "nomads.ncep.noaa.gov"
         components.path = "/cgi-bin/filter_hrrr_2d.pl"
         components.percentEncodedQuery = percentEncodedQuery(for: candidate, bbox: bbox)
-
-        guard let url = components.url else {
-            preconditionFailure("Unable to build a NOMADS HRRR subset URL.")
-        }
-
-        return url
+        return components.url
     }
 
     private func percentEncodedQuery(
