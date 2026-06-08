@@ -58,7 +58,7 @@ actor StormSetupSnapshotCache {
         self.jsonDecoder = decoder
     }
 
-    func loadSnapshot(for key: StormSetupSnapshotCacheKey) -> StormSetupSnapshotCacheResult? {
+    func loadSnapshot(for key: StormSetupSnapshotCacheKey) async -> StormSetupSnapshotCacheResult? {
         let fileURL = key.snapshotFileURL(rootURL: rootURL)
         let now = dateProvider.now()
 
@@ -111,7 +111,7 @@ actor StormSetupSnapshotCache {
     func store(
         snapshot: TornadoIngredientSnapshot,
         for key: StormSetupSnapshotCacheKey
-    ) throws -> StormSetupSnapshotCacheResult {
+    ) async throws -> StormSetupSnapshotCacheResult {
         let fileURL = key.snapshotFileURL(rootURL: rootURL)
         let directoryURL = key.directoryURL(rootURL: rootURL)
 

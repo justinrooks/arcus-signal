@@ -566,7 +566,7 @@ Related GitHub issues:
 - `#75` - https://github.com/justinrooks/arcus-signal/issues/75
 
 ### Status
-- Not started
+- Completed
 
 ### Scope
 - Wire the provider and controller for local end-to-end behavior.
@@ -590,15 +590,43 @@ Related GitHub issues:
 - `Server architecture decision`
 
 ### Handoff notes
-- Issue #75 should wire the controller/provider orchestration around the finished cache seam instead of reworking key generation or persistence behavior.
-- The provider path can treat cache hit/miss as a runtime result; the persisted cache record already contains the source and snapshot data needed for a straight return path.
-- Keep bbox ownership in the GRIB subset cache. Do not fold it into the sampled snapshot cache identity.
+- `GET /api/v1/storm-setup/current?h3=<cell>` is now wired end-to-end through the local provider/controller path.
+- The controller stays thin: it validates the query parameter, converts H3 at the HTTP boundary, maps provider errors to useful HTTP responses, and returns `Content`.
+- The provider now orchestrates H3 resolution, ordered HRRR candidate selection, NOMADS URL construction, sampled snapshot cache lookup, GRIB subset fetch/cache, `wgrib2` point sampling, raw normalization, assessment/freshness interpretation, and sampled snapshot persistence.
+- Cache hit/miss behavior is runtime-driven. The sampled snapshot cache can short-circuit the rest of the pipeline, while the GRIB subset cache still owns bbox-specific storage.
+- Source metadata is preserved in the response and includes model, product, domain, run time, forecast hour, valid time, field set version, and freshness timestamps.
+- Logging now records selected candidates, fallback decisions, cache hit/miss decisions, `wgrib2` failures, and degraded/freshness state without dumping binary payloads.
+- Errors stay specific: invalid H3, no usable HRRR candidate, NOMADS download failure, GRIB cache failure, `wgrib2` failure, and insufficient normalized data.
 
 ### Files changed
-- None yet.
+- `Sources/App/Controllers/StormSetupController.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/StormSetupModels.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/StormSetupSnapshotCache.swift`
+- `Sources/App/configure.swift`
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
 
 ### Tests run
-- None yet.
+- `swift test --filter StormSetupProviderTests` - passed
+- `swift test --filter StormSetupControllerTests` - passed
+- `swift test` - passed
+- Broader suite still emits unrelated repository warnings, but there were no test failures.
+
+### Manual local verification
+- Representative command:
+  - `curl -sS -D - 'http://127.0.0.1:8080/api/v1/storm-setup/current?h3=617700169958293503'`
+- Result:
+  - `200 OK`
+  - JSON response included `h3Cell`, `centroid`, `source`, `raw`, `assessment`, and `freshness`.
+  - `source` preserved model/product/domain/run time/forecast hour/valid time/field set metadata.
+  - `raw` included sampled tornado ingredients and diagnostics.
+  - `freshness` included fetched/expires timestamps and degraded/stale flags.
+- Cache behavior observed:
+  - First live request: sampled snapshot cache miss, GRIB subset cache miss, live NOMADS fetch, `wgrib2` sampling, sampled snapshot cached.
+  - Repeated same request: sampled snapshot cache hit, no downstream re-sampling.
+  - Forced replay after removing only the sampled snapshot file: sampled snapshot cache miss, GRIB subset cache hit, no second NOMADS download.
 
 ### Deferred
 - Production deployment config for `wgrib2`.
@@ -606,6 +634,11 @@ Related GitHub issues:
 - Database persistence for caches.
 - Broader app refresh graph integration.
 - Separate Storm Setup service.
+
+### Risks / open questions
+- Live NOMADS availability still governs the real endpoint. When upstream data is unavailable, the route correctly returns a source failure instead of inventing a snapshot.
+- The local `wgrib2` path is still an environment dependency, so this endpoint is only as portable as that binary path.
+- No new Storm Setup API questions remain for this issue; the remaining work is deferred production plumbing, not orchestration design.
 
 ---
 

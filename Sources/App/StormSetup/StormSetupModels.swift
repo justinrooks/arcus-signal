@@ -56,6 +56,40 @@ struct TornadoRawParameters: Content, Sendable {
     let diagnostics: [TornadoRawParameterDiagnostic]?
 }
 
+extension TornadoRawParameters {
+    var nonNilFieldCount: Int {
+        [
+            sbcapeJkg != nil,
+            mlcapeJkg != nil,
+            mucapeJkg != nil,
+            mlcinJkg != nil,
+            dcapeJkg != nil,
+            mllclM != nil,
+            temperatureDewpointSpreadF != nil,
+            lclLfcSeparationM != nil,
+            lapseRate03kmCkm != nil,
+            lapseRate700500mbCkm != nil,
+            shear06kmKt != nil,
+            shear03kmKt != nil,
+            shear01kmKt != nil,
+            effectiveShearKt != nil,
+            srh01kmM2s2 != nil,
+            srh03kmM2s2 != nil,
+            effectiveSrhM2s2 != nil,
+            supercellComposite != nil,
+            significantTornadoFixed != nil,
+            significantTornadoEffective != nil,
+            significantHail != nil,
+            bunkersRightMotion != nil,
+            bunkersLeftMotion != nil,
+            stormRelativeWind46km != nil,
+            meanWind850300mb != nil
+        ]
+        .filter { $0 }
+        .count
+    }
+}
+
 struct DirectionSpeed: Content, Sendable {
     let directionDegrees: Double
     let speedKt: Double

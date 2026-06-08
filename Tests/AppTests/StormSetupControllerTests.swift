@@ -22,9 +22,7 @@ struct StormSetupControllerTests {
     func currentResponseIncludesSelectedSourceMetadata() async throws {
         try await withApp { app in
             let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
-            app.stormSetupProvider = DefaultStormSetupProvider(
-                dateProvider: FixedStormSetupDateProvider(nowDate: fixedNow)
-            )
+            app.stormSetupProvider = makeStormSetupRouteProvider(now: fixedNow)
 
             let inputH3: Int64 = 617700169958293503
 
@@ -46,9 +44,11 @@ struct StormSetupControllerTests {
                 #expect(snapshot.freshness.expiresAt == makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 30))
                 #expect(snapshot.freshness.isStale == false)
                 #expect(snapshot.freshness.isDegraded == false)
-                #expect(snapshot.assessment.overall == .unknown)
-                #expect(snapshot.assessment.confidence == .degraded)
-                #expect(snapshot.assessment.summary.contains("not enough ingredient data"))
+                #expect(snapshot.raw.sbcapeJkg == 1450)
+                #expect(snapshot.raw.mlcinJkg == -35)
+                #expect(snapshot.assessment.overall == .conditional)
+                #expect(snapshot.assessment.confidence == .moderate)
+                #expect(snapshot.assessment.summary.contains("conditionally supportive"))
             })
         }
     }
@@ -73,10 +73,29 @@ struct StormSetupControllerTests {
         }
     }
 
+    @Test("GET /api/v1/storm-setup/current maps provider errors to useful HTTP responses")
+    func providerErrorsMapToUsefulHTTPResponses() async throws {
+        try await withApp { app in
+            let source = makeSourceMetadataForErrorMapping()
+            app.stormSetupProvider = ThrowingStormSetupProvider(
+                error: StormSetupCurrentSnapshotError.insufficientNormalizedData(
+                    source: source,
+                    reason: "wgrib2 produced no recognizable ingredient values"
+                )
+            )
+
+            try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=617700169958293503", afterResponse: { res async in
+                #expect(res.status == .unprocessableEntity)
+                #expect(res.body.string.contains("Insufficient normalized ingredient data"))
+            })
+        }
+    }
+
     @Test("GET /api/v1/storm-setup/current resolves the H3 centroid")
     func validH3ResolvesCentroid() async throws {
         try await withApp { app in
             let inputH3: Int64 = 617700169958293503
+            app.stormSetupProvider = makeStormSetupRouteProvider(now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45))
             let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: inputH3)
 
             try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=\(inputH3)", afterResponse: { res async throws in
@@ -95,9 +114,7 @@ struct StormSetupControllerTests {
     func currentResponseEncodesSuccessfully() async throws {
         try await withApp { app in
             let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
-            app.stormSetupProvider = DefaultStormSetupProvider(
-                dateProvider: FixedStormSetupDateProvider(nowDate: fixedNow)
-            )
+            app.stormSetupProvider = makeStormSetupRouteProvider(now: fixedNow)
             let inputH3: Int64 = 617700169958293503
 
             try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=\(inputH3)", afterResponse: { res async throws in
@@ -108,9 +125,10 @@ struct StormSetupControllerTests {
                 #expect(snapshot.h3Cell == inputH3)
                 #expect(snapshot.source.model == .hrrr)
                 #expect(snapshot.source.nomadsURL != nil)
-                #expect(snapshot.raw.sbcapeJkg == nil)
-                #expect(snapshot.assessment.overall == .unknown)
-                #expect(snapshot.assessment.confidence == .degraded)
+                #expect(snapshot.raw.sbcapeJkg == 1450)
+                #expect(snapshot.raw.mlcinJkg == -35)
+                #expect(snapshot.assessment.overall == .conditional)
+                #expect(snapshot.assessment.confidence == .moderate)
                 #expect(snapshot.freshness.isStale == false)
             })
         }
@@ -154,4 +172,25 @@ private func makeUTCDate(
     }
 
     return date
+}
+
+private struct ThrowingStormSetupProvider: StormSetupProviding {
+    let error: StormSetupCurrentSnapshotError
+
+    func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot {
+        _ = h3Cell
+        throw error
+    }
+}
+
+private func makeSourceMetadataForErrorMapping() -> StormSetupSourceMetadata {
+    let candidate = HrrrRunCandidate(
+        runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+        forecastHour: 0
+    )
+
+    return HrrrNomadsURLBuilder().makeSourceMetadata(
+        for: candidate,
+        around: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+    )
 }

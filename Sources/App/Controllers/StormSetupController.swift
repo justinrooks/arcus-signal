@@ -18,7 +18,13 @@ struct StormSetupController: RouteCollection {
         let query = try req.query.decode(CurrentQuery.self)
         let h3Cell = try normalizedH3Cell(from: query.h3)
 
-        return try await req.application.stormSetupProvider.currentSnapshot(for: h3Cell)
+        do {
+            return try await req.application.stormSetupProvider.currentSnapshot(for: h3Cell)
+        } catch let error as StormSetupCurrentSnapshotError {
+            throw error.asAbort()
+        } catch {
+            throw error
+        }
     }
 }
 
