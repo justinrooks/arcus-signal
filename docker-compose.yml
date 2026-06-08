@@ -22,6 +22,8 @@ services:
         SWIFT_VERSION: ${SWIFT_VERSION:-6.3.0}
     environment:
       <<: *shared_environment
+      STORM_SETUP_WGRIB2_PATH: ${STORM_SETUP_WGRIB2_PATH:-/usr/local/bin/wgrib2}
+      STORM_SETUP_CACHE_ROOT: ${STORM_SETUP_CACHE_ROOT:-/app/storage/storm-setup}
     restart: unless-stopped
     depends_on:
       postgres:

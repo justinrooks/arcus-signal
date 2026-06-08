@@ -23,6 +23,47 @@ struct StormSetupConfiguration: Sendable, Equatable {
         fileURLWithPath: "/Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2"
     )
 
+    static func resolved(
+        from environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> StormSetupConfiguration {
+        let cacheRootURL = Self.environmentFileURL(
+            for: "STORM_SETUP_CACHE_ROOT",
+            isDirectory: true,
+            in: environment
+        ) ?? localStormSetupCacheRootURL
+
+        let wgrib2ExecutableURL = Self.environmentFileURL(
+            for: "STORM_SETUP_WGRIB2_PATH",
+            isDirectory: false,
+            in: environment
+        ) ?? localWgrib2ExecutableURL
+
+        let gribSubsetMaximumByteCount = Self.environmentInt(
+            for: "STORM_SETUP_GRIB_MAX_BYTES",
+            in: environment
+        ) ?? 25 * 1024 * 1024
+
+        let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
+            in: environment
+        ) ?? 15
+
+        return StormSetupConfiguration(
+            gribSubsetCacheRootURL: cacheRootURL.appendingPathComponent(
+                "grib-subsets",
+                isDirectory: true
+            ),
+            sampledSnapshotCacheRootURL: cacheRootURL.appendingPathComponent(
+                "sampled-snapshots",
+                isDirectory: true
+            ),
+            gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
+            gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
+            wgrib2ExecutableURL: wgrib2ExecutableURL,
+            wgrib2TimeoutSeconds: wgrib2TimeoutSeconds
+        )
+    }
+
     static let `default` = StormSetupConfiguration(
         gribSubsetCacheRootURL: localGribSubsetCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
@@ -42,6 +83,43 @@ struct StormSetupConfiguration: Sendable, Equatable {
     func makeWgrib2Client(runner: ProcessRunner = ProcessRunner()) -> Wgrib2Client {
         Wgrib2Client(configuration: self, runner: runner)
     }
+
+    private static func environmentFileURL(
+        for key: String,
+        isDirectory: Bool,
+        in environment: [String: String]
+    ) -> URL? {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return nil
+        }
+
+        return URL(fileURLWithPath: rawValue, isDirectory: isDirectory)
+    }
+
+    private static func environmentInt(
+        for key: String,
+        in environment: [String: String]
+    ) -> Int? {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return nil
+        }
+
+        return Int(rawValue)
+    }
+
+    private static func environmentTimeInterval(
+        for key: String,
+        in environment: [String: String]
+    ) -> TimeInterval? {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return nil
+        }
+
+        return TimeInterval(rawValue)
+    }
 }
 
 private struct StormSetupConfigurationKey: StorageKey {
@@ -51,7 +129,7 @@ private struct StormSetupConfigurationKey: StorageKey {
 extension Application {
     var stormSetupConfiguration: StormSetupConfiguration {
         get {
-            storage[StormSetupConfigurationKey.self] ?? .default
+            storage[StormSetupConfigurationKey.self] ?? .resolved()
         }
         set {
             storage[StormSetupConfigurationKey.self] = newValue

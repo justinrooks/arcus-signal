@@ -122,6 +122,10 @@ COPY --from=build --chown=vapor:vapor /staging /app
 COPY --from=build /usr/local/bin/wgrib2 /usr/local/bin/wgrib2
 COPY --from=build /usr/local/NCEPLIBS-g2c/lib/libg2c.so* /usr/local/NCEPLIBS-g2c/lib/
 
+# Prepare a writable cache root for Storm Setup while keeping the vapor user model intact.
+RUN mkdir -p /app/storage/storm-setup \
+    && chown -R vapor:vapor /app/storage
+
 # Provide configuration needed by the built-in crash reporter and some sensible default behaviors.
 ENV SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=./swift-backtrace-static
 

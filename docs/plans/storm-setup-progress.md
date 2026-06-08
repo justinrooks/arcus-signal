@@ -70,7 +70,7 @@ Related GitHub issues:
 - The implementation chain through `#75`, `#76`, `#77`, `#78`, and `#80` is complete.
 - Issue `#79` is this reconciliation pass and is complete with this update.
 - Issue `#81` is complete with Docker packaging only.
-- The next runtime follow-up is `#82`.
+- Issue `#82` is complete with Docker runtime path and cache wiring.
 - Initial source scaffolding exists in the working tree:
   - `Sources/App/Controllers/StormSetupController.swift`
   - `Sources/App/StormSetup/GribAdapter.swift`
@@ -97,7 +97,7 @@ Related GitHub issues:
 - `#79` - Progress log status, open questions, and verification ledger reconciliation: complete.
 - `#80` - Replace production precondition failures with explicit errors: complete.
 - `#81` - Package `wgrib2` into Docker image: complete.
-- `#82` - Configure Docker runtime paths and caches: next runtime follow-up.
+- `#82` - Configure Docker runtime paths and caches: complete.
 
 ## Issue #78 - Storm Setup provider wiring stays lazy and API-scoped
 
@@ -229,6 +229,66 @@ Related GitHub issues:
 - Wire Storm Setup runtime config to use `/usr/local/bin/wgrib2` inside the container.
 - Move Docker cache roots to container-friendly paths for the GRIB subset cache and sampled snapshot cache.
 - Keep `#81` strictly limited to packaging. The binary is now in the image; the runtime still needs to point at it.
+
+## Issue #82 - Configure Docker runtime paths and caches
+
+### GitHub
+- `#82` - https://github.com/justinrooks/arcus-signal/issues/82
+
+### Status
+- Complete
+
+### Scope
+- Make Storm Setup use environment-driven runtime paths for Docker while keeping the local macOS defaults intact.
+- Keep the GRIB subset cache and sampled snapshot cache separate under a configurable cache root.
+- Ensure the API container can write Storm Setup cache files as the `vapor` user.
+- Wire the API Compose service to use `/usr/local/bin/wgrib2` and `/app/storage/storm-setup`.
+- Keep the worker free of Storm Setup runtime-path requirements for now.
+
+### Files changed
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/Wgrib2Client.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Dockerfile`
+- `docker-compose.yml`
+- `Tests/AppTests/StormSetupConfigurationTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `docs/plans/storm-setup-progress.md`
+
+### Tests / commands run
+- `swift test --filter StormSetup`
+- `swift test`
+- `swift build`
+- `docker compose build api`
+- `docker compose run --rm api /usr/local/bin/wgrib2 -version`
+- `docker compose run --rm api env | grep STORM_SETUP`
+
+### Local verification notes
+- `swift test --filter StormSetup` passed and exercised the new configuration factory, wgrib2 executable validation, and provider classification path.
+- `swift test` passed across the full suite.
+- `swift build` passed.
+- `docker compose build api` succeeded after requesting elevated Docker access for the local buildx state.
+- `docker compose run --rm api /usr/local/bin/wgrib2 -version` printed `3.8.0` from the packaged runtime binary and exited with status `8`, which is expected for this binary after the version banner.
+- `docker compose run --rm api env | grep STORM_SETUP` showed:
+  - `STORM_SETUP_CACHE_ROOT=/app/storage/storm-setup`
+  - `STORM_SETUP_WGRIB2_PATH=/usr/local/bin/wgrib2`
+
+### Configured container paths
+- `STORM_SETUP_WGRIB2_PATH=/usr/local/bin/wgrib2`
+- `STORM_SETUP_CACHE_ROOT=/app/storage/storm-setup`
+- `grib-subsets` cache under `/app/storage/storm-setup/grib-subsets`
+- `sampled-snapshots` cache under `/app/storage/storm-setup/sampled-snapshots`
+
+### Deferred scope
+- Worker runtime does not need Storm Setup-specific runtime paths yet.
+- No HRRR selection, NOMADS URL, assessment, or response-contract changes were made.
+- No persistence or cache-sharing architecture beyond the writable container path was added.
+
+### Handoff notes for Storm Setup Docker readiness
+- The API container can now resolve the packaged `wgrib2` binary without depending on the macOS developer path.
+- Storm Setup cache writes land under a writable container-owned path in the image, so Docker API runs do not depend on the host filesystem.
+- If future work wants cache persistence across container recreation, add a volume later. This issue deliberately stopped at writable runtime paths, which is the correct blast radius for deployment plumbing.
 
 ## Issue #79 - Progress log status, open questions, and verification ledger reconciliation
 

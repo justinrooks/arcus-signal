@@ -346,6 +346,12 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 source: sourceMetadata,
                 reason: String(describing: error)
             )
+        case let error as Wgrib2ClientError:
+            return StormSetupCurrentSnapshotFailure(
+                stage: .wgrib2Sampling,
+                source: sourceMetadata,
+                reason: String(describing: error)
+            )
         case let error as StormSetupCurrentSnapshotError:
             return StormSetupCurrentSnapshotFailure(
                 stage: .sourceSelection,

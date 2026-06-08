@@ -63,6 +63,60 @@ struct StormSetupWgrib2ClientTests {
         #expect(withMatch == ["/tmp/sample.grib2", "-match", ":CAPE:", "-s", "-lon", "-104.4661", "39.7825"])
     }
 
+    @Test("wgrib2 client fails fast when the configured executable is missing")
+    func samplePointRejectsMissingExecutable() async throws {
+        let configuration = makeConfiguration(wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/does-not-exist-wgrib2"))
+        let client = Wgrib2Client(configuration: configuration)
+
+        do {
+            _ = try await client.samplePoint(
+                Wgrib2PointRequest(
+                    fileURL: URL(fileURLWithPath: "/tmp/sample.grib2"),
+                    longitude: -104.4661,
+                    latitude: 39.7825,
+                    matchPattern: nil
+                )
+            )
+            Issue.record("Expected a missing executable error.")
+        } catch let error as Wgrib2ClientError {
+            guard case .executableMissing(let url) = error else {
+                Issue.record("Expected executableMissing, got \(error).")
+                return
+            }
+
+            #expect(url.path == "/tmp/does-not-exist-wgrib2")
+        }
+    }
+
+    @Test("wgrib2 client fails fast when the configured executable is not executable")
+    func samplePointRejectsNonExecutableFile() async throws {
+        let executableURL = try makeTemporaryFile(
+            contents: "#!/bin/sh\nexit 0\n",
+            permissions: 0o644
+        )
+        let configuration = makeConfiguration(wgrib2ExecutableURL: executableURL)
+        let client = Wgrib2Client(configuration: configuration)
+
+        do {
+            _ = try await client.samplePoint(
+                Wgrib2PointRequest(
+                    fileURL: URL(fileURLWithPath: "/tmp/sample.grib2"),
+                    longitude: -104.4661,
+                    latitude: 39.7825,
+                    matchPattern: nil
+                )
+            )
+            Issue.record("Expected a non-executable error.")
+        } catch let error as Wgrib2ClientError {
+            guard case .executableNotExecutable(let url) = error else {
+                Issue.record("Expected executableNotExecutable, got \(error).")
+                return
+            }
+
+            #expect(url == executableURL)
+        }
+    }
+
     @Test("process runner captures stdout and stderr for successful commands")
     func processRunnerCapturesStandardOutputAndError() async throws {
         let runner = ProcessRunner()
@@ -203,5 +257,39 @@ struct StormSetupWgrib2ClientTests {
         )
 
         return executableURL
+    }
+
+    private func makeTemporaryFile(contents: String, permissions: Int) throws -> URL {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("storm-setup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+
+        let fileURL = directoryURL.appendingPathComponent("file.sh")
+        guard let data = contents.data(using: .utf8) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        try data.write(to: fileURL)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: permissions],
+            ofItemAtPath: fileURL.path
+        )
+
+        return fileURL
+    }
+
+    private func makeConfiguration(wgrib2ExecutableURL: URL) -> StormSetupConfiguration {
+        StormSetupConfiguration(
+            gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
+            sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
+            gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
+            gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+            wgrib2ExecutableURL: wgrib2ExecutableURL,
+            wgrib2TimeoutSeconds: 15
+        )
     }
 }

@@ -236,6 +236,50 @@ struct StormSetupProviderTests {
         #expect(insufficientData.status == .unprocessableEntity)
     }
 
+    @Test("wgrib2 executable validation failure is classified as a sampling failure")
+    func wgrib2ExecutableValidationFailureIsClassifiedAsSamplingFailure() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let centroid = expected.centroid
+        let candidate = HrrrRunCandidate(runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22), forecastHour: 0)
+        let source = makeSourceMetadata(candidate: candidate, centroid: centroid)
+        let subset = makeSubsetResult(source: source, fetchedAt: now)
+        let wgrib2URL = URL(fileURLWithPath: "/tmp/does-not-exist-wgrib2")
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let subsetLoader = StubStormSetupSubsetLoader { _, _, _ in subset }
+        let fieldSampler = StubStormSetupFieldSampler { _, _ in
+            throw Wgrib2ClientError.executableMissing(wgrib2URL)
+        }
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: .empty)),
+            interpreter: StubStormSetupAssessor(assessment: makeAssessment())
+        )
+
+        do {
+            _ = try await provider.currentSnapshot(for: fixedH3)
+            Issue.record("Expected a no-usable-candidate failure.")
+        } catch let error as StormSetupCurrentSnapshotError {
+            let abort = error.asAbort()
+
+            guard case .noUsableHrrrCandidate(let failures) = error else {
+                Issue.record("Expected noUsableHrrrCandidate, got \(error).")
+                return
+            }
+
+            #expect(abort.status == .internalServerError)
+            #expect(failures.contains(where: { $0.stage == .wgrib2Sampling }))
+            #expect(failures.contains(where: { $0.reason.contains("Configured wgrib2 executable does not exist") }))
+        }
+    }
+
     private func makeProvider(
         dateProvider: any StormSetupDateProviding,
         snapshotCache: any StormSetupSnapshotCaching,

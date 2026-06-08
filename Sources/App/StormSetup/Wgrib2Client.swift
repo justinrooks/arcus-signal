@@ -11,6 +11,20 @@ protocol Wgrib2Sampling: Sendable {
     func samplePoint(_ request: Wgrib2PointRequest) async throws -> [Wgrib2PointSample]
 }
 
+enum Wgrib2ClientError: Error, Sendable, CustomStringConvertible {
+    case executableMissing(URL)
+    case executableNotExecutable(URL)
+
+    var description: String {
+        switch self {
+        case .executableMissing(let url):
+            return "Configured wgrib2 executable does not exist at \(url.path)."
+        case .executableNotExecutable(let url):
+            return "Configured wgrib2 executable is not executable at \(url.path)."
+        }
+    }
+}
+
 struct Wgrib2Client: Sendable {
     let configuration: StormSetupConfiguration
     let runner: ProcessRunner
@@ -24,6 +38,8 @@ struct Wgrib2Client: Sendable {
     }
 
     func samplePoint(_ request: Wgrib2PointRequest) async throws -> [Wgrib2PointSample] {
+        try validateExecutable()
+
         let arguments = makeArguments(for: request)
 
         let result = try await runner.run(
@@ -37,6 +53,19 @@ struct Wgrib2Client: Sendable {
             .map(String.init)
             .filter { $0.isEmpty == false }
             .map(Wgrib2PointSample.parse(from:))
+    }
+
+    private func validateExecutable() throws {
+        let executablePath = configuration.wgrib2ExecutableURL.path
+        let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: executablePath) else {
+            throw Wgrib2ClientError.executableMissing(configuration.wgrib2ExecutableURL)
+        }
+
+        guard fileManager.isExecutableFile(atPath: executablePath) else {
+            throw Wgrib2ClientError.executableNotExecutable(configuration.wgrib2ExecutableURL)
+        }
     }
 
     func makeArguments(for request: Wgrib2PointRequest) -> [String] {
