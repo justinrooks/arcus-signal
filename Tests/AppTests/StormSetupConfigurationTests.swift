@@ -6,7 +6,10 @@ import Testing
 struct StormSetupConfigurationTests {
     @Test("resolved configuration uses local defaults when no environment overrides are present")
     func resolvedConfigurationUsesLocalDefaults() {
-        let configuration = StormSetupConfiguration.resolved(from: [:])
+        let configuration = StormSetupConfiguration.resolved(
+            from: [:],
+            isExecutableFile: { _ in false }
+        )
 
         #expect(configuration == .default)
         #expect(configuration.gribSubsetCacheRootURL == StormSetupConfiguration.localGribSubsetCacheRootURL)
@@ -14,6 +17,20 @@ struct StormSetupConfigurationTests {
         #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.localWgrib2ExecutableURL)
         #expect(configuration.wgrib2TimeoutSeconds == 15)
         #expect(configuration.gribSubsetMaximumByteCount == 25 * 1024 * 1024)
+    }
+
+    @Test("resolved configuration defaults to packaged wgrib2 when available")
+    func resolvedConfigurationDefaultsToPackagedWgrib2WhenAvailable() {
+        let configuration = StormSetupConfiguration.resolved(
+            from: [:],
+            isExecutableFile: { path in
+                path == StormSetupConfiguration.packagedWgrib2ExecutableURL.path
+            }
+        )
+
+        #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.packagedWgrib2ExecutableURL)
+        #expect(configuration.gribSubsetCacheRootURL == StormSetupConfiguration.localGribSubsetCacheRootURL)
+        #expect(configuration.sampledSnapshotCacheRootURL == StormSetupConfiguration.localSampledSnapshotCacheRootURL)
     }
 
     @Test("resolved configuration honors Docker-friendly cache root and wgrib2 overrides")

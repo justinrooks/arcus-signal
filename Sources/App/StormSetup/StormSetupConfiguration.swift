@@ -23,8 +23,11 @@ struct StormSetupConfiguration: Sendable, Equatable {
         fileURLWithPath: "/Users/justin/Downloads/wgrib2-3.8.0/build/install/bin/wgrib2"
     )
 
+    static let packagedWgrib2ExecutableURL = URL(fileURLWithPath: "/usr/local/bin/wgrib2")
+
     static func resolved(
-        from environment: [String: String] = ProcessInfo.processInfo.environment
+        from environment: [String: String] = ProcessInfo.processInfo.environment,
+        isExecutableFile: (String) -> Bool = FileManager.default.isExecutableFile(atPath:)
     ) -> StormSetupConfiguration {
         let cacheRootURL = Self.environmentFileURL(
             for: "STORM_SETUP_CACHE_ROOT",
@@ -36,7 +39,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
             for: "STORM_SETUP_WGRIB2_PATH",
             isDirectory: false,
             in: environment
-        ) ?? localWgrib2ExecutableURL
+        ) ?? Self.defaultWgrib2ExecutableURL(isExecutableFile: isExecutableFile)
 
         let gribSubsetMaximumByteCount = Self.environmentInt(
             for: "STORM_SETUP_GRIB_MAX_BYTES",
@@ -95,6 +98,16 @@ struct StormSetupConfiguration: Sendable, Equatable {
         }
 
         return URL(fileURLWithPath: rawValue, isDirectory: isDirectory)
+    }
+
+    private static func defaultWgrib2ExecutableURL(
+        isExecutableFile: (String) -> Bool
+    ) -> URL {
+        if isExecutableFile(packagedWgrib2ExecutableURL.path) {
+            return packagedWgrib2ExecutableURL
+        }
+
+        return localWgrib2ExecutableURL
     }
 
     private static func environmentInt(
