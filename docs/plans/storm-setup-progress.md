@@ -72,6 +72,7 @@ Related GitHub issues:
 - Issue `#70` is complete.
 - Issue `#71` is complete.
 - Issue `#72` is complete.
+- Issue `#77` is complete.
 - No later Storm Setup issue has been started.
 
 ---
@@ -258,6 +259,45 @@ Related GitHub issues:
 - `Tests/AppTests/StormSetupControllerTests.swift`
 - `Tests/AppTests/StormSetupHrrrSourceTests.swift`
 - `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+
+## Issue 4 - ProcessRunner drains stdout/stderr safely
+
+### GitHub
+- `#77` - https://github.com/justinrooks/arcus-signal/issues/77
+
+### Status
+- Complete
+
+### Scope
+- Drain `ProcessRunner` stdout and stderr while the child process is still running.
+- Preserve the existing `launchFailed`, `timedOut(timeoutSeconds:stderr:)`, `nonZeroExit(code:stderr:)`, and successful `ProcessResult(stdout:stderr:exitCode:)` behavior.
+- Keep the fix local to `Sources/App/StormSetup/GribAdapter.swift`.
+- Add focused tests for success, non-zero exit, timeout stderr preservation, and large-output pipe draining.
+
+### Handoff notes
+- `ProcessRunner` now launches detached stdout/stderr drain tasks immediately after `Process.run()`, so large child output no longer has to wait for process exit before being consumed.
+- The large-output regression test writes 15,000 lines to both stdout and stderr and completes without timing out.
+- The timeout regression test now uses a child that flushes stderr before sleeping, which proves the runner preserves useful stderr on the timeout path.
+- Issue `#78` should treat the runner as fixed and should not revisit pipe draining unless a new regression is discovered.
+
+### Files changed
+- `Sources/App/StormSetup/GribAdapter.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+
+### Tests run
+- `swift test --filter StormSetup` - passed
+- `swift test` - passed
+- `swift build` - passed
+
+### Local verification notes
+- The Storm Setup slice passed with the new pipe-draining implementation in place.
+- The full package test suite passed.
+- `swift build` completed cleanly.
+- Existing unrelated deprecation warnings remain elsewhere in the codebase, but there were no failures.
+
+### Deferred
+- No additional `ProcessRunner` cleanup is needed for this issue.
+- Docker/runtime follow-up work remains out of scope for `#77` and should stay deferred to `#78` or later.
 
 ### Tests run
 - `swift test --filter 'StormSetupHrrrSourceTests|StormSetupControllerTests|StormSetupWgrib2ClientTests'` - passed

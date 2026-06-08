@@ -44,6 +44,13 @@ struct ProcessRunner: Sendable {
                 )
             }
 
+            let stdoutTask = Task.detached(priority: .utility) {
+                Self.readPipeToEnd(stdoutPipe.fileHandleForReading)
+            }
+            let stderrTask = Task.detached(priority: .utility) {
+                Self.readPipeToEnd(stderrPipe.fileHandleForReading)
+            }
+
             let deadline = Date().addingTimeInterval(timeoutSeconds)
             var timedOut = false
 
@@ -72,8 +79,8 @@ struct ProcessRunner: Sendable {
                 process.waitUntilExit()
             }
 
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            let stdoutData = await stdoutTask.value
+            let stderrData = await stderrTask.value
 
             let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
@@ -100,5 +107,9 @@ struct ProcessRunner: Sendable {
 
             return result
         }.value
+    }
+
+    private static func readPipeToEnd(_ fileHandle: FileHandle) -> Data {
+        fileHandle.readDataToEndOfFile()
     }
 }

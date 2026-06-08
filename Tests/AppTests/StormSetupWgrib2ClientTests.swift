@@ -120,8 +120,13 @@ struct StormSetupWgrib2ClientTests {
         let runner = ProcessRunner()
         let executableURL = try makeExecutableScript(
             contents: """
-            #!/bin/sh
-            sleep 5
+            #!/usr/bin/env python3
+            import sys
+            import time
+
+            sys.stderr.write("waiting for timeout\\n")
+            sys.stderr.flush()
+            time.sleep(5)
             """
         )
 
@@ -129,7 +134,7 @@ struct StormSetupWgrib2ClientTests {
             _ = try await runner.run(
                 executableURL: executableURL,
                 arguments: [],
-                timeoutSeconds: 0.05
+                timeoutSeconds: 2
             )
             Issue.record("Expected a timeout error.")
         } catch let error as ProcessRunnerError {
@@ -138,9 +143,43 @@ struct StormSetupWgrib2ClientTests {
                 return
             }
 
-            #expect(abs(timeoutSeconds - 0.05) < 0.0001)
-            #expect(stderr.isEmpty)
+            #expect(abs(timeoutSeconds - 2) < 0.0001)
+            #expect(stderr == "waiting for timeout\n")
         }
+    }
+
+    @Test("process runner drains large stdout and stderr without timing out")
+    func processRunnerDrainsLargeStandardOutputAndError() async throws {
+        let runner = ProcessRunner()
+        let executableURL = try makeExecutableScript(
+            contents: """
+            #!/bin/sh
+            i=1
+            while [ "$i" -le 15000 ]; do
+                printf 'stdout-%05d\\n' "$i"
+                printf 'stderr-%05d\\n' "$i" 1>&2
+                i=$((i + 1))
+            done
+            exit 0
+            """
+        )
+
+        let result = try await runner.run(
+            executableURL: executableURL,
+            arguments: [],
+            timeoutSeconds: 2
+        )
+
+        let stdoutLines = result.stdout.split(whereSeparator: \.isNewline)
+        let stderrLines = result.stderr.split(whereSeparator: \.isNewline)
+
+        #expect(result.exitCode == 0)
+        #expect(stdoutLines.count == 15000)
+        #expect(stderrLines.count == 15000)
+        #expect(stdoutLines.first == "stdout-00001")
+        #expect(stdoutLines.last == "stdout-15000")
+        #expect(stderrLines.first == "stderr-00001")
+        #expect(stderrLines.last == "stderr-15000")
     }
 
     private func makeExecutableScript(contents: String) throws -> URL {
