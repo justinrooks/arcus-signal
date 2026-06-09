@@ -214,6 +214,21 @@ struct AppTests {
         try await app.asyncShutdown()
     }
 
+    @Test("Worker APNS request encoder uses ISO8601 dates")
+    func workerAPNSRequestEncoderUsesISO8601Dates() throws {
+        let encoder = makeAPNSRequestEncoder()
+        let payload = HotAlertAPNsPayload(
+            arcusAlertId: "11111111-2222-3333-4444-555555555555",
+            revisionSent: Date(timeIntervalSince1970: 1_747_744_896)
+        )
+
+        let encoded = try encoder.encode(payload)
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+
+        #expect(object?[HotAlertAPNsPayload.revisionSentKey] as? String == "2025-05-20T12:41:36Z")
+        #expect(object?[HotAlertAPNsPayload.arcusAlertIDKey] as? String == "11111111-2222-3333-4444-555555555555")
+    }
+
     @Test("Worker production bootstrap fails when APNS config is missing")
     func workerProductionBootstrapFailsWithoutAPNSConfig() async throws {
         try await withEnvironment([
