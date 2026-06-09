@@ -205,6 +205,91 @@ struct StormSetupProviderTests {
         #expect(fieldSampleRequestCount == 1)
     }
 
+    @Test("provider falls back when the first candidate normalizes to no recognizable fields")
+    func providerFallsBackToSecondCandidateAfterEmptyNormalization() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let centroid = expected.centroid
+        let firstCandidate = HrrrRunCandidate(runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22), forecastHour: 0)
+        let secondCandidate = HrrrRunCandidate(runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 21), forecastHour: 1)
+        let firstSource = makeSourceMetadata(candidate: firstCandidate, centroid: centroid)
+        let secondSource = makeSourceMetadata(candidate: secondCandidate, centroid: centroid)
+        let firstSubset = makeSubsetResult(source: firstSource, fetchedAt: now)
+        let secondSubset = makeSubsetResult(source: secondSource, fetchedAt: now)
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let subsetLoader = StubStormSetupSubsetLoader { callIndex, resolution, requestCentroid in
+            #expect(requestCentroid.latitude == centroid.latitude)
+            #expect(requestCentroid.longitude == centroid.longitude)
+
+            switch callIndex {
+            case 0:
+                #expect(resolution.primaryCandidate == firstCandidate)
+                return firstSubset
+            case 1:
+                #expect(resolution.primaryCandidate == secondCandidate)
+                return secondSubset
+            default:
+                throw TestFailure.unexpectedDownstreamCall("unexpected extra subset-loader call")
+            }
+        }
+        let fieldSampler = StubStormSetupFieldSampler { subset, requestCentroid in
+            #expect(requestCentroid.latitude == centroid.latitude)
+            #expect(requestCentroid.longitude == centroid.longitude)
+
+            if subset.localFileURL == firstSubset.localFileURL {
+                return [
+                    HrrrFieldSample(
+                        requestedLongitude: requestCentroid.longitude,
+                        requestedLatitude: requestCentroid.latitude,
+                        point: Wgrib2PointSample.parse(
+                            from: "1:0:d=2026060313:TMP:surface:9 hour fcst:lon=-104.47,lat=39.79,val=12"
+                        )
+                    )
+                ]
+            }
+
+            if subset.localFileURL == secondSubset.localFileURL {
+                return [
+                    HrrrFieldSample(
+                        requestedLongitude: requestCentroid.longitude,
+                        requestedLatitude: requestCentroid.latitude,
+                        point: Wgrib2PointSample.parse(
+                            from: "1:0:d=2026060313:CAPE:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1600"
+                        )
+                    )
+                ]
+            }
+
+            throw TestFailure.unexpectedDownstreamCall("unexpected subset file URL: \(subset.localFileURL)")
+        }
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: TornadoIngredientNormalizer(),
+            interpreter: StubStormSetupAssessor(assessment: makeAssessment(overall: .supportive))
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+        let loadCount = await snapshotCache.loadCount
+        let storeCount = await snapshotCache.storeCount
+        let subsetRequestCount = await subsetLoader.requestCount
+        let fieldSampleRequestCount = await fieldSampler.requestCount
+
+        #expect(snapshot.source.runTime == secondCandidate.runTime)
+        #expect(snapshot.source.forecastHour == secondCandidate.forecastHour)
+        #expect(snapshot.raw.sbcapeJkg == 1600)
+        #expect(loadCount == 2)
+        #expect(storeCount == 1)
+        #expect(subsetRequestCount == 2)
+        #expect(fieldSampleRequestCount == 2)
+    }
+
     @Test("known failure modes map to useful HTTP aborts")
     func knownFailuresMapToUsefulAborts() {
         let source = makeSourceMetadata(

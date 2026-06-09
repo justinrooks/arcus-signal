@@ -31,3 +31,31 @@
 
 ### 6. Implementation status
 - Added a controller regression test that posts `LocationUploadSource.settingsPreference` and `LocationUploadSource.foregroundPrime` through `/api/v1/devices/location-snapshots` and asserts the persisted `device_presence.source` matches the submitted value.
+
+## 2026-06-09
+- Repos scanned: `arcus-signal`
+- Commit window: since the last automation run (`2026-06-02T15:07:36Z` to `2026-06-09`)
+- High-risk areas inspected:
+  - `Sources/App/StormSetup/StormSetupProvider.swift` candidate fallback and normalized-data failure handling
+  - `Sources/App/StormSetup/HrrrRunResolver.swift` and `Sources/App/StormSetup/HrrrSourceModels.swift` HRRR candidate windowing and source metadata
+  - `Sources/App/StormSetup/StormSetupConfiguration.swift` packaged `wgrib2` default selection
+  - `Tests/AppTests/StormSetupProviderTests.swift`, `Tests/AppTests/StormSetupHrrrSourceTests.swift`, `Tests/AppTests/StormSetupConfigurationTests.swift`, `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+- Files inspected:
+  - `Sources/App/StormSetup/StormSetupProvider.swift`
+  - `Sources/App/StormSetup/HrrrRunResolver.swift`
+  - `Sources/App/StormSetup/HrrrSourceModels.swift`
+  - `Sources/App/StormSetup/StormSetupConfiguration.swift`
+  - `Sources/App/StormSetup/GribAdapter.swift`
+  - `Tests/AppTests/StormSetupProviderTests.swift`
+  - `Tests/AppTests/StormSetupHrrrSourceTests.swift`
+  - `Tests/AppTests/StormSetupConfigurationTests.swift`
+  - `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+- Existing relevant tests found:
+  - `StormSetupProviderTests` covers snapshot cache hit/miss, a fallback from subset download failure, and `wgrib2` sampling failure classification
+  - `StormSetupHrrrSourceTests` covers ordered candidate generation, lookback trimming, and NOMADS URL construction
+  - `StormSetupConfigurationTests` covers local defaults, packaged `wgrib2` selection, and environment overrides
+- Top recommended test: add a `StormSetupProviderTests` case proving that a valid first HRRR candidate with zero recognizable normalized fields still falls back to the next candidate instead of failing the whole snapshot request
+- Watchlist items: none
+- Implementation recommended: yes
+- Implementation status: added [`/Users/justin/Code/arcus-signal/Tests/AppTests/StormSetupProviderTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/StormSetupProviderTests.swift) regression coverage for empty-normalization fallback
+- Out-of-scope repositories intentionally not scanned: none
