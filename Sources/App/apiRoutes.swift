@@ -11,6 +11,7 @@ func configureAPIRoutes(_ app: Application) throws {
     try app.register(collection: AlertsController())
     try app.register(collection: DeviceController())
     try app.register(collection: OperatorDashboardController())
+    try app.register(collection: StormSetupController())
 }
 
 public func normalizedOptional(_ value: String?) -> String? {

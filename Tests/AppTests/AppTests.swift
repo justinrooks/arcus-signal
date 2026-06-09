@@ -200,6 +200,35 @@ struct AppTests {
         }
     }
 
+    @Test("Worker bootstrap preserves an injected Storm Setup provider")
+    func workerBootstrapPreservesInjectedStormSetupProvider() async throws {
+        let app = try await Application.make(.testing)
+        do {
+            app.stormSetupProvider = SentinelStormSetupProvider()
+            try await configure(app, mode: .worker)
+            #expect(app.stormSetupProvider is SentinelStormSetupProvider)
+        } catch {
+            try? await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
+    @Test("Worker APNS request encoder uses ISO8601 dates")
+    func workerAPNSRequestEncoderUsesISO8601Dates() throws {
+        let encoder = makeAPNSRequestEncoder()
+        let payload = HotAlertAPNsPayload(
+            arcusAlertId: "11111111-2222-3333-4444-555555555555",
+            revisionSent: Date(timeIntervalSince1970: 1_747_744_896)
+        )
+
+        let encoded = try encoder.encode(payload)
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+
+        #expect(object?[HotAlertAPNsPayload.revisionSentKey] as? String == "2025-05-20T12:41:36Z")
+        #expect(object?[HotAlertAPNsPayload.arcusAlertIDKey] as? String == "11111111-2222-3333-4444-555555555555")
+    }
+
     @Test("Worker production bootstrap fails when APNS config is missing")
     func workerProductionBootstrapFailsWithoutAPNSConfig() async throws {
         try await withEnvironment([
@@ -890,6 +919,13 @@ struct AppTests {
         #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: false))
         #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: false, isExpired: false))
         #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: true))
+    }
+}
+
+private final class SentinelStormSetupProvider: StormSetupProviding, @unchecked Sendable {
+    func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot {
+        _ = h3Cell
+        throw Abort(.internalServerError, reason: "Sentinel provider should never be called.")
     }
 }
 

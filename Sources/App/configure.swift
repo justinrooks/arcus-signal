@@ -32,6 +32,10 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     decoder.dateDecodingStrategy = .iso8601
     ContentConfiguration.global.use(decoder: decoder, for: .json)
 
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    ContentConfiguration.global.use(encoder: encoder, for: .json)
+
     switch mode {
     case .api:
         try configureAPIRoutes(app)
@@ -133,7 +137,7 @@ private func configureAPNs(on app: Application) async throws {
             ),
             eventLoopGroupProvider: .shared(app.eventLoopGroup),
             responseDecoder: JSONDecoder(),
-            requestEncoder: JSONEncoder(),
+            requestEncoder: makeAPNSRequestEncoder(),
             as: .development
         )
         
@@ -168,7 +172,7 @@ private func configureAPNs(on app: Application) async throws {
             ),
             eventLoopGroupProvider: .shared(app.eventLoopGroup),
             responseDecoder: JSONDecoder(),
-            requestEncoder: JSONEncoder(),
+            requestEncoder: makeAPNSRequestEncoder(),
             as: .production
         )
         
@@ -187,6 +191,14 @@ private func configureAPNs(on app: Application) async throws {
         throw Abort(.internalServerError, reason: reason)
     }
     
+}
+
+func makeAPNSRequestEncoder() -> JSONEncoder {
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    return encoder
+}
+
 
 //    let requiredKeys = ["APNS_PRIVATE_KEY_PATH", "APNS_KEY_ID", "APNS_TEAM_ID"]
 //    let values = requiredKeys.reduce(into: [String: String]()) { partialResult, key in
@@ -255,8 +267,6 @@ private func configureAPNs(on app: Application) async throws {
 //            "apnsPrivateKeyPath": .string(privateKeyPath)
 //        ]
 //    )
-}
-
 private func loadAuthenticationMethod(
     keyID: String,
     teamID: String,

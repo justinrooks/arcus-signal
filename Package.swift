@@ -41,16 +41,38 @@ let package = Package(
                 .product(name: "VaporAPNS", package: "apns"),
                 .product(name: "ArcusCore", package: "ArcusCore"),
             ],
+            path: "Sources/App",
+            sources: [
+                "Clients",
+                "Controllers",
+                "Extensions",
+                "Jobs",
+                "Migrations",
+                "Models",
+                "Infrastructure/Hashing",
+                "Infrastructure/Networking",
+                "Infrastructure/Notifications",
+                "Services",
+                "StormSetup",
+                "Worker",
+                "lib",
+                "apiRoutes.swift",
+                "configure.swift"
+            ],
             swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "Run",
             dependencies: ["App"],
+            path: "Sources/Run",
+            sources: ["main.swift"],
             swiftSettings: swiftSettings
         ),
         .executableTarget(
             name: "RunWorker",
             dependencies: ["App"],
+            path: "Sources/RunWorker",
+            sources: ["main.swift"],
             swiftSettings: swiftSettings
         ),
         .testTarget(
@@ -60,6 +82,8 @@ let package = Package(
                 .product(name: "VaporTesting", package: "vapor"),
                 .product(name: "XCTQueues", package: "queues"),
             ],
+            path: "Tests/AppTests",
+            sources: ["."],
             swiftSettings: swiftSettings
         )
     ]

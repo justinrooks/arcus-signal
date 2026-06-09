@@ -10,10 +10,16 @@ git pull --ff-only
 echo "Pulling latest image from github..."
 sudo docker compose --env-file .env pull api worker
 
-echo "Starting api/worker from pulled images..."
-sudo docker compose --env-file .env up -d --no-build api worker
+echo "Starting database and queue dependencies..."
+sudo docker compose --env-file .env up -d postgres redis
 
 echo "Running database migrations..."
-sudo docker compose --env-file .env run --rm api ./Run migrate --env development
+sudo docker compose --env-file .env run --rm api ./Run migrate --env development --yes
+
+echo "Verifying packaged wgrib2 binary..."
+sudo docker compose --env-file .env run --rm api test -x /usr/local/bin/wgrib2
+
+echo "Starting api/worker from pulled images..."
+sudo docker compose --env-file .env up -d --no-build api worker
 
 echo "Done."
