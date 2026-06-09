@@ -764,10 +764,13 @@ Related GitHub issues:
 - Full suite completed with existing unrelated Vapor/deprecation warnings elsewhere in the codebase, but no failures.
 
 ### Assessment threshold decisions
-- Instability uses the strongest available CAPE signal, with weak/conditional/supportive/strong cutoffs at `<500`, `<1000`, `<2000`, and `>=2000` J/kg.
-- Deep shear uses the strongest available 0-6 km or effective shear signal, with cutoffs at `<30`, `<40`, `<55`, and `>=55` kt.
-- Low-level rotation uses the strongest available SRH signal, with cutoffs at `<75`, `<175`, `<250`, and `>=250` m2/s2.
-- Cloud-base favorability combines MLLCL and temperature/dewpoint spread and stays conservative when either field is missing or high.
+- Instability uses the strongest available CAPE signal, with weak/conditional/supportive/strong cutoffs at `<1000`, `<2000`, `<2500`, and `>=2500` J/kg.
+- Deep shear uses the strongest available 0-6 km or effective shear signal, with cutoffs at `<30`, `<35`, `<50`, and `>=50` kt.
+- Low-level rotation scores 0-1 km SRH and 0-3 km SRH with separate bands, then uses the strongest available support class.
+- 0-1 km SRH uses weak/conditional/supportive/strong cutoffs at `<100`, `<150`, `<200`, and `>=200` m2/s2.
+- 0-3 km SRH uses weak/conditional/supportive/strong cutoffs at `<150`, `<250`, `<350`, and `>=350` m2/s2.
+- CIN is treated as a middle-range sweet spot: `<= -100` is too capped/weak, `-100..< -75` is conditional, `-75..< -25` is strong/ideal, and `>= -25` is conditional/too weakly capped.
+- Cloud-base favorability combines MLLCL and temperature/dewpoint spread and stays conservative when either field is missing or high; MLLCL uses weak/conditional/supportive/strong bands at `>1500`, `1000...1500`, `800..<1000`, and `<800` m AGL.
 - Overall support only reaches `strong` when multiple core pillars are strong and the composite signal also agrees; `conditional` stays first-class when rotation is merely modest.
 
 ### Freshness / degraded decisions

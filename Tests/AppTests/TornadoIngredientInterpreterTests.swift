@@ -46,15 +46,15 @@ struct TornadoIngredientInterpreterTests {
     func supportiveSetupYieldsSupportiveOverall() {
         let assessment = interpret(
             raw: makeRaw(
-                sbcapeJkg: 1400,
-                mlcapeJkg: 1600,
-                mucapeJkg: 1700,
+                sbcapeJkg: 1900,
+                mlcapeJkg: 2200,
+                mucapeJkg: 2300,
                 mlcinJkg: -35,
                 mllclM: 850,
                 temperatureDewpointSpreadF: 10,
                 shear06kmKt: 48,
-                srh01kmM2s2: 120,
-                srh03kmM2s2: 190
+                srh01kmM2s2: 175,
+                srh03kmM2s2: 300
             )
         )
 
@@ -121,7 +121,7 @@ struct TornadoIngredientInterpreterTests {
                 mlcapeJkg: 1600,
                 mucapeJkg: 1700,
                 mlcinJkg: -20,
-                mllclM: 1450,
+                mllclM: 1600,
                 temperatureDewpointSpreadF: 24,
                 shear06kmKt: 45,
                 srh01kmM2s2: 100,
@@ -189,6 +189,51 @@ struct TornadoIngredientInterpreterTests {
         #expect(!summary.contains("predictor"))
         #expect(!summary.contains("risk score"))
         #expect(!summary.contains("at your exact location"))
+    }
+
+    @Test("MLCAPE follows updated operational threshold bands")
+    func mlcapeFollowsUpdatedOperationalThresholdBands() {
+        #expect(interpret(raw: makeRaw(mlcapeJkg: 900)).instability == .weak)
+        #expect(interpret(raw: makeRaw(mlcapeJkg: 1500)).instability == .conditional)
+        #expect(interpret(raw: makeRaw(mlcapeJkg: 2200)).instability == .supportive)
+        #expect(interpret(raw: makeRaw(mlcapeJkg: 2600)).instability == .strong)
+    }
+
+    @Test("0-6 km bulk shear follows updated knot threshold bands")
+    func deepShearFollowsUpdatedOperationalThresholdBands() {
+        #expect(interpret(raw: makeRaw(shear06kmKt: 25)).deepShear == .weak)
+        #expect(interpret(raw: makeRaw(shear06kmKt: 32)).deepShear == .conditional)
+        #expect(interpret(raw: makeRaw(shear06kmKt: 42)).deepShear == .supportive)
+        #expect(interpret(raw: makeRaw(shear06kmKt: 52)).deepShear == .strong)
+    }
+
+    @Test("low-level rotation scores 0-1 km and 0-3 km SRH with separate bands")
+    func lowLevelRotationUsesSeparateSRHBands() {
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 90)).lowLevelRotation == .weak)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 125)).lowLevelRotation == .conditional)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 175)).lowLevelRotation == .supportive)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 225)).lowLevelRotation == .strong)
+
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 140)).lowLevelRotation == .weak)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 200)).lowLevelRotation == .conditional)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 300)).lowLevelRotation == .supportive)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 375)).lowLevelRotation == .strong)
+    }
+
+    @Test("CIN uses an ideal middle range instead of monotonic scoring")
+    func cinUsesIdealMiddleRange() {
+        #expect(interpret(raw: makeRaw(mlcinJkg: -125)).capInhibition == .weak)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -85)).capInhibition == .conditional)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -50)).capInhibition == .strong)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -10)).capInhibition == .conditional)
+    }
+
+    @Test("LCL height follows updated cloud-base threshold bands")
+    func lclHeightFollowsUpdatedCloudBaseThresholdBands() {
+        #expect(interpret(raw: makeRaw(mllclM: 1600)).cloudBase == .weak)
+        #expect(interpret(raw: makeRaw(mllclM: 1250)).cloudBase == .conditional)
+        #expect(interpret(raw: makeRaw(mllclM: 900)).cloudBase == .supportive)
+        #expect(interpret(raw: makeRaw(mllclM: 700)).cloudBase == .strong)
     }
 
     private func interpret(raw: TornadoRawParameters) -> TornadoIngredientAssessment {

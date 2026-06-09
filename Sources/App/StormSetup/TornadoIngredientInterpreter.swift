@@ -84,11 +84,11 @@ struct TornadoIngredientInterpreter: Sendable {
         }
 
         switch strongest {
-        case ..<500:
-            return .weak
         case ..<1000:
-            return .conditional
+            return .weak
         case ..<2000:
+            return .conditional
+        case ..<2500:
             return .supportive
         default:
             return .strong
@@ -137,12 +137,12 @@ struct TornadoIngredientInterpreter: Sendable {
         switch cin {
         case ..<(-100):
             return .weak
-        case ..<(-50):
+        case ..<(-75):
             return .conditional
         case ..<(-25):
-            return .supportive
-        default:
             return .strong
+        default:
+            return .conditional
         }
     }
 
@@ -155,9 +155,9 @@ struct TornadoIngredientInterpreter: Sendable {
         switch strongest {
         case ..<30:
             return .weak
-        case ..<40:
+        case ..<35:
             return .conditional
-        case ..<55:
+        case ..<50:
             return .supportive
         default:
             return .strong
@@ -165,21 +165,46 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessLowLevelRotation(_ raw: TornadoRawParameters) -> IngredientSupport {
-        let values = [raw.effectiveSrhM2s2, raw.srh03kmM2s2, raw.srh01kmM2s2].compactMap { $0 }
-        guard let strongest = values.max() else {
+        let supports = [
+            raw.effectiveSrhM2s2.map(assessEffectiveSRH),
+            raw.srh03kmM2s2.map(assessSRH03km),
+            raw.srh01kmM2s2.map(assessSRH01km)
+        ].compactMap { $0 }
+        guard let strongest = supports.max() else {
             return .unknown
         }
 
-        switch strongest {
-        case ..<75:
+        return strongest
+    }
+
+    private func assessSRH01km(_ value: Double) -> IngredientSupport {
+        switch value {
+        case ..<100:
             return .weak
-        case ..<175:
+        case ..<150:
             return .conditional
-        case ..<250:
+        case ..<200:
             return .supportive
         default:
             return .strong
         }
+    }
+
+    private func assessSRH03km(_ value: Double) -> IngredientSupport {
+        switch value {
+        case ..<150:
+            return .weak
+        case ..<250:
+            return .conditional
+        case ..<350:
+            return .supportive
+        default:
+            return .strong
+        }
+    }
+
+    private func assessEffectiveSRH(_ value: Double) -> IngredientSupport {
+        assessSRH01km(value)
     }
 
     private func assessStormMode() -> IngredientSupport {
@@ -350,12 +375,12 @@ struct TornadoIngredientInterpreter: Sendable {
         if lowLevelRotation == .weak {
             append(.weakLowLevelRotation)
         }
-        if let mllcl = raw.mllclM, mllcl >= 1200 {
+        if let mllcl = raw.mllclM, mllcl > 1500 {
             append(.elevatedCloudBases)
         }
         if let cin = raw.mlcinJkg, cin <= -100 {
             append(.strongCap)
-        } else if let cin = raw.mlcinJkg, cin <= -50, instability >= .supportive, deepShear >= .supportive {
+        } else if let cin = raw.mlcinJkg, cin < -75, instability >= .supportive, deepShear >= .supportive {
             append(.weakLift)
         }
         if moisture == .weak {
@@ -399,7 +424,7 @@ struct TornadoIngredientInterpreter: Sendable {
 private extension TornadoIngredientInterpreter {
     func moistureScore(_ raw: TornadoRawParameters) -> Double? {
         let scores: [Double] = [
-            raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.75), (1250, 0.45)], worstScore: 0.0) },
+            raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
             raw.temperatureDewpointSpreadF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
         ].compactMap { $0 }
 
@@ -412,7 +437,7 @@ private extension TornadoIngredientInterpreter {
 
     func cloudBaseScore(_ raw: TornadoRawParameters) -> Double? {
         let scores: [Double] = [
-            raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.75), (1250, 0.45)], worstScore: 0.0) },
+            raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
             raw.temperatureDewpointSpreadF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
         ].compactMap { $0 }
 
