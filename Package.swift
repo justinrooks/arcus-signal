@@ -83,7 +83,13 @@ let package = Package(
                 .product(name: "XCTQueues", package: "queues"),
             ],
             path: "Tests/AppTests",
+            exclude: [
+                "Fixtures"
+            ],
             sources: ["."],
+            resources: [
+                .process("Fixtures")
+            ],
             swiftSettings: swiftSettings
         )
     ]

@@ -14,6 +14,10 @@ struct GribInventoryFieldMap: Sendable {
             return capeMatch(for: level)
         case "CIN":
             return cinMatch(for: level)
+        case "TMP":
+            return temperatureMatch(for: level)
+        case "DPT":
+            return dewpointMatch(for: level)
         case "HLCY":
             return helicityMatch(for: level)
         case "VUCSH", "VVCSH":
@@ -33,9 +37,27 @@ struct GribInventoryFieldMap: Sendable {
             return .direct(.mlcapeJkg, priority: 0)
         case "255-0 mb above ground":
             return .direct(.mucapeJkg, priority: 0)
+        case "0-3000 m above ground":
+            return .direct(.threeCapeJkg, priority: 0)
         default:
             return nil
         }
+    }
+
+    private func temperatureMatch(for level: String) -> GribInventoryFieldMatch? {
+        guard level == "2 m above ground" else {
+            return nil
+        }
+
+        return .direct(.temperature2mK, priority: 0)
+    }
+
+    private func dewpointMatch(for level: String) -> GribInventoryFieldMatch? {
+        guard level == "2 m above ground" else {
+            return nil
+        }
+
+        return .direct(.dewpoint2mK, priority: 0)
     }
 
     private func cinMatch(for level: String) -> GribInventoryFieldMatch? {

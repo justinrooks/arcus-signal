@@ -46,6 +46,9 @@ private struct TornadoRawParametersBuilder {
     var mucapeJkg: ParameterCandidate?
     var mlcinJkg: ParameterCandidate?
     var mllclM: ParameterCandidate?
+    var temperature2mK: ParameterCandidate?
+    var dewpoint2mK: ParameterCandidate?
+    var threeCapeJkg: ParameterCandidate?
     var srh01kmM2s2: ParameterCandidate?
     var srh03kmM2s2: ParameterCandidate?
     var shear06kmU: ParameterCandidate?
@@ -71,6 +74,14 @@ private struct TornadoRawParametersBuilder {
             mucapeJkg = candidate(existing: mucapeJkg, value: value, priority: priority)
         case .mlcinJkg:
             mlcinJkg = candidate(existing: mlcinJkg, value: value, priority: priority)
+        case .temperature2mK:
+            temperature2mK = candidate(existing: temperature2mK, value: value, priority: priority)
+        case .dewpoint2mK:
+            dewpoint2mK = candidate(existing: dewpoint2mK, value: value, priority: priority)
+        case .tempDewPtDeltaF:
+            break
+        case .threeCapeJkg:
+            threeCapeJkg = candidate(existing: threeCapeJkg, value: value, priority: priority)
         case .srh01kmM2s2:
             srh01kmM2s2 = candidate(existing: srh01kmM2s2, value: value, priority: priority)
         case .srh03kmM2s2:
@@ -110,6 +121,15 @@ private struct TornadoRawParametersBuilder {
             shear06kmKt = nil
         }
 
+        let tempDewPtDeltaF: Double?
+        if let temperature2mK, let dewpoint2mK {
+            // This is a temperature delta, so the Kelvin-to-Celsius offset cancels out.
+            // Only the scale factor remains when converting the spread to Fahrenheit.
+            tempDewPtDeltaF = (temperature2mK.value - dewpoint2mK.value) * Self.kelvinToFahrenheitDelta
+        } else {
+            tempDewPtDeltaF = nil
+        }
+
         return TornadoIngredientNormalizationResult(
             raw: TornadoRawParameters(
                 sbcapeJkg: sbcapeJkg?.value,
@@ -118,7 +138,9 @@ private struct TornadoRawParametersBuilder {
                 mlcinJkg: mlcinJkg?.value,
                 dcapeJkg: nil,
                 mllclM: mllclM?.value,
-                temperatureDewpointSpreadF: nil,
+                tempDewPtDeltaF: tempDewPtDeltaF,
+                threeCapeJkg: threeCapeJkg?.value,
+                temperatureDewpointSpreadF: tempDewPtDeltaF,
                 lclLfcSeparationM: nil,
                 lapseRate03kmCkm: nil,
                 lapseRate700500mbCkm: nil,
@@ -156,6 +178,7 @@ private struct TornadoRawParametersBuilder {
     }
 
     private static let metresPerSecondToKnots = 1.943_844_492_440_6
+    private static let kelvinToFahrenheitDelta = 1.8
 }
 
 private struct ParameterCandidate: Sendable, Equatable {

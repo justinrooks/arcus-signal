@@ -76,13 +76,17 @@ struct HrrrNomadsURLBuilder: Sendable {
             "var_VVCSH",
             "var_USTM",
             "var_VSTM",
-            "var_HGT"
+            "var_HGT",
+            "var_DPT",
+            "var_TMP"
         ].map { encodedQueryItem(name: $0, value: "on") }
     }
 
     private var levelFlagItems: [String] {
         [
             "lev_surface",
+            "lev_0-3000_m_above_ground",
+            "lev_2_m_above_ground",
             "lev_90-0_mb_above_ground",
             "lev_255-0_mb_above_ground",
             "lev_1000-0_m_above_ground",
