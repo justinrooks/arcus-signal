@@ -92,6 +92,37 @@ struct StormSetupHrrrSourceTests {
         #expect(urlString.contains("bottomlat=39.61"))
         #expect(!urlString.contains("latest"))
     }
+
+    @Test("NOMADS URL builder includes pressure-level variables and levels")
+    func urlBuilderIncludesPressureFieldSet() throws {
+        let candidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let centroid = StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+        let builder = HrrrNomadsURLBuilder()
+
+        let metadata = builder.makeSourceMetadata(for: candidate, around: centroid)
+        let urlString = metadata.nomadsURL?.absoluteString ?? ""
+
+        #expect(metadata.model == .hrrr)
+        #expect(metadata.product == .wrfprsf)
+        #expect(metadata.fieldSetVersion == .tornadoPressureV1)
+        #expect(urlString.contains("file=hrrr.t13z.wrfprsf09.grib2"))
+        #expect(urlString.contains("var_HGT=on"))
+        #expect(urlString.contains("var_TMP=on"))
+        #expect(urlString.contains("var_DPT=on"))
+        #expect(urlString.contains("var_UGRD=on"))
+        #expect(urlString.contains("var_VGRD=on"))
+        #expect(urlString.contains("lev_850_mb=on"))
+        #expect(urlString.contains("lev_700_mb=on"))
+        #expect(urlString.contains("lev_500_mb=on"))
+        #expect(urlString.contains("lev_300_mb=on"))
+        #expect(!urlString.contains("var_CAPE=on"))
+        #expect(!urlString.contains("lev_surface=on"))
+    }
 }
 
 private struct FixedStormSetupDateProvider: StormSetupDateProviding {

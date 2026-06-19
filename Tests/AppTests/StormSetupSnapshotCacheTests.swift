@@ -28,6 +28,44 @@ struct StormSetupSnapshotCacheTests {
         #expect(keyA.snapshotFileURL(rootURL: rootURL).path == keyB.snapshotFileURL(rootURL: rootURL).path)
     }
 
+    @Test("snapshot cache keys separate surface and pressure-level sources")
+    func snapshotCacheKeysSeparateSurfaceAndPressureSources() throws {
+        let rootURL = testRootURL()
+        let centroid = StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+        let builder = HrrrNomadsURLBuilder()
+        let surfaceSource = builder.makeSourceMetadata(
+            for: HrrrRunCandidate(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                forecastHour: 9
+            ),
+            around: centroid
+        )
+        let pressureSource = builder.makeSourceMetadata(
+            for: HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                forecastHour: 9,
+                fieldSetVersion: .tornadoPressureV1
+            ),
+            around: centroid
+        )
+
+        let surfaceKey = try StormSetupSnapshotCacheKey(
+            h3Cell: 882_681_611_511_963_647,
+            sourceMetadata: surfaceSource,
+            rulesVersion: .current
+        )
+        let pressureKey = try StormSetupSnapshotCacheKey(
+            h3Cell: 882_681_611_511_963_647,
+            sourceMetadata: pressureSource,
+            rulesVersion: .current
+        )
+
+        #expect(surfaceKey != pressureKey)
+        #expect(surfaceKey.cacheIdentifier != pressureKey.cacheIdentifier)
+        #expect(surfaceKey.snapshotFileURL(rootURL: rootURL).path != pressureKey.snapshotFileURL(rootURL: rootURL).path)
+    }
+
     @Test("different H3 cells map to different cache paths")
     func differentH3CellsMapToDifferentPaths() throws {
         let rootURL = testRootURL()

@@ -313,13 +313,14 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     }
 
     private func makeCandidate(from sourceMetadata: StormSetupSourceMetadata) -> HrrrRunCandidate {
-        HrrrRunCandidate(
+        let product = sourceMetadata.product ?? .wrfsfc
+        return HrrrRunCandidate(
             model: sourceMetadata.model ?? .hrrr,
-            product: sourceMetadata.product ?? .wrfsfc,
+            product: product,
             domain: sourceMetadata.domain ?? .conus,
             runTime: sourceMetadata.runTime ?? dateProvider.now(),
             forecastHour: sourceMetadata.forecastHour ?? 0,
-            fieldSetVersion: sourceMetadata.fieldSetVersion ?? .tornadoV1
+            fieldSetVersion: sourceMetadata.fieldSetVersion ?? product.defaultFieldSetVersion
         )
     }
 

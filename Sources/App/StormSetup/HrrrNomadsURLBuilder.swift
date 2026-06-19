@@ -56,8 +56,8 @@ struct HrrrNomadsURLBuilder: Sendable {
             encodedQueryItem(name: "file", value: candidate.fileName)
         ]
 
-        items.append(contentsOf: fieldFlagItems)
-        items.append(contentsOf: levelFlagItems)
+        items.append(contentsOf: fieldFlagItems(for: candidate))
+        items.append(contentsOf: levelFlagItems(for: candidate))
         items.append(encodedQueryItem(name: "subregion", value: ""))
         items.append(encodedQueryItem(name: "leftlon", value: formattedCoordinate(bbox.leftlon)))
         items.append(encodedQueryItem(name: "rightlon", value: formattedCoordinate(bbox.rightlon)))
@@ -67,33 +67,16 @@ struct HrrrNomadsURLBuilder: Sendable {
         return items.joined(separator: "&")
     }
 
-    private var fieldFlagItems: [String] {
-        [
-            "var_CAPE",
-            "var_CIN",
-            "var_HLCY",
-            "var_VUCSH",
-            "var_VVCSH",
-            "var_USTM",
-            "var_VSTM",
-            "var_HGT",
-            "var_DPT",
-            "var_TMP"
-        ].map { encodedQueryItem(name: $0, value: "on") }
+    private func fieldFlagItems(for candidate: HrrrRunCandidate) -> [String] {
+        candidate.fieldSetVersion.nomadsVariableFlags.map {
+            encodedQueryItem(name: $0, value: "on")
+        }
     }
 
-    private var levelFlagItems: [String] {
-        [
-            "lev_surface",
-            "lev_0-3000_m_above_ground",
-            "lev_2_m_above_ground",
-            "lev_90-0_mb_above_ground",
-            "lev_255-0_mb_above_ground",
-            "lev_1000-0_m_above_ground",
-            "lev_3000-0_m_above_ground",
-            "lev_0-6000_m_above_ground",
-            "lev_level_of_adiabatic_condensation_from_sfc"
-        ].map { encodedQueryItem(name: $0, value: "on") }
+    private func levelFlagItems(for candidate: HrrrRunCandidate) -> [String] {
+        candidate.fieldSetVersion.nomadsLevelFlags.map {
+            encodedQueryItem(name: $0, value: "on")
+        }
     }
 
     private func encodedQueryItem(name: String, value: String) -> String {

@@ -7,6 +7,25 @@ enum HrrrModel: String, Content, Sendable, Equatable {
 
 enum HrrrProduct: String, Content, Sendable, Equatable {
     case wrfsfc
+    case wrfprsf
+
+    var defaultFieldSetVersion: HrrrFieldSetVersion {
+        switch self {
+        case .wrfsfc:
+            return .tornadoV1
+        case .wrfprsf:
+            return .tornadoPressureV1
+        }
+    }
+
+    var fileNameStem: String {
+        switch self {
+        case .wrfsfc:
+            return "wrfsfcf"
+        case .wrfprsf:
+            return "wrfprsf"
+        }
+    }
 }
 
 enum HrrrDomain: String, Content, Sendable, Equatable {
@@ -15,6 +34,60 @@ enum HrrrDomain: String, Content, Sendable, Equatable {
 
 enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
     case tornadoV1 = "tornado-v1"
+    case tornadoPressureV1 = "tornado-pressure-v1"
+
+    var nomadsVariableFlags: [String] {
+        switch self {
+        case .tornadoV1:
+            return [
+                "var_CAPE",
+                "var_CIN",
+                "var_HLCY",
+                "var_VUCSH",
+                "var_VVCSH",
+                "var_USTM",
+                "var_VSTM",
+                "var_HGT",
+                "var_DPT",
+                "var_TMP"
+            ]
+        case .tornadoPressureV1:
+            return [
+                "var_HGT",
+                "var_TMP",
+                "var_DPT",
+                "var_UGRD",
+                "var_VGRD"
+            ]
+        }
+    }
+
+    var nomadsLevelFlags: [String] {
+        switch self {
+        case .tornadoV1:
+            return [
+                "lev_surface",
+                "lev_0-3000_m_above_ground",
+                "lev_2_m_above_ground",
+                "lev_90-0_mb_above_ground",
+                "lev_255-0_mb_above_ground",
+                "lev_1000-0_m_above_ground",
+                "lev_3000-0_m_above_ground",
+                "lev_0-6000_m_above_ground",
+                "lev_level_of_adiabatic_condensation_from_sfc"
+            ]
+        case .tornadoPressureV1:
+            return [
+                "lev_1000_mb",
+                "lev_925_mb",
+                "lev_850_mb",
+                "lev_700_mb",
+                "lev_500_mb",
+                "lev_300_mb",
+                "lev_250_mb"
+            ]
+        }
+    }
 }
 
 struct StormSetupHrrrBoundingBox: Content, Sendable, Equatable {
@@ -50,7 +123,7 @@ struct HrrrRunCandidate: Content, Sendable, Equatable {
         domain: HrrrDomain = .conus,
         runTime: Date,
         forecastHour: Int,
-        fieldSetVersion: HrrrFieldSetVersion = .tornadoV1
+        fieldSetVersion: HrrrFieldSetVersion? = nil
     ) {
         self.model = model
         self.product = product
@@ -58,7 +131,7 @@ struct HrrrRunCandidate: Content, Sendable, Equatable {
         self.runTime = runTime
         self.forecastHour = forecastHour
         self.validTime = runTime.addingTimeInterval(TimeInterval(forecastHour) * 3600)
-        self.fieldSetVersion = fieldSetVersion
+        self.fieldSetVersion = fieldSetVersion ?? product.defaultFieldSetVersion
     }
 
     var directoryPath: String {
@@ -66,7 +139,7 @@ struct HrrrRunCandidate: Content, Sendable, Equatable {
     }
 
     var fileName: String {
-        "hrrr.t\(runTime.stormSetupUTCHourString)z.\(product.rawValue)f\(forecastHour.stormSetupTwoDigitString).grib2"
+        "hrrr.t\(runTime.stormSetupUTCHourString)z.\(product.fileNameStem)\(forecastHour.stormSetupTwoDigitString).grib2"
     }
 }
 
