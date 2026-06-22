@@ -42,7 +42,7 @@ struct HrrrNomadsURLBuilder: Sendable {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "nomads.ncep.noaa.gov"
-        components.path = "/cgi-bin/filter_hrrr_2d.pl"
+        components.path = candidate.fieldSetVersion.nomadsFilterPath
         components.percentEncodedQuery = percentEncodedQuery(for: candidate, bbox: bbox)
         return components.url
     }

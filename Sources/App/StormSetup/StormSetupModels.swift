@@ -10,7 +10,7 @@ struct TornadoIngredientSnapshot: Content, Sendable {
     let freshness: IngredientFreshness
 }
 
-struct StormSetupCentroid: Content, Sendable {
+struct StormSetupCentroid: Content, Sendable, Equatable {
     let latitude: Double
     let longitude: Double
 }

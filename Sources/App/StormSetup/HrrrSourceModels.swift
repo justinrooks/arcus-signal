@@ -62,6 +62,15 @@ enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
         }
     }
 
+    var nomadsFilterPath: String {
+        switch self {
+        case .tornadoV1:
+            return "/cgi-bin/filter_hrrr_2d.pl"
+        case .tornadoPressureV1:
+            return "/cgi-bin/filter_hrrr.pl"
+        }
+    }
+
     var nomadsLevelFlags: [String] {
         switch self {
         case .tornadoV1:
