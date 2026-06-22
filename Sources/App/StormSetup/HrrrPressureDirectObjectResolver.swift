@@ -115,6 +115,13 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
     }
 
     init(
+        checker: any HrrrRemoteObjectChecking,
+        urlBuilder: HrrrPressureDirectObjectURLBuilder = HrrrPressureDirectObjectURLBuilder()
+    ) {
+        self.init(remoteObjectChecker: checker, urlBuilder: urlBuilder)
+    }
+
+    init(
         httpClient: any HTTPClient,
         urlBuilder: HrrrPressureDirectObjectURLBuilder = HrrrPressureDirectObjectURLBuilder()
     ) {

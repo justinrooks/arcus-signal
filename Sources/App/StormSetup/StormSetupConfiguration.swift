@@ -16,6 +16,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     static let localGribSubsetCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("grib-subsets", isDirectory: true)
 
+    static let localPressureGribRawCacheRootURL = localStormSetupCacheRootURL
+        .appendingPathComponent("pressure-grib-raw", isDirectory: true)
+
     static let localSampledSnapshotCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("sampled-snapshots", isDirectory: true)
 
@@ -46,6 +49,11 @@ struct StormSetupConfiguration: Sendable, Equatable {
             in: environment
         ) ?? 25 * 1024 * 1024
 
+        let pressureGribRawMaximumByteCount = Self.environmentInt(
+            for: "STORM_SETUP_PRESSURE_GRIB_MAX_BYTES",
+            in: environment
+        ) ?? 150 * 1024 * 1024
+
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
@@ -56,12 +64,17 @@ struct StormSetupConfiguration: Sendable, Equatable {
                 "grib-subsets",
                 isDirectory: true
             ),
+            pressureGribRawCacheRootURL: cacheRootURL.appendingPathComponent(
+                "pressure-grib-raw",
+                isDirectory: true
+            ),
             sampledSnapshotCacheRootURL: cacheRootURL.appendingPathComponent(
                 "sampled-snapshots",
                 isDirectory: true
             ),
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
+            pressureGribRawMaximumByteCount: pressureGribRawMaximumByteCount,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds
         )
@@ -69,17 +82,21 @@ struct StormSetupConfiguration: Sendable, Equatable {
 
     static let `default` = StormSetupConfiguration(
         gribSubsetCacheRootURL: localGribSubsetCacheRootURL,
+        pressureGribRawCacheRootURL: localPressureGribRawCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
         gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+        pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15
     )
 
     let gribSubsetCacheRootURL: URL
+    let pressureGribRawCacheRootURL: URL
     let sampledSnapshotCacheRootURL: URL
     let gribSubsetCacheRetentionSeconds: TimeInterval
     let gribSubsetMaximumByteCount: Int
+    let pressureGribRawMaximumByteCount: Int
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
 

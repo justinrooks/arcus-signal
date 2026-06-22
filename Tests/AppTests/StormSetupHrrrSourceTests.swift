@@ -255,7 +255,7 @@ struct StormSetupHrrrSourceTests {
         let result = try await resolver.resolveSource(for: resolution)
 
         #expect(result.candidate == newer)
-        #expect(result.source.sourceKind == .directObject)
+        #expect(result.source.sourceKind == HrrrSourceKind.directObject)
         #expect(result.source.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf00.grib2")
         #expect(result.idxProbe.available == true)
         #expect(result.gribProbe == nil)
