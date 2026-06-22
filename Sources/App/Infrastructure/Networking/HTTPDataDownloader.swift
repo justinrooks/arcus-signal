@@ -106,6 +106,7 @@ public actor LastGlobalSuccessHTTPObserver: HTTPResponseObserving {
 
 public protocol HTTPClient: Sendable {
     func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse
+    func head(_ url: URL, headers: [String: String]) async throws -> HTTPResponse
     func clearCache()
 }
 
@@ -128,6 +129,10 @@ public final class VaporApplicationHTTPClient: HTTPClient {
 
     public func get(_ url: URL, headers: [String: String] = [:]) async throws -> HTTPResponse {
         try await request(url: url, method: .GET, headers: headers)
+    }
+
+    public func head(_ url: URL, headers: [String : String] = [:]) async throws -> HTTPResponse {
+        try await request(url: url, method: .HEAD, headers: headers)
     }
 
     /// Vapor's client does not expose an app-level HTTP cache to clear.

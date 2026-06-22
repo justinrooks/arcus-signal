@@ -172,6 +172,176 @@ struct StormSetupHrrrSourceTests {
         #expect(metadata.idxURL == nil)
         #expect(metadata.bbox == nil)
     }
+
+    @Test("pressure candidates preserve valid time and direct-object file naming")
+    func pressureCandidatesPreserveTimingAndFileNames() throws {
+        let runTime = makeUTCDate(year: 2026, month: 6, day: 19, hour: 21)
+
+        let forecastZero = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: runTime,
+            forecastHour: 0,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let forecastNine = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: runTime,
+            forecastHour: 9,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let forecastTwelve = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: runTime,
+            forecastHour: 12,
+            fieldSetVersion: .tornadoPressureV1
+        )
+
+        #expect(forecastZero.fileName == "hrrr.t21z.wrfprsf00.grib2")
+        #expect(forecastNine.fileName == "hrrr.t21z.wrfprsf09.grib2")
+        #expect(forecastTwelve.fileName == "hrrr.t21z.wrfprsf12.grib2")
+        #expect(forecastTwelve.validTime == makeUTCDate(year: 2026, month: 6, day: 20, hour: 9))
+    }
+
+    @Test("pressure direct-object URLs resolve from the NOAA AWS bucket")
+    func pressureDirectObjectUrlsResolveFromAWS() throws {
+        let candidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            forecastHour: 0,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let builder = HrrrPressureDirectObjectURLBuilder()
+
+        let metadata = builder.makeSourceMetadata(for: candidate)
+
+        #expect(metadata.sourceKind == .directObject)
+        #expect(metadata.model == .hrrr)
+        #expect(metadata.product == .wrfprsf)
+        #expect(metadata.domain == .conus)
+        #expect(metadata.runTime == makeUTCDate(year: 2026, month: 6, day: 19, hour: 21))
+        #expect(metadata.forecastHour == 0)
+        #expect(metadata.validTime == makeUTCDate(year: 2026, month: 6, day: 19, hour: 21))
+        #expect(metadata.fieldSetVersion == .tornadoPressureV1)
+        #expect(metadata.bbox == nil)
+        #expect(metadata.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf00.grib2")
+        #expect(metadata.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf00.grib2.idx")
+    }
+
+    @Test("pressure direct-object resolver prefers the newest available candidate")
+    func pressureDirectObjectResolverPrefersNewestAvailableCandidate() async throws {
+        let newer = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            forecastHour: 0,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let older = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+            forecastHour: 1,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let resolution = HrrrRunResolution(
+            targetValidTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            candidates: [newer, older]
+        )
+        let checker = StubHrrrRemoteObjectChecking(
+            availableURLs: [
+                HrrrPressureDirectObjectURLBuilder().makeIdxURL(for: newer).absoluteString: true
+            ]
+        )
+        let resolver = DefaultHrrrPressureDirectObjectResolver(checker: checker)
+
+        let result = try await resolver.resolveSource(for: resolution)
+
+        #expect(result.candidate == newer)
+        #expect(result.source.sourceKind == .directObject)
+        #expect(result.source.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf00.grib2")
+        #expect(result.idxProbe.available == true)
+        #expect(result.gribProbe == nil)
+        #expect(checker.requestedURLs == [
+            HrrrPressureDirectObjectURLBuilder().makeIdxURL(for: newer).absoluteString
+        ])
+    }
+
+    @Test("pressure direct-object resolver walks backward past unavailable candidates")
+    func pressureDirectObjectResolverWalksBackwardPastUnavailableCandidates() async throws {
+        let newest = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            forecastHour: 0,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let middle = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+            forecastHour: 1,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let oldest = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 19),
+            forecastHour: 2,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let builder = HrrrPressureDirectObjectURLBuilder()
+        let checker = StubHrrrRemoteObjectChecking(
+            availableURLs: [
+                builder.makeIdxURL(for: middle).absoluteString: true,
+                builder.makeIdxURL(for: oldest).absoluteString: false,
+                builder.makeGribURL(for: oldest).absoluteString: true
+            ]
+        )
+        let resolver = DefaultHrrrPressureDirectObjectResolver(checker: checker, urlBuilder: builder)
+        let resolution = HrrrRunResolution(
+            targetValidTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            candidates: [newest, middle, oldest]
+        )
+
+        let result = try await resolver.resolveSource(for: resolution)
+
+        #expect(result.candidate == middle)
+        #expect(result.idxProbe.available == true)
+        #expect(result.gribProbe == nil)
+        #expect(checker.requestedURLs == [
+            builder.makeIdxURL(for: newest).absoluteString,
+            builder.makeGribURL(for: newest).absoluteString,
+            builder.makeIdxURL(for: middle).absoluteString
+        ])
+    }
+
+    @Test("pressure direct-object resolver reports a clear failure when no recent candidate is available")
+    func pressureDirectObjectResolverFailsClearlyWhenNoCandidateIsAvailable() async throws {
+        let candidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            forecastHour: 0,
+            fieldSetVersion: .tornadoPressureV1
+        )
+        let builder = HrrrPressureDirectObjectURLBuilder()
+        let checker = StubHrrrRemoteObjectChecking(
+            availableURLs: [
+                builder.makeIdxURL(for: candidate).absoluteString: false,
+                builder.makeGribURL(for: candidate).absoluteString: false
+            ]
+        )
+        let resolver = DefaultHrrrPressureDirectObjectResolver(checker: checker, urlBuilder: builder)
+        let resolution = HrrrRunResolution(
+            targetValidTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            candidates: [candidate]
+        )
+
+        do {
+            _ = try await resolver.resolveSource(for: resolution)
+            Issue.record("Expected the pressure resolver to fail when no source is available.")
+        } catch let error as HrrrPressureDirectObjectResolverError {
+            if case .noAvailableCandidate = error {
+                #expect(error.description.contains("No usable HRRR pressure direct-object candidate"))
+                return
+            }
+            Issue.record("Expected a no-available-candidate error but got \(error).")
+        }
+    }
 }
 
 private struct FixedStormSetupDateProvider: StormSetupDateProviding {
@@ -205,4 +375,23 @@ private func makeUTCDate(
     }
 
     return date
+}
+
+final class StubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking, @unchecked Sendable {
+    let availableURLs: [String: Bool]
+    private(set) var requestedURLs: [String] = []
+
+    init(availableURLs: [String: Bool] = [:]) {
+        self.availableURLs = availableURLs
+    }
+
+    func probe(url: URL) async -> HrrrRemoteObjectProbeResult {
+        requestedURLs.append(url.absoluteString)
+        let available = availableURLs[url.absoluteString] ?? false
+        return HrrrRemoteObjectProbeResult(
+            url: url,
+            available: available,
+            status: available ? 200 : 404
+        )
+    }
 }

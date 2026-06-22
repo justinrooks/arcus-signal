@@ -414,6 +414,10 @@ final class StubHTTPClient: HTTPClient, @unchecked Sendable {
         }
     }
 
+    func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
     func clearCache() {}
 
     var requestCount: Int {
