@@ -4,6 +4,26 @@ import Testing
 
 @Suite("Storm setup HRRR source selection", .serialized)
 struct StormSetupHrrrSourceTests {
+    @Test("HRRR products generate the expected file names")
+    func productFileNamesAreCorrect() throws {
+        #expect(HrrrProduct.wrfsfc.fileNameStem == "wrfsfcf")
+        #expect(HrrrProduct.wrfprsf.fileNameStem == "wrfprsf")
+
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9
+        )
+        let pressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            fieldSetVersion: .tornadoPressureV1
+        )
+
+        #expect(surfaceCandidate.fileName == "hrrr.t13z.wrfsfcf09.grib2")
+        #expect(pressureCandidate.fileName == "hrrr.t13z.wrfprsf09.grib2")
+    }
+
     @Test("fixed clock produces ordered HRRR candidates and valid times")
     func resolverProducesOrderedCandidates() throws {
         let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -59,8 +79,9 @@ struct StormSetupHrrrSourceTests {
         let builder = HrrrNomadsURLBuilder()
 
         let metadata = builder.makeSourceMetadata(for: candidate, around: centroid)
-        let urlString = metadata.nomadsURL?.absoluteString ?? ""
+        let urlString = metadata.primaryDownloadURL?.absoluteString ?? ""
 
+        #expect(metadata.sourceKind == .nomadsFilteredSubset)
         #expect(metadata.model == .hrrr)
         #expect(metadata.product == .wrfsfc)
         #expect(metadata.domain == .conus)
@@ -106,10 +127,13 @@ struct StormSetupHrrrSourceTests {
         let builder = HrrrNomadsURLBuilder()
 
         let metadata = builder.makeSourceMetadata(for: candidate, around: centroid)
-        let urlString = metadata.nomadsURL?.absoluteString ?? ""
+        let urlString = metadata.primaryDownloadURL?.absoluteString ?? ""
 
+        #expect(metadata.sourceKind == .nomadsFilteredSubset)
         #expect(metadata.model == .hrrr)
         #expect(metadata.product == .wrfprsf)
+        #expect(metadata.primaryDownloadURL != nil)
+        #expect(metadata.idxURL == nil)
         #expect(metadata.fieldSetVersion == .tornadoPressureV1)
         #expect(urlString.contains("/cgi-bin/filter_hrrr.pl"))
         #expect(urlString.contains("file=hrrr.t13z.wrfprsf09.grib2"))
@@ -124,6 +148,29 @@ struct StormSetupHrrrSourceTests {
         #expect(urlString.contains("lev_300_mb=on"))
         #expect(!urlString.contains("var_CAPE=on"))
         #expect(!urlString.contains("lev_surface=on"))
+    }
+
+    @Test("source metadata can represent a direct pressure object without a NOMADS filter")
+    func sourceMetadataCanRepresentDirectObjectSources() throws {
+        let directURL = URL(string: "https://example.com/hrrr/wrfprsf/hrrr.t13z.wrfprsf09.grib2")!
+        let metadata = StormSetupSourceMetadata(
+            sourceKind: .directObject,
+            model: .hrrr,
+            product: .wrfprsf,
+            domain: .conus,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            fieldSetVersion: .tornadoPressureV1,
+            primaryDownloadURL: directURL,
+            idxURL: nil
+        )
+
+        #expect(metadata.sourceKind == .directObject)
+        #expect(metadata.primaryDownloadURL == directURL)
+        #expect(metadata.nomadsURL == directURL)
+        #expect(metadata.idxURL == nil)
+        #expect(metadata.bbox == nil)
     }
 }
 

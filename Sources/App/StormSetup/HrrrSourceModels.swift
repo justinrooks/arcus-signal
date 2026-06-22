@@ -28,6 +28,11 @@ enum HrrrProduct: String, Content, Sendable, Equatable {
     }
 }
 
+enum HrrrSourceKind: String, Content, Sendable, Equatable {
+    case nomadsFilteredSubset
+    case directObject
+}
+
 enum HrrrDomain: String, Content, Sendable, Equatable {
     case conus
 }
@@ -59,15 +64,6 @@ enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
                 "var_UGRD",
                 "var_VGRD"
             ]
-        }
-    }
-
-    var nomadsFilterPath: String {
-        switch self {
-        case .tornadoV1:
-            return "/cgi-bin/filter_hrrr_2d.pl"
-        case .tornadoPressureV1:
-            return "/cgi-bin/filter_hrrr.pl"
         }
     }
 

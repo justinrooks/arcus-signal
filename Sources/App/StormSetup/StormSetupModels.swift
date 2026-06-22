@@ -16,6 +16,7 @@ struct StormSetupCentroid: Content, Sendable, Equatable {
 }
 
 struct StormSetupSourceMetadata: Content, Sendable {
+    let sourceKind: HrrrSourceKind
     let model: HrrrModel?
     let product: HrrrProduct?
     let domain: HrrrDomain?
@@ -24,7 +25,64 @@ struct StormSetupSourceMetadata: Content, Sendable {
     let validTime: Date?
     let fieldSetVersion: HrrrFieldSetVersion?
     let bbox: StormSetupHrrrBoundingBox?
-    let nomadsURL: URL?
+    let primaryDownloadURL: URL?
+    let idxURL: URL?
+
+    init(
+        sourceKind: HrrrSourceKind = .nomadsFilteredSubset,
+        model: HrrrModel?,
+        product: HrrrProduct?,
+        domain: HrrrDomain?,
+        runTime: Date?,
+        forecastHour: Int?,
+        validTime: Date?,
+        fieldSetVersion: HrrrFieldSetVersion?,
+        bbox: StormSetupHrrrBoundingBox? = nil,
+        primaryDownloadURL: URL? = nil,
+        idxURL: URL? = nil
+    ) {
+        self.sourceKind = sourceKind
+        self.model = model
+        self.product = product
+        self.domain = domain
+        self.runTime = runTime
+        self.forecastHour = forecastHour
+        self.validTime = validTime
+        self.fieldSetVersion = fieldSetVersion
+        self.bbox = bbox
+        self.primaryDownloadURL = primaryDownloadURL
+        self.idxURL = idxURL
+    }
+
+    init(
+        model: HrrrModel?,
+        product: HrrrProduct?,
+        domain: HrrrDomain?,
+        runTime: Date?,
+        forecastHour: Int?,
+        validTime: Date?,
+        fieldSetVersion: HrrrFieldSetVersion?,
+        bbox: StormSetupHrrrBoundingBox? = nil,
+        nomadsURL: URL? = nil
+    ) {
+        self.init(
+            sourceKind: .nomadsFilteredSubset,
+            model: model,
+            product: product,
+            domain: domain,
+            runTime: runTime,
+            forecastHour: forecastHour,
+            validTime: validTime,
+            fieldSetVersion: fieldSetVersion,
+            bbox: bbox,
+            primaryDownloadURL: nomadsURL,
+            idxURL: nil
+        )
+    }
+
+    var nomadsURL: URL? {
+        primaryDownloadURL
+    }
 }
 
 struct TornadoRawParameters: Content, Sendable {

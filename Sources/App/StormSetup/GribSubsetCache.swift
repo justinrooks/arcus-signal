@@ -119,7 +119,7 @@ actor GribSubsetCache {
 
         try fileManager.createDirectory(at: key.directoryURL(rootURL: rootURL), withIntermediateDirectories: true)
 
-        guard let sourceURL = sourceMetadata.nomadsURL else {
+        guard let sourceURL = sourceMetadata.primaryDownloadURL else {
             throw GribSubsetCacheError.missingNomadsURL(source: sourceMetadata)
         }
 

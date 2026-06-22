@@ -18,6 +18,7 @@ struct HrrrNomadsURLBuilder: Sendable {
     ) -> StormSetupSourceMetadata {
         let bbox = makeBoundingBox(around: centroid)
         return StormSetupSourceMetadata(
+            sourceKind: .nomadsFilteredSubset,
             model: candidate.model,
             product: candidate.product,
             domain: candidate.domain,
@@ -26,7 +27,7 @@ struct HrrrNomadsURLBuilder: Sendable {
             validTime: candidate.validTime,
             fieldSetVersion: candidate.fieldSetVersion,
             bbox: bbox,
-            nomadsURL: makeURL(for: candidate, bbox: bbox)
+            primaryDownloadURL: makeURL(for: candidate, bbox: bbox)
         )
     }
 
@@ -42,9 +43,18 @@ struct HrrrNomadsURLBuilder: Sendable {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "nomads.ncep.noaa.gov"
-        components.path = candidate.fieldSetVersion.nomadsFilterPath
+        components.path = nomadsFilterPath(for: candidate)
         components.percentEncodedQuery = percentEncodedQuery(for: candidate, bbox: bbox)
         return components.url
+    }
+
+    private func nomadsFilterPath(for candidate: HrrrRunCandidate) -> String {
+        switch candidate.product {
+        case .wrfsfc:
+            return "/cgi-bin/filter_hrrr_2d.pl"
+        case .wrfprsf:
+            return "/cgi-bin/filter_hrrr.pl"
+        }
     }
 
     private func percentEncodedQuery(

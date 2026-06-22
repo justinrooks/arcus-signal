@@ -417,6 +417,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         extra: [String: Logger.MetadataValue] = [:]
     ) -> Logger.Metadata {
         var metadata: Logger.Metadata = [
+            "sourceKind": .string(sourceMetadata.sourceKind.rawValue),
             "model": .string(sourceMetadata.model?.rawValue ?? "nil"),
             "product": .string(sourceMetadata.product?.rawValue ?? "nil"),
             "domain": .string(sourceMetadata.domain?.rawValue ?? "nil"),
@@ -424,7 +425,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             "forecastHour": .string(sourceMetadata.forecastHour.map(String.init) ?? "nil"),
             "validTime": .string(sourceMetadata.validTime?.description ?? "nil"),
             "fieldSetVersion": .string(sourceMetadata.fieldSetVersion?.rawValue ?? "nil"),
-            "nomadsURL": .string(sourceMetadata.nomadsURL?.absoluteString ?? "nil")
+            "primaryDownloadURL": .string(sourceMetadata.primaryDownloadURL?.absoluteString ?? "nil")
         ]
 
         if let bbox = sourceMetadata.bbox {
