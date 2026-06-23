@@ -96,6 +96,40 @@ actor PreviewStubStormSetupSubsetLoader: StormSetupSubsetLoading {
     }
 }
 
+actor PreviewStubPressureSourceResolver: HrrrPressureDirectObjectResolving {
+    private let handler: @Sendable (Int, HrrrRunResolution) async throws -> HrrrPressureDirectObjectResolution
+    private var callCount = 0
+
+    init(
+        handler: @escaping @Sendable (Int, HrrrRunResolution) async throws -> HrrrPressureDirectObjectResolution
+    ) {
+        self.handler = handler
+    }
+
+    func resolveSource(for resolution: HrrrRunResolution) async throws -> HrrrPressureDirectObjectResolution {
+        let index = callCount
+        callCount += 1
+        return try await handler(index, resolution)
+    }
+}
+
+actor PreviewStubPressureGribLoader: StormSetupPressureGribLoading {
+    private let handler: @Sendable (Int, StormSetupSourceMetadata) async throws -> StormSetupPressureGribCacheResult
+    private var callCount = 0
+
+    init(
+        handler: @escaping @Sendable (Int, StormSetupSourceMetadata) async throws -> StormSetupPressureGribCacheResult
+    ) {
+        self.handler = handler
+    }
+
+    func loadOrFetch(sourceMetadata: StormSetupSourceMetadata) async throws -> StormSetupPressureGribCacheResult {
+        let index = callCount
+        callCount += 1
+        return try await handler(index, sourceMetadata)
+    }
+}
+
 actor PreviewStubStormSetupFieldSampler: StormSetupFieldSampling {
     private let handler: @Sendable (GribSubsetCacheResult, StormSetupCentroid) async throws -> [HrrrFieldSample]
 
@@ -136,6 +170,24 @@ func previewMakeSubsetResult(
         source: source,
         localFileURL: URL(fileURLWithPath: "/private/tmp/anvil-preview.grib2"),
         byteSize: 1024,
+        fetchedAt: fetchedAt,
+        expiresAt: fetchedAt.addingTimeInterval(3600),
+        cacheHit: cacheHit
+    )
+}
+
+func previewMakePressureCacheResult(
+    source: StormSetupSourceMetadata,
+    fetchedAt: Date,
+    cacheHit: Bool = false
+) -> StormSetupPressureGribCacheResult {
+    StormSetupPressureGribCacheResult(
+        source: source,
+        localFileURL: URL(fileURLWithPath: "/private/tmp/anvil-preview-pressure.grib2"),
+        downloadURL: source.primaryDownloadURL!,
+        idxURL: source.idxURL,
+        byteSize: 1024,
+        checksumSHA256: "preview-checksum",
         fetchedAt: fetchedAt,
         expiresAt: fetchedAt.addingTimeInterval(3600),
         cacheHit: cacheHit

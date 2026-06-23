@@ -21,6 +21,10 @@ struct StormSetupPressureGribCacheResult: Sendable {
     }
 }
 
+protocol StormSetupPressureGribLoading: Sendable {
+    func loadOrFetch(sourceMetadata: StormSetupSourceMetadata) async throws -> StormSetupPressureGribCacheResult
+}
+
 struct StormSetupPressureGribCacheRecord: Codable, Sendable {
     let key: StormSetupPressureGribCacheKey
     let source: StormSetupSourceMetadata
@@ -466,3 +470,5 @@ actor StormSetupPressureGribCache {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
+
+extension StormSetupPressureGribCache: StormSetupPressureGribLoading {}

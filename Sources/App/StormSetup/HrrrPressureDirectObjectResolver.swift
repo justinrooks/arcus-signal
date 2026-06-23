@@ -176,11 +176,12 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
     }
 
     private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-        HrrrRunCandidate(
+        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
+        return HrrrRunCandidate(
             model: candidate.model,
             product: .wrfprsf,
             domain: candidate.domain,
-            runTime: candidate.runTime,
+            runTime: runTime,
             forecastHour: candidate.forecastHour,
             fieldSetVersion: .tornadoPressureV1
         )

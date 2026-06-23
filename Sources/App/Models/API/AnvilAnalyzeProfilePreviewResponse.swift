@@ -7,6 +7,7 @@ struct AnvilAnalyzeProfilePreviewResponse: Content, Sendable, Equatable {
 }
 
 struct AnvilAnalyzeProfilePreviewDebugDTO: Content, Sendable, Equatable {
+    let sourceKind: HrrrSourceKind
     let product: HrrrProduct
     let runTime: Date
     let forecastHour: Int
@@ -17,7 +18,11 @@ struct AnvilAnalyzeProfilePreviewDebugDTO: Content, Sendable, Equatable {
     let pressureLevelsRetained: [Int]
     let missingLevels: [AnvilAnalyzeProfilePreviewMissingLevelDTO]
     let warnings: [String]
-    let subsetCacheHit: Bool?
+    let rawFileCacheHit: Bool?
+    let primaryDownloadURL: URL?
+    let idxURL: URL?
+    let idxAvailable: Bool?
+    let gribAvailable: Bool?
 }
 
 struct AnvilAnalyzeProfilePreviewMissingLevelDTO: Content, Sendable, Equatable {

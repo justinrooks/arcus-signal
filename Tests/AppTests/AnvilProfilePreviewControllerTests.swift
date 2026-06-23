@@ -78,6 +78,7 @@ struct AnvilProfilePreviewControllerTests {
                 #expect(response == expected)
                 #expect(response.request.location.h3 == expected.request.location.h3)
                 #expect(response.request.profile.count == 5)
+                #expect(response.debug.sourceKind == .directObject)
                 #expect(response.debug.product == .wrfprsf)
                 #expect(response.debug.h3 == expected.request.location.h3)
                 #expect(response.debug.centroid == expected.debug.centroid)
@@ -85,7 +86,11 @@ struct AnvilProfilePreviewControllerTests {
                 #expect(response.debug.pressureLevelsRetained == expected.debug.pressureLevelsRetained)
                 #expect(response.debug.missingLevels == expected.debug.missingLevels)
                 #expect(response.debug.warnings == expected.debug.warnings)
-                #expect(response.debug.subsetCacheHit == false)
+                #expect(response.debug.rawFileCacheHit == false)
+                #expect(response.debug.primaryDownloadURL == expected.debug.primaryDownloadURL)
+                #expect(response.debug.idxURL == expected.debug.idxURL)
+                #expect(response.debug.idxAvailable == expected.debug.idxAvailable)
+                #expect(response.debug.gribAvailable == expected.debug.gribAvailable)
 
                 guard let jsonData = res.body.string.data(using: .utf8) else {
                     Issue.record("Unable to decode response body as UTF-8.")
@@ -102,13 +107,18 @@ struct AnvilProfilePreviewControllerTests {
                 #expect(debugObject?.keys.sorted() == [
                     "centroid",
                     "forecastHour",
+                    "gribAvailable",
                     "h3",
+                    "idxAvailable",
+                    "idxURL",
                     "missingLevels",
                     "pressureLevelsRequested",
                     "pressureLevelsRetained",
+                    "primaryDownloadURL",
                     "product",
+                    "rawFileCacheHit",
                     "runTime",
-                    "subsetCacheHit",
+                    "sourceKind",
                     "validTime",
                     "warnings"
                 ])
@@ -181,6 +191,7 @@ struct AnvilProfilePreviewControllerTests {
             groupedProfile: grouping
         ).request
         let debug = AnvilAnalyzeProfilePreviewDebugDTO(
+            sourceKind: .directObject,
             product: .wrfprsf,
             runTime: request.runTime,
             forecastHour: request.forecastHour,
@@ -196,7 +207,11 @@ struct AnvilProfilePreviewControllerTests {
                 )
             },
             warnings: [makeDroppedLevelsWarning(from: grouping.missingLevels)],
-            subsetCacheHit: false
+            rawFileCacheHit: false,
+            primaryDownloadURL: URL(string: "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf03.grib2"),
+            idxURL: URL(string: "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf03.grib2.idx"),
+            idxAvailable: true,
+            gribAvailable: nil
         )
 
         return AnvilAnalyzeProfilePreviewResponse(request: request, debug: debug)
