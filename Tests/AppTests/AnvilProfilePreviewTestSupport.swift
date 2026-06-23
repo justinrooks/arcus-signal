@@ -130,6 +130,26 @@ actor PreviewStubPressureGribLoader: StormSetupPressureGribLoading {
     }
 }
 
+actor PreviewStubPressureProfileLoader: HrrrPressureProfileLoading {
+    private let handler: @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid) async throws -> HrrrPressureProfileLoadResult
+    private var callCount = 0
+
+    init(
+        handler: @escaping @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid) async throws -> HrrrPressureProfileLoadResult
+    ) {
+        self.handler = handler
+    }
+
+    func loadPressureProfile(
+        for sourceResolution: HrrrPressureDirectObjectResolution,
+        centroid: StormSetupCentroid
+    ) async throws -> HrrrPressureProfileLoadResult {
+        let index = callCount
+        callCount += 1
+        return try await handler(index, sourceResolution, centroid)
+    }
+}
+
 actor PreviewStubStormSetupFieldSampler: StormSetupFieldSampling {
     private let handler: @Sendable (GribSubsetCacheResult, StormSetupCentroid) async throws -> [HrrrFieldSample]
 
@@ -186,6 +206,66 @@ func previewMakePressureCacheResult(
         localFileURL: URL(fileURLWithPath: "/private/tmp/anvil-preview-pressure.grib2"),
         downloadURL: source.primaryDownloadURL!,
         idxURL: source.idxURL,
+        byteSize: 1024,
+        checksumSHA256: "preview-checksum",
+        fetchedAt: fetchedAt,
+        expiresAt: fetchedAt.addingTimeInterval(3600),
+        cacheHit: cacheHit
+    )
+}
+
+func previewMakePressureProfileLoadResult(
+    sourceResolution: HrrrPressureDirectObjectResolution,
+    fetchedAt: Date,
+    subsetCacheHit: Bool = false,
+    samples: [HrrrFieldSample]? = nil
+) -> HrrrPressureProfileLoadResult {
+    let inventory = HrrrPressureIdxInventory.parse(
+        """
+        1:0:d=2026060313:HGT:1000 mb:9 hour fcst:
+        2:1487:d=2026060313:TMP:1000 mb:9 hour fcst:
+        3:2975:d=2026060313:DPT:1000 mb:9 hour fcst:
+        4:4461:d=2026060313:UGRD:1000 mb:9 hour fcst:
+        5:5947:d=2026060313:VGRD:1000 mb:9 hour fcst:
+        6:7434:d=2026060313:HGT:925 mb:9 hour fcst:
+        """
+    )
+    let selection = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
+    let byteRangePlan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
+    let subsetCacheResult = previewMakePressureSubsetCacheResult(
+        source: sourceResolution.source,
+        fetchedAt: fetchedAt,
+        cacheHit: subsetCacheHit
+    )
+    let fieldSamples = samples ?? previewMakePressureSamples(
+        level: 1000,
+        hgt: 1200,
+        tmp: 301.55,
+        dpt: 285.45,
+        ugrd: -2.1,
+        vgrd: 4.6
+    )
+    let groupedProfile = StormSetupPressureProfileGrouper().group(samples: fieldSamples)
+
+    return HrrrPressureProfileLoadResult(
+        sourceResolution: sourceResolution,
+        inventory: inventory,
+        selection: selection,
+        byteRangePlan: byteRangePlan,
+        subsetCacheResult: subsetCacheResult,
+        samples: fieldSamples,
+        groupedProfile: groupedProfile
+    )
+}
+
+func previewMakePressureSubsetCacheResult(
+    source: StormSetupSourceMetadata,
+    fetchedAt: Date,
+    cacheHit: Bool = false
+) -> HrrrPressureSubsetGribCacheResult {
+    HrrrPressureSubsetGribCacheResult(
+        source: source,
+        localFileURL: URL(fileURLWithPath: "/private/tmp/anvil-preview-pressure-subset.grib2"),
         byteSize: 1024,
         checksumSHA256: "preview-checksum",
         fetchedAt: fetchedAt,

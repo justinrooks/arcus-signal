@@ -257,16 +257,47 @@ Handoff notes for `#92`:
 
 ### Issue #92 - 04: Wire Anvil profile preview through byte-range pressure subsets
 
-Status: Planned
+Status: Completed
+
+Note:
+- The preview wiring is complete, and pressure-level tuning is intentionally deferred to a separate follow-up so we can evaluate the lower bound without reopening the byte-range plumbing.
 
 Scope:
-- Replace preview's whole-pressure-file loader with the byte-range subset loader.
-- Keep preview response request shape stable.
-- Add debug metadata for selected messages/ranges.
+- Replace the preview provider's whole-pressure-file path with the byte-range pressure profile loader.
+- Preserve the embedded `AnvilAnalyzeProfileRequest` payload shape in the preview response.
+- Expand debug metadata with selected message/range diagnostics and subset-cache hit/miss state.
 
-Deferred:
-- Anvil HTTP dispatch.
-- User-facing product API changes.
+Files changed:
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Sources/App/StormSetup/HrrrPressureProfileLoading.swift`
+- `Sources/App/Models/API/AnvilAnalyzeProfilePreviewResponse.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewControllerTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewTestSupport.swift`
+- `Tests/AppTests/HrrrPressureProfileLoadingTests.swift`
+
+Tests and commands run:
+- `swift build --target App`
+- `swift test --filter HrrrPressureProfileLoadingTests` (blocked by the existing package link failure involving `VaporAPNS` and `SwiftUICore`)
+- `swift test --filter AnvilProfilePreviewProviderTests` (blocked by the same package link failure)
+
+Local verification notes:
+- The app target compiles cleanly with the new loader seam and preview wiring.
+- The preview response still returns the embedded Anvil request payload unchanged, while debug now reports selected-message count, selected pressure levels, range count, total selected range bytes, and subset-cache hit/miss.
+- The preview provider now resolves the HRRR pressure source, fetches and parses `.idx`, selects the five-level preview slice (`1000/925/850/700/500`), downloads byte-range subsets, samples with `wgrib2`, groups the pressure profile, and only then builds the preview request.
+- Narrowing the preview slice reduced the selected byte-range set from the full pressure ladder to the smaller sounding profile that the preview request builder actually needs.
+- Controlled unusable-profile failures now include missing/incomplete level diagnostics in the error text.
+- The repository still has the pre-existing `VaporAPNS` / `SwiftUICore` link failure, so the new tests could not complete end-to-end in this environment.
+
+Deferred scope:
+- Arcus-Anvil HTTP dispatch and response DTO freezing.
+- Ingredient evidence mapping for Anvil severe-weather output.
+- Any surface API changes beyond the preview debug payload.
+
+Handoff notes for `#103`:
+- Freeze the current preview request shape as the compatibility baseline unless an Anvil contract constraint forces a minimal internal adjustment.
+- Keep the preview debug fields additive if possible; do not backslide into surface-product output.
+- Reuse the new byte-range loader seam when reconciling request/response contract tests so the preview path stays offline and deterministic.
 
 ### Issue #103 - 05: Reconcile and freeze the Anvil request/response contract
 

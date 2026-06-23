@@ -82,11 +82,15 @@ struct AnvilProfilePreviewControllerTests {
                 #expect(response.debug.product == .wrfprsf)
                 #expect(response.debug.h3 == expected.request.location.h3)
                 #expect(response.debug.centroid == expected.debug.centroid)
+                #expect(response.debug.selectedMessageCount == expected.debug.selectedMessageCount)
+                #expect(response.debug.selectedPressureLevels == expected.debug.selectedPressureLevels)
+                #expect(response.debug.rangeCount == expected.debug.rangeCount)
+                #expect(response.debug.totalSelectedRangeBytes == expected.debug.totalSelectedRangeBytes)
                 #expect(response.debug.pressureLevelsRequested == expected.debug.pressureLevelsRequested)
                 #expect(response.debug.pressureLevelsRetained == expected.debug.pressureLevelsRetained)
                 #expect(response.debug.missingLevels == expected.debug.missingLevels)
                 #expect(response.debug.warnings == expected.debug.warnings)
-                #expect(response.debug.rawFileCacheHit == false)
+                #expect(response.debug.subsetCacheHit == false)
                 #expect(response.debug.primaryDownloadURL == expected.debug.primaryDownloadURL)
                 #expect(response.debug.idxURL == expected.debug.idxURL)
                 #expect(response.debug.idxAvailable == expected.debug.idxAvailable)
@@ -116,9 +120,13 @@ struct AnvilProfilePreviewControllerTests {
                     "pressureLevelsRetained",
                     "primaryDownloadURL",
                     "product",
-                    "rawFileCacheHit",
+                    "rangeCount",
                     "runTime",
+                    "selectedMessageCount",
+                    "selectedPressureLevels",
                     "sourceKind",
+                    "subsetCacheHit",
+                    "totalSelectedRangeBytes",
                     "validTime",
                     "warnings"
                 ])
@@ -198,6 +206,10 @@ struct AnvilProfilePreviewControllerTests {
             validTime: request.validTime,
             h3: request.location.h3,
             centroid: request.location.centroid,
+            selectedMessageCount: 5,
+            selectedPressureLevels: [1000],
+            rangeCount: 5,
+            totalSelectedRangeBytes: 1024,
             pressureLevelsRequested: grouping.requestedLevels.map(\.pressureMb),
             pressureLevelsRetained: grouping.retainedLevels.map(\.pressureMb),
             missingLevels: grouping.missingLevels.map {
@@ -207,7 +219,7 @@ struct AnvilProfilePreviewControllerTests {
                 )
             },
             warnings: [makeDroppedLevelsWarning(from: grouping.missingLevels)],
-            rawFileCacheHit: false,
+            subsetCacheHit: false,
             primaryDownloadURL: URL(string: "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf03.grib2"),
             idxURL: URL(string: "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf03.grib2.idx"),
             idxAvailable: true,

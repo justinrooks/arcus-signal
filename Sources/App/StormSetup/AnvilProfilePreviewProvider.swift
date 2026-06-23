@@ -39,9 +39,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let h3Resolver: any StormSetupH3Resolving
     private let hrrrRunResolver: any HrrrRunResolving
     private let pressureSourceResolver: any HrrrPressureDirectObjectResolving
-    private let pressureGribLoader: any StormSetupPressureGribLoading
-    private let fieldSampler: any StormSetupFieldSampling
-    private let pressureGrouper: StormSetupPressureProfileGrouper
+    private let pressureProfileLoader: any HrrrPressureProfileLoading
     private let requestBuilder: AnvilProfileRequestBuilder
 
     init(
@@ -49,16 +47,12 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         hrrrRunResolver: (any HrrrRunResolving)? = nil,
         pressureSourceResolver: any HrrrPressureDirectObjectResolving,
-        pressureGribLoader: any StormSetupPressureGribLoading,
-        fieldSampler: any StormSetupFieldSampling,
-        pressureGrouper: StormSetupPressureProfileGrouper = StormSetupPressureProfileGrouper()
+        pressureProfileLoader: any HrrrPressureProfileLoading
     ) {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
         self.pressureSourceResolver = pressureSourceResolver
-        self.pressureGribLoader = pressureGribLoader
-        self.fieldSampler = fieldSampler
-        self.pressureGrouper = pressureGrouper
+        self.pressureProfileLoader = pressureProfileLoader
         self.requestBuilder = AnvilProfileRequestBuilder(h3Resolver: h3Resolver)
     }
 
@@ -67,20 +61,22 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let dateProvider = SystemStormSetupDateProvider()
         let httpClient = VaporApplicationHTTPClient(application: application)
         let pressureSourceResolver = DefaultHrrrPressureDirectObjectResolver(httpClient: httpClient)
-        let pressureGribLoader = StormSetupPressureGribCache(
+        let pressureProfileLoader = DefaultHrrrPressureProfileLoader(
             httpClient: httpClient,
-            rootURL: configuration.pressureGribRawCacheRootURL,
-            dateProvider: dateProvider,
-            retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
-            maximumByteCount: configuration.pressureGribRawMaximumByteCount
+            subsetCache: HrrrPressureSubsetGribCache(
+                httpClient: httpClient,
+                rootURL: configuration.pressureGribSubsetCacheRootURL,
+                dateProvider: dateProvider,
+                retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
+                maximumByteCount: configuration.gribSubsetMaximumByteCount
+            ),
+            fieldSampler: HrrrFieldSampler(client: configuration.makeWgrib2Client())
         )
-        let fieldSampler = HrrrFieldSampler(client: configuration.makeWgrib2Client())
 
         self.init(
             dateProvider: dateProvider,
             pressureSourceResolver: pressureSourceResolver,
-            pressureGribLoader: pressureGribLoader,
-            fieldSampler: fieldSampler
+            pressureProfileLoader: pressureProfileLoader
         )
     }
 
@@ -149,10 +145,10 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             for: candidate,
             targetValidTime: targetValidTime
         )
-        let cacheResult = try await loadPressureGrib(sourceMetadata: sourceResolution.source)
-        let subset = makeSubsetResult(from: cacheResult)
-        let samples = try await samplePressureFile(subset: subset, centroid: centroid)
-        let groupedProfile = pressureGrouper.group(samples: samples)
+        let loadResult = try await loadPressureProfile(
+            sourceResolution: sourceResolution,
+            centroid: centroid
+        )
 
         let buildResult: AnvilProfileRequestBuildResult
         do {
@@ -160,10 +156,10 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 h3Cell: h3Cell,
                 runTime: sourceResolution.source.runTime ?? candidate.runTime,
                 forecastHour: sourceResolution.source.forecastHour ?? candidate.forecastHour,
-                groupedProfile: groupedProfile
+                groupedProfile: loadResult.groupedProfile
             )
         } catch let error as AnvilProfileRequestBuilderError {
-            throw classifyBuilderError(error)
+            throw classifyBuilderError(error, missingLevels: loadResult.groupedProfile.missingLevels)
         } catch {
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
@@ -180,9 +176,13 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 latitude: request.location.lat,
                 longitude: request.location.lon
             ),
-            pressureLevelsRequested: groupedProfile.requestedLevels.map(\.pressureMb),
-            pressureLevelsRetained: groupedProfile.retainedLevels.map(\.pressureMb),
-            missingLevels: groupedProfile.missingLevels.map {
+            selectedMessageCount: loadResult.selection.selectedMessages.count,
+            selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
+            rangeCount: loadResult.byteRangePlan.ranges.count,
+            totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
+            pressureLevelsRequested: loadResult.groupedProfile.requestedLevels.map(\.pressureMb),
+            pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map(\.pressureMb),
+            missingLevels: loadResult.groupedProfile.missingLevels.map {
                 AnvilAnalyzeProfilePreviewMissingLevelDTO(
                     pressureMb: $0.pressureMb,
                     missingVariables: $0.missingVariables
@@ -190,9 +190,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             },
             warnings: makeWarnings(
                 for: buildResult.warnings,
-                ignoredSampleCount: groupedProfile.ignoredSamples.count
+                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count
             ),
-            rawFileCacheHit: cacheResult.cacheHit,
+            subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
             primaryDownloadURL: sourceResolution.source.primaryDownloadURL,
             idxURL: sourceResolution.source.idxURL,
             idxAvailable: sourceResolution.idxProbe.available,
@@ -220,35 +220,19 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         }
     }
 
-    private func loadPressureGrib(
-        sourceMetadata: StormSetupSourceMetadata
-    ) async throws -> StormSetupPressureGribCacheResult {
+    private func loadPressureProfile(
+        sourceResolution: HrrrPressureDirectObjectResolution,
+        centroid: StormSetupCentroid
+    ) async throws -> HrrrPressureProfileLoadResult {
         do {
-            return try await pressureGribLoader.loadOrFetch(sourceMetadata: sourceMetadata)
-        } catch let error as StormSetupPressureGribCacheError {
-            switch error {
-            case .unableToCreateDirectory, .unableToWriteCache:
-                throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
-            default:
-                throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
-            }
+            return try await pressureProfileLoader.loadPressureProfile(
+                for: sourceResolution,
+                centroid: centroid
+            )
+        } catch let error as AnvilProfilePreviewError {
+            throw error
         } catch {
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
-        }
-    }
-
-    private func samplePressureFile(
-        subset: GribSubsetCacheResult,
-        centroid: StormSetupCentroid
-    ) async throws -> [HrrrFieldSample] {
-        do {
-            return try await fieldSampler.sample(from: subset, around: centroid)
-        } catch let error as Wgrib2ClientError {
-            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
-        } catch let error as ProcessRunnerError {
-            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
-        } catch {
-            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
     }
 
@@ -263,22 +247,53 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         )
     }
 
-    private func classifyBuilderError(_ error: AnvilProfileRequestBuilderError) -> AnvilProfilePreviewError {
+    private func classifyBuilderError(
+        _ error: AnvilProfileRequestBuilderError,
+        missingLevels: [StormSetupPressureProfileMissingLevel]
+    ) -> AnvilProfilePreviewError {
+        let missingSummary = makeMissingLevelsSummary(missingLevels)
+
         switch error {
         case .noRetainedLevels:
-            return .unusableProfile(reason: "No retained pressure levels were available.")
+            return .unusableProfile(
+                reason: "No retained pressure levels were available. \(missingSummary)"
+            )
         case .tooFewRetainedLevels(let actual, let minimum):
             return .unusableProfile(
-                reason: "Only \(actual) retained levels were available; minimum required is \(minimum)."
+                reason: "Only \(actual) retained levels were available; minimum required is \(minimum). \(missingSummary)"
             )
         case .unequalArrayLengths(let expected, let actual):
             return .unusableProfile(
-                reason: "Pressure arrays had mismatched lengths. Expected \(expected), got \(actual)."
+                reason: "Pressure arrays had mismatched lengths. Expected \(expected), got \(actual). \(missingSummary)"
             )
         case .pressureNotStrictlyDescending(let previousPressureMb, let pressureMb):
             return .unusableProfile(
-                reason: "Pressure levels were not strictly descending: \(previousPressureMb) then \(pressureMb)."
+                reason: "Pressure levels were not strictly descending: \(previousPressureMb) then \(pressureMb). \(missingSummary)"
             )
+        }
+    }
+
+    private func makeMissingLevelsSummary(_ levels: [StormSetupPressureProfileMissingLevel]) -> String {
+        guard !levels.isEmpty else {
+            return "Missing or incomplete levels were not reported."
+        }
+
+        let labels = levels.map { level in
+            "\(level.pressureMb) mb missing \(level.missingVariables.map(\.rawValue).joined(separator: ", "))"
+        }
+        .joined(separator: "; ")
+
+        return "Missing or incomplete levels: \(labels)."
+    }
+
+    private func uniquePressureLevels(from selection: HrrrPressureProfileMessageSelectionResult) -> [Int] {
+        var seen = Set<Int>()
+        return selection.selectedMessages.compactMap { message in
+            let pressureMb = message.pressureLevel.pressureMb
+            guard seen.insert(pressureMb).inserted else {
+                return nil
+            }
+            return pressureMb
         }
     }
 
@@ -308,17 +323,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         }
 
         return values
-    }
-
-    private func makeSubsetResult(from result: StormSetupPressureGribCacheResult) -> GribSubsetCacheResult {
-        GribSubsetCacheResult(
-            source: result.source,
-            localFileURL: result.localFileURL,
-            byteSize: result.byteSize,
-            fetchedAt: result.fetchedAt,
-            expiresAt: result.expiresAt,
-            cacheHit: result.cacheHit
-        )
     }
 }
 

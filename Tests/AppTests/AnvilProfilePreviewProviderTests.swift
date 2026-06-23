@@ -49,52 +49,50 @@ struct AnvilProfilePreviewProviderTests {
                 )
             }
         }
-        let pressureGribLoader = PreviewStubPressureGribLoader { callIndex, source in
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { callIndex, sourceResolution, centroid in
             #expect(callIndex == 0)
-            return previewMakePressureCacheResult(
-                source: source,
-                fetchedAt: now,
-                cacheHit: true
-            )
-        }
-        let fieldSampler = PreviewStubStormSetupFieldSampler { subset, centroid in
-            #expect(subset.cacheHit == true)
+            #expect(sourceResolution.idxProbe.available == true)
             #expect(centroid == expected.centroid)
-            return previewMakePressureSamples(
-                level: 1000,
-                hgt: 1200,
-                tmp: 301.55,
-                dpt: 285.45,
-                ugrd: -2.1,
-                vgrd: 4.6
-            ) + previewMakePressureSamples(
-                level: 925,
-                hgt: 1500,
-                tmp: 295.95,
-                dpt: 283.25,
-                ugrd: -5.4,
-                vgrd: 7.9
-            ) + previewMakePressureSamples(
-                level: 850,
-                hgt: 1800,
-                tmp: 290.65,
-                dpt: 284.35,
-                ugrd: -6.25,
-                vgrd: 8.75
-            ) + previewMakePressureSamples(
-                level: 700,
-                hgt: 2450,
-                tmp: 283.15,
-                dpt: 274.15,
-                ugrd: -12.5,
-                vgrd: 14.2
-            ) + previewMakePressureSamples(
-                level: 500,
-                hgt: 5600,
-                tmp: 268.95,
-                dpt: 261.15,
-                ugrd: -18.75,
-                vgrd: 22.0
+            return previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                subsetCacheHit: true,
+                samples: previewMakePressureSamples(
+                    level: 1000,
+                    hgt: 1200,
+                    tmp: 301.55,
+                    dpt: 285.45,
+                    ugrd: -2.1,
+                    vgrd: 4.6
+                ) + previewMakePressureSamples(
+                    level: 925,
+                    hgt: 1500,
+                    tmp: 295.95,
+                    dpt: 283.25,
+                    ugrd: -5.4,
+                    vgrd: 7.9
+                ) + previewMakePressureSamples(
+                    level: 850,
+                    hgt: 1800,
+                    tmp: 290.65,
+                    dpt: 284.35,
+                    ugrd: -6.25,
+                    vgrd: 8.75
+                ) + previewMakePressureSamples(
+                    level: 700,
+                    hgt: 2450,
+                    tmp: 283.15,
+                    dpt: 274.15,
+                    ugrd: -12.5,
+                    vgrd: 14.2
+                ) + previewMakePressureSamples(
+                    level: 500,
+                    hgt: 5600,
+                    tmp: 268.95,
+                    dpt: 261.15,
+                    ugrd: -18.75,
+                    vgrd: 22.0
+                )
             )
         }
 
@@ -103,8 +101,7 @@ struct AnvilProfilePreviewProviderTests {
             dateProvider: dateProvider,
             hrrrRunResolver: resolver,
             pressureSourceResolver: pressureSourceResolver,
-            pressureGribLoader: pressureGribLoader,
-            fieldSampler: fieldSampler
+            pressureProfileLoader: pressureProfileLoader
         )
 
         let preview = try await provider.previewProfile(for: h3Cell)
@@ -131,9 +128,13 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.runTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21))
         #expect(preview.debug.forecastHour == 1)
         #expect(preview.debug.validTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-        #expect(preview.debug.h3 == h3String(for: h3Cell))
+        #expect(preview.debug.h3 == expected.request.location.h3)
         #expect(preview.debug.centroid == expected.centroid)
-        #expect(preview.debug.rawFileCacheHit == true)
+        #expect(preview.debug.selectedMessageCount == 5)
+        #expect(preview.debug.selectedPressureLevels == [1000])
+        #expect(preview.debug.rangeCount == 5)
+        #expect(preview.debug.totalSelectedRangeBytes == 1024)
+        #expect(preview.debug.subsetCacheHit == true)
         #expect(preview.debug.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2")
         #expect(preview.debug.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2.idx")
         #expect(preview.debug.idxAvailable == true)
@@ -167,41 +168,48 @@ struct AnvilProfilePreviewProviderTests {
                 idxAvailable: true
             )
         }
-        let pressureGribLoader = PreviewStubPressureGribLoader { _, source in
-            previewMakePressureCacheResult(
-                source: source,
-                fetchedAt: now
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, _ in
+            let result = previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                samples: previewMakePressureSamples(
+                    level: 1000,
+                    hgt: 1200,
+                    tmp: 301.55,
+                    dpt: 285.45,
+                    ugrd: -2.1,
+                    vgrd: 4.6
+                ) + previewMakePressureSamples(
+                    level: 925,
+                    hgt: 1500,
+                    tmp: 295.95,
+                    dpt: 283.25,
+                    ugrd: -5.4,
+                    vgrd: 7.9
+                ) + previewMakePressureSamples(
+                    level: 850,
+                    hgt: 1800,
+                    tmp: 290.65,
+                    dpt: 284.35,
+                    ugrd: -6.25,
+                    vgrd: 8.75
+                ) + previewMakePressureSamples(
+                    level: 700,
+                    hgt: 2450,
+                    tmp: 283.15,
+                    dpt: 274.15,
+                    ugrd: -12.5,
+                    vgrd: 14.2
+                )
             )
-        }
-        let fieldSampler = PreviewStubStormSetupFieldSampler { _, _ in
-            previewMakePressureSamples(
-                level: 1000,
-                hgt: 1200,
-                tmp: 301.55,
-                dpt: 285.45,
-                ugrd: -2.1,
-                vgrd: 4.6
-            ) + previewMakePressureSamples(
-                level: 925,
-                hgt: 1500,
-                tmp: 295.95,
-                dpt: 283.25,
-                ugrd: -5.4,
-                vgrd: 7.9
-            ) + previewMakePressureSamples(
-                level: 850,
-                hgt: 1800,
-                tmp: 290.65,
-                dpt: 284.35,
-                ugrd: -6.25,
-                vgrd: 8.75
-            ) + previewMakePressureSamples(
-                level: 700,
-                hgt: 2450,
-                tmp: 283.15,
-                dpt: 274.15,
-                ugrd: -12.5,
-                vgrd: 14.2
+            return HrrrPressureProfileLoadResult(
+                sourceResolution: result.sourceResolution,
+                inventory: result.inventory,
+                selection: result.selection,
+                byteRangePlan: result.byteRangePlan,
+                subsetCacheResult: result.subsetCacheResult,
+                samples: result.samples,
+                groupedProfile: result.groupedProfile
             )
         }
 
@@ -210,15 +218,16 @@ struct AnvilProfilePreviewProviderTests {
             dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
             hrrrRunResolver: resolver,
             pressureSourceResolver: pressureSourceResolver,
-            pressureGribLoader: pressureGribLoader,
-            fieldSampler: fieldSampler
+            pressureProfileLoader: pressureProfileLoader
         )
 
         do {
             _ = try await provider.previewProfile(for: h3Cell)
             Issue.record("Expected the preview provider to fail with unusable profile data.")
         } catch let error as AnvilProfilePreviewError {
-            if case .unusableProfile = error {
+            if case .unusableProfile(let reason) = error {
+                #expect(reason.contains("Only 4 retained levels"))
+                #expect(reason.contains("Missing or incomplete levels"))
                 return
             }
             Issue.record("Expected unusable profile error but got \(error).")
@@ -232,13 +241,9 @@ struct AnvilProfilePreviewProviderTests {
                 Issue.record("Pressure source resolver should not have been called for an invalid H3 cell.")
                 throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected call")
             },
-            pressureGribLoader: PreviewStubPressureGribLoader { _, _ in
-                Issue.record("Pressure GRIB loader should not have been called for an invalid H3 cell.")
+            pressureProfileLoader: PreviewStubPressureProfileLoader { _, _, _ in
+                Issue.record("Pressure profile loader should not have been called for an invalid H3 cell.")
                 throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected call")
-            },
-            fieldSampler: PreviewStubStormSetupFieldSampler { _, _ in
-                Issue.record("Field sampler should not have been called for an invalid H3 cell.")
-                return []
             }
         )
 
@@ -266,13 +271,9 @@ struct AnvilProfilePreviewProviderTests {
             pressureSourceResolver: PreviewStubPressureSourceResolver { _, _ in
                 throw AnvilProfilePreviewError.upstreamUnavailable(reason: "AWS pressure object unavailable")
             },
-            pressureGribLoader: PreviewStubPressureGribLoader { _, _ in
-                Issue.record("Pressure GRIB loader should not have been called after source resolution failed.")
+            pressureProfileLoader: PreviewStubPressureProfileLoader { _, _, _ in
+                Issue.record("Pressure profile loader should not have been called after source resolution failed.")
                 throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected call")
-            },
-            fieldSampler: PreviewStubStormSetupFieldSampler { _, _ in
-                Issue.record("Field sampler should not have been called after source resolution failed.")
-                return []
             }
         )
 
@@ -311,11 +312,8 @@ struct AnvilProfilePreviewProviderTests {
                     idxAvailable: true
                 )
             },
-            pressureGribLoader: PreviewStubPressureGribLoader { _, source in
-                previewMakePressureCacheResult(source: source, fetchedAt: now)
-            },
-            fieldSampler: PreviewStubStormSetupFieldSampler { _, _ in
-                throw Wgrib2ClientError.executableMissing(URL(fileURLWithPath: "/tmp/wgrib2"))
+            pressureProfileLoader: PreviewStubPressureProfileLoader { _, _, _ in
+                throw AnvilProfilePreviewError.internalExecutionFailure(reason: "wgrib2 exited with code 1")
             }
         )
 
@@ -416,8 +414,4 @@ private extension Date {
             )
         ) ?? self
     }
-}
-
-private func h3String(for h3Cell: Int64) -> String {
-    H3Cell(UInt64(bitPattern: h3Cell)).description
 }

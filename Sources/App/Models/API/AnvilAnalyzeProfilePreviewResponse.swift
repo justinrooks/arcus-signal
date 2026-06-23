@@ -14,11 +14,15 @@ struct AnvilAnalyzeProfilePreviewDebugDTO: Content, Sendable, Equatable {
     let validTime: Date
     let h3: String
     let centroid: StormSetupCentroid
+    let selectedMessageCount: Int
+    let selectedPressureLevels: [Int]
+    let rangeCount: Int
+    let totalSelectedRangeBytes: Int64
     let pressureLevelsRequested: [Int]
     let pressureLevelsRetained: [Int]
     let missingLevels: [AnvilAnalyzeProfilePreviewMissingLevelDTO]
     let warnings: [String]
-    let rawFileCacheHit: Bool?
+    let subsetCacheHit: Bool
     let primaryDownloadURL: URL?
     let idxURL: URL?
     let idxAvailable: Bool?
