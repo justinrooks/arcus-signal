@@ -31,6 +31,8 @@ Related local docs:
 - Do not move HRRR fetching into Arcus-Anvil.
 - Use existing `wgrib2` execution and point-sampling plumbing.
 - Use existing pressure grouping and Anvil request-builder seams where possible.
+- The frozen Anvil profile request remains profile-only; no extra surface-field inputs were required beyond the existing runTime, forecastHour, validTime, location, and profile payload.
+- Response contract values are transport-only: optional SCP/STP/SHIP plus diagnostics and status, with missing severe-weather values treated as absent rather than synthesized.
 - Required profile variables for the first vertical slice are:
   - `HGT`
   - `TMP`
@@ -56,6 +58,7 @@ Keep:
 - Whole-file pressure raw cache exists.
 - Pressure-profile grouping exists.
 - Frozen Anvil request DTO and preview endpoint exist.
+- Frozen Anvil response DTO exists.
 - Ingredient interpreter already has nullable composite slots, but they are currently unpopulated.
 
 Missing:
@@ -65,7 +68,7 @@ Missing:
 - HTTP range downloader with `206 Partial Content` validation.
 - Partial GRIB concatenation/cache.
 - Preview wiring through byte-range subsets.
-- Anvil response DTOs and HTTP client.
+- Anvil HTTP client.
 - SCP/STP/SHIP evidence mapping into ingredient interpretation.
 
 Do not touch:
@@ -301,16 +304,57 @@ Handoff notes for `#103`:
 
 ### Issue #103 - 05: Reconcile and freeze the Anvil request/response contract
 
-Status: Planned
+Status: Completed
 
 Scope:
 - Confirm whether Anvil needs surface fields beyond the current profile DTO.
 - Add response DTOs for SCP/STP/SHIP and diagnostics.
 - Keep request and response contract tests fixture-backed.
 
+Decision:
+- The current request shape is sufficient as-is. No additional surface fields were required from the surface pipeline for the frozen profile-analysis contract.
+- The response contract now carries `status`, optional `scp`, `stp`, and `ship`, plus optional diagnostics entries with status/code/message for degraded or partial-output handling.
+
 Deferred:
 - Live Anvil calls.
 - Ingredient interpretation.
+
+Files changed:
+- `Sources/App/Models/API/AnvilAnalyzeProfileResponse.swift`
+- `Tests/AppTests/Fixtures/AnvilAnalyzeProfileResponse.json`
+- `Tests/AppTests/AnvilAnalyzeProfileResponseDTOTests.swift`
+
+Tests and commands run:
+- `swift build --target App`
+- `swift test --filter AnvilAnalyzeProfileResponseDTOTests` (blocked by the pre-existing package link failure involving `VaporAPNS` and `SwiftUICore`)
+- `swift test --filter AnvilAnalyzeProfileDTOTests` (blocked by the same pre-existing package link failure)
+- `HOME=/private/tmp SWIFT_MODULE_CACHE_PATH=/private/tmp/clang-cache xcrun swiftc /Users/justin/Code/arcus-signal/Sources/App/Models/API/AnvilAnalyzeProfileRequest.swift /private/tmp/anvil_request_check.swift -o /private/tmp/anvil_request_check && /private/tmp/anvil_request_check`
+- `HOME=/private/tmp SWIFT_MODULE_CACHE_PATH=/private/tmp/clang-cache xcrun swiftc /Users/justin/Code/arcus-signal/Sources/App/Models/API/AnvilAnalyzeProfileResponse.swift /private/tmp/anvil_response_check.swift -o /private/tmp/anvil_response_check && /private/tmp/anvil_response_check`
+
+Local verification notes:
+- `swift build --target App` completed successfully, which compiled the new Anvil response DTO without touching the existing package link problem.
+- The package-level test invocations still fail at link time for the existing `VaporAPNS` / `SwiftUICore` issue, so the DTO suites could not execute inside `swift test` here.
+- Direct compile-and-run checks against the frozen request and response DTO source files passed and confirmed:
+  - the request fixture still round-trips exactly with the current profile-only payload
+  - the response fixture decodes and re-encodes exactly
+  - missing `scp`, `stp`, and `ship` fields decode to `nil`
+  - diagnostics decode with required `status` and `message` fields
+
+Surface-field dependency and unit expectations:
+- No extra surface-field dependency was identified for the frozen request contract.
+- Existing request units remain unchanged: temperatures in Celsius, wind components in meters per second, and height in meters MSL.
+
+Deferred scope:
+- Anvil HTTP transport.
+- Ingredient interpretation.
+- Live Anvil calls.
+- Surface HRRR flow refactors.
+- SHARPpy inside Signal.
+
+Handoff notes for `#101`:
+- Decode the frozen `AnvilAnalyzeProfileResponse` directly in the future client.
+- Treat missing `scp`, `stp`, or `ship` as absent evidence, not as zeros.
+- Preserve diagnostics/status so the client can distinguish degraded analysis from outright transport failure.
 
 ### Issue #101 - 06: Add Arcus-Anvil HTTP client for profile analysis
 

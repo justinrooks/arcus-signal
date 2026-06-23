@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "diagnostics": [
+    {
+      "status": "warning",
+      "code": "missing_surface_moisture",
+      "message": "Surface moisture inputs were unavailable; profile moisture values were used."
+    },
+    {
+      "status": "info",
+      "code": "analysis_complete",
+      "message": "Profile analysis completed successfully."
+    }
+  ],
+  "scp": 1.7,
+  "stp": 2.4,
+  "ship": 0.6
+}
