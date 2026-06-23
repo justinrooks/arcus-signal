@@ -215,7 +215,7 @@ Handoff notes for `#98`:
 
 ### Issue #98 - 03: Download and cache byte-range HRRR pressure GRIB subsets
 
-Status: Planned
+Status: Implemented, runtime verification blocked by existing package link failure
 
 Scope:
 - Fetch selected byte ranges with `Range` headers.
@@ -226,6 +226,34 @@ Scope:
 Deferred:
 - Preview endpoint wiring.
 - Anvil transport.
+
+Files changed:
+- `Sources/App/StormSetup/HrrrPressureByteRangeDownloader.swift`
+- `Sources/App/StormSetup/HrrrPressureSubsetGribCache.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Tests/AppTests/HrrrPressureByteRangeDownloaderTests.swift`
+- `Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift`
+- `Tests/AppTests/StormSetupConfigurationTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+
+Tests and commands run:
+- `swift test --filter HrrrPressureByteRangeDownloaderTests`
+
+Local verification notes:
+- The package build compiled the new downloader, cache, config, and test sources successfully.
+- The test run stopped at the repository’s pre-existing link failure involving `VaporAPNS` and `SwiftUICore`, so the new tests could not execute in this environment.
+- The downloader now requires `206 Partial Content`, validates `Content-Range` when present, and rejects ignored-range `200` responses, `416`, empty bodies, and obvious text/HTML bodies.
+- The subset cache uses a separate pressure-subset cache root and a key that includes source URL plus selected range identity, so it does not collide with the surface or whole-file pressure caches.
+
+Deferred scope:
+- Preview endpoint wiring for `#92`.
+- Any Anvil request/response transport work.
+- Live-network verification against HRRR or NOMADS.
+
+Handoff notes for `#92`:
+- Wire the preview provider to `HrrrPressureSubsetGribCache` rather than the whole-file pressure cache.
+- Pass the planned `HrrrGribByteRangePlan` through unchanged so the preview path preserves the same selection identity used for caching.
+- Keep preview debug metadata focused on selected ranges and cache identity; do not reintroduce whole-file pressure fallback.
 
 ### Issue #92 - 04: Wire Anvil profile preview through byte-range pressure subsets
 

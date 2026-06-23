@@ -33,6 +33,7 @@ struct StormSetupWgrib2ClientTests {
     func makeArgumentsIncludesOptionalMatchOnlyWhenProvided() throws {
         let configuration = StormSetupConfiguration(
             gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
+            pressureGribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
             pressureGribRawCacheRootURL: FileManager.default.temporaryDirectory,
             sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
@@ -287,6 +288,7 @@ struct StormSetupWgrib2ClientTests {
     private func makeConfiguration(wgrib2ExecutableURL: URL) -> StormSetupConfiguration {
         StormSetupConfiguration(
             gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
+            pressureGribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
             pressureGribRawCacheRootURL: FileManager.default.temporaryDirectory,
             sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,

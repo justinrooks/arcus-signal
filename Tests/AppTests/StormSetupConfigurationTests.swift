@@ -13,6 +13,7 @@ struct StormSetupConfigurationTests {
 
         #expect(configuration == .default)
         #expect(configuration.gribSubsetCacheRootURL == StormSetupConfiguration.localGribSubsetCacheRootURL)
+        #expect(configuration.pressureGribSubsetCacheRootURL == StormSetupConfiguration.localPressureGribSubsetCacheRootURL)
         #expect(configuration.pressureGribRawCacheRootURL == StormSetupConfiguration.localPressureGribRawCacheRootURL)
         #expect(configuration.sampledSnapshotCacheRootURL == StormSetupConfiguration.localSampledSnapshotCacheRootURL)
         #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.localWgrib2ExecutableURL)
@@ -32,6 +33,7 @@ struct StormSetupConfigurationTests {
 
         #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.packagedWgrib2ExecutableURL)
         #expect(configuration.gribSubsetCacheRootURL == StormSetupConfiguration.localGribSubsetCacheRootURL)
+        #expect(configuration.pressureGribSubsetCacheRootURL == StormSetupConfiguration.localPressureGribSubsetCacheRootURL)
         #expect(configuration.pressureGribRawCacheRootURL == StormSetupConfiguration.localPressureGribRawCacheRootURL)
         #expect(configuration.sampledSnapshotCacheRootURL == StormSetupConfiguration.localSampledSnapshotCacheRootURL)
     }
@@ -47,6 +49,7 @@ struct StormSetupConfigurationTests {
         ])
 
         #expect(configuration.gribSubsetCacheRootURL.path == "/app/storage/storm-setup/grib-subsets")
+        #expect(configuration.pressureGribSubsetCacheRootURL.path == "/app/storage/storm-setup/pressure-grib-subsets")
         #expect(configuration.pressureGribRawCacheRootURL.path == "/app/storage/storm-setup/pressure-grib-raw")
         #expect(configuration.sampledSnapshotCacheRootURL.path == "/app/storage/storm-setup/sampled-snapshots")
         #expect(configuration.wgrib2ExecutableURL.path == "/usr/local/bin/wgrib2")

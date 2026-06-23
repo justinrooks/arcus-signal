@@ -16,6 +16,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     static let localGribSubsetCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("grib-subsets", isDirectory: true)
 
+    static let localPressureGribSubsetCacheRootURL = localStormSetupCacheRootURL
+        .appendingPathComponent("pressure-grib-subsets", isDirectory: true)
+
     static let localPressureGribRawCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("pressure-grib-raw", isDirectory: true)
 
@@ -64,6 +67,10 @@ struct StormSetupConfiguration: Sendable, Equatable {
                 "grib-subsets",
                 isDirectory: true
             ),
+            pressureGribSubsetCacheRootURL: cacheRootURL.appendingPathComponent(
+                "pressure-grib-subsets",
+                isDirectory: true
+            ),
             pressureGribRawCacheRootURL: cacheRootURL.appendingPathComponent(
                 "pressure-grib-raw",
                 isDirectory: true
@@ -82,6 +89,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
 
     static let `default` = StormSetupConfiguration(
         gribSubsetCacheRootURL: localGribSubsetCacheRootURL,
+        pressureGribSubsetCacheRootURL: localPressureGribSubsetCacheRootURL,
         pressureGribRawCacheRootURL: localPressureGribRawCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
@@ -92,6 +100,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
     )
 
     let gribSubsetCacheRootURL: URL
+    let pressureGribSubsetCacheRootURL: URL
     let pressureGribRawCacheRootURL: URL
     let sampledSnapshotCacheRootURL: URL
     let gribSubsetCacheRetentionSeconds: TimeInterval
