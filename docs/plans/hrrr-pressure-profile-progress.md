@@ -175,7 +175,7 @@ Handoff notes for `#99`:
 
 ### Issue #99 - 02: Select Anvil pressure-profile messages and plan byte ranges
 
-Status: Planned
+Status: Completed
 
 Scope:
 - Select only profile messages needed for Anvil from parsed `.idx` records.
@@ -185,6 +185,33 @@ Scope:
 Deferred:
 - HTTP range fetching.
 - GRIB file assembly.
+
+Files changed:
+- `Sources/App/StormSetup/HrrrPressureProfileMessageSelector.swift`
+- `Sources/App/StormSetup/HrrrGribByteRangePlanner.swift`
+- `Tests/AppTests/HrrrPressureProfileMessageSelectorTests.swift`
+- `Tests/AppTests/HrrrGribByteRangePlannerTests.swift`
+
+Tests and commands run:
+- `swift test --filter HrrrPressureProfile` (blocked by the existing package link failure involving `VaporAPNS` and `SwiftUICore`)
+- `swift test --filter HrrrGribByteRangePlannerTests` (blocked by the same package link failure)
+- `HOME=/private/tmp SWIFT_MODULE_CACHE_PATH=/private/tmp/clang-cache xcrun swiftc Sources/App/StormSetup/HrrrPressureIdxInventory.swift Sources/App/StormSetup/StormSetupPressureLevel.swift Sources/App/StormSetup/StormSetupPressureProfileModels.swift Sources/App/StormSetup/HrrrPressureProfileMessageSelector.swift Sources/App/StormSetup/HrrrGribByteRangePlanner.swift /private/tmp/hrrr_pressure_profile_verify.swift -o /private/tmp/hrrr_pressure_profile_verify && /private/tmp/hrrr_pressure_profile_verify`
+
+Local verification notes:
+- The selector keeps only complete pressure levels in the preferred descending order contract and preserves inventory order for the retained records.
+- Missing required variables are reported per pressure level; `DPT` is treated as missing moisture data when absent rather than synthesized.
+- Unknown variables and unrequested pressure levels are recorded as ignored diagnostics, not fatal errors.
+- The byte-range planner closes each selected message against the next inventory record offset and leaves the terminal selected message open-ended when there is no successor record.
+
+Deferred scope:
+- HTTP `Range` header fetching and partial-content validation.
+- GRIB subset concatenation and cache persistence.
+- Any preview or Anvil wiring that consumes the planned ranges.
+
+Handoff notes for `#98`:
+- Consume `HrrrPressureProfileMessageSelectionResult.selectedMessages` in inventory order.
+- Use `HrrrGribByteRange.httpRangeHeaderValue` for deterministic range headers.
+- Handle the terminal open-ended range explicitly when the last selected message has no following inventory record.
 
 ### Issue #98 - 03: Download and cache byte-range HRRR pressure GRIB subsets
 
