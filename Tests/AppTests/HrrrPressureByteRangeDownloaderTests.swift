@@ -54,7 +54,7 @@ struct HrrrPressureByteRangeDownloaderTests {
         let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
 
         await assertThrowsDownloaderError {
-            _ = try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
+            try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
         } verify: { error in
             guard case .serverIgnoredRange(let returnedSource, let status) = error else {
                 Issue.record("Expected serverIgnoredRange, got \(error).")
@@ -82,9 +82,9 @@ struct HrrrPressureByteRangeDownloaderTests {
         let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
 
         await assertThrowsDownloaderError {
-            _ = try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
+            try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
         } verify: { error in
-            guard case .mismatchedContentRange(let returnedSource, let expected, let actual) = error else {
+            guard case .mismatchedContentRange(let returnedSource, _, let expected, let actual) = error else {
                 Issue.record("Expected mismatchedContentRange, got \(error).")
                 return
             }
@@ -107,7 +107,7 @@ struct HrrrPressureByteRangeDownloaderTests {
         let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
 
         await assertThrowsDownloaderError {
-            _ = try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
+            try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
         } verify: { error in
             guard case .rangeNotSatisfiable(let returnedSource) = error else {
                 Issue.record("Expected rangeNotSatisfiable, got \(error).")
@@ -134,9 +134,9 @@ struct HrrrPressureByteRangeDownloaderTests {
         let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
 
         await assertThrowsDownloaderError {
-            _ = try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
+            try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
         } verify: { error in
-            guard case .emptyResponseBody(let returnedSource) = error else {
+            guard case .emptyResponseBody(let returnedSource, _) = error else {
                 Issue.record("Expected emptyResponseBody, got \(error).")
                 return
             }
@@ -162,9 +162,9 @@ struct HrrrPressureByteRangeDownloaderTests {
         let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
 
         await assertThrowsDownloaderError {
-            _ = try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
+            try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
         } verify: { error in
-            guard case .rejectedTextResponse(let returnedSource, _) = error else {
+            guard case .rejectedTextResponse(let returnedSource, _, _) = error else {
                 Issue.record("Expected rejectedTextResponse, got \(error).")
                 return
             }
@@ -265,7 +265,7 @@ struct HrrrPressureByteRangeDownloaderTests {
     }
 
     private func assertThrowsDownloaderError(
-        _ operation: @escaping @Sendable () async throws -> HrrrPressureByteRangeDownloadResult,
+        _ operation: @escaping @Sendable () async throws -> Void,
         verify: @escaping (HrrrPressureByteRangeDownloaderError) -> Void
     ) async {
         do {

@@ -96,7 +96,7 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.runTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21))
         #expect(preview.debug.forecastHour == 1)
         #expect(preview.debug.validTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-        #expect(preview.debug.h3 == expected.request.location.h3)
+        #expect(preview.debug.h3 == H3Cell(UInt64(bitPattern: expected.h3Cell)).description)
         #expect(preview.debug.centroid == expected.centroid)
         #expect(preview.debug.selectedMessageCount == 5)
         #expect(preview.debug.selectedPressureLevels == [1000])

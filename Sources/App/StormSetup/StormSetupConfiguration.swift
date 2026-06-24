@@ -124,6 +124,32 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let anvilProfileAnalysisBaseURL: URL?
     let anvilProfileAnalysisTimeoutSeconds: TimeInterval?
 
+    init(
+        gribSubsetCacheRootURL: URL,
+        pressureGribSubsetCacheRootURL: URL,
+        pressureGribRawCacheRootURL: URL,
+        sampledSnapshotCacheRootURL: URL,
+        gribSubsetCacheRetentionSeconds: TimeInterval,
+        gribSubsetMaximumByteCount: Int,
+        pressureGribRawMaximumByteCount: Int,
+        wgrib2ExecutableURL: URL,
+        wgrib2TimeoutSeconds: TimeInterval,
+        anvilProfileAnalysisBaseURL: URL? = nil,
+        anvilProfileAnalysisTimeoutSeconds: TimeInterval? = nil
+    ) {
+        self.gribSubsetCacheRootURL = gribSubsetCacheRootURL
+        self.pressureGribSubsetCacheRootURL = pressureGribSubsetCacheRootURL
+        self.pressureGribRawCacheRootURL = pressureGribRawCacheRootURL
+        self.sampledSnapshotCacheRootURL = sampledSnapshotCacheRootURL
+        self.gribSubsetCacheRetentionSeconds = gribSubsetCacheRetentionSeconds
+        self.gribSubsetMaximumByteCount = gribSubsetMaximumByteCount
+        self.pressureGribRawMaximumByteCount = pressureGribRawMaximumByteCount
+        self.wgrib2ExecutableURL = wgrib2ExecutableURL
+        self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
+        self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL
+        self.anvilProfileAnalysisTimeoutSeconds = anvilProfileAnalysisTimeoutSeconds
+    }
+
     func makeWgrib2Client(runner: ProcessRunner = ProcessRunner()) -> Wgrib2Client {
         Wgrib2Client(configuration: self, runner: runner)
     }

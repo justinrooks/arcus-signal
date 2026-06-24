@@ -125,6 +125,240 @@ struct StormSetupProviderTests {
         #expect(fieldSampleRequestCount == 1)
     }
 
+    @Test("provider augments the snapshot with Anvil evidence and uses it in the assessment")
+    func providerAugmentsSnapshotWithAnvilEvidence() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let centroid = expected.centroid
+        let candidate = HrrrRunCandidate(runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22), forecastHour: 0)
+        let source = makeSourceMetadata(candidate: candidate, centroid: centroid)
+        let subset = makeSubsetResult(source: source, fetchedAt: now)
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let subsetLoader = StubStormSetupSubsetLoader { callIndex, resolution, requestCentroid in
+            #expect(callIndex == 0)
+            #expect(resolution.primaryCandidate == candidate)
+            #expect(requestCentroid.latitude == centroid.latitude)
+            #expect(requestCentroid.longitude == centroid.longitude)
+            return subset
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, requestCentroid in
+            [
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "1:0:d=2026060313:CAPE:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1450"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "2:0:d=2026060313:CIN:90-0 mb above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-35"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "3:0:d=2026060313:HLCY:1000-0 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=80"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "4:0:d=2026060313:VUCSH:0-6000 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=6"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "5:0:d=2026060313:VVCSH:0-6000 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=8"
+                    )
+                )
+            ]
+        }
+        let normalized = makeNormalizationResult(
+            raw: makeRaw(
+                sbcapeJkg: 1450,
+                mlcapeJkg: 1200,
+                mucapeJkg: 1600,
+                mlcinJkg: -35,
+                mllclM: 950,
+                shear06kmKt: 42,
+                srh01kmM2s2: 80,
+                srh03kmM2s2: 160
+            )
+        )
+        let anvilResponse = AnvilAnalyzeProfileAnalysisResponse(
+            request: AnvilAnalyzeProfileRequest(
+                runTime: now,
+                forecastHour: 0,
+                validTime: now,
+                location: AnvilLocationDTO(lat: centroid.latitude, lon: centroid.longitude, h3: "\(fixedH3)"),
+                profile: AnvilProfileDTO(
+                    pressureMb: [1000, 925, 850],
+                    heightMslM: [1560, 780, 1450],
+                    temperatureC: [28.4, 22.8, 17.5],
+                    dewpointC: [12.3, 10.1, 11.2],
+                    uWindMs: [-2.1, -5.4, -6.25],
+                    vWindMs: [4.6, 7.9, 8.75]
+                )
+            ),
+            debug: makeAnalysisDebug(),
+            response: AnvilAnalyzeProfileResponse(
+                effectiveLayer: AnvilEffectiveLayerDTO(
+                    status: "found",
+                    basePressureMb: 1000,
+                    topPressureMb: 925,
+                    baseMetersAgl: 0,
+                    topMetersAgl: 690
+                ),
+                stormMotion: AnvilStormMotionDTO(
+                    status: "computed",
+                    bunkersRight: AnvilBunkersRightStormMotionDTO(
+                        uKt: 36.80394762849837,
+                        vKt: 13.53066796460426,
+                        speedKt: 39.21236458834915,
+                        directionTowardDeg: 69.81446460119884,
+                        uMs: 18.933570033795217,
+                        vMs: 6.960770950382875,
+                        speedMs: 20.172565688288692
+                    )
+                ),
+                mucape: 362.1018454649957,
+                mlcape: 191.7304143918497,
+                mlcin: -221.93726424748172,
+                mllclMetersAgl: 1179.4130766012365,
+                effectiveSrh: 29.42420403684148,
+                effectiveBulkShearMs: 30.134722226263612,
+                scp: 4.2,
+                stpCin: 0.0,
+                stpFixed: 3.4,
+                ship: 2.3,
+                quality: AnvilQualityDTO(
+                    profileLevelCount: 20,
+                    warnings: []
+                )
+            )
+        )
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: normalized),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: StubAnvilProfileAnalysisProvider(response: anvilResponse)
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+
+        #expect(snapshot.anvilEvidence?.status == .available)
+        #expect(snapshot.anvilEvidence?.scp?.support == .strong)
+        #expect(snapshot.anvilEvidence?.stp?.support == .strong)
+        #expect(snapshot.anvilEvidence?.ship?.support == .strong)
+        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.confidence == .high)
+        #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
+    }
+
+    @Test("provider marks the assessment degraded when Anvil evidence is unavailable")
+    func providerMarksAssessmentDegradedWhenAnvilEvidenceIsUnavailable() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let centroid = expected.centroid
+        let candidate = HrrrRunCandidate(runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22), forecastHour: 0)
+        let source = makeSourceMetadata(candidate: candidate, centroid: centroid)
+        let subset = makeSubsetResult(source: source, fetchedAt: now)
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let subsetLoader = StubStormSetupSubsetLoader { callIndex, resolution, requestCentroid in
+            #expect(callIndex == 0)
+            #expect(resolution.primaryCandidate == candidate)
+            #expect(requestCentroid.latitude == centroid.latitude)
+            #expect(requestCentroid.longitude == centroid.longitude)
+            return subset
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, requestCentroid in
+            [
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "1:0:d=2026060313:CAPE:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1450"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "2:0:d=2026060313:CIN:90-0 mb above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-35"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "3:0:d=2026060313:HLCY:1000-0 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=80"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "4:0:d=2026060313:VUCSH:0-6000 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=6"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: requestCentroid.longitude,
+                    requestedLatitude: requestCentroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "5:0:d=2026060313:VVCSH:0-6000 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=8"
+                    )
+                )
+            ]
+        }
+        let normalized = makeNormalizationResult(
+            raw: makeRaw(
+                sbcapeJkg: 1450,
+                mlcapeJkg: 1200,
+                mucapeJkg: 1600,
+                mlcinJkg: -35,
+                mllclM: 950,
+                shear06kmKt: 42,
+                srh01kmM2s2: 80,
+                srh03kmM2s2: 160
+            )
+        )
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: normalized),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: ThrowingAnvilProfileAnalysisProvider(error: TestFailure.unexpectedDownstreamCall("Anvil offline"))
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+
+        #expect(snapshot.anvilEvidence?.status == .unavailable)
+        #expect(snapshot.anvilEvidence?.reason?.contains("Anvil offline") == true)
+        #expect(snapshot.assessment.overall == IngredientSupport.conditional)
+        #expect(snapshot.assessment.confidence == .low)
+        #expect(snapshot.assessment.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
+    }
+
     @Test("provider falls back to the next HRRR candidate when the first one fails")
     func providerFallsBackToSecondCandidate() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -371,7 +605,8 @@ struct StormSetupProviderTests {
         subsetLoader: any StormSetupSubsetLoading,
         fieldSampler: any StormSetupFieldSampling,
         normalizer: any StormSetupIngredientNormalizing,
-        interpreter: any StormSetupIngredientAssessing
+        interpreter: any StormSetupIngredientAssessing,
+        anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)? = nil
     ) -> DefaultStormSetupProvider {
         DefaultStormSetupProvider(
             dateProvider: dateProvider,
@@ -380,6 +615,7 @@ struct StormSetupProviderTests {
             fieldSampler: fieldSampler,
             normalizer: normalizer,
             interpreter: interpreter,
+            anvilProfileAnalysisProvider: anvilProfileAnalysisProvider,
             logger: Logger(label: "storm-setup-tests")
         )
     }
@@ -422,6 +658,31 @@ struct StormSetupProviderTests {
             primaryDrivers: ["Instability is supportive.", "Deep shear is supportive."],
             limitingFactors: [.weakLowLevelRotation],
             summary: "The setup is conditionally supportive."
+        )
+    }
+
+    private func makeAnalysisDebug() -> AnvilAnalyzeProfilePreviewDebugDTO {
+        AnvilAnalyzeProfilePreviewDebugDTO(
+            sourceKind: .directObject,
+            product: .wrfprsf,
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0,
+            validTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            h3: "617700169958293503",
+            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
+            selectedMessageCount: 5,
+            selectedPressureLevels: [1000, 925, 850],
+            rangeCount: 3,
+            totalSelectedRangeBytes: 1024,
+            pressureLevelsRequested: [1000, 925, 850],
+            pressureLevelsRetained: [1000, 925, 850],
+            missingLevels: [],
+            warnings: [],
+            subsetCacheHit: false,
+            primaryDownloadURL: nil,
+            idxURL: nil,
+            idxAvailable: true,
+            gribAvailable: true
         )
     }
 
@@ -594,10 +855,33 @@ private struct StubStormSetupNormalizer: StormSetupIngredientNormalizing, @unche
 private struct StubStormSetupAssessor: StormSetupIngredientAssessing, @unchecked Sendable {
     let assessment: TornadoIngredientAssessment
 
-    func assess(raw: TornadoRawParameters, freshness: IngredientFreshness) -> TornadoIngredientAssessment {
+    func assess(
+        raw: TornadoRawParameters,
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence?
+    ) -> TornadoIngredientAssessment {
         _ = raw
         _ = freshness
+        _ = evidence
         return assessment
+    }
+}
+
+private struct StubAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
+    let response: AnvilAnalyzeProfileAnalysisResponse
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        return response
+    }
+}
+
+private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
+    let error: any Error
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        throw error
     }
 }
 
@@ -706,8 +990,100 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
         interpreter: StubStormSetupAssessor(
             assessment: makeStormSetupRouteAssessment()
         ),
+        anvilProfileAnalysisProvider: StubStormSetupRouteAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse()
+        ),
         logger: Logger(label: "storm-setup-tests")
     )
+}
+
+private func makeStormSetupRouteAnalysisResponse() -> AnvilAnalyzeProfileAnalysisResponse {
+    AnvilAnalyzeProfileAnalysisResponse(
+        request: AnvilAnalyzeProfileRequest(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0,
+            validTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            location: AnvilLocationDTO(
+                lat: 39.7825,
+                lon: -104.4661,
+                h3: "617700169958293503"
+            ),
+            profile: AnvilProfileDTO(
+                pressureMb: [1000, 925, 850],
+                heightMslM: [1560, 780, 1450],
+                temperatureC: [28.4, 22.8, 17.5],
+                dewpointC: [12.3, 10.1, 11.2],
+                uWindMs: [-2.1, -5.4, -6.25],
+                vWindMs: [4.6, 7.9, 8.75]
+            )
+        ),
+        debug: AnvilAnalyzeProfilePreviewDebugDTO(
+            sourceKind: .directObject,
+            product: .wrfprsf,
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0,
+            validTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            h3: "617700169958293503",
+            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
+            selectedMessageCount: 5,
+            selectedPressureLevels: [1000, 925, 850],
+            rangeCount: 3,
+            totalSelectedRangeBytes: 1024,
+            pressureLevelsRequested: [1000, 925, 850],
+            pressureLevelsRetained: [1000, 925, 850],
+            missingLevels: [],
+            warnings: [],
+            subsetCacheHit: false,
+            primaryDownloadURL: nil,
+            idxURL: nil,
+            idxAvailable: true,
+            gribAvailable: true
+        ),
+        response: AnvilAnalyzeProfileResponse(
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: "found",
+                basePressureMb: 1000,
+                topPressureMb: 925,
+                baseMetersAgl: 0,
+                topMetersAgl: 690
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: "computed",
+                bunkersRight: AnvilBunkersRightStormMotionDTO(
+                    uKt: 36.80394762849837,
+                    vKt: 13.53066796460426,
+                    speedKt: 39.21236458834915,
+                    directionTowardDeg: 69.81446460119884,
+                    uMs: 18.933570033795217,
+                    vMs: 6.960770950382875,
+                    speedMs: 20.172565688288692
+                )
+            ),
+            mucape: 362.1018454649957,
+            mlcape: 191.7304143918497,
+            mlcin: -221.93726424748172,
+            mllclMetersAgl: 1179.4130766012365,
+            effectiveSrh: 29.42420403684148,
+            effectiveBulkShearMs: 30.134722226263612,
+            scp: 4.2,
+            stpCin: 0.0,
+            stpFixed: 3.4,
+            ship: 2.3,
+            quality: AnvilQualityDTO(
+                profileLevelCount: 20,
+                warnings: []
+            )
+        )
+    )
+}
+
+private struct StubStormSetupRouteAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
+    let response: AnvilAnalyzeProfileAnalysisResponse
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        return response
+    }
 }
 
 func makeStormSetupRouteRaw() -> TornadoRawParameters {

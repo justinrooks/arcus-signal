@@ -448,16 +448,58 @@ Deferred scope:
 
 ### Issue #102 - 07: Map Anvil severe-weather output into ingredient evidence
 
-Status: Planned
+Status: Completed
 
 Scope:
 - Convert Anvil SCP/STP/SHIP output into internal ingredient evidence.
 - Feed evidence into the existing interpreter as support/confidence context.
 - Avoid raw-number product copy.
 
+Files changed:
+- `Sources/App/StormSetup/AnvilIngredientEvidence.swift`
+- `Sources/App/StormSetup/TornadoIngredientAssessment.swift`
+- `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
+- `Sources/App/StormSetup/StormSetupModels.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Tests/AppTests/AnvilIngredientEvidenceTests.swift`
+- `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `docs/plans/hrrr-pressure-profile-progress.md`
+
+Tests and commands run:
+- `swift build --target App`
+- `swift test --filter AnvilIngredientEvidenceTests` (blocked by the pre-existing package link failure involving `VaporAPNS` and `SwiftUICore`)
+- `swift test --filter TornadoIngredientInterpreterTests` (blocked by the same pre-existing package link failure)
+- `swift test --filter StormSetupControllerTests` (blocked by the same pre-existing package link failure)
+- `swift test --filter StormSetupProviderTests/providerAugmentsSnapshotWithAnvilEvidence` (blocked by the same pre-existing package link failure)
+- `swift test --filter StormSetupProviderTests/providerMarksAssessmentDegradedWhenAnvilEvidenceIsUnavailable` (blocked by the same pre-existing package link failure)
+
+Local verification result:
+- The App target compiles cleanly with the new internal Anvil evidence seam and Storm Setup response plumbing.
+- Package-level test execution is still blocked by the repository’s existing `VaporAPNS` / `SwiftUICore` link failure, so the filtered test suites could not complete in this environment.
+
+Evidence model summary:
+- `AnvilIngredientEvidence` now maps the frozen Anvil response into stable internal evidence for `scp`, `stp`, and `ship`.
+- The mapper converts the response diagnostics into internal health flags plus quality metadata, and treats low profile counts, missing severe-weather values, or warnings as degraded evidence.
+- The snapshot now carries an optional `anvilEvidence` debug block so the Storm Setup endpoint can surface the same internal evidence that fed the assessment.
+- Raw severe-weather numbers stay internal to the evidence layer and are not surfaced as product copy.
+
+Interpreter behavior summary:
+- `TornadoIngredientInterpreter` now accepts optional Anvil evidence through a narrow overload.
+- Healthy evidence can lift support or confidence by one conservative step when the raw setup is already near the threshold.
+- Weak, degraded, or unavailable evidence can lower confidence, and summary text now explicitly reports when Anvil is unavailable or degraded.
+- The production Storm Setup provider now resolves Anvil analysis, maps it into evidence, and passes that into the interpreter while also including the evidence block in the snapshot response.
+
 Deferred:
 - UI work.
 - New prediction language.
+- Live Anvil calls.
+
+Handoff notes for `#100`:
+- Record the exact compile and test outcomes above, including the existing link failure, rather than implying the test suite fully passes.
+- Keep the docs focused on the internal evidence seam, the conservative interpreter adjustment, and the new debug visibility on the Storm Setup response.
+- The remaining ledger work should only reconcile status and verification text; no new behavior is expected from the final docs pass.
 
 ### Issue #100 - 08: Finalize HRRR pressure-profile docs and verification ledger
 

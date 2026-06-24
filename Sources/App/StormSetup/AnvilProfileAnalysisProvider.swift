@@ -47,8 +47,9 @@ extension AnvilProfileAnalysisError {
 
 struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
     private let previewProvider: any AnvilProfilePreviewProviding
-    private let configuration: StormSetupConfiguration
-    private let httpClient: any HTTPClient
+    private let configuration: StormSetupConfiguration?
+    private let httpClient: (any HTTPClient)?
+    private let directClient: (any AnvilProfileClient)?
 
     init(
         previewProvider: any AnvilProfilePreviewProviding,
@@ -58,6 +59,17 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
         self.previewProvider = previewProvider
         self.configuration = configuration
         self.httpClient = httpClient
+        self.directClient = nil
+    }
+
+    init(
+        previewProvider: any AnvilProfilePreviewProviding,
+        anvilClient: any AnvilProfileClient
+    ) {
+        self.previewProvider = previewProvider
+        self.configuration = nil
+        self.httpClient = nil
+        self.directClient = anvilClient
     }
 
     init(application: Application) {
@@ -79,12 +91,18 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
         }
 
         let client: any AnvilProfileClient
-        do {
-            client = try configuration.makeAnvilProfileClient(httpClient: httpClient)
-        } catch let error as AnvilProfileClientError {
-            throw classify(clientError: error)
-        } catch {
-            throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
+        if let directClient {
+            client = directClient
+        } else if let configuration, let httpClient {
+            do {
+                client = try configuration.makeAnvilProfileClient(httpClient: httpClient)
+            } catch let error as AnvilProfileClientError {
+                throw classify(clientError: error)
+            } catch {
+                throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
+            }
+        } else {
+            throw AnvilProfileAnalysisError.internalExecutionFailure(reason: "Anvil analysis provider was misconfigured.")
         }
 
         let response: AnvilAnalyzeProfileResponse

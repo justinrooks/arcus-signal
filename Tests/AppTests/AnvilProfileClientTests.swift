@@ -88,7 +88,7 @@ struct AnvilProfileClientTests {
             _ = try await client.analyzeProfile(request)
             Issue.record("Expected the client to throw for a non-2xx response.")
         } catch let error as AnvilProfileClientError {
-            guard case .unexpectedHTTPStatus(let status, let endpoint, let responsePreview) = error else {
+            guard case .unexpectedHTTPStatus(let endpoint, let status, let responsePreview) = error else {
                 Issue.record("Expected unexpectedHTTPStatus, got \(error).")
                 return
             }
@@ -114,11 +114,12 @@ struct AnvilProfileClientTests {
             _ = try await client.analyzeProfile(request)
             Issue.record("Expected the client to throw for malformed JSON.")
         } catch let error as AnvilProfileClientError {
-            guard case .malformedResponseJSON(let reason, let responsePreview) = error else {
+            guard case .malformedResponseJSON(let endpoint, let reason, let responsePreview) = error else {
                 Issue.record("Expected malformedResponseJSON, got \(error).")
                 return
             }
 
+            #expect(endpoint.absoluteString == "https://anvil.example.com/v1/analyze-profile")
             #expect(reason.isEmpty == false)
             #expect(responsePreview?.contains(#"{"status":"ok""#) == true)
         } catch {
@@ -139,11 +140,12 @@ struct AnvilProfileClientTests {
             _ = try await client.analyzeProfile(request)
             Issue.record("Expected the client to throw for a transport failure.")
         } catch let error as AnvilProfileClientError {
-            guard case .transportFailure(let reason) = error else {
+            guard case .transportFailure(let endpoint, let reason) = error else {
                 Issue.record("Expected transportFailure, got \(error).")
                 return
             }
 
+            #expect(endpoint.absoluteString == "https://anvil.example.com/v1/analyze-profile")
             #expect(reason.isEmpty == false)
         } catch {
             Issue.record("Expected AnvilProfileClientError, got \(error).")
@@ -163,11 +165,12 @@ struct AnvilProfileClientTests {
             _ = try await client.analyzeProfile(request)
             Issue.record("Expected the client to throw for a timeout.")
         } catch let error as AnvilProfileClientError {
-            guard case .requestTimedOut(let timeoutSeconds, let reason) = error else {
+            guard case .requestTimedOut(let endpoint, let timeoutSeconds, let reason) = error else {
                 Issue.record("Expected requestTimedOut, got \(error).")
                 return
             }
 
+            #expect(endpoint.absoluteString == "https://anvil.example.com/v1/analyze-profile")
             #expect(timeoutSeconds == 12)
             #expect(reason.isEmpty == false)
         } catch {

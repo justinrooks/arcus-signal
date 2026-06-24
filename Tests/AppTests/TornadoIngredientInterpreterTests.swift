@@ -191,6 +191,119 @@ struct TornadoIngredientInterpreterTests {
         #expect(!summary.contains("at your exact location"))
     }
 
+    @Test("missing Anvil evidence preserves the baseline assessment")
+    func missingAnvilEvidencePreservesBaselineAssessment() {
+        let raw = makeRaw(
+            sbcapeJkg: 1200,
+            mlcapeJkg: 1300,
+            mucapeJkg: 1500,
+            mlcinJkg: -40,
+            mllclM: 950,
+            temperatureDewpointSpreadF: 17,
+            shear06kmKt: 42,
+            srh01kmM2s2: 90,
+            srh03kmM2s2: 140
+        )
+
+        let baseline = interpret(raw: raw)
+        let withMissingEvidence = interpret(raw: raw, evidence: nil)
+
+        #expect(withMissingEvidence.overall == baseline.overall)
+        #expect(withMissingEvidence.confidence == baseline.confidence)
+        #expect(withMissingEvidence.summary == baseline.summary)
+    }
+
+    @Test("healthy Anvil evidence can strengthen the overall setup")
+    func healthyAnvilEvidenceCanStrengthenTheOverallSetup() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 1200,
+                mlcapeJkg: 1300,
+                mucapeJkg: 1500,
+                mlcinJkg: -40,
+                mllclM: 950,
+                temperatureDewpointSpreadF: 17,
+                shear06kmKt: 42,
+                srh01kmM2s2: 90,
+                srh03kmM2s2: 140
+            ),
+            evidence: makeHealthyStrongEvidence()
+        )
+
+        #expect(assessment.overall == .supportive)
+        #expect(assessment.confidence == .high)
+        #expect(assessment.summary.contains("Anvil analysis reinforces the setup."))
+        #expect(!assessment.summary.lowercased().contains("scp"))
+        #expect(!assessment.summary.lowercased().contains("stp"))
+        #expect(!assessment.summary.lowercased().contains("ship"))
+    }
+
+    @Test("healthy weak Anvil evidence can lower support")
+    func healthyWeakAnvilEvidenceCanLowerSupport() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 1900,
+                mlcapeJkg: 2200,
+                mucapeJkg: 2300,
+                mlcinJkg: -35,
+                mllclM: 850,
+                temperatureDewpointSpreadF: 10,
+                shear06kmKt: 48,
+                srh01kmM2s2: 175,
+                srh03kmM2s2: 300
+            ),
+            evidence: makeHealthyWeakEvidence()
+        )
+
+        #expect(assessment.overall == .conditional)
+        #expect(assessment.confidence == .moderate)
+        #expect(assessment.summary.contains("Anvil analysis is not reinforcing the setup."))
+    }
+
+    @Test("degraded Anvil evidence lowers confidence without inventing certainty")
+    func degradedAnvilEvidenceLowersConfidenceWithoutInventingCertainty() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 1900,
+                mlcapeJkg: 2200,
+                mucapeJkg: 2300,
+                mlcinJkg: -35,
+                mllclM: 850,
+                temperatureDewpointSpreadF: 10,
+                shear06kmKt: 48,
+                srh01kmM2s2: 175,
+                srh03kmM2s2: 300
+            ),
+            evidence: makeDegradedEvidence()
+        )
+
+        #expect(assessment.overall == .supportive)
+        #expect(assessment.confidence == .moderate)
+        #expect(assessment.summary.contains("Anvil analysis is degraded, so confidence is limited."))
+    }
+
+    @Test("unavailable Anvil evidence is reported as unavailable and degrades confidence")
+    func unavailableAnvilEvidenceIsReportedAsUnavailableAndDegradesConfidence() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 1900,
+                mlcapeJkg: 2200,
+                mucapeJkg: 2300,
+                mlcinJkg: -35,
+                mllclM: 850,
+                temperatureDewpointSpreadF: 10,
+                shear06kmKt: 48,
+                srh01kmM2s2: 175,
+                srh03kmM2s2: 300
+            ),
+            evidence: .unavailable(reason: "Anvil analysis provider is not configured.")
+        )
+
+        #expect(assessment.overall == .supportive)
+        #expect(assessment.confidence == .moderate)
+        #expect(assessment.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
+    }
+
     @Test("MLCAPE follows updated operational threshold bands")
     func mlcapeFollowsUpdatedOperationalThresholdBands() {
         #expect(interpret(raw: makeRaw(mlcapeJkg: 900)).instability == .weak)
@@ -237,6 +350,13 @@ struct TornadoIngredientInterpreterTests {
     }
 
     private func interpret(raw: TornadoRawParameters) -> TornadoIngredientAssessment {
+        interpret(raw: raw, evidence: nil)
+    }
+
+    private func interpret(
+        raw: TornadoRawParameters,
+        evidence: AnvilIngredientEvidence?
+    ) -> TornadoIngredientAssessment {
         let source = StormSetupSourceMetadata(
             model: .hrrr,
             product: .wrfsfc,
@@ -252,7 +372,113 @@ struct TornadoIngredientInterpreterTests {
             source: source,
             fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
         )
-        return TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness)
+        return TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness, evidence: evidence)
+    }
+
+    private func makeHealthyStrongEvidence() -> AnvilIngredientEvidence {
+        AnvilIngredientEvidence(response: AnvilAnalyzeProfileResponse(
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: "found",
+                basePressureMb: 1000,
+                topPressureMb: 925,
+                baseMetersAgl: 0,
+                topMetersAgl: 690
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: "computed",
+                bunkersRight: AnvilBunkersRightStormMotionDTO(
+                    uKt: 36.80394762849837,
+                    vKt: 13.53066796460426,
+                    speedKt: 39.21236458834915,
+                    directionTowardDeg: 69.81446460119884,
+                    uMs: 18.933570033795217,
+                    vMs: 6.960770950382875,
+                    speedMs: 20.172565688288692
+                )
+            ),
+            mucape: 362.1018454649957,
+            mlcape: 191.7304143918497,
+            mlcin: -221.93726424748172,
+            mllclMetersAgl: 1179.4130766012365,
+            effectiveSrh: 29.42420403684148,
+            effectiveBulkShearMs: 30.134722226263612,
+            scp: 4.2,
+            stpCin: 0.0,
+            stpFixed: 3.4,
+            ship: 2.3,
+            quality: AnvilQualityDTO(
+                profileLevelCount: 20,
+                warnings: []
+            )
+        ))
+    }
+
+    private func makeHealthyWeakEvidence() -> AnvilIngredientEvidence {
+        AnvilIngredientEvidence(response: AnvilAnalyzeProfileResponse(
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: "found",
+                basePressureMb: 1000,
+                topPressureMb: 925,
+                baseMetersAgl: 0,
+                topMetersAgl: 690
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: "computed",
+                bunkersRight: AnvilBunkersRightStormMotionDTO(
+                    uKt: 36.80394762849837,
+                    vKt: 13.53066796460426,
+                    speedKt: 39.21236458834915,
+                    directionTowardDeg: 69.81446460119884,
+                    uMs: 18.933570033795217,
+                    vMs: 6.960770950382875,
+                    speedMs: 20.172565688288692
+                )
+            ),
+            mucape: 362.1018454649957,
+            mlcape: 191.7304143918497,
+            mlcin: -221.93726424748172,
+            mllclMetersAgl: 1179.4130766012365,
+            effectiveSrh: 29.42420403684148,
+            effectiveBulkShearMs: 30.134722226263612,
+            scp: 0.2,
+            stpCin: 0.1,
+            stpFixed: 0.3,
+            ship: 0.1,
+            quality: AnvilQualityDTO(
+                profileLevelCount: 20,
+                warnings: []
+            )
+        ))
+    }
+
+    private func makeDegradedEvidence() -> AnvilIngredientEvidence {
+        AnvilIngredientEvidence(response: AnvilAnalyzeProfileResponse(
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: "notFound",
+                basePressureMb: nil,
+                topPressureMb: nil,
+                baseMetersAgl: nil,
+                topMetersAgl: nil
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: "notComputed",
+                bunkersRight: nil
+            ),
+            mucape: nil,
+            mlcape: nil,
+            mlcin: nil,
+            mllclMetersAgl: nil,
+            effectiveSrh: nil,
+            effectiveBulkShearMs: nil,
+            scp: nil,
+            stpCin: nil,
+            stpFixed: nil,
+            ship: nil,
+            quality: AnvilQualityDTO(
+                profileLevelCount: 3,
+                warnings: ["profile incomplete"]
+            )
+        ))
     }
 
     private func makeRaw(

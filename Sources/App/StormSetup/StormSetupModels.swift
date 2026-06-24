@@ -8,6 +8,25 @@ struct TornadoIngredientSnapshot: Content, Sendable {
     let raw: TornadoRawParameters
     let assessment: TornadoIngredientAssessment
     let freshness: IngredientFreshness
+    let anvilEvidence: AnvilIngredientEvidence?
+
+    init(
+        h3Cell: Int64,
+        centroid: StormSetupCentroid,
+        source: StormSetupSourceMetadata,
+        raw: TornadoRawParameters,
+        assessment: TornadoIngredientAssessment,
+        freshness: IngredientFreshness,
+        anvilEvidence: AnvilIngredientEvidence? = nil
+    ) {
+        self.h3Cell = h3Cell
+        self.centroid = centroid
+        self.source = source
+        self.raw = raw
+        self.assessment = assessment
+        self.freshness = freshness
+        self.anvilEvidence = anvilEvidence
+    }
 }
 
 struct StormSetupCentroid: Content, Sendable, Equatable {
@@ -15,7 +34,7 @@ struct StormSetupCentroid: Content, Sendable, Equatable {
     let longitude: Double
 }
 
-struct StormSetupSourceMetadata: Content, Sendable {
+struct StormSetupSourceMetadata: Content, Sendable, Equatable {
     let sourceKind: HrrrSourceKind
     let model: HrrrModel?
     let product: HrrrProduct?

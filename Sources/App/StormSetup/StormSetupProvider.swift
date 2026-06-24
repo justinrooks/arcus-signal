@@ -30,7 +30,11 @@ protocol StormSetupIngredientNormalizing: Sendable {
 }
 
 protocol StormSetupIngredientAssessing: Sendable {
-    func assess(raw: TornadoRawParameters, freshness: IngredientFreshness) -> TornadoIngredientAssessment
+    func assess(
+        raw: TornadoRawParameters,
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence?
+    ) -> TornadoIngredientAssessment
 }
 
 enum StormSetupCurrentSnapshotFailureStage: String, Sendable {
@@ -93,6 +97,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     private let fieldSampler: any StormSetupFieldSampling
     private let normalizer: any StormSetupIngredientNormalizing
     private let interpreter: any StormSetupIngredientAssessing
+    private let anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)?
     private let logger: Logger
 
     init(
@@ -105,6 +110,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         fieldSampler: any StormSetupFieldSampling,
         normalizer: any StormSetupIngredientNormalizing = TornadoIngredientNormalizer(),
         interpreter: any StormSetupIngredientAssessing = TornadoIngredientInterpreter(),
+        anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)? = nil,
         logger: Logger = Logger(label: "storm-setup")
     ) {
         self.h3Resolver = h3Resolver
@@ -116,6 +122,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         self.fieldSampler = fieldSampler
         self.normalizer = normalizer
         self.interpreter = interpreter
+        self.anvilProfileAnalysisProvider = anvilProfileAnalysisProvider
         self.logger = logger
     }
 
@@ -129,6 +136,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         fieldSampler: any StormSetupFieldSampling,
         normalizer: any StormSetupIngredientNormalizing,
         interpreter: any StormSetupIngredientAssessing,
+        anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)? = nil,
         logger: Logger
     ) {
         self.h3Resolver = h3Resolver
@@ -140,6 +148,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         self.fieldSampler = fieldSampler
         self.normalizer = normalizer
         self.interpreter = interpreter
+        self.anvilProfileAnalysisProvider = anvilProfileAnalysisProvider
         self.logger = logger
     }
 
@@ -275,14 +284,16 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         let freshness = IngredientFreshness.make(source: sourceMetadata, fetchedAt: subset.fetchedAt)
-        let assessment = interpreter.assess(raw: normalized.raw, freshness: freshness)
+        let anvilEvidence = await resolveAnvilEvidence(for: resolvedH3Cell)
+        let assessment = interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: anvilEvidence)
         let snapshot = TornadoIngredientSnapshot(
             h3Cell: resolvedH3Cell,
             centroid: centroid,
             source: sourceMetadata,
             raw: normalized.raw,
             assessment: assessment,
-            freshness: freshness
+            freshness: freshness,
+            anvilEvidence: anvilEvidence
         )
 
         do {
@@ -322,6 +333,19 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             forecastHour: sourceMetadata.forecastHour ?? 0,
             fieldSetVersion: sourceMetadata.fieldSetVersion ?? product.defaultFieldSetVersion
         )
+    }
+
+    private func resolveAnvilEvidence(for h3Cell: Int64) async -> AnvilIngredientEvidence {
+        guard let anvilProfileAnalysisProvider else {
+            return .unavailable(reason: "Anvil analysis provider is not configured.")
+        }
+
+        do {
+            let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(for: h3Cell)
+            return AnvilIngredientEvidence(response: analysis.response)
+        } catch {
+            return .unavailable(reason: String(describing: error))
+        }
     }
 
     private func classify(
@@ -477,6 +501,7 @@ extension DefaultStormSetupProvider {
             fieldSampler: sampler,
             normalizer: TornadoIngredientNormalizer(),
             interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: application.anvilProfileAnalysisProvider,
             logger: logger ?? application.logger
         )
     }

@@ -67,6 +67,36 @@ extension IngredientSupport {
         lhs.comparisonRank < rhs.comparisonRank
     }
 
+    func lowered() -> IngredientSupport {
+        switch self {
+        case .unknown:
+            return .unknown
+        case .weak:
+            return .weak
+        case .conditional:
+            return .weak
+        case .supportive:
+            return .conditional
+        case .strong:
+            return .supportive
+        }
+    }
+
+    func raised() -> IngredientSupport {
+        switch self {
+        case .unknown:
+            return .unknown
+        case .weak:
+            return .conditional
+        case .conditional:
+            return .supportive
+        case .supportive:
+            return .strong
+        case .strong:
+            return .strong
+        }
+    }
+
     var comparisonRank: Int {
         switch self {
         case .unknown:
@@ -79,6 +109,34 @@ extension IngredientSupport {
             return 2
         case .strong:
             return 3
+        }
+    }
+}
+
+extension SnapshotConfidence {
+    func lowered() -> SnapshotConfidence {
+        switch self {
+        case .high:
+            return .moderate
+        case .moderate:
+            return .low
+        case .low:
+            return .degraded
+        case .degraded:
+            return .degraded
+        }
+    }
+
+    func raised() -> SnapshotConfidence {
+        switch self {
+        case .degraded:
+            return .low
+        case .low:
+            return .moderate
+        case .moderate:
+            return .high
+        case .high:
+            return .high
         }
     }
 }
