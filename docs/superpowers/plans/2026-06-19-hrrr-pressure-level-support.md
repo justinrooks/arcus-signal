@@ -1,5 +1,7 @@
 # HRRR Pressure-Level Support Implementation Plan
 
+> **Historical note:** This plan is superseded by the completed byte-range HRRR pressure-profile implementation documented in `docs/plans/hrrr-pressure-profile-progress.md` and `docs/hrrr-pressure-profile.md`. It describes an obsolete NOMADS pressure-level attempt and should not be used as current implementation guidance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add pressure-level HRRR source support without changing the existing surface-product path.

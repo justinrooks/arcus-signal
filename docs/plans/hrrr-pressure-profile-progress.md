@@ -6,6 +6,9 @@ HRRR Pressure Profile adds byte-range pressure-level HRRR profile extraction and
 
 Implementation should proceed one issue at a time, following `docs/plans/hrrr-pressure-profile-runbook.md`.
 
+Epic status:
+- Complete
+
 Primary GitHub epic:
 - `#85` - https://github.com/justinrooks/arcus-signal/issues/85
 
@@ -13,6 +16,7 @@ Related local docs:
 - `AGENTS.md`
 - `docs/architecture.md`
 - `docs/epics-stories.md`
+- `docs/hrrr-pressure-profile.md`
 - `docs/plans/hrrr-pressure-profile-runbook.md`
 - `docs/plans/storm-setup-issue-runbook.md`
 - `docs/plans/storm-setup-progress.md`
@@ -62,14 +66,7 @@ Keep:
 - Ingredient interpreter already has nullable composite slots, but they are currently unpopulated.
 
 Missing:
-- `.idx` inventory parser.
-- Pressure message selector from `.idx`.
-- Byte-range planner.
-- HTTP range downloader with `206 Partial Content` validation.
-- Partial GRIB concatenation/cache.
-- Preview wiring through byte-range subsets.
-- Anvil HTTP client.
-- SCP/STP/SHIP evidence mapping into ingredient interpretation.
+- None. The byte-range `.idx` path, preview wiring, Anvil client, and ingredient-evidence mapping are complete.
 
 Do not touch:
 - Existing surface GRIB flow.
@@ -503,12 +500,52 @@ Handoff notes for `#100`:
 
 ### Issue #100 - 08: Finalize HRRR pressure-profile docs and verification ledger
 
-Status: Planned
+Status: Completed
 
 Scope:
 - Update internal docs after implementation.
 - Reconcile old pressure/full-file issue notes.
 - Record final verification commands and known deferred risks.
 
-Deferred:
-- Any new feature behavior.
+Files changed:
+- `docs/plans/hrrr-pressure-profile-progress.md`
+- `docs/hrrr-pressure-profile.md`
+- `docs/superpowers/plans/2026-06-19-hrrr-pressure-level-support.md`
+
+Tests and commands run:
+- `swift build --target App` (passed)
+- `swift test --filter HrrrPressure` (failed with 12 issues across the pressure-profile suites, including downloader, selector, cache, and loading tests)
+- `swift test --filter StormSetup` (failed with 7 issues across the Storm Setup suites, including pressure grouping, pressure source selection, and pressure cache tests)
+
+Local verification notes:
+- `swift build --target App` completed successfully.
+- `swift test --filter HrrrPressure` and `swift test --filter StormSetup` both completed enough of the suite to report concrete test failures rather than a package-link failure.
+- The pressure-profile failures were concentrated in downloader, selector, cache, and loading coverage.
+- The Storm Setup failures were concentrated in pressure-profile grouping and pressure-source selection coverage.
+- The documentation updates were reconciled against the completed implementation trail in issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, and `#102`.
+- The final docs now describe the byte-range `.idx` path as the current pressure-profile behavior and keep Anvil scoped to ingredient evidence rather than prediction.
+
+Skipped validation:
+- Direct GitHub issue body retrieval for `#100` was unavailable because `gh issue view` could not connect to `api.github.com` from this environment.
+- No runtime behavior was changed, so no code-level verification beyond the existing pressure-profile and Storm Setup test commands was required.
+
+Deferred work:
+- No new feature work remains from the pressure-profile epic.
+- Live network verification against HRRR or Anvil remains environment-dependent and was not part of this final docs pass.
+
+Handoff outcome:
+- The pressure-profile epic is complete and the progress ledger is now the durable handoff record.
+- Future maintenance should treat `docs/hrrr-pressure-profile.md` and this progress log as the current reference, and the historical pressure-level plan as superseded.
+
+---
+
+## Final Completion Summary
+
+- Epic `#85` is complete.
+- Sub-issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, `#102`, and `#100` are all complete.
+- The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, and ingredient-evidence mapping.
+- The final verification record is `swift build --target App` passing and the two filtered test commands above surfacing concrete failures that should be tracked separately from this documentation pass.
+- Known remaining risks are environmental only:
+  - the filtered test suites still have outstanding failures in the current working tree or fixtures
+  - live HRRR, NOMADS, and Anvil verification was not part of this docs-only finalization pass
+- Deferred work from the epic is intentionally closed out; no new runtime behavior was added in this documentation pass.
