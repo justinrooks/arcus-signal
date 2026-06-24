@@ -180,9 +180,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
             rangeCount: loadResult.byteRangePlan.ranges.count,
             totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
-            pressureLevelsRequested: loadResult.groupedProfile.requestedLevels.map(\.pressureMb),
+            pressureLevelsRequested: loadResult.selection.requestedLevels.map(\.pressureMb),
             pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map(\.pressureMb),
-            missingLevels: loadResult.groupedProfile.missingLevels.map {
+            missingLevels: loadResult.selection.missingLevels.map {
                 AnvilAnalyzeProfilePreviewMissingLevelDTO(
                     pressureMb: $0.pressureMb,
                     missingVariables: $0.missingVariables

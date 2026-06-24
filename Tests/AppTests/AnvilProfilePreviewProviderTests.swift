@@ -102,12 +102,14 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.selectedPressureLevels == [1000])
         #expect(preview.debug.rangeCount == 5)
         #expect(preview.debug.totalSelectedRangeBytes == 1024)
+        #expect(preview.debug.pressureLevelsRequested == [1000])
         #expect(preview.debug.subsetCacheHit == true)
         #expect(preview.debug.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2")
         #expect(preview.debug.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2.idx")
         #expect(preview.debug.idxAvailable == true)
         #expect(preview.debug.gribAvailable == nil)
         #expect(preview.debug.pressureLevelsRetained == [1000, 925, 850, 700, 600, 500, 400, 300])
+        #expect(preview.debug.missingLevels.isEmpty)
         #expect(preview.debug.warnings.contains(where: { $0.contains("Dropped incomplete pressure levels") }))
     }
 

@@ -393,6 +393,7 @@ Local verification notes:
 - Transport failures and timeouts are mapped separately from HTTP status failures and decoding failures.
 - The filtered test command still dies at the repository’s existing `VaporAPNS` / `SwiftUICore` link issue, so the new tests could not execute in this environment.
 - The preview pressure subset cache limit is now 30 MB, which is the limit that gates the 8-level lower-troposphere preview slice.
+- Preview debug metadata now sources `pressureLevelsRequested` and `missingLevels` from the actual selector result so the preview output reflects the requested slice rather than the canonical preferred ladder.
 
 Configuration keys added:
 - `ANVIL_PROFILE_ANALYSIS_BASE_URL`

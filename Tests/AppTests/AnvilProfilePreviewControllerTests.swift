@@ -213,14 +213,9 @@ struct AnvilProfilePreviewControllerTests {
             selectedPressureLevels: [1000],
             rangeCount: 5,
             totalSelectedRangeBytes: 1024,
-            pressureLevelsRequested: grouping.requestedLevels.map(\.pressureMb),
+            pressureLevelsRequested: [1000],
             pressureLevelsRetained: grouping.retainedLevels.map(\.pressureMb),
-            missingLevels: grouping.missingLevels.map {
-                AnvilAnalyzeProfilePreviewMissingLevelDTO(
-                    pressureMb: $0.pressureMb,
-                    missingVariables: $0.missingVariables
-                )
-            },
+            missingLevels: [],
             warnings: [makeDroppedLevelsWarning(from: grouping.missingLevels)],
             subsetCacheHit: false,
             primaryDownloadURL: URL(string: "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t21z.wrfprsf03.grib2"),
@@ -263,9 +258,11 @@ private func makeMissingLevels(excluding retainedPressureLevels: [Int]) -> [Stor
         }
 }
 
-private func makeDroppedLevelsWarning(from levels: [StormSetupPressureProfileMissingLevel]) -> String {
-    let labels = levels.map { "\($0.pressureMb) mb" }.joined(separator: ", ")
-    return "Dropped incomplete pressure levels: \(labels)."
+private func makeDroppedLevelsWarning(from missingLevels: [StormSetupPressureProfileMissingLevel]) -> String {
+    let summary = missingLevels
+        .map { "\($0.pressureMb) mb missing \($0.missingVariables.map(\.rawValue).joined(separator: ", "))" }
+        .joined(separator: "; ")
+    return "Dropped incomplete pressure levels: \(summary)."
 }
 
 private func makeLevel(
