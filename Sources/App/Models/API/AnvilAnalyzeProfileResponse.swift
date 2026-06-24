@@ -1,15 +1,45 @@
 import Foundation
 
 struct AnvilAnalyzeProfileResponse: Codable, Sendable, Equatable {
-    let status: String
-    let diagnostics: [AnvilAnalyzeProfileResponseDiagnosticDTO]?
+    let effectiveLayer: AnvilEffectiveLayerDTO
+    let stormMotion: AnvilStormMotionDTO
+    let mucape: Double?
+    let mlcape: Double?
+    let mlcin: Double?
+    let mllclMetersAgl: Double?
+    let effectiveSrh: Double?
+    let effectiveBulkShearMs: Double?
     let scp: Double?
-    let stp: Double?
+    let stpCin: Double?
+    let stpFixed: Double?
     let ship: Double?
+    let quality: AnvilQualityDTO
 }
 
-struct AnvilAnalyzeProfileResponseDiagnosticDTO: Codable, Sendable, Equatable {
+struct AnvilEffectiveLayerDTO: Codable, Sendable, Equatable {
     let status: String
-    let code: String?
-    let message: String
+    let basePressureMb: Double?
+    let topPressureMb: Double?
+    let baseMetersAgl: Double?
+    let topMetersAgl: Double?
+}
+
+struct AnvilQualityDTO: Codable, Sendable, Equatable {
+    let profileLevelCount: Int
+    let warnings: [String]
+}
+
+struct AnvilStormMotionDTO: Codable, Sendable, Equatable {
+    let status: String
+    let bunkersRight: AnvilBunkersRightStormMotionDTO?
+}
+
+struct AnvilBunkersRightStormMotionDTO: Codable, Sendable, Equatable {
+    let uKt: Double
+    let vKt: Double
+    let speedKt: Double
+    let directionTowardDeg: Double
+    let uMs: Double
+    let vMs: Double
+    let speedMs: Double
 }

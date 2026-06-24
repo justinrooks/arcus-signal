@@ -5,7 +5,7 @@ struct AnvilAnalyzeProfileRequest: Codable, Sendable, Equatable {
     let forecastHour: Int
     let validTime: Date
     let location: AnvilLocationDTO
-    let profile: [AnvilProfileDTO]
+    let profile: AnvilProfileDTO
 }
 
 struct AnvilLocationDTO: Codable, Sendable, Equatable {
@@ -15,10 +15,10 @@ struct AnvilLocationDTO: Codable, Sendable, Equatable {
 }
 
 struct AnvilProfileDTO: Codable, Sendable, Equatable {
-    let pressureMb: Double
-    let heightMslM: Double
-    let temperatureC: Double
-    let dewpointC: Double
-    let uWindMs: Double
-    let vWindMs: Double
+    let pressureMb: [Double]
+    let heightMslM: [Double]
+    let temperatureC: [Double]
+    let dewpointC: [Double]
+    let uWindMs: [Double]
+    let vWindMs: [Double]
 }

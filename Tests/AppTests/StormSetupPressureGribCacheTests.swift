@@ -257,6 +257,15 @@ final class PressureStubHTTPClient: HTTPClient, @unchecked Sendable {
         try await get(url, headers: headers)
     }
 
+    func post(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
     func clearCache() {}
 
     var requestCount: Int {

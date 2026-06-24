@@ -291,6 +291,66 @@ func previewMakePressureSamples(
     ]
 }
 
+func previewMakeEightLevelPressureSamples() -> [HrrrFieldSample] {
+    previewMakePressureSamples(
+        level: 1000,
+        hgt: 1200,
+        tmp: 301.55,
+        dpt: 285.45,
+        ugrd: -2.1,
+        vgrd: 4.6
+    ) + previewMakePressureSamples(
+        level: 925,
+        hgt: 1500,
+        tmp: 295.95,
+        dpt: 283.25,
+        ugrd: -5.4,
+        vgrd: 7.9
+    ) + previewMakePressureSamples(
+        level: 850,
+        hgt: 1800,
+        tmp: 290.65,
+        dpt: 284.35,
+        ugrd: -6.25,
+        vgrd: 8.75
+    ) + previewMakePressureSamples(
+        level: 700,
+        hgt: 2450,
+        tmp: 283.15,
+        dpt: 274.15,
+        ugrd: -12.5,
+        vgrd: 14.2
+    ) + previewMakePressureSamples(
+        level: 600,
+        hgt: 4100,
+        tmp: 275.85,
+        dpt: 266.75,
+        ugrd: -15.25,
+        vgrd: 18.4
+    ) + previewMakePressureSamples(
+        level: 500,
+        hgt: 5600,
+        tmp: 268.95,
+        dpt: 261.15,
+        ugrd: -18.75,
+        vgrd: 22.0
+    ) + previewMakePressureSamples(
+        level: 400,
+        hgt: 7100,
+        tmp: 258.75,
+        dpt: 252.35,
+        ugrd: -23.5,
+        vgrd: 27.8
+    ) + previewMakePressureSamples(
+        level: 300,
+        hgt: 9300,
+        tmp: 246.15,
+        dpt: 240.35,
+        ugrd: -28.9,
+        vgrd: 31.4
+    )
+}
+
 func previewSample(_ line: String) -> HrrrFieldSample {
     HrrrFieldSample(
         requestedLongitude: -104.4661,

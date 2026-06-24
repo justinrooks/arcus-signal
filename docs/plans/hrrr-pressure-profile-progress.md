@@ -312,8 +312,8 @@ Scope:
 - Keep request and response contract tests fixture-backed.
 
 Decision:
-- The current request shape is sufficient as-is. No additional surface fields were required from the surface pipeline for the frozen profile-analysis contract.
-- The response contract now carries `status`, optional `scp`, `stp`, and `ship`, plus optional diagnostics entries with status/code/message for degraded or partial-output handling.
+- The request stays profile-only, but the `profile` field is a nested object of parallel arrays rather than a list of level objects.
+- The response contract now carries the nested analysis payload with `effectiveLayer`, `stormMotion`, scalar instability/shear fields, and a `quality` object with profile count and warnings.
 
 Deferred:
 - Live Anvil calls.
@@ -335,10 +335,10 @@ Local verification notes:
 - `swift build --target App` completed successfully, which compiled the new Anvil response DTO without touching the existing package link problem.
 - The package-level test invocations still fail at link time for the existing `VaporAPNS` / `SwiftUICore` issue, so the DTO suites could not execute inside `swift test` here.
 - Direct compile-and-run checks against the frozen request and response DTO source files passed and confirmed:
-  - the request fixture still round-trips exactly with the current profile-only payload
+  - the request fixture still round-trips exactly with the current profile-only payload shape
   - the response fixture decodes and re-encodes exactly
-  - missing `scp`, `stp`, and `ship` fields decode to `nil`
-  - diagnostics decode with required `status` and `message` fields
+  - missing scalar analysis fields decode to `nil`
+  - nested `effectiveLayer`, `stormMotion`, and `quality` fields decode with the expected required shape
 
 Surface-field dependency and unit expectations:
 - No extra surface-field dependency was identified for the frozen request contract.
@@ -353,12 +353,12 @@ Deferred scope:
 
 Handoff notes for `#101`:
 - Decode the frozen `AnvilAnalyzeProfileResponse` directly in the future client.
-- Treat missing `scp`, `stp`, or `ship` as absent evidence, not as zeros.
-- Preserve diagnostics/status so the client can distinguish degraded analysis from outright transport failure.
+- Treat missing scalar analysis fields as absent evidence, not as zeros.
+- Preserve nested `effectiveLayer`, `stormMotion`, and `quality` status so the client can distinguish degraded analysis from outright transport failure.
 
 ### Issue #101 - 06: Add Arcus-Anvil HTTP client for profile analysis
 
-Status: Planned
+Status: Completed
 
 Scope:
 - Add a small injected Anvil client.
@@ -369,6 +369,81 @@ Scope:
 Deferred:
 - Scheduler/background refresh design.
 - App-facing fields.
+
+Files changed:
+- `Sources/App/Infrastructure/Networking/HTTPDataDownloader.swift`
+- `Sources/App/StormSetup/AnvilProfileClient.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Tests/AppTests/AnvilProfileClientTests.swift`
+- `Tests/AppTests/HrrrPressureByteRangeDownloaderTests.swift`
+- `Tests/AppTests/HrrrPressureProfileLoadingTests.swift`
+- `Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift`
+- `Tests/AppTests/StormSetupConfigurationTests.swift`
+- `Tests/AppTests/StormSetupGribSubsetCacheTests.swift`
+- `Tests/AppTests/StormSetupPressureGribCacheTests.swift`
+
+Tests and commands run:
+- `swift test --filter AnvilProfileClientTests` (blocked by the pre-existing package link failure involving `VaporAPNS` and `SwiftUICore`)
+- `swift build --target App`
+
+Local verification notes:
+- The App target compiles successfully with the new Anvil client and Storm Setup configuration fields.
+- The client encodes the frozen request body as JSON with the nested `profile` object, posts it to the configured analysis endpoint, and decodes the frozen response DTO.
+- Missing configuration fails in the configuration factory before any request is issued.
+- Transport failures and timeouts are mapped separately from HTTP status failures and decoding failures.
+- The filtered test command still dies at the repository’s existing `VaporAPNS` / `SwiftUICore` link issue, so the new tests could not execute in this environment.
+- The preview pressure subset cache limit is now 30 MB, which is the limit that gates the 8-level lower-troposphere preview slice.
+
+Configuration keys added:
+- `ANVIL_PROFILE_ANALYSIS_BASE_URL`
+- `ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS`
+
+Error model summary:
+- `AnvilProfileClientError.missingConfiguration`
+- `AnvilProfileClientError.transportFailure`
+- `AnvilProfileClientError.requestTimedOut`
+- `AnvilProfileClientError.unexpectedHTTPStatus`
+- `AnvilProfileClientError.malformedResponseJSON`
+
+Deferred scope:
+- Scheduler/background refresh design.
+- App-facing fields.
+- Preview endpoint Anvil dispatch.
+- Ingredient interpretation mapping.
+
+Handoff notes for `#102`:
+- Consume `AnvilAnalyzeProfileResponse` directly from the new client rather than re-decoding in downstream logic.
+- Treat missing `scp`, `stp`, and `ship` as absent evidence, not synthesized zero values.
+- Reuse the new client seam for mock-driven tests; do not wire live Anvil calls into the preview endpoint here.
+
+### Follow-up - Dev analysis endpoint
+
+Status: Completed
+
+Scope:
+- Wire a dev-only endpoint that reuses the pressure-profile preview pipeline, posts the frozen request to Anvil, and returns the decoded response for inspection.
+
+Files changed:
+- `Sources/App/Controllers/AnvilProfileAnalysisController.swift`
+- `Sources/App/Models/API/AnvilAnalyzeProfileAnalysisResponse.swift`
+- `Sources/App/StormSetup/AnvilProfileAnalysisProvider.swift`
+- `Sources/App/apiRoutes.swift`
+- `Tests/AppTests/AnvilProfileAnalysisControllerTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisProviderTests.swift`
+
+Tests and commands run:
+- `swift build --target App`
+- `swift test --filter AnvilProfileAnalysis` (blocked by the pre-existing package link failure involving `VaporAPNS` and `SwiftUICore`)
+
+Local verification notes:
+- The new endpoint is dev-only and lives under `/api/v1/dev/anvil/profile-analysis`.
+- The provider reuses the frozen preview request, then sends that request through the injected Anvil client and returns the decoded response.
+- The route returns a wrapper with the request, preview debug metadata, and the decoded Anvil response so the pipeline is inspectable end to end.
+
+Deferred scope:
+- Live Anvil use in the preview endpoint.
+- UI work.
+- Ingredient interpretation mapping.
 
 ### Issue #102 - 07: Map Anvil severe-weather output into ingredient evidence
 

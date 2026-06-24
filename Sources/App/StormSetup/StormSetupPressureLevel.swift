@@ -21,6 +21,8 @@ enum StormSetupPressureLevel: Int, Sendable, Codable, CaseIterable, Comparable {
     case mb400 = 400
     case mb350 = 350
     case mb300 = 300
+    case mb250 = 250
+    case mb200 = 200
 
     static let preferredDescending: [StormSetupPressureLevel] = Self.allCases
 

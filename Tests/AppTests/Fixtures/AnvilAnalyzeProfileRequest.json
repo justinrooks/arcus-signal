@@ -7,30 +7,12 @@
     "lon": -104.9903,
     "h3": "882681b59fffffff"
   },
-  "profile": [
-    {
-      "pressureMb": 1000,
-      "heightMslM": 1560,
-      "temperatureC": 28.4,
-      "dewpointC": 12.3,
-      "uWindMs": -2.1,
-      "vWindMs": 4.6
-    },
-    {
-      "pressureMb": 925,
-      "heightMslM": 780,
-      "temperatureC": 22.8,
-      "dewpointC": 10.1,
-      "uWindMs": -5.4,
-      "vWindMs": 7.9
-    },
-    {
-      "pressureMb": 850,
-      "heightMslM": 1450,
-      "temperatureC": 17.5,
-      "dewpointC": 11.2,
-      "uWindMs": -6.25,
-      "vWindMs": 8.75
-    }
-  ]
+  "profile": {
+    "pressureMb": [1000, 925, 850],
+    "heightMslM": [1560, 780, 1450],
+    "temperatureC": [28.4, 22.8, 17.5],
+    "dewpointC": [12.3, 10.1, 11.2],
+    "uWindMs": [-2.1, -5.4, -6.25],
+    "vWindMs": [4.6, 7.9, 8.75]
+  }
 }

@@ -36,12 +36,12 @@ struct AnvilProfileRequestBuilderTests {
         #expect(result.request.location.lat.isApproximatelyEqual(to: expectedCentroid.centroid.latitude))
         #expect(result.request.location.lon.isApproximatelyEqual(to: expectedCentroid.centroid.longitude))
         #expect(result.request.location.h3 == h3String(for: h3Cell))
-        #expect(result.request.profile.map(\.pressureMb) == [1000, 925, 850, 700, 500])
-        #expect(result.request.profile.map(\.heightMslM) == [1200, 1500, 1800, 2450, 5600])
-        #expect(result.request.profile.map(\.temperatureC) == [28.4, 22.8, 17.5, 10.0, -4.2])
-        #expect(result.request.profile.map(\.dewpointC) == [12.3, 10.1, 11.2, 1.0, -12.0])
-        #expect(result.request.profile.map(\.uWindMs) == [-2.1, -5.4, -6.25, -12.5, -18.75])
-        #expect(result.request.profile.map(\.vWindMs) == [4.6, 7.9, 8.75, 14.2, 22.0])
+        #expect(result.request.profile.pressureMb == [1000, 925, 850, 700, 500])
+        #expect(result.request.profile.heightMslM == [1200, 1500, 1800, 2450, 5600])
+        #expect(result.request.profile.temperatureC == [28.4, 22.8, 17.5, 10.0, -4.2])
+        #expect(result.request.profile.dewpointC == [12.3, 10.1, 11.2, 1.0, -12.0])
+        #expect(result.request.profile.uWindMs == [-2.1, -5.4, -6.25, -12.5, -18.75])
+        #expect(result.request.profile.vWindMs == [4.6, 7.9, 8.75, 14.2, 22.0])
         #expect(result.warnings.isEmpty)
     }
 
@@ -181,7 +181,7 @@ struct AnvilProfileRequestBuilderTests {
                 return false
             }
         }))
-        #expect(result.request.profile.count == 5)
+        #expect(result.request.profile.pressureMb.count == 5)
     }
 
     @Test("dropped levels are surfaced as quality warnings")

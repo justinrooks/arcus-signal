@@ -57,42 +57,7 @@ struct AnvilProfilePreviewProviderTests {
                 sourceResolution: sourceResolution,
                 fetchedAt: now,
                 subsetCacheHit: true,
-                samples: previewMakePressureSamples(
-                    level: 1000,
-                    hgt: 1200,
-                    tmp: 301.55,
-                    dpt: 285.45,
-                    ugrd: -2.1,
-                    vgrd: 4.6
-                ) + previewMakePressureSamples(
-                    level: 925,
-                    hgt: 1500,
-                    tmp: 295.95,
-                    dpt: 283.25,
-                    ugrd: -5.4,
-                    vgrd: 7.9
-                ) + previewMakePressureSamples(
-                    level: 850,
-                    hgt: 1800,
-                    tmp: 290.65,
-                    dpt: 284.35,
-                    ugrd: -6.25,
-                    vgrd: 8.75
-                ) + previewMakePressureSamples(
-                    level: 700,
-                    hgt: 2450,
-                    tmp: 283.15,
-                    dpt: 274.15,
-                    ugrd: -12.5,
-                    vgrd: 14.2
-                ) + previewMakePressureSamples(
-                    level: 500,
-                    hgt: 5600,
-                    tmp: 268.95,
-                    dpt: 261.15,
-                    ugrd: -18.75,
-                    vgrd: 22.0
-                )
+                samples: previewMakeEightLevelPressureSamples()
             )
         }
 
@@ -111,9 +76,12 @@ struct AnvilProfilePreviewProviderTests {
                 makeLevel(pressureMb: 925, heightMslM: 1500, temperatureC: 22.8, dewpointC: 10.1, uWindMs: -5.4, vWindMs: 7.9),
                 makeLevel(pressureMb: 850, heightMslM: 1800, temperatureC: 17.5, dewpointC: 11.2, uWindMs: -6.25, vWindMs: 8.75),
                 makeLevel(pressureMb: 700, heightMslM: 2450, temperatureC: 10.0, dewpointC: 1.0, uWindMs: -12.5, vWindMs: 14.2),
-                makeLevel(pressureMb: 500, heightMslM: 5600, temperatureC: -4.2, dewpointC: -12.0, uWindMs: -18.75, vWindMs: 22.0)
+                makeLevel(pressureMb: 600, heightMslM: 4100, temperatureC: 3.2, dewpointC: -2.6, uWindMs: -15.25, vWindMs: 18.4),
+                makeLevel(pressureMb: 500, heightMslM: 5600, temperatureC: -4.2, dewpointC: -12.0, uWindMs: -18.75, vWindMs: 22.0),
+                makeLevel(pressureMb: 400, heightMslM: 7100, temperatureC: -14.4, dewpointC: -20.8, uWindMs: -23.5, vWindMs: 27.8),
+                makeLevel(pressureMb: 300, heightMslM: 9300, temperatureC: -27.0, dewpointC: -32.8, uWindMs: -28.9, vWindMs: 31.4)
             ],
-            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 500])
+            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 600, 500, 400, 300])
         )
         let expectedRequest = try AnvilProfileRequestBuilder().build(
             h3Cell: h3Cell,
@@ -139,7 +107,7 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2.idx")
         #expect(preview.debug.idxAvailable == true)
         #expect(preview.debug.gribAvailable == nil)
-        #expect(preview.debug.pressureLevelsRetained == [1000, 925, 850, 700, 500])
+        #expect(preview.debug.pressureLevelsRetained == [1000, 925, 850, 700, 600, 500, 400, 300])
         #expect(preview.debug.warnings.contains(where: { $0.contains("Dropped incomplete pressure levels") }))
     }
 

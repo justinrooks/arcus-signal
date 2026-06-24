@@ -77,7 +77,7 @@ struct AnvilProfilePreviewControllerTests {
                 let response = try res.content.decode(AnvilAnalyzeProfilePreviewResponse.self)
                 #expect(response == expected)
                 #expect(response.request.location.h3 == expected.request.location.h3)
-                #expect(response.request.profile.count == 5)
+                #expect(response.request.profile.pressureMb.count == 8)
                 #expect(response.debug.sourceKind == .directObject)
                 #expect(response.debug.product == .wrfprsf)
                 #expect(response.debug.h3 == expected.request.location.h3)
@@ -186,9 +186,12 @@ struct AnvilProfilePreviewControllerTests {
                 makeLevel(pressureMb: 925, heightMslM: 1500, temperatureC: 22.8, dewpointC: 10.1, uWindMs: -5.4, vWindMs: 7.9),
                 makeLevel(pressureMb: 850, heightMslM: 1800, temperatureC: 17.5, dewpointC: 11.2, uWindMs: -6.25, vWindMs: 8.75),
                 makeLevel(pressureMb: 700, heightMslM: 2450, temperatureC: 10.0, dewpointC: 1.0, uWindMs: -12.5, vWindMs: 14.2),
-                makeLevel(pressureMb: 500, heightMslM: 5600, temperatureC: -4.2, dewpointC: -12.0, uWindMs: -18.75, vWindMs: 22.0)
+                makeLevel(pressureMb: 600, heightMslM: 4100, temperatureC: 3.2, dewpointC: -2.6, uWindMs: -15.25, vWindMs: 18.4),
+                makeLevel(pressureMb: 500, heightMslM: 5600, temperatureC: -4.2, dewpointC: -12.0, uWindMs: -18.75, vWindMs: 22.0),
+                makeLevel(pressureMb: 400, heightMslM: 7100, temperatureC: -14.4, dewpointC: -20.8, uWindMs: -23.5, vWindMs: 27.8),
+                makeLevel(pressureMb: 300, heightMslM: 9300, temperatureC: -27.0, dewpointC: -32.8, uWindMs: -28.9, vWindMs: 31.4)
             ],
-            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 500])
+            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 600, 500, 400, 300])
         )
 
         let builder = AnvilProfileRequestBuilder()

@@ -18,22 +18,17 @@ struct AnvilAnalyzeProfileDTOTests {
     @Test("profile DTO round-trips")
     func profileRoundTrips() throws {
         let value = AnvilProfileDTO(
-            pressureMb: 850,
-            heightMslM: 1450,
-            temperatureC: 17.5,
-            dewpointC: 11.2,
-            uWindMs: -6.25,
-            vWindMs: 8.75
+            pressureMb: [1000, 925, 850],
+            heightMslM: [1560, 780, 1450],
+            temperatureC: [28.4, 22.8, 17.5],
+            dewpointC: [12.3, 10.1, 11.2],
+            uWindMs: [-2.1, -5.4, -6.25],
+            vWindMs: [4.6, 7.9, 8.75]
         )
 
         let decoded = try roundTrip(value)
 
-        #expect(decoded.pressureMb == value.pressureMb)
-        #expect(decoded.heightMslM == value.heightMslM)
-        #expect(decoded.temperatureC == value.temperatureC)
-        #expect(decoded.dewpointC == value.dewpointC)
-        #expect(decoded.uWindMs == value.uWindMs)
-        #expect(decoded.vWindMs == value.vWindMs)
+        #expect(decoded == value)
     }
 
     @Test("anvil analyze profile request round-trips")
@@ -48,13 +43,7 @@ struct AnvilAnalyzeProfileDTOTests {
         #expect(decoded.location.lat == value.location.lat)
         #expect(decoded.location.lon == value.location.lon)
         #expect(decoded.location.h3 == value.location.h3)
-        #expect(decoded.profile.count == value.profile.count)
-        #expect(decoded.profile.map(\.pressureMb) == value.profile.map(\.pressureMb))
-        #expect(decoded.profile.map(\.heightMslM) == value.profile.map(\.heightMslM))
-        #expect(decoded.profile.map(\.temperatureC) == value.profile.map(\.temperatureC))
-        #expect(decoded.profile.map(\.dewpointC) == value.profile.map(\.dewpointC))
-        #expect(decoded.profile.map(\.uWindMs) == value.profile.map(\.uWindMs))
-        #expect(decoded.profile.map(\.vWindMs) == value.profile.map(\.vWindMs))
+        #expect(decoded.profile == value.profile)
     }
 
     @Test("frozen JSON fixture matches the request contract")
@@ -80,32 +69,14 @@ struct AnvilAnalyzeProfileDTOTests {
                 lon: -104.9903,
                 h3: "882681b59fffffff"
             ),
-            profile: [
-                AnvilProfileDTO(
-                    pressureMb: 1000,
-                    heightMslM: 1560,
-                    temperatureC: 28.4,
-                    dewpointC: 12.3,
-                    uWindMs: -2.1,
-                    vWindMs: 4.6
-                ),
-                AnvilProfileDTO(
-                    pressureMb: 925,
-                    heightMslM: 780,
-                    temperatureC: 22.8,
-                    dewpointC: 10.1,
-                    uWindMs: -5.4,
-                    vWindMs: 7.9
-                ),
-                AnvilProfileDTO(
-                    pressureMb: 850,
-                    heightMslM: 1450,
-                    temperatureC: 17.5,
-                    dewpointC: 11.2,
-                    uWindMs: -6.25,
-                    vWindMs: 8.75
-                )
-            ]
+            profile: AnvilProfileDTO(
+                pressureMb: [1000, 925, 850],
+                heightMslM: [1560, 780, 1450],
+                temperatureC: [28.4, 22.8, 17.5],
+                dewpointC: [12.3, 10.1, 11.2],
+                uWindMs: [-2.1, -5.4, -6.25],
+                vWindMs: [4.6, 7.9, 8.75]
+            )
         )
     }
 

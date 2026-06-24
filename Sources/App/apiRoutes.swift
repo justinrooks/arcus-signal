@@ -9,6 +9,7 @@ func configureAPIRoutes(_ app: Application) throws {
     try app.register(collection: DevController())
     if app.arcusDebugEndpointsEnabled {
         try app.register(collection: AnvilProfilePreviewController())
+        try app.register(collection: AnvilProfileAnalysisController())
     }
     try app.register(collection: NotificationsController())
     try app.register(collection: AlertsController())

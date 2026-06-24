@@ -23,7 +23,12 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
         .mb925,
         .mb850,
         .mb700,
-        .mb500
+        .mb600,
+        .mb500,
+        .mb400,
+        .mb300,
+        .mb250,
+        .mb200
     ]
 
     private let httpClient: any HTTPClient

@@ -46,7 +46,7 @@ struct AnvilProfileRequestBuilder: Sendable {
                     lon: resolved.centroid.longitude,
                     h3: h3String(for: resolved.h3Cell)
                 ),
-                profile: profileArrays.profiles
+                profile: profileArrays.profile
             ),
             warnings: warnings
         )
@@ -148,17 +148,15 @@ struct AnvilProfileRequestBuilder: Sendable {
             )
         }
 
-        var profiles: [AnvilProfileDTO] {
-            zip6(pressureMb, heightMslM, temperatureC, dewpointC, uWindMs, vWindMs).map {
-                AnvilProfileDTO(
-                    pressureMb: $0.0,
-                    heightMslM: $0.1,
-                    temperatureC: $0.2,
-                    dewpointC: $0.3,
-                    uWindMs: $0.4,
-                    vWindMs: $0.5
-                )
-            }
+        var profile: AnvilProfileDTO {
+            AnvilProfileDTO(
+                pressureMb: pressureMb,
+                heightMslM: heightMslM,
+                temperatureC: temperatureC,
+                dewpointC: dewpointC,
+                uWindMs: uWindMs,
+                vWindMs: vWindMs
+            )
         }
 
         private static func validateArrayLengths(

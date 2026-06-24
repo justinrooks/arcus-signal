@@ -50,7 +50,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         let gribSubsetMaximumByteCount = Self.environmentInt(
             for: "STORM_SETUP_GRIB_MAX_BYTES",
             in: environment
-        ) ?? 25 * 1024 * 1024
+        ) ?? 50 * 1024 * 1024
 
         let pressureGribRawMaximumByteCount = Self.environmentInt(
             for: "STORM_SETUP_PRESSURE_GRIB_MAX_BYTES",
@@ -61,6 +61,15 @@ struct StormSetupConfiguration: Sendable, Equatable {
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
         ) ?? 15
+
+        let anvilProfileAnalysisBaseURL = Self.environmentURL(
+            for: "ANVIL_PROFILE_ANALYSIS_BASE_URL",
+            in: environment
+        )
+        let anvilProfileAnalysisTimeoutSeconds = Self.environmentTimeInterval(
+            for: "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS",
+            in: environment
+        )
 
         return StormSetupConfiguration(
             gribSubsetCacheRootURL: cacheRootURL.appendingPathComponent(
@@ -83,7 +92,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
             gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
             pressureGribRawMaximumByteCount: pressureGribRawMaximumByteCount,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
-            wgrib2TimeoutSeconds: wgrib2TimeoutSeconds
+            wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
+            anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
+            anvilProfileAnalysisTimeoutSeconds: anvilProfileAnalysisTimeoutSeconds
         )
     }
 
@@ -93,10 +104,12 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureGribRawCacheRootURL: localPressureGribRawCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
-        gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+        gribSubsetMaximumByteCount: 30 * 1024 * 1024,
         pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
-        wgrib2TimeoutSeconds: 15
+        wgrib2TimeoutSeconds: 15,
+        anvilProfileAnalysisBaseURL: nil,
+        anvilProfileAnalysisTimeoutSeconds: nil
     )
 
     let gribSubsetCacheRootURL: URL
@@ -108,9 +121,29 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let pressureGribRawMaximumByteCount: Int
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
+    let anvilProfileAnalysisBaseURL: URL?
+    let anvilProfileAnalysisTimeoutSeconds: TimeInterval?
 
     func makeWgrib2Client(runner: ProcessRunner = ProcessRunner()) -> Wgrib2Client {
         Wgrib2Client(configuration: self, runner: runner)
+    }
+
+    func makeAnvilProfileClient(httpClient: any HTTPClient) throws -> any AnvilProfileClient {
+        guard let baseURL = anvilProfileAnalysisBaseURL,
+              let timeoutSeconds = anvilProfileAnalysisTimeoutSeconds else {
+            throw AnvilProfileClientError.missingConfiguration(
+                missingKeys: [
+                    anvilProfileAnalysisBaseURL == nil ? "ANVIL_PROFILE_ANALYSIS_BASE_URL" : nil,
+                    anvilProfileAnalysisTimeoutSeconds == nil ? "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS" : nil
+                ].compactMap { $0 }
+            )
+        }
+
+        return DefaultAnvilProfileClient(
+            baseURL: baseURL,
+            timeoutSeconds: timeoutSeconds,
+            httpClient: httpClient
+        )
     }
 
     private static func environmentFileURL(
@@ -158,6 +191,18 @@ struct StormSetupConfiguration: Sendable, Equatable {
         }
 
         return TimeInterval(rawValue)
+    }
+
+    private static func environmentURL(
+        for key: String,
+        in environment: [String: String]
+    ) -> URL? {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return nil
+        }
+
+        return URL(string: rawValue)
     }
 }
 

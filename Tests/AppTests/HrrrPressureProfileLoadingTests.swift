@@ -16,10 +16,10 @@ struct HrrrPressureProfileLoadingTests {
             candidate: candidate,
             idxAvailable: true
         )
-        let inventoryText = makeFiveLevelInventoryText()
+        let inventoryText = makeEightLevelInventoryText()
         let inventory = HrrrPressureIdxInventory.parse(inventoryText)
         let selection = HrrrPressureProfileMessageSelector(
-            preferredLevels: [.mb1000, .mb925, .mb850, .mb700, .mb500]
+            preferredLevels: [.mb1000, .mb925, .mb850, .mb700, .mb600, .mb500, .mb400, .mb300]
         ).select(inventory: inventory)
         let plan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
         let payloads = plan.ranges.enumerated().map { index, _ in
@@ -46,42 +46,7 @@ struct HrrrPressureProfileLoadingTests {
             fieldSampler: PreviewStubStormSetupFieldSampler { subset, centroid in
                 #expect(subset.cacheHit == false)
                 #expect(centroid == StormSetupCentroid(latitude: 39.7825, longitude: -104.4661))
-                return previewMakePressureSamples(
-                    level: 1000,
-                    hgt: 1200,
-                    tmp: 301.55,
-                    dpt: 285.45,
-                    ugrd: -2.1,
-                    vgrd: 4.6
-                ) + previewMakePressureSamples(
-                    level: 925,
-                    hgt: 1500,
-                    tmp: 295.95,
-                    dpt: 283.25,
-                    ugrd: -5.4,
-                    vgrd: 7.9
-                ) + previewMakePressureSamples(
-                    level: 850,
-                    hgt: 1800,
-                    tmp: 290.65,
-                    dpt: 284.35,
-                    ugrd: -6.25,
-                    vgrd: 8.75
-                ) + previewMakePressureSamples(
-                    level: 700,
-                    hgt: 2450,
-                    tmp: 283.15,
-                    dpt: 274.15,
-                    ugrd: -12.5,
-                    vgrd: 14.2
-                ) + previewMakePressureSamples(
-                    level: 500,
-                    hgt: 5600,
-                    tmp: 268.95,
-                    dpt: 261.15,
-                    ugrd: -18.75,
-                    vgrd: 22.0
-                )
+                return previewMakeEightLevelPressureSamples()
             }
         )
 
@@ -92,13 +57,13 @@ struct HrrrPressureProfileLoadingTests {
 
         let idxURL = try #require(sourceResolution.source.idxURL)
         let gribURL = try #require(sourceResolution.source.primaryDownloadURL)
-        #expect(result.selection.requestedLevels == [.mb1000, .mb925, .mb850, .mb700, .mb500])
-        #expect(result.selection.selectedMessages.count == 25)
-        #expect(result.byteRangePlan.ranges.count == 25)
+        #expect(result.selection.requestedLevels == [.mb1000, .mb925, .mb850, .mb700, .mb600, .mb500, .mb400, .mb300])
+        #expect(result.selection.selectedMessages.count == 40)
+        #expect(result.byteRangePlan.ranges.count == 40)
         #expect(result.subsetCacheResult.cacheHit == false)
-        #expect(result.groupedProfile.retainedLevels.count == 5)
+        #expect(result.groupedProfile.retainedLevels.count == 8)
         #expect(client.requests.contains(where: { $0.url == idxURL }))
-        #expect(client.requests.filter { $0.url == gribURL }.count == 25)
+        #expect(client.requests.filter { $0.url == gribURL }.count == 40)
         #expect(client.requests.filter { $0.url == gribURL && $0.headers["Range"] == nil }.isEmpty)
         #expect(result.groupedProfile.missingLevels.isEmpty)
     }
@@ -139,7 +104,7 @@ struct HrrrPressureProfileLoadingTests {
             .appendingPathComponent("hrrr-pressure-profile-loader-tests-\(UUID().uuidString)", isDirectory: true)
     }
 
-    private func makeFiveLevelInventoryText() -> String {
+    private func makeEightLevelInventoryText() -> String {
         """
         1:0:d=2026060313:HGT:1000 mb:9 hour fcst:
         2:4:d=2026060313:TMP:1000 mb:9 hour fcst:
@@ -161,12 +126,27 @@ struct HrrrPressureProfileLoadingTests {
         18:68:d=2026060313:DPT:700 mb:9 hour fcst:
         19:72:d=2026060313:UGRD:700 mb:9 hour fcst:
         20:76:d=2026060313:VGRD:700 mb:9 hour fcst:
-        21:80:d=2026060313:HGT:500 mb:9 hour fcst:
-        22:84:d=2026060313:TMP:500 mb:9 hour fcst:
-        23:88:d=2026060313:DPT:500 mb:9 hour fcst:
-        24:92:d=2026060313:UGRD:500 mb:9 hour fcst:
-        25:96:d=2026060313:VGRD:500 mb:9 hour fcst:
-        26:120:d=2026060313:HGT:300 mb:9 hour fcst:
+        21:80:d=2026060313:HGT:600 mb:9 hour fcst:
+        22:84:d=2026060313:TMP:600 mb:9 hour fcst:
+        23:88:d=2026060313:DPT:600 mb:9 hour fcst:
+        24:92:d=2026060313:UGRD:600 mb:9 hour fcst:
+        25:96:d=2026060313:VGRD:600 mb:9 hour fcst:
+        26:100:d=2026060313:HGT:500 mb:9 hour fcst:
+        27:104:d=2026060313:TMP:500 mb:9 hour fcst:
+        28:108:d=2026060313:DPT:500 mb:9 hour fcst:
+        29:112:d=2026060313:UGRD:500 mb:9 hour fcst:
+        30:116:d=2026060313:VGRD:500 mb:9 hour fcst:
+        31:120:d=2026060313:HGT:400 mb:9 hour fcst:
+        32:124:d=2026060313:TMP:400 mb:9 hour fcst:
+        33:128:d=2026060313:DPT:400 mb:9 hour fcst:
+        34:132:d=2026060313:UGRD:400 mb:9 hour fcst:
+        35:136:d=2026060313:VGRD:400 mb:9 hour fcst:
+        36:140:d=2026060313:HGT:300 mb:9 hour fcst:
+        37:144:d=2026060313:TMP:300 mb:9 hour fcst:
+        38:148:d=2026060313:DPT:300 mb:9 hour fcst:
+        39:152:d=2026060313:UGRD:300 mb:9 hour fcst:
+        40:156:d=2026060313:VGRD:300 mb:9 hour fcst:
+        41:180:d=2026060313:HGT:200 mb:9 hour fcst:
         """
     }
 }
@@ -215,6 +195,15 @@ private final class PressureProfileStubHTTPClient: HTTPClient, @unchecked Sendab
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func post(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
         try await get(url, headers: headers)
     }
 
