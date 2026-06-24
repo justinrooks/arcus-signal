@@ -20,13 +20,15 @@ struct HrrrPressureByteRangeDownloaderTests {
         let selection = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
         let plan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
         let client = PressureRangeStubHTTPClient(
-            plannedResponses: Dictionary(uniqueKeysWithValues: zip(plan.ranges.map(\.httpRangeHeaderValue), [
+            plannedResponses: Dictionary(uniqueKeysWithValues: zip(plan.ranges, [
                 makeResponse(status: 206, contentRange: "bytes 0-3/20", body: Data("hgt-".utf8)),
                 makeResponse(status: 206, contentRange: "bytes 4-7/20", body: Data("tmp-".utf8)),
                 makeResponse(status: 206, contentRange: "bytes 8-11/20", body: Data("dpt-".utf8)),
                 makeResponse(status: 206, contentRange: "bytes 12-15/20", body: Data("ugrd".utf8)),
                 makeResponse(status: 206, contentRange: "bytes 16-19/20", body: Data("vgrd".utf8))
-            ]))
+            ]).map { range, response in
+                (source.primaryDownloadURL!.absoluteString + "|" + range.httpRangeHeaderValue, response)
+            })
         )
         let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
 
@@ -295,11 +297,19 @@ final class PressureRangeStubHTTPClient: HTTPClient, @unchecked Sendable {
     func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
         requests.append(Request(url: url, headers: headers))
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
-        guard let response = plannedResponses[key] else {
-            throw URLError(.badServerResponse)
+        if let response = plannedResponses[key] {
+            return response
         }
 
-        return response
+        if let response = plannedResponses[url.absoluteString] {
+            return response
+        }
+
+        if let response = plannedResponses[headers["Range"] ?? ""] {
+            return response
+        }
+
+        throw URLError(.badServerResponse)
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {

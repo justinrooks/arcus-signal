@@ -155,7 +155,7 @@ struct HrrrPressureSubsetGribCacheTests {
               3:8:d=2026060313:DPT:1000 mb:9 hour fcst:
               4:4:d=2026060313:TMP:1000 mb:9 hour fcst:
               5:0:d=2026060313:HGT:1000 mb:9 hour fcst:
-              6:60:d=2026060313:HGT:925 mb:9 hour fcst:
+              6:20:d=2026060313:HGT:925 mb:9 hour fcst:
               """
             : """
               1:0:d=2026060313:HGT:1000 mb:9 hour fcst:
@@ -163,7 +163,7 @@ struct HrrrPressureSubsetGribCacheTests {
               3:8:d=2026060313:DPT:1000 mb:9 hour fcst:
               4:12:d=2026060313:UGRD:1000 mb:9 hour fcst:
               5:16:d=2026060313:VGRD:1000 mb:9 hour fcst:
-              6:60:d=2026060313:HGT:925 mb:9 hour fcst:
+              6:20:d=2026060313:HGT:925 mb:9 hour fcst:
               """
         let inventory = HrrrPressureIdxInventory.parse(inventoryText)
         let selection = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
@@ -232,11 +232,19 @@ private final class PressureSubsetStubHTTPClient: HTTPClient, @unchecked Sendabl
     func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
         requests.append(Request(url: url, headers: headers))
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
-        guard let response = plannedResponses[key] else {
-            throw URLError(.badServerResponse)
+        if let response = plannedResponses[key] {
+            return response
         }
 
-        return response
+        if let response = plannedResponses[url.absoluteString] {
+            return response
+        }
+
+        if let response = plannedResponses[headers["Range"] ?? ""] {
+            return response
+        }
+
+        throw URLError(.badServerResponse)
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {

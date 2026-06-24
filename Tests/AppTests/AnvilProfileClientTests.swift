@@ -29,7 +29,10 @@ struct AnvilProfileClientTests {
     @Test("client sends the frozen request with the expected method, URL, headers, and JSON body")
     func clientSendsFrozenRequestShape() async throws {
         let request = makeRequest()
-        let response = makeResponse(status: 200)
+        let response = makeResponse(
+            status: 200,
+            body: try loadFixture(named: "AnvilAnalyzeProfileResponse")
+        )
         let httpClient = AnvilProfileStubHTTPClient(plannedResponse: response)
         let configuration = makeConfiguration()
         let client = try configuration.makeAnvilProfileClient(httpClient: httpClient)

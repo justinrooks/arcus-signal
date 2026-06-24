@@ -18,7 +18,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.sampledSnapshotCacheRootURL == StormSetupConfiguration.localSampledSnapshotCacheRootURL)
         #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.localWgrib2ExecutableURL)
         #expect(configuration.wgrib2TimeoutSeconds == 15)
-        #expect(configuration.gribSubsetMaximumByteCount == 30 * 1024 * 1024)
+        #expect(configuration.gribSubsetMaximumByteCount == 50 * 1024 * 1024)
         #expect(configuration.pressureGribRawMaximumByteCount == 150 * 1024 * 1024)
         #expect(configuration.anvilProfileAnalysisBaseURL == nil)
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == nil)

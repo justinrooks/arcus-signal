@@ -40,7 +40,7 @@ struct AnvilProfilePreviewProviderTests {
                 )
             case 1:
                 return previewMakePressureSourceResolution(
-                    candidate: makeShiftedPressureCandidate(from: candidate),
+                    candidate: candidate,
                     idxAvailable: true
                 )
             default:
@@ -70,18 +70,8 @@ struct AnvilProfilePreviewProviderTests {
         )
 
         let preview = try await provider.previewProfile(for: h3Cell)
-        let expectedGrouping = makeGroupingResult(
-            levels: [
-                makeLevel(pressureMb: 1000, heightMslM: 1200, temperatureC: 28.4, dewpointC: 12.3, uWindMs: -2.1, vWindMs: 4.6),
-                makeLevel(pressureMb: 925, heightMslM: 1500, temperatureC: 22.8, dewpointC: 10.1, uWindMs: -5.4, vWindMs: 7.9),
-                makeLevel(pressureMb: 850, heightMslM: 1800, temperatureC: 17.5, dewpointC: 11.2, uWindMs: -6.25, vWindMs: 8.75),
-                makeLevel(pressureMb: 700, heightMslM: 2450, temperatureC: 10.0, dewpointC: 1.0, uWindMs: -12.5, vWindMs: 14.2),
-                makeLevel(pressureMb: 600, heightMslM: 4100, temperatureC: 3.2, dewpointC: -2.6, uWindMs: -15.25, vWindMs: 18.4),
-                makeLevel(pressureMb: 500, heightMslM: 5600, temperatureC: -4.2, dewpointC: -12.0, uWindMs: -18.75, vWindMs: 22.0),
-                makeLevel(pressureMb: 400, heightMslM: 7100, temperatureC: -14.4, dewpointC: -20.8, uWindMs: -23.5, vWindMs: 27.8),
-                makeLevel(pressureMb: 300, heightMslM: 9300, temperatureC: -27.0, dewpointC: -32.8, uWindMs: -28.9, vWindMs: 31.4)
-            ],
-            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 600, 500, 400, 300])
+        let expectedGrouping = StormSetupPressureProfileGrouper().group(
+            samples: previewMakeEightLevelPressureSamples()
         )
         let expectedRequest = try AnvilProfileRequestBuilder().build(
             h3Cell: h3Cell,
@@ -134,7 +124,7 @@ struct AnvilProfilePreviewProviderTests {
                 )
             }
             return previewMakePressureSourceResolution(
-                candidate: makeShiftedPressureCandidate(from: candidate),
+                candidate: candidate,
                 idxAvailable: true
             )
         }
@@ -278,7 +268,7 @@ struct AnvilProfilePreviewProviderTests {
                     )
                 }
                 return previewMakePressureSourceResolution(
-                    candidate: makeShiftedPressureCandidate(from: candidate),
+                    candidate: candidate,
                     idxAvailable: true
                 )
             },
@@ -320,56 +310,7 @@ private func previewMakePressureSourceResolution(
 }
 
 private func makeShiftedPressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-    HrrrRunCandidate(
-        model: candidate.model,
-        product: .wrfprsf,
-        domain: candidate.domain,
-        runTime: StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime,
-        forecastHour: candidate.forecastHour + 1,
-        fieldSetVersion: .tornadoPressureV1
-    )
-}
-
-private func makeGroupingResult(
-    levels: [StormSetupPressureProfileLevel],
-    missingLevels: [StormSetupPressureProfileMissingLevel] = []
-) -> StormSetupPressureProfileGroupingResult {
-    StormSetupPressureProfileGroupingResult(
-        requestedLevels: StormSetupPressureLevel.preferredDescending,
-        retainedLevels: levels,
-        missingLevels: missingLevels,
-        ignoredSamples: []
-    )
-}
-
-private func makeMissingLevels(excluding retainedPressureLevels: [Int]) -> [StormSetupPressureProfileMissingLevel] {
-    let retained = Set(retainedPressureLevels)
-    return StormSetupPressureLevel.preferredDescending
-        .filter { !retained.contains($0.pressureMb) }
-        .map {
-            StormSetupPressureProfileMissingLevel(
-                pressureMb: $0.pressureMb,
-                missingVariables: [.hgt, .tmp, .dpt, .ugrd, .vgrd]
-            )
-        }
-}
-
-private func makeLevel(
-    pressureMb: Int,
-    heightMslM: Double,
-    temperatureC: Double,
-    dewpointC: Double,
-    uWindMs: Double,
-    vWindMs: Double
-) -> StormSetupPressureProfileLevel {
-    StormSetupPressureProfileLevel(
-        pressureMb: pressureMb,
-        heightMslM: heightMslM,
-        temperatureC: temperatureC,
-        dewpointC: dewpointC,
-        uWindMs: uWindMs,
-        vWindMs: vWindMs
-    )
+    candidate
 }
 
 private extension Date {

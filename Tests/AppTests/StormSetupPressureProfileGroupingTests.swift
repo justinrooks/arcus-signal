@@ -90,7 +90,7 @@ struct StormSetupPressureProfileGroupingTests {
                 vgrd: 4.6
             )
             + samples(
-                level: 200,
+                level: 50,
                 hgt: 1200,
                 tmp: 285.15,
                 dpt: 279.15,
@@ -100,7 +100,7 @@ struct StormSetupPressureProfileGroupingTests {
         )
 
         #expect(result.retainedLevels.map { $0.pressureMb } == [1000])
-        #expect(result.ignoredSamples.contains(where: { reasonMatches($0.reason, .unsupportedPressureLevel("200 mb")) }))
+        #expect(result.ignoredSamples.contains(where: { reasonMatches($0.reason, .unsupportedPressureLevel("50 mb")) }))
     }
 
     @Test("temperature and dew point convert from Kelvin to Celsius")

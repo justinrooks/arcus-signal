@@ -111,7 +111,6 @@ struct AnvilProfilePreviewControllerTests {
                 #expect(debugObject?.keys.sorted() == [
                     "centroid",
                     "forecastHour",
-                    "gribAvailable",
                     "h3",
                     "idxAvailable",
                     "idxURL",

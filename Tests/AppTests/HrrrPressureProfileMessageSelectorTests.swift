@@ -73,7 +73,7 @@ struct HrrrPressureProfileMessageSelectorTests {
             """
         )
 
-        let result = HrrrPressureProfileMessageSelector().select(inventory: inventory)
+        let result = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
 
         #expect(result.selectedMessages.map(\.pressureLevel) == Array(repeating: .mb1000, count: 5))
         #expect(result.ignoredRecords.contains(where: { matches($0.reason, .unsupportedVariable("WIND")) }))

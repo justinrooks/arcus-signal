@@ -256,7 +256,7 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .conditional)
-        #expect(assessment.confidence == .moderate)
+        #expect(assessment.confidence == .low)
         #expect(assessment.summary.contains("Anvil analysis is not reinforcing the setup."))
     }
 
@@ -278,7 +278,7 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .supportive)
-        #expect(assessment.confidence == .moderate)
+        #expect(assessment.confidence == .low)
         #expect(assessment.summary.contains("Anvil analysis is degraded, so confidence is limited."))
     }
 
@@ -300,7 +300,7 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .supportive)
-        #expect(assessment.confidence == .moderate)
+        #expect(assessment.confidence == .low)
         #expect(assessment.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
     }
 

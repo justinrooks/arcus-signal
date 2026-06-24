@@ -22,8 +22,9 @@ struct HrrrPressureProfileLoadingTests {
             preferredLevels: [.mb1000, .mb925, .mb850, .mb700, .mb600, .mb500, .mb400, .mb300]
         ).select(inventory: inventory)
         let plan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
-        let payloads = plan.ranges.enumerated().map { index, _ in
-            Data("message-\(index)".utf8)
+        let payloads = plan.ranges.map { range in
+            let byteCount = range.closedRange.map { Int($0.upperBound - $0.lowerBound + 1) } ?? 1
+            return Data(repeating: UInt8(truncatingIfNeeded: range.inventoryIndex), count: byteCount)
         }
         let client = PressureProfileStubHTTPClient(
             responses: makePlannedResponses(
@@ -57,15 +58,15 @@ struct HrrrPressureProfileLoadingTests {
 
         let idxURL = try #require(sourceResolution.source.idxURL)
         let gribURL = try #require(sourceResolution.source.primaryDownloadURL)
-        #expect(result.selection.requestedLevels == [.mb1000, .mb925, .mb850, .mb700, .mb600, .mb500, .mb400, .mb300])
         #expect(result.selection.selectedMessages.count == 40)
         #expect(result.byteRangePlan.ranges.count == 40)
         #expect(result.subsetCacheResult.cacheHit == false)
         #expect(result.groupedProfile.retainedLevels.count == 8)
+        #expect(result.selection.requestedLevels == [.mb1000, .mb925, .mb850, .mb700, .mb600, .mb500, .mb400, .mb300, .mb250, .mb200, .mb175, .mb150, .mb125, .mb100])
         #expect(client.requests.contains(where: { $0.url == idxURL }))
         #expect(client.requests.filter { $0.url == gribURL }.count == 40)
         #expect(client.requests.filter { $0.url == gribURL && $0.headers["Range"] == nil }.isEmpty)
-        #expect(result.groupedProfile.missingLevels.isEmpty)
+        #expect(result.groupedProfile.missingLevels.isEmpty == false)
     }
 
     private func makePlannedResponses(

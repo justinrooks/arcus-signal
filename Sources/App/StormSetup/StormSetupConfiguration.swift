@@ -104,7 +104,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureGribRawCacheRootURL: localPressureGribRawCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
-        gribSubsetMaximumByteCount: 30 * 1024 * 1024,
+        gribSubsetMaximumByteCount: 50 * 1024 * 1024,
         pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
