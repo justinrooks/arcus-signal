@@ -45,6 +45,10 @@ It is not a new design proposal. It records the finished byte-range implementati
   - Base URL for Arcus-Anvil profile analysis.
 - `ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS`
   - Timeout for the Anvil profile-analysis request.
+- Anvil profile-analysis POSTs use a single attempt in Arcus Signal.
+  - The shared HTTP client still retries for other callers.
+  - A transient transport failure is surfaced to the caller instead of replaying the analysis request.
+  - This keeps duplicate upstream compute out of the Storm Setup path.
 
 ## Cache Layout
 
@@ -73,6 +77,8 @@ When the path fails, the useful signals are:
   - Treated as internal execution failure.
 - Missing or degraded Anvil response fields
   - Surface as absent evidence or degraded confidence, not zeroes.
+- Transient Anvil POST transport failure
+  - Surface the failure directly; Arcus Signal does not retry the request inside Storm Setup.
 
 The preview and analysis debug payloads should be used to inspect selected message counts, ranges, cache state, and missing levels.
 
@@ -82,6 +88,7 @@ The preview and analysis debug payloads should be used to inspect selected messa
 - There is no fallback from byte-range downloads to whole-file pressure downloads.
 - Pressure-level tuning remains a product decision, not a transport contract.
 - Anvil severe-weather values are internal ingredient evidence, not user-facing tornado prediction language.
+- Anvil profile-analysis POSTs are intentionally non-retrying to avoid duplicate upstream compute.
 
 ## Verification Record
 

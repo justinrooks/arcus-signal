@@ -248,6 +248,15 @@ private final class PressureSubsetStubHTTPClient: HTTPClient, @unchecked Sendabl
         try await get(url, headers: headers)
     }
 
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
+    }
+
     func clearCache() {}
 
     var requestCount: Int { requests.count }

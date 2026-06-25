@@ -113,6 +113,12 @@ public protocol HTTPClient: Sendable {
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String: String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse
     func clearCache()
 }
 
@@ -134,11 +140,11 @@ public final class VaporApplicationHTTPClient: HTTPClient {
     }
 
     public func get(_ url: URL, headers: [String: String] = [:]) async throws -> HTTPResponse {
-        try await request(url: url, method: .GET, headers: headers)
+        try await request(url: url, method: .GET, headers: headers, retryTransientFailures: true)
     }
 
     public func head(_ url: URL, headers: [String : String] = [:]) async throws -> HTTPResponse {
-        try await request(url: url, method: .HEAD, headers: headers)
+        try await request(url: url, method: .HEAD, headers: headers, retryTransientFailures: true)
     }
 
     public func post(
@@ -147,7 +153,30 @@ public final class VaporApplicationHTTPClient: HTTPClient {
         body: Data? = nil,
         timeoutSeconds: TimeInterval? = nil
     ) async throws -> HTTPResponse {
-        try await request(url: url, method: .POST, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
+        try await request(
+            url: url,
+            method: .POST,
+            headers: headers,
+            body: body,
+            timeoutSeconds: timeoutSeconds,
+            retryTransientFailures: true
+        )
+    }
+
+    public func postWithoutRetry(
+        _ url: URL,
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        timeoutSeconds: TimeInterval? = nil
+    ) async throws -> HTTPResponse {
+        try await request(
+            url: url,
+            method: .POST,
+            headers: headers,
+            body: body,
+            timeoutSeconds: timeoutSeconds,
+            retryTransientFailures: false
+        )
     }
 
     /// Vapor's client does not expose an app-level HTTP cache to clear.
@@ -158,9 +187,10 @@ public final class VaporApplicationHTTPClient: HTTPClient {
         method: HTTPMethod,
         headers: [String: String],
         body: Data? = nil,
-        timeoutSeconds: TimeInterval? = nil
+        timeoutSeconds: TimeInterval? = nil,
+        retryTransientFailures: Bool
     ) async throws -> HTTPResponse {
-        let retryDelays = delays.isEmpty ? [0] : delays
+        let retryDelays = retryTransientFailures ? (delays.isEmpty ? [0] : delays) : [0]
 
         for attempt in 0..<retryDelays.count {
             try Task.checkCancellation()

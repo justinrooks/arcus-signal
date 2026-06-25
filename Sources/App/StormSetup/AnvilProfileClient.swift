@@ -65,7 +65,9 @@ struct DefaultAnvilProfileClient: AnvilProfileClient, Sendable {
         let response: HTTPResponse
 
         do {
-            response = try await httpClient.post(
+            // Anvil profile analysis is treated as a single-attempt POST so Arcus Signal does not
+            // replay an expensive upstream analysis on transient transport failures.
+            response = try await httpClient.postWithoutRetry(
                 endpointURL,
                 headers: requestHeaders,
                 body: body,

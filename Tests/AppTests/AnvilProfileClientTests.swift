@@ -130,8 +130,8 @@ struct AnvilProfileClientTests {
         }
     }
 
-    @Test("client maps transport failures")
-    func clientMapsTransportFailures() async throws {
+    @Test("client maps transport failures without retrying them")
+    func clientMapsTransportFailuresWithoutRetryingThem() async throws {
         let request = makeRequest()
         let httpClient = AnvilProfileStubHTTPClient(
             plannedError: URLError(.networkConnectionLost)
@@ -150,6 +150,7 @@ struct AnvilProfileClientTests {
 
             #expect(endpoint.absoluteString == "https://anvil.example.com/v1/analyze-profile")
             #expect(reason.isEmpty == false)
+            #expect(httpClient.requestCount == 1)
         } catch {
             Issue.record("Expected AnvilProfileClientError, got \(error).")
         }
@@ -318,6 +319,15 @@ private final class AnvilProfileStubHTTPClient: HTTPClient, @unchecked Sendable 
         }
 
         return plannedResponse ?? HTTPResponse(status: 200, headers: [:], data: nil)
+    }
+
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
     }
 
     func clearCache() {}

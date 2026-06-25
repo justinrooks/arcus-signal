@@ -177,6 +177,7 @@ Prefer:
 - cache keys that are boring and inspectable
 - vertical slices over broad abstractions
 - one issue, one commit-sized implementation
+- single-attempt Anvil profile-analysis POSTs unless an issue explicitly says to retry
 
 Avoid:
 - generic provider hierarchies

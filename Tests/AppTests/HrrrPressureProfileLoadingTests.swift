@@ -209,5 +209,14 @@ private final class PressureProfileStubHTTPClient: HTTPClient, @unchecked Sendab
         try await get(url, headers: headers)
     }
 
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
+    }
+
     func clearCache() {}
 }
