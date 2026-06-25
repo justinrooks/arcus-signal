@@ -20,8 +20,8 @@ struct HrrrPressureSubsetGribCacheTests {
         #expect(keyA.subsetFileURL(rootURL: rootURL).path == keyB.subsetFileURL(rootURL: rootURL).path)
     }
 
-    @Test("cache keys separate surface, whole-file pressure, and pressure subset caches")
-    func cacheKeysSeparateSurfaceWholeFileAndSubsetCaches() throws {
+    @Test("cache keys separate surface and pressure subset caches")
+    func cacheKeysSeparateSurfaceAndSubsetCaches() throws {
         let rootURL = testRootURL()
         let centroid = StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
         let surfaceSource = HrrrNomadsURLBuilder().makeSourceMetadata(
@@ -31,14 +31,6 @@ struct HrrrPressureSubsetGribCacheTests {
             ),
             around: centroid
         )
-        let pressureSource = HrrrPressureDirectObjectURLBuilder().makeSourceMetadata(
-            for: HrrrRunCandidate(
-                product: .wrfprsf,
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
-                forecastHour: 9,
-                fieldSetVersion: .tornadoPressureV1
-            )
-        )
         let subsetSource = makeSourceMetadata(
             primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
             idxURL: URL(string: "https://example.com/a.idx")!
@@ -46,13 +38,9 @@ struct HrrrPressureSubsetGribCacheTests {
         let plan = makePlan()
 
         let surfaceKey = try StormSetupCacheKey(sourceMetadata: surfaceSource)
-        let pressureKey = try StormSetupPressureGribCacheKey(sourceMetadata: pressureSource)
         let subsetKey = try HrrrPressureSubsetGribCacheKey(sourceMetadata: subsetSource, byteRangePlan: plan)
 
-        #expect(surfaceKey.cacheIdentifier != pressureKey.cacheIdentifier)
-        #expect(surfaceKey.subsetFileURL(rootURL: rootURL).path != pressureKey.rawFileURL(rootURL: rootURL).path)
         #expect(surfaceKey.subsetFileURL(rootURL: rootURL).path != subsetKey.subsetFileURL(rootURL: rootURL).path)
-        #expect(pressureKey.rawFileURL(rootURL: rootURL).path != subsetKey.subsetFileURL(rootURL: rootURL).path)
     }
 
     @Test("cache key changes when source URL or selected ranges change")

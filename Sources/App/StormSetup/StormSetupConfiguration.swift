@@ -19,9 +19,6 @@ struct StormSetupConfiguration: Sendable, Equatable {
     static let localPressureGribSubsetCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("pressure-grib-subsets", isDirectory: true)
 
-    static let localPressureGribRawCacheRootURL = localStormSetupCacheRootURL
-        .appendingPathComponent("pressure-grib-raw", isDirectory: true)
-
     static let localSampledSnapshotCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("sampled-snapshots", isDirectory: true)
 
@@ -52,11 +49,6 @@ struct StormSetupConfiguration: Sendable, Equatable {
             in: environment
         ) ?? 50 * 1024 * 1024
 
-        let pressureGribRawMaximumByteCount = Self.environmentInt(
-            for: "STORM_SETUP_PRESSURE_GRIB_MAX_BYTES",
-            in: environment
-        ) ?? 150 * 1024 * 1024
-
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
@@ -80,17 +72,12 @@ struct StormSetupConfiguration: Sendable, Equatable {
                 "pressure-grib-subsets",
                 isDirectory: true
             ),
-            pressureGribRawCacheRootURL: cacheRootURL.appendingPathComponent(
-                "pressure-grib-raw",
-                isDirectory: true
-            ),
             sampledSnapshotCacheRootURL: cacheRootURL.appendingPathComponent(
                 "sampled-snapshots",
                 isDirectory: true
             ),
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
-            pressureGribRawMaximumByteCount: pressureGribRawMaximumByteCount,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
             anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
@@ -101,11 +88,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     static let `default` = StormSetupConfiguration(
         gribSubsetCacheRootURL: localGribSubsetCacheRootURL,
         pressureGribSubsetCacheRootURL: localPressureGribSubsetCacheRootURL,
-        pressureGribRawCacheRootURL: localPressureGribRawCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
         gribSubsetMaximumByteCount: 50 * 1024 * 1024,
-        pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
         anvilProfileAnalysisBaseURL: nil,
@@ -114,11 +99,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
 
     let gribSubsetCacheRootURL: URL
     let pressureGribSubsetCacheRootURL: URL
-    let pressureGribRawCacheRootURL: URL
     let sampledSnapshotCacheRootURL: URL
     let gribSubsetCacheRetentionSeconds: TimeInterval
     let gribSubsetMaximumByteCount: Int
-    let pressureGribRawMaximumByteCount: Int
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
     let anvilProfileAnalysisBaseURL: URL?
@@ -127,11 +110,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     init(
         gribSubsetCacheRootURL: URL,
         pressureGribSubsetCacheRootURL: URL,
-        pressureGribRawCacheRootURL: URL,
         sampledSnapshotCacheRootURL: URL,
         gribSubsetCacheRetentionSeconds: TimeInterval,
         gribSubsetMaximumByteCount: Int,
-        pressureGribRawMaximumByteCount: Int,
         wgrib2ExecutableURL: URL,
         wgrib2TimeoutSeconds: TimeInterval,
         anvilProfileAnalysisBaseURL: URL? = nil,
@@ -139,11 +120,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     ) {
         self.gribSubsetCacheRootURL = gribSubsetCacheRootURL
         self.pressureGribSubsetCacheRootURL = pressureGribSubsetCacheRootURL
-        self.pressureGribRawCacheRootURL = pressureGribRawCacheRootURL
         self.sampledSnapshotCacheRootURL = sampledSnapshotCacheRootURL
         self.gribSubsetCacheRetentionSeconds = gribSubsetCacheRetentionSeconds
         self.gribSubsetMaximumByteCount = gribSubsetMaximumByteCount
-        self.pressureGribRawMaximumByteCount = pressureGribRawMaximumByteCount
         self.wgrib2ExecutableURL = wgrib2ExecutableURL
         self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
         self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL

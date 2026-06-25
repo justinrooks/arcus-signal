@@ -112,7 +112,7 @@ Implement only the current issue's scope.
 - Reuse the existing `HrrrRunCandidate`, `StormSetupSourceMetadata`, `Wgrib2Client`, `HrrrFieldSampler`, pressure-profile grouper, and Anvil request builder where they fit.
 - Use AWS HRRR direct-object URLs as the primary pressure source.
 - Use `.idx` inventory files to select only required pressure-product GRIB messages.
-- Prefer HTTP byte-range downloads over whole-file pressure GRIB downloads for the target path.
+- Use HTTP byte-range downloads for the pressure path; the whole-file pressure cache is retired.
 - Preserve deterministic source identity: model, product, domain, run time, forecast hour, valid time, field set, selected levels, selected messages, and source URL.
 - Keep H3 as signed `Int64` inside server boundaries.
 - Resolve H3 to centroid latitude/longitude internally before sampling.

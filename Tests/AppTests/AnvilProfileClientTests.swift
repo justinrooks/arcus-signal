@@ -185,11 +185,9 @@ struct AnvilProfileClientTests {
         StormSetupConfiguration(
             gribSubsetCacheRootURL: URL(fileURLWithPath: "/tmp/grib-subsets"),
             pressureGribSubsetCacheRootURL: URL(fileURLWithPath: "/tmp/pressure-grib-subsets"),
-            pressureGribRawCacheRootURL: URL(fileURLWithPath: "/tmp/pressure-grib-raw"),
             sampledSnapshotCacheRootURL: URL(fileURLWithPath: "/tmp/sampled-snapshots"),
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: 25 * 1024 * 1024,
-            pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
             wgrib2ExecutableURL: URL(fileURLWithPath: "/usr/local/bin/wgrib2"),
             wgrib2TimeoutSeconds: 15,
             anvilProfileAnalysisBaseURL: URL(string: "https://anvil.example.com"),

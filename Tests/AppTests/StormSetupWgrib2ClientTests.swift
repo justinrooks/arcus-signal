@@ -34,11 +34,9 @@ struct StormSetupWgrib2ClientTests {
         let configuration = StormSetupConfiguration(
             gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
             pressureGribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
-            pressureGribRawCacheRootURL: FileManager.default.temporaryDirectory,
             sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: 25 * 1024 * 1024,
-            pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
             wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/wgrib2"),
             wgrib2TimeoutSeconds: 15
         )
@@ -289,11 +287,9 @@ struct StormSetupWgrib2ClientTests {
         StormSetupConfiguration(
             gribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
             pressureGribSubsetCacheRootURL: FileManager.default.temporaryDirectory,
-            pressureGribRawCacheRootURL: FileManager.default.temporaryDirectory,
             sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: 25 * 1024 * 1024,
-            pressureGribRawMaximumByteCount: 150 * 1024 * 1024,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: 15
         )

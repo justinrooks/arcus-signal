@@ -20,7 +20,7 @@ It is not a new design proposal. It records the finished byte-range implementati
 ## Current Boundary
 
 - Byte-range `.idx` selection is the current pressure-profile behavior.
-- Whole-file pressure GRIB download is not the primary path.
+- The whole-file pressure GRIB cache path was retired and is not part of the supported flow.
 - Surface HRRR flow remains unchanged.
 - The server does not store raw user lat/lon for this path.
 - The Anvil result is used as supporting evidence inside Storm Setup, not as a separate prediction product.
@@ -38,8 +38,6 @@ It is not a new design proposal. It records the finished byte-range implementati
   - Timeout for `wgrib2` execution.
 - `STORM_SETUP_GRIB_MAX_BYTES`
   - Maximum size for the existing surface GRIB subset cache.
-- `STORM_SETUP_PRESSURE_GRIB_MAX_BYTES`
-  - Maximum size for the pressure raw cache.
 
 ### Anvil Profile Analysis
 
@@ -56,8 +54,6 @@ Under the configured Storm Setup cache root:
   - Existing surface GRIB subset cache.
 - `pressure-grib-subsets/`
   - Byte-range pressure subset cache.
-- `pressure-grib-raw/`
-  - Raw pressure GRIB cache used by the completed pressure-profile path.
 - `sampled-snapshots/`
   - Cached sampled snapshot output.
 
@@ -83,11 +79,10 @@ The preview and analysis debug payloads should be used to inspect selected messa
 ## Degraded and Deferred Modes
 
 - No live HRRR, NOMADS, or Anvil calls should be used in unit tests.
-- There is no fallback from byte-range downloads to whole-file pressure downloads unless a future issue explicitly reopens that scope.
+- There is no fallback from byte-range downloads to whole-file pressure downloads.
 - Pressure-level tuning remains a product decision, not a transport contract.
 - Anvil severe-weather values are internal ingredient evidence, not user-facing tornado prediction language.
 
 ## Verification Record
 
 The completed implementation trail and final verification commands are recorded in `docs/plans/hrrr-pressure-profile-progress.md`.
-

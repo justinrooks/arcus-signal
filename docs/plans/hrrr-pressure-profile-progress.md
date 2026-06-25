@@ -30,7 +30,7 @@ Related local docs:
 - Pressure profile input remains H3-first; Signal resolves the H3 centroid internally.
 - AWS HRRR direct objects are the primary source for `wrfprsf`.
 - `.idx` inventory parsing and HTTP byte ranges are the target pressure acquisition path.
-- Whole-file pressure GRIB download may remain as transitional/debug fallback only when explicitly scoped.
+- The whole-file pressure GRIB cache was retired; future pressure work must use the byte-range subset cache.
 - Do not introduce Zarr, BUFKit, SHARPpy inside Signal, or a broad data-platform layer.
 - Do not move HRRR fetching into Arcus-Anvil.
 - Use existing `wgrib2` execution and point-sampling plumbing.
@@ -59,7 +59,7 @@ Keep:
 - `wgrib2` process execution and point-sample parsing exist.
 - Pressure product/source metadata exists.
 - AWS pressure direct-object URL construction and `.idx` probing exist.
-- Whole-file pressure raw cache exists.
+- Whole-file pressure raw cache has been retired.
 - Pressure-profile grouping exists.
 - Frozen Anvil request DTO and preview endpoint exist.
 - Frozen Anvil response DTO exists.
@@ -97,7 +97,7 @@ Work these issues sequentially:
 Relevant source:
 - `Sources/App/StormSetup/HrrrSourceModels.swift`
 - `Sources/App/StormSetup/HrrrPressureDirectObjectResolver.swift`
-- `Sources/App/StormSetup/StormSetupPressureGribCache.swift`
+- `Sources/App/StormSetup/HrrrPressureSubsetGribCache.swift`
 - `Sources/App/StormSetup/StormSetupPressureLevel.swift`
 - `Sources/App/StormSetup/StormSetupPressureProfileModels.swift`
 - `Sources/App/StormSetup/StormSetupPressureProfileGrouper.swift`
@@ -109,7 +109,7 @@ Relevant source:
 
 Relevant tests:
 - `Tests/AppTests/StormSetupHrrrSourceTests.swift`
-- `Tests/AppTests/StormSetupPressureGribCacheTests.swift`
+- `Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift`
 - `Tests/AppTests/StormSetupPressureProfileGroupingTests.swift`
 - `Tests/AppTests/AnvilAnalyzeProfileDTOTests.swift`
 - `Tests/AppTests/AnvilProfileRequestBuilderTests.swift`
@@ -121,7 +121,7 @@ Relevant tests:
 ## Investigation Notes
 
 - `HrrrPressureDirectObjectResolver` currently builds `.idx` URLs and probes them for availability, but does not parse inventory content.
-- `StormSetupPressureGribCache` currently performs whole-object `GET` and stores a full raw pressure GRIB.
+- `StormSetupPressureSubsetGribCache` performs the byte-range pressure download and caches only the selected subset.
 - The existing HTTP abstraction accepts headers, so range requests can be added without changing every caller.
 - No sample `.idx`, BUFKit, SHARPpy, SCP/STP/SHIP fixture, or sounding fixture exists in the repo outside build artifacts.
 - Pressure grouping currently starts after `wgrib2 -lon` output exists. Byte-range planning needs tests before that point.
@@ -377,7 +377,6 @@ Files changed:
 - `Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift`
 - `Tests/AppTests/StormSetupConfigurationTests.swift`
 - `Tests/AppTests/StormSetupGribSubsetCacheTests.swift`
-- `Tests/AppTests/StormSetupPressureGribCacheTests.swift`
 
 Tests and commands run:
 - `swift test --filter AnvilProfileClientTests` (blocked by the pre-existing package link failure involving `VaporAPNS` and `SwiftUICore`)
