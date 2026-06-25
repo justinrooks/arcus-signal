@@ -153,21 +153,14 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
             }
 
             let gribProbe = await remoteObjectChecker.probe(url: source.primaryDownloadURL ?? urlBuilder.makeGribURL(for: pressureCandidate))
-            if gribProbe.available {
-                return HrrrPressureDirectObjectResolution(
-                    candidate: pressureCandidate,
-                    source: source,
-                    idxProbe: idxProbe,
-                    gribProbe: gribProbe
-                )
-            }
-
             let idxSummary = probeSummary(for: idxProbe)
             let gribSummary = probeSummary(for: gribProbe)
             failures.append(
                 HrrrPressureDirectObjectFailure(
                     source: source,
-                    reason: "IDX \(idxSummary); GRIB \(gribSummary)"
+                    reason: gribProbe.available
+                        ? "IDX \(idxSummary); GRIB available"
+                        : "IDX \(idxSummary); GRIB \(gribSummary)"
                 )
             )
         }

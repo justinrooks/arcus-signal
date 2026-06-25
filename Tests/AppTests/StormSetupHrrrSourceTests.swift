@@ -294,8 +294,8 @@ struct StormSetupHrrrSourceTests {
         ])
     }
 
-    @Test("pressure direct-object resolver walks backward past unavailable candidates")
-    func pressureDirectObjectResolverWalksBackwardPastUnavailableCandidates() async throws {
+    @Test("pressure direct-object resolver skips GRIB-only candidates and keeps walking backward")
+    func pressureDirectObjectResolverSkipsGribOnlyCandidates() async throws {
         let newest = HrrrRunCandidate(
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
@@ -375,8 +375,8 @@ struct StormSetupHrrrSourceTests {
         ])
     }
 
-    @Test("pressure direct-object resolver reports a clear failure when no recent candidate is available")
-    func pressureDirectObjectResolverFailsClearlyWhenNoCandidateIsAvailable() async throws {
+    @Test("pressure direct-object resolver reports a clear failure when IDX is missing even if GRIB exists")
+    func pressureDirectObjectResolverFailsClearlyWhenIDXIsMissingEvenIfGRIBExists() async throws {
         let candidate = HrrrRunCandidate(
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
@@ -387,7 +387,7 @@ struct StormSetupHrrrSourceTests {
         let checker = StubHrrrRemoteObjectChecking(
             availableURLs: [
                 builder.makeIdxURL(for: candidate).absoluteString: false,
-                builder.makeGribURL(for: candidate).absoluteString: false
+                builder.makeGribURL(for: candidate).absoluteString: true
             ]
         )
         let resolver = DefaultHrrrPressureDirectObjectResolver(checker: checker, urlBuilder: builder)
@@ -409,6 +409,12 @@ struct StormSetupHrrrSourceTests {
         } catch let error as HrrrPressureDirectObjectResolverError {
             if case .noAvailableCandidate = error {
                 #expect(error.description.contains("No usable HRRR pressure direct-object candidate"))
+                #expect(error.description.contains("IDX unavailable"))
+                #expect(error.description.contains("GRIB available"))
+                #expect(checker.requestedURLs == [
+                    builder.makeIdxURL(for: candidate).absoluteString,
+                    builder.makeGribURL(for: candidate).absoluteString
+                ])
                 return
             }
             Issue.record("Expected a no-available-candidate error but got \(error).")
