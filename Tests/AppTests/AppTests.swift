@@ -171,6 +171,16 @@ struct AppTests {
         }
     }
 
+    private func productionBootstrapEnvironment(
+        databaseURL: String? = "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable",
+        redisURL: String? = "redis://127.0.0.1:6379"
+    ) -> [String: String?] {
+        [
+            "DATABASE_URL": databaseURL,
+            "REDIS_URL": redisURL
+        ]
+    }
+
     @Test("Worker health endpoint returns ok")
     func workerHealth() async throws {
         try await withApp(mode: .worker) { app in
@@ -231,16 +241,17 @@ struct AppTests {
 
     @Test("Worker production bootstrap fails when APNS config is missing")
     func workerProductionBootstrapFailsWithoutAPNSConfig() async throws {
-        try await withEnvironment([
-            "DATABASE_URL": "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable",
-            "REDIS_URL": "redis://127.0.0.1:6379",
+        var overrides = productionBootstrapEnvironment()
+        overrides.merge([
             "APNS_TEAM_ID": nil,
             "APNS_TOPIC": nil,
             "APNS_SANDBOX_KEY_ID": nil,
             "APNS_SANDBOX_PRIVATE_KEY_PATH": nil,
             "APNS_PROD_KEY_ID": nil,
             "APNS_PROD_PRIVATE_KEY_PATH": nil
-        ]) {
+        ], uniquingKeysWith: { _, new in new })
+
+        try await withEnvironment(overrides) {
             let app = try await Application.make(.production)
             var capturedError: (any Error)?
             do {
@@ -262,6 +273,36 @@ struct AppTests {
 
             #expect(abortError.status == .internalServerError)
             #expect(abortError.reason.contains("APNS configuration is incomplete."))
+        }
+    }
+
+    @Test("Production bootstrap fails when DATABASE_URL is missing")
+    func productionBootstrapFailsWithoutDatabaseURL() async throws {
+        try await withEnvironment([
+            "DATABASE_URL": nil,
+            "REDIS_URL": "redis://127.0.0.1:6379"
+        ]) {
+            let app = try await Application.make(.production)
+            var capturedError: (any Error)?
+            do {
+                try await configure(app, mode: .api)
+            } catch {
+                capturedError = error
+            }
+            try await app.asyncShutdown()
+
+            guard let capturedError else {
+                Issue.record("Expected configure to fail when DATABASE_URL is missing in production.")
+                return
+            }
+
+            guard let abortError = capturedError as? any AbortError else {
+                Issue.record("Expected AbortError but got \(String(describing: capturedError)).")
+                return
+            }
+
+            #expect(abortError.status == .internalServerError)
+            #expect(abortError.reason.contains("DATABASE_URL must be set when running in production."))
         }
     }
 
