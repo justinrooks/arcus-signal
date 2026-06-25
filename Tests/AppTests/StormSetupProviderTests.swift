@@ -48,6 +48,9 @@ struct StormSetupProviderTests {
 
         #expect(snapshot.h3Cell == fixedH3)
         #expect(snapshot.raw.sbcapeJkg == 1450)
+        #expect(snapshot.anvilEvidence == nil)
+        #expect(snapshot.assessment.overall == .conditional)
+        #expect(snapshot.assessment.confidence == .moderate)
         #expect(loadCount == 1)
         #expect(storeCount == 0)
         #expect(subsetRequestCount == 0)

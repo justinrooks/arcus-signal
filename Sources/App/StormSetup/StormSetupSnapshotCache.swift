@@ -84,7 +84,7 @@ actor StormSetupSnapshotCache {
                 return nil
             }
 
-            let snapshot = record.snapshot.surfaceSnapshot()
+            let snapshot = record.snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
             let freshness = record.snapshot.freshness
             guard freshness.sourceValidTime == key.validTime else {
                 invalidate(fileURL: fileURL)
@@ -138,7 +138,7 @@ actor StormSetupSnapshotCache {
             )
         }
 
-        let surfaceSnapshot = snapshot.surfaceSnapshot()
+        let surfaceSnapshot = snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
         let record = StormSetupSnapshotCacheRecord(key: key, snapshot: surfaceSnapshot)
         let data = try jsonEncoder.encode(record)
 
@@ -165,13 +165,18 @@ actor StormSetupSnapshotCache {
 }
 
 private extension TornadoIngredientSnapshot {
-    func surfaceSnapshot() -> TornadoIngredientSnapshot {
-        TornadoIngredientSnapshot(
+    func surfaceSnapshot(rulesVersion: StormSetupRulesVersion) -> TornadoIngredientSnapshot {
+        let baselineAssessment = TornadoIngredientInterpreter(rulesVersion: rulesVersion).assess(
+            raw: raw,
+            freshness: freshness
+        )
+
+        return TornadoIngredientSnapshot(
             h3Cell: h3Cell,
             centroid: centroid,
             source: source,
             raw: raw,
-            assessment: assessment,
+            assessment: baselineAssessment,
             freshness: freshness
         )
     }
