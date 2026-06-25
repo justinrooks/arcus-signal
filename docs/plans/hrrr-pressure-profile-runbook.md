@@ -1,9 +1,9 @@
 # HRRR Pressure Profile Issue Runbook
 
-**Status:** Active  
-**Applies To:** HRRR Pressure Profiles, Anvil, and Storm Setup Ingredient Evidence  
-**Project:** Arcus Signal  
-**Parent Issue:** https://github.com/justinrooks/arcus-signal/issues/85  
+**Status:** Active
+**Applies To:** HRRR Pressure Profiles, Anvil, and Storm Setup Ingredient Evidence
+**Project:** Arcus Signal
+**Parent Issue:** https://github.com/justinrooks/arcus-signal/issues/85
 **Related Docs:**
 - `AGENTS.md`
 - `docs/architecture.md`
@@ -32,7 +32,7 @@ This runbook exists to keep implementation:
 - clear enough for small-agent execution
 - honest about uncertainty in model fields and Anvil contract details
 
-> Do not treat any single sub-issue as permission to rebuild Storm Setup.  
+> Do not treat any single sub-issue as permission to rebuild Storm Setup.
 > Implement the current slice, verify it, update the progress log, and stop.
 
 ---
@@ -41,22 +41,22 @@ This runbook exists to keep implementation:
 
 Treat these inputs with the following authority:
 
-1. The repo `AGENTS.md`  
+1. The repo `AGENTS.md`
    Repo-wide and server standing rules.
 
-2. `docs/architecture.md` and `docs/epics-stories.md`  
+2. `docs/architecture.md` and `docs/epics-stories.md`
    Arcus Signal pipeline, persistence, idempotency, and delivery invariants.
 
-3. `docs/plans/hrrr-pressure-profile-runbook.md`  
+3. `docs/plans/hrrr-pressure-profile-runbook.md`
    The execution contract for pressure-profile issues.
 
-4. `docs/plans/hrrr-pressure-profile-progress.md`  
+4. `docs/plans/hrrr-pressure-profile-progress.md`
    Durable implementation ledger and issue-to-issue handoff record.
 
-5. `docs/plans/storm-setup-issue-runbook.md` and `docs/plans/storm-setup-progress.md`  
+5. `docs/plans/storm-setup-issue-runbook.md` and `docs/plans/storm-setup-progress.md`
    Existing Storm Setup boundaries and completed surface HRRR decisions.
 
-6. The current GitHub sub-issue  
+6. The current GitHub sub-issue
    The implementation boundary for the current run.
 
 7. Current source and tests touched by that issue.

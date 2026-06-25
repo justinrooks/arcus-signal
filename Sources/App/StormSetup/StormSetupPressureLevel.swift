@@ -69,4 +69,3 @@ enum StormSetupPressureProfileVariable: String, Sendable, Codable, CaseIterable 
     case ugrd = "UGRD"
     case vgrd = "VGRD"
 }
-
