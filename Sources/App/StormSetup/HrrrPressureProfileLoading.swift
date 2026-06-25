@@ -3,7 +3,8 @@ import Foundation
 protocol HrrrPressureProfileLoading: Sendable {
     func loadPressureProfile(
         for sourceResolution: HrrrPressureDirectObjectResolution,
-        centroid: StormSetupCentroid
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
     ) async throws -> HrrrPressureProfileLoadResult
 }
 
@@ -54,7 +55,8 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
 
     func loadPressureProfile(
         for sourceResolution: HrrrPressureDirectObjectResolution,
-        centroid: StormSetupCentroid
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
     ) async throws -> HrrrPressureProfileLoadResult {
         let inventory = try await loadInventory(for: sourceResolution)
         let selection = HrrrPressureProfileMessageSelector(
@@ -90,7 +92,10 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
         }
 
         let samples = try await samplePressureFile(subset: subsetCacheResult, centroid: centroid)
-        let groupedProfile = pressureGrouper.group(samples: samples)
+        let groupedProfile = pressureGrouper.group(
+            samples: samples,
+            surfaceHeightMslM: surfaceHeightMslM
+        )
 
         return HrrrPressureProfileLoadResult(
             sourceResolution: sourceResolution,

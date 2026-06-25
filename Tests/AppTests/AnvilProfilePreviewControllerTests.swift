@@ -237,10 +237,18 @@ private func makeGroupingResult(
     levels: [StormSetupPressureProfileLevel],
     missingLevels: [StormSetupPressureProfileMissingLevel] = []
 ) -> StormSetupPressureProfileGroupingResult {
-    StormSetupPressureProfileGroupingResult(
+    let droppedLevels = missingLevels.map { missingLevel in
+        StormSetupPressureProfileDroppedLevel(
+            pressureMb: missingLevel.pressureMb,
+            reason: .incomplete(missingVariables: missingLevel.missingVariables)
+        )
+    }
+
+    return StormSetupPressureProfileGroupingResult(
         requestedLevels: StormSetupPressureLevel.preferredDescending,
         retainedLevels: levels,
         missingLevels: missingLevels,
+        droppedLevels: droppedLevels,
         ignoredSamples: []
     )
 }

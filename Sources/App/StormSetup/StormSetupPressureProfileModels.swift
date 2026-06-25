@@ -14,6 +14,20 @@ struct StormSetupPressureProfileMissingLevel: Sendable, Equatable {
     let missingVariables: [StormSetupPressureProfileVariable]
 }
 
+struct StormSetupPressureProfileDroppedLevel: Sendable, Equatable {
+    let pressureMb: Int
+    let reason: StormSetupPressureProfileDroppedLevelReason
+}
+
+enum StormSetupPressureProfileDroppedLevelReason: Sendable, Equatable {
+    case incomplete(missingVariables: [StormSetupPressureProfileVariable])
+    case belowGround(
+        surfaceHeightMslM: Double,
+        levelHeightMslM: Double,
+        toleranceM: Double
+    )
+}
+
 struct StormSetupPressureProfileIgnoredSample: Sendable, Equatable {
     let inventory: String
     let reason: StormSetupPressureProfileIgnoredSampleReason
@@ -30,10 +44,6 @@ struct StormSetupPressureProfileGroupingResult: Sendable, Equatable {
     let requestedLevels: [StormSetupPressureLevel]
     let retainedLevels: [StormSetupPressureProfileLevel]
     let missingLevels: [StormSetupPressureProfileMissingLevel]
+    let droppedLevels: [StormSetupPressureProfileDroppedLevel]
     let ignoredSamples: [StormSetupPressureProfileIgnoredSample]
-
-    var droppedLevels: [StormSetupPressureProfileMissingLevel] {
-        missingLevels
-    }
 }
-

@@ -185,8 +185,84 @@ struct StormSetupPressureProfileGroupingTests {
         )
     }
 
-    private func group(_ samples: [HrrrFieldSample]) -> StormSetupPressureProfileGroupingResult {
-        StormSetupPressureProfileGrouper().group(samples: samples)
+    @Test("levels at or below the selected surface height are dropped with diagnostics")
+    func levelsAtOrBelowSurfaceHeightAreDropped() {
+        let result = group(
+            samples(
+                level: 1000,
+                hgt: 1200,
+                tmp: 295.15,
+                dpt: 289.15,
+                ugrd: -2.1,
+                vgrd: 4.6
+            )
+            + samples(
+                level: 925,
+                hgt: 1500,
+                tmp: 289.95,
+                dpt: 287.05,
+                ugrd: -5.4,
+                vgrd: 7.9
+            )
+            + samples(
+                level: 850,
+                hgt: 1800,
+                tmp: 285.15,
+                dpt: 281.15,
+                ugrd: -6.25,
+                vgrd: 8.75
+            ),
+            surfaceHeightMslM: 1200
+        )
+
+        #expect(result.retainedLevels.map { $0.pressureMb } == [925, 850])
+        #expect(result.droppedLevels.contains(where: { level in
+            guard case .belowGround(let surfaceHeightMslM, let levelHeightMslM, let toleranceM) = level.reason else {
+                return false
+            }
+
+            return level.pressureMb == 1000
+                && surfaceHeightMslM == 1200
+                && levelHeightMslM == 1200
+                && toleranceM == 1
+        }))
+    }
+
+    @Test("levels within the explicit surface-height tolerance are dropped")
+    func levelsWithinSurfaceHeightToleranceAreDropped() {
+        let result = group(
+            samples(
+                level: 1000,
+                hgt: 1200.4,
+                tmp: 295.15,
+                dpt: 289.15,
+                ugrd: -2.1,
+                vgrd: 4.6
+            ),
+            surfaceHeightMslM: 1200
+        )
+
+        #expect(result.retainedLevels.isEmpty)
+        #expect(result.droppedLevels.contains(where: { level in
+            guard case .belowGround(let surfaceHeightMslM, let levelHeightMslM, let toleranceM) = level.reason else {
+                return false
+            }
+
+            return level.pressureMb == 1000
+                && surfaceHeightMslM == 1200
+                && levelHeightMslM == 1200.4
+                && toleranceM == 1
+        }))
+    }
+
+    private func group(
+        _ samples: [HrrrFieldSample],
+        surfaceHeightMslM: Double? = nil
+    ) -> StormSetupPressureProfileGroupingResult {
+        StormSetupPressureProfileGrouper().group(
+            samples: samples,
+            surfaceHeightMslM: surfaceHeightMslM
+        )
     }
 
     private func samples(

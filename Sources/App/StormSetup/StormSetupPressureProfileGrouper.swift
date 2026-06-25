@@ -1,7 +1,11 @@
 import Foundation
 
 struct StormSetupPressureProfileGrouper: Sendable {
-    func group(samples: [HrrrFieldSample]) -> StormSetupPressureProfileGroupingResult {
+    func group(
+        samples: [HrrrFieldSample],
+        surfaceHeightMslM: Double? = nil,
+        surfaceHeightToleranceM: Double = 1.0
+    ) -> StormSetupPressureProfileGroupingResult {
         var draftsByLevel: [StormSetupPressureLevel: Draft] = [:]
         var ignoredSamples: [StormSetupPressureProfileIgnoredSample] = []
 
@@ -55,6 +59,7 @@ struct StormSetupPressureProfileGrouper: Sendable {
 
         var retainedLevels: [StormSetupPressureProfileLevel] = []
         var missingLevels: [StormSetupPressureProfileMissingLevel] = []
+        var droppedLevels: [StormSetupPressureProfileDroppedLevel] = []
 
         for level in StormSetupPressureLevel.preferredDescending {
             guard let draft = draftsByLevel[level] else {
@@ -64,17 +69,46 @@ struct StormSetupPressureProfileGrouper: Sendable {
                         missingVariables: StormSetupPressureProfileVariable.allCases
                     )
                 )
+                droppedLevels.append(
+                    StormSetupPressureProfileDroppedLevel(
+                        pressureMb: level.pressureMb,
+                        reason: .incomplete(
+                            missingVariables: StormSetupPressureProfileVariable.allCases
+                        )
+                    )
+                )
                 continue
             }
 
             let missingVariables = draft.missingVariables
             if missingVariables.isEmpty {
-                retainedLevels.append(draft.makeLevel())
+                let levelValue = draft.makeLevel()
+                if let surfaceHeightMslM,
+                   levelValue.heightMslM <= surfaceHeightMslM + surfaceHeightToleranceM {
+                    droppedLevels.append(
+                        StormSetupPressureProfileDroppedLevel(
+                            pressureMb: levelValue.pressureMb,
+                            reason: .belowGround(
+                                surfaceHeightMslM: surfaceHeightMslM,
+                                levelHeightMslM: levelValue.heightMslM,
+                                toleranceM: surfaceHeightToleranceM
+                            )
+                        )
+                    )
+                } else {
+                    retainedLevels.append(levelValue)
+                }
             } else {
                 missingLevels.append(
                     StormSetupPressureProfileMissingLevel(
                         pressureMb: level.pressureMb,
                         missingVariables: missingVariables
+                    )
+                )
+                droppedLevels.append(
+                    StormSetupPressureProfileDroppedLevel(
+                        pressureMb: level.pressureMb,
+                        reason: .incomplete(missingVariables: missingVariables)
                     )
                 )
             }
@@ -84,6 +118,7 @@ struct StormSetupPressureProfileGrouper: Sendable {
             requestedLevels: StormSetupPressureLevel.preferredDescending,
             retainedLevels: retainedLevels,
             missingLevels: missingLevels,
+            droppedLevels: droppedLevels,
             ignoredSamples: ignoredSamples
         )
     }
@@ -176,4 +211,3 @@ private extension StormSetupPressureProfileVariable {
         self.init(rawValue: normalized)
     }
 }
-

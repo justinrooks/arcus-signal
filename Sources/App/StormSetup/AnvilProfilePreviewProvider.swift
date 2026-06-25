@@ -40,6 +40,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let hrrrRunResolver: any HrrrRunResolving
     private let pressureSourceResolver: any HrrrPressureDirectObjectResolving
     private let pressureProfileLoader: any HrrrPressureProfileLoading
+    private let surfaceHeightMslM: Double?
     private let requestBuilder: AnvilProfileRequestBuilder
 
     init(
@@ -47,12 +48,14 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         hrrrRunResolver: (any HrrrRunResolving)? = nil,
         pressureSourceResolver: any HrrrPressureDirectObjectResolving,
-        pressureProfileLoader: any HrrrPressureProfileLoading
+        pressureProfileLoader: any HrrrPressureProfileLoading,
+        surfaceHeightMslM: Double? = nil
     ) {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
         self.pressureSourceResolver = pressureSourceResolver
         self.pressureProfileLoader = pressureProfileLoader
+        self.surfaceHeightMslM = surfaceHeightMslM
         self.requestBuilder = AnvilProfileRequestBuilder(h3Resolver: h3Resolver)
     }
 
@@ -159,7 +162,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 groupedProfile: loadResult.groupedProfile
             )
         } catch let error as AnvilProfileRequestBuilderError {
-            throw classifyBuilderError(error, missingLevels: loadResult.groupedProfile.missingLevels)
+            throw classifyBuilderError(error, groupedProfile: loadResult.groupedProfile)
         } catch {
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
@@ -227,7 +230,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         do {
             return try await pressureProfileLoader.loadPressureProfile(
                 for: sourceResolution,
-                centroid: centroid
+                centroid: centroid,
+                surfaceHeightMslM: surfaceHeightMslM
             )
         } catch let error as AnvilProfilePreviewError {
             throw error
@@ -249,41 +253,58 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
     private func classifyBuilderError(
         _ error: AnvilProfileRequestBuilderError,
-        missingLevels: [StormSetupPressureProfileMissingLevel]
+        groupedProfile: StormSetupPressureProfileGroupingResult
     ) -> AnvilProfilePreviewError {
-        let missingSummary = makeMissingLevelsSummary(missingLevels)
+        let droppedSummary = makeDroppedLevelsSummary(groupedProfile.droppedLevels)
 
         switch error {
         case .noRetainedLevels:
             return .unusableProfile(
-                reason: "No retained pressure levels were available. \(missingSummary)"
+                reason: "No retained pressure levels were available. \(droppedSummary)"
             )
         case .tooFewRetainedLevels(let actual, let minimum):
             return .unusableProfile(
-                reason: "Only \(actual) retained levels were available; minimum required is \(minimum). \(missingSummary)"
+                reason: "Only \(actual) retained levels were available; minimum required is \(minimum). \(droppedSummary)"
             )
         case .unequalArrayLengths(let expected, let actual):
             return .unusableProfile(
-                reason: "Pressure arrays had mismatched lengths. Expected \(expected), got \(actual). \(missingSummary)"
+                reason: "Pressure arrays had mismatched lengths. Expected \(expected), got \(actual). \(droppedSummary)"
             )
         case .pressureNotStrictlyDescending(let previousPressureMb, let pressureMb):
             return .unusableProfile(
-                reason: "Pressure levels were not strictly descending: \(previousPressureMb) then \(pressureMb). \(missingSummary)"
+                reason: "Pressure levels were not strictly descending: \(previousPressureMb) then \(pressureMb). \(droppedSummary)"
             )
         }
     }
 
-    private func makeMissingLevelsSummary(_ levels: [StormSetupPressureProfileMissingLevel]) -> String {
+    private func makeDroppedLevelsSummary(_ levels: [StormSetupPressureProfileDroppedLevel]) -> String {
         guard !levels.isEmpty else {
-            return "Missing or incomplete levels were not reported."
+            return "Missing or dropped pressure levels were not reported."
         }
 
-        let labels = levels.map { level in
-            "\(level.pressureMb) mb missing \(level.missingVariables.map(\.rawValue).joined(separator: ", "))"
+        let belowGroundLabels = levels.compactMap { level -> String? in
+            guard case .belowGround(let surfaceHeightMslM, let levelHeightMslM, let toleranceM) = level.reason else {
+                return nil
+            }
+            return "\(level.pressureMb) mb below selected surface height \(surfaceHeightMslM)m (level \(levelHeightMslM)m, tolerance \(toleranceM)m)"
         }
-        .joined(separator: "; ")
 
-        return "Missing or incomplete levels: \(labels)."
+        let incompleteLabels = levels.compactMap { level -> String? in
+            guard case .incomplete(let missingVariables) = level.reason else {
+                return nil
+            }
+            return "\(level.pressureMb) mb missing \(missingVariables.map(\.rawValue).joined(separator: ", "))"
+        }
+
+        var parts: [String] = []
+        if !incompleteLabels.isEmpty {
+            parts.append("Missing or incomplete levels: \(incompleteLabels.joined(separator: "; ")).")
+        }
+        if !belowGroundLabels.isEmpty {
+            parts.append("Below-ground levels: \(belowGroundLabels.joined(separator: "; ")).")
+        }
+
+        return parts.joined(separator: " ")
     }
 
     private func uniquePressureLevels(from selection: HrrrPressureProfileMessageSelectionResult) -> [Int] {
@@ -304,10 +325,28 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         var values = warnings.map { warning -> String in
             switch warning {
             case .droppedLevels(let levels):
-                let labels = levels
-                    .map { "\($0.pressureMb) mb" }
-                    .joined(separator: ", ")
-                return "Dropped incomplete pressure levels: \(labels)."
+                let belowGroundLabels = levels.compactMap { level -> String? in
+                    guard case .belowGround(let surfaceHeightMslM, let levelHeightMslM, let toleranceM) = level.reason else {
+                        return nil
+                    }
+                    return "\(level.pressureMb) mb below selected surface height \(surfaceHeightMslM)m (level \(levelHeightMslM)m, tolerance \(toleranceM)m)"
+                }
+
+                let incompleteLabels = levels.compactMap { level -> String? in
+                    guard case .incomplete(let missingVariables) = level.reason else {
+                        return nil
+                    }
+                    return "\(level.pressureMb) mb missing \(missingVariables.map(\.rawValue).joined(separator: ", "))"
+                }
+
+                var labels: [String] = []
+                if !belowGroundLabels.isEmpty {
+                    labels.append("Dropped below-ground pressure levels: \(belowGroundLabels.joined(separator: ", ")).")
+                }
+                if !incompleteLabels.isEmpty {
+                    labels.append("Dropped incomplete pressure levels: \(incompleteLabels.joined(separator: ", ")).")
+                }
+                return labels.joined(separator: " ")
             case .nonMonotonicHeight(
                 let previousPressureMb,
                 let previousHeightMslM,

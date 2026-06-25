@@ -131,22 +131,23 @@ actor PreviewStubPressureGribLoader: StormSetupPressureGribLoading {
 }
 
 actor PreviewStubPressureProfileLoader: HrrrPressureProfileLoading {
-    private let handler: @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid) async throws -> HrrrPressureProfileLoadResult
+    private let handler: @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
     private var callCount = 0
 
     init(
-        handler: @escaping @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid) async throws -> HrrrPressureProfileLoadResult
+        handler: @escaping @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
     ) {
         self.handler = handler
     }
 
     func loadPressureProfile(
         for sourceResolution: HrrrPressureDirectObjectResolution,
-        centroid: StormSetupCentroid
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
     ) async throws -> HrrrPressureProfileLoadResult {
         let index = callCount
         callCount += 1
-        return try await handler(index, sourceResolution, centroid)
+        return try await handler(index, sourceResolution, centroid, surfaceHeightMslM)
     }
 }
 
@@ -218,7 +219,8 @@ func previewMakePressureProfileLoadResult(
     sourceResolution: HrrrPressureDirectObjectResolution,
     fetchedAt: Date,
     subsetCacheHit: Bool = false,
-    samples: [HrrrFieldSample]? = nil
+    samples: [HrrrFieldSample]? = nil,
+    surfaceHeightMslM: Double? = nil
 ) -> HrrrPressureProfileLoadResult {
     let inventory = HrrrPressureIdxInventory.parse(
         """
@@ -245,7 +247,10 @@ func previewMakePressureProfileLoadResult(
         ugrd: -2.1,
         vgrd: 4.6
     )
-    let groupedProfile = StormSetupPressureProfileGrouper().group(samples: fieldSamples)
+    let groupedProfile = StormSetupPressureProfileGrouper().group(
+        samples: fieldSamples,
+        surfaceHeightMslM: surfaceHeightMslM
+    )
 
     return HrrrPressureProfileLoadResult(
         sourceResolution: sourceResolution,

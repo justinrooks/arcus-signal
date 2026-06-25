@@ -53,7 +53,8 @@ struct HrrrPressureProfileLoadingTests {
 
         let result = try await loader.loadPressureProfile(
             for: sourceResolution,
-            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
+            surfaceHeightMslM: nil
         )
 
         let idxURL = try #require(sourceResolution.source.idxURL)

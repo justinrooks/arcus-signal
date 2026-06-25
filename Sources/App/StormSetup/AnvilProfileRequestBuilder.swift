@@ -215,7 +215,7 @@ struct AnvilProfileRequestBuildResult: Sendable, Equatable {
 }
 
 enum AnvilProfileRequestWarning: Sendable, Equatable {
-    case droppedLevels([StormSetupPressureProfileMissingLevel])
+    case droppedLevels([StormSetupPressureProfileDroppedLevel])
     case nonMonotonicHeight(
         previousPressureMb: Int,
         previousHeightMslM: Double,

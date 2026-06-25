@@ -190,9 +190,9 @@ struct AnvilProfileRequestBuilderTests {
         let grouping = makeGroupingResult(
             levels: makeFiveLevelProfile(),
             droppedLevels: [
-                StormSetupPressureProfileMissingLevel(
+                StormSetupPressureProfileDroppedLevel(
                     pressureMb: 775,
-                    missingVariables: [.hgt, .tmp, .dpt, .ugrd, .vgrd]
+                    reason: .incomplete(missingVariables: [.hgt, .tmp, .dpt, .ugrd, .vgrd])
                 )
             ]
         )
@@ -204,6 +204,45 @@ struct AnvilProfileRequestBuilderTests {
             groupedProfile: grouping
         )
 
+        #expect(result.warnings.contains(where: { warning in
+            if case .droppedLevels(let levels) = warning {
+                return levels == grouping.droppedLevels
+            }
+            return false
+        }))
+    }
+
+    @Test("below-ground levels are dropped before request assembly and surfaced in warnings")
+    func belowGroundLevelsAreDroppedBeforeRequestAssembly() throws {
+        let builder = makeBuilder()
+        let grouping = makeGroupingResult(
+            levels: [
+                makeLevel(pressureMb: 925, heightMslM: 1500, temperatureC: 22.8, dewpointC: 10.1, uWindMs: -5.4, vWindMs: 7.9),
+                makeLevel(pressureMb: 850, heightMslM: 1800, temperatureC: 17.5, dewpointC: 11.2, uWindMs: -6.25, vWindMs: 8.75),
+                makeLevel(pressureMb: 700, heightMslM: 2450, temperatureC: 10.0, dewpointC: 1.0, uWindMs: -12.5, vWindMs: 14.2),
+                makeLevel(pressureMb: 600, heightMslM: 4100, temperatureC: 3.2, dewpointC: -2.6, uWindMs: -15.25, vWindMs: 18.4),
+                makeLevel(pressureMb: 500, heightMslM: 5600, temperatureC: -4.2, dewpointC: -12.0, uWindMs: -18.75, vWindMs: 22.0)
+            ],
+            droppedLevels: [
+                StormSetupPressureProfileDroppedLevel(
+                    pressureMb: 1000,
+                    reason: .belowGround(
+                        surfaceHeightMslM: 1300,
+                        levelHeightMslM: 1200,
+                        toleranceM: 1
+                    )
+                )
+            ]
+        )
+
+        let result = try builder.build(
+            h3Cell: 617_700_169_958_293_503,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+            forecastHour: 3,
+            groupedProfile: grouping
+        )
+
+        #expect(result.request.profile.pressureMb == [925, 850, 700, 600, 500])
         #expect(result.warnings.contains(where: { warning in
             if case .droppedLevels(let levels) = warning {
                 return levels == grouping.droppedLevels
@@ -228,12 +267,26 @@ struct AnvilProfileRequestBuilderTests {
 
     private func makeGroupingResult(
         levels: [StormSetupPressureProfileLevel],
-        droppedLevels: [StormSetupPressureProfileMissingLevel] = []
+        missingLevels: [StormSetupPressureProfileMissingLevel] = [],
+        droppedLevels: [StormSetupPressureProfileDroppedLevel] = []
     ) -> StormSetupPressureProfileGroupingResult {
-        StormSetupPressureProfileGroupingResult(
+        let resolvedMissingLevels = missingLevels.isEmpty
+            ? droppedLevels.compactMap { droppedLevel -> StormSetupPressureProfileMissingLevel? in
+                guard case .incomplete(let missingVariables) = droppedLevel.reason else {
+                    return nil
+                }
+                return StormSetupPressureProfileMissingLevel(
+                    pressureMb: droppedLevel.pressureMb,
+                    missingVariables: missingVariables
+                )
+            }
+            : missingLevels
+
+        return StormSetupPressureProfileGroupingResult(
             requestedLevels: StormSetupPressureLevel.preferredDescending,
             retainedLevels: levels,
-            missingLevels: droppedLevels,
+            missingLevels: resolvedMissingLevels,
+            droppedLevels: droppedLevels,
             ignoredSamples: []
         )
     }
