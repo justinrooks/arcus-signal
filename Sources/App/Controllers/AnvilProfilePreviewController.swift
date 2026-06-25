@@ -15,7 +15,8 @@ struct AnvilProfilePreviewController: RouteCollection {
     }
 
     func profilePreview(req: Request) async throws -> AnvilAnalyzeProfilePreviewResponse {
-        guard req.application.arcusDebugEndpointsEnabled else {
+        guard req.application.arcusDebugEndpointsEnabled,
+              req.application.environment != .production else {
             throw Abort(.notFound)
         }
 

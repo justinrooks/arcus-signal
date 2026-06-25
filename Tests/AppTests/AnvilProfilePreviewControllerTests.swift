@@ -8,12 +8,15 @@ import VaporTesting
 struct AnvilProfilePreviewControllerTests {
     private func withApp(
         debugEndpointsEnabled: Bool,
+        environment: Environment = .testing,
         test: (Application) async throws -> Void
     ) async throws {
         try await previewWithEnvironment([
-            "ARCUS_DEBUG_ENDPOINTS_ENABLED": debugEndpointsEnabled ? "true" : nil
+            "ARCUS_DEBUG_ENDPOINTS_ENABLED": debugEndpointsEnabled ? "true" : nil,
+            "DATABASE_URL": environment == .production ? "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable" : nil,
+            "REDIS_URL": environment == .production ? "redis://127.0.0.1:6379" : nil
         ]) {
-            let app = try await Application.make(.testing)
+            let app = try await Application.make(environment)
             do {
                 try await configure(app, mode: .api)
                 try await test(app)
@@ -28,6 +31,19 @@ struct AnvilProfilePreviewControllerTests {
     @Test("disabled debug endpoints return 404")
     func disabledDebugEndpointsReturnNotFound() async throws {
         try await withApp(debugEndpointsEnabled: false) { app in
+            try await app.testing().test(.GET, "api/v1/dev/anvil/profile-preview?h3=617700169958293503") { res async in
+                #expect(res.status == .notFound)
+            }
+        }
+    }
+
+    @Test("production still blocks the endpoint")
+    func productionStillBlocksTheEndpoint() async throws {
+        try await withApp(debugEndpointsEnabled: true, environment: .production) { app in
+            app.anvilProfilePreviewProvider = PreviewStubAnvilProfilePreviewProvider(
+                result: .success(makePreviewResponse())
+            )
+
             try await app.testing().test(.GET, "api/v1/dev/anvil/profile-preview?h3=617700169958293503") { res async in
                 #expect(res.status == .notFound)
             }

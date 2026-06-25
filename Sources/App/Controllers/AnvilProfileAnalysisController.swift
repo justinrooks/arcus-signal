@@ -8,7 +8,8 @@ struct AnvilProfileAnalysisController: RouteCollection {
     }
 
     func analyzeProfile(req: Request) async throws -> Response {
-        guard req.application.environment != .production else {
+        guard req.application.arcusDebugEndpointsEnabled,
+              req.application.environment != .production else {
             throw Abort(.notFound)
         }
 
