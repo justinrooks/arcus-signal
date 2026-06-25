@@ -284,7 +284,10 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         let freshness = IngredientFreshness.make(source: sourceMetadata, fetchedAt: subset.fetchedAt)
-        let anvilEvidence = await resolveAnvilEvidence(for: resolvedH3Cell)
+        let anvilEvidence = await resolveAnvilEvidence(
+            for: resolvedH3Cell,
+            sourceMetadata: sourceMetadata
+        )
         let assessment = interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: anvilEvidence)
         let snapshot = TornadoIngredientSnapshot(
             h3Cell: resolvedH3Cell,
@@ -335,13 +338,33 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         )
     }
 
-    private func resolveAnvilEvidence(for h3Cell: Int64) async -> AnvilIngredientEvidence {
+    private func resolveAnvilEvidence(
+        for h3Cell: Int64,
+        sourceMetadata: StormSetupSourceMetadata
+    ) async -> AnvilIngredientEvidence {
         guard let anvilProfileAnalysisProvider else {
             return .unavailable(reason: "Anvil analysis provider is not configured.")
         }
 
+        guard let selectedSurfaceValidTime = sourceMetadata.validTime else {
+            return .unavailable(reason: "Selected surface HRRR source was missing valid time metadata.")
+        }
+
         do {
             let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(for: h3Cell)
+
+            guard analysis.request.validTime == analysis.debug.validTime else {
+                return .unavailable(
+                    reason: "Anvil request valid time \(analysis.request.validTime) did not match debug valid time \(analysis.debug.validTime)."
+                )
+            }
+
+            guard analysis.request.validTime == selectedSurfaceValidTime else {
+                return .unavailable(
+                    reason: "Anvil evidence valid time \(analysis.request.validTime) did not match the selected surface HRRR valid time \(selectedSurfaceValidTime)."
+                )
+            }
+
             return AnvilIngredientEvidence(response: analysis.response)
         } catch {
             return .unavailable(reason: String(describing: error))
