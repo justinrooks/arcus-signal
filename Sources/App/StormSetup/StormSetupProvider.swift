@@ -246,7 +246,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     "expiresAt": .string("\(cached.expiresAt)")
                 ])
             )
-            return cached.snapshot
+            return await composeSnapshotWithCurrentAnvilEvidence(from: cached.snapshot)
         }
 
         logger.info(
@@ -284,23 +284,17 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         let freshness = IngredientFreshness.make(source: sourceMetadata, fetchedAt: subset.fetchedAt)
-        let anvilEvidence = await resolveAnvilEvidence(
-            for: resolvedH3Cell,
-            sourceMetadata: sourceMetadata
-        )
-        let assessment = interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: anvilEvidence)
-        let snapshot = TornadoIngredientSnapshot(
+        let surfaceSnapshot = TornadoIngredientSnapshot(
             h3Cell: resolvedH3Cell,
             centroid: centroid,
             source: sourceMetadata,
             raw: normalized.raw,
-            assessment: assessment,
-            freshness: freshness,
-            anvilEvidence: anvilEvidence
+            assessment: interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: nil),
+            freshness: freshness
         )
 
         do {
-            _ = try await snapshotCache.store(snapshot: snapshot, for: cacheKey)
+            _ = try await snapshotCache.store(snapshot: surfaceSnapshot, for: cacheKey)
             logger.info(
                 "Storm Setup sampled snapshot cached.",
                 metadata: candidateMetadata(
@@ -323,7 +317,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
         }
 
-        return snapshot
+        return await composeSnapshotWithCurrentAnvilEvidence(from: surfaceSnapshot)
     }
 
     private func makeCandidate(from sourceMetadata: StormSetupSourceMetadata) -> HrrrRunCandidate {
@@ -369,6 +363,34 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         } catch {
             return .unavailable(reason: String(describing: error))
         }
+    }
+
+    private func composeSnapshotWithCurrentAnvilEvidence(
+        from snapshot: TornadoIngredientSnapshot
+    ) async -> TornadoIngredientSnapshot {
+        guard anvilProfileAnalysisProvider != nil else {
+            return snapshot
+        }
+
+        let anvilEvidence = await resolveAnvilEvidence(
+            for: snapshot.h3Cell,
+            sourceMetadata: snapshot.source
+        )
+        let assessment = interpreter.assess(
+            raw: snapshot.raw,
+            freshness: snapshot.freshness,
+            evidence: anvilEvidence
+        )
+
+        return TornadoIngredientSnapshot(
+            h3Cell: snapshot.h3Cell,
+            centroid: snapshot.centroid,
+            source: snapshot.source,
+            raw: snapshot.raw,
+            assessment: assessment,
+            freshness: snapshot.freshness,
+            anvilEvidence: anvilEvidence
+        )
     }
 
     private func classify(

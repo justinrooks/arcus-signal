@@ -54,6 +54,145 @@ struct StormSetupProviderTests {
         #expect(fieldSampleRequestCount == 0)
     }
 
+    @Test("cache hits refresh Anvil evidence when the provider is configured")
+    func snapshotCacheHitRefreshesAnvilEvidence() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let candidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: candidate, centroid: expected.centroid)
+        let freshness = makeFreshness(now: now)
+        let raw = makeRaw(
+            sbcapeJkg: 1450,
+            mlcapeJkg: 1200,
+            mucapeJkg: 1600,
+            mlcinJkg: -35,
+            mllclM: 950,
+            shear06kmKt: 42,
+            srh01kmM2s2: 80,
+            srh03kmM2s2: 160
+        )
+        let staleEvidence = AnvilIngredientEvidence.unavailable(reason: "Cached Anvil evidence is stale.")
+        let cachedSnapshot = makeSnapshot(
+            h3Cell: fixedH3,
+            source: source,
+            fetchedAt: now,
+            raw: raw,
+            assessment: TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness, evidence: staleEvidence),
+            freshness: freshness,
+            anvilEvidence: staleEvidence
+        )
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: cachedSnapshot)
+        let subsetLoader = StubStormSetupSubsetLoader { _, _, _ in
+            throw TestFailure.unexpectedDownstreamCall("subset loader should not run on a cache hit")
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, _ in
+            throw TestFailure.unexpectedDownstreamCall("field sampler should not run on a cache hit")
+        }
+        let anvilProvider = CountingAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime)
+        )
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: .empty)),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: anvilProvider
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+        let loadCount = await snapshotCache.loadCount
+        let storeCount = await snapshotCache.storeCount
+        let subsetRequestCount = await subsetLoader.requestCount
+        let fieldSampleRequestCount = await fieldSampler.requestCount
+        let anvilRequestCount = await anvilProvider.requestCount
+
+        #expect(snapshot.anvilEvidence?.status == .available)
+        #expect(snapshot.anvilEvidence?.reason == nil)
+        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.confidence == .high)
+        #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
+        #expect(loadCount == 1)
+        #expect(storeCount == 0)
+        #expect(subsetRequestCount == 0)
+        #expect(fieldSampleRequestCount == 0)
+        #expect(anvilRequestCount == 1)
+    }
+
+    @Test("cache hits ignore stale Anvil evidence when the current provider changes")
+    func snapshotCacheHitIgnoresStaleAnvilEvidence() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let candidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: candidate, centroid: expected.centroid)
+        let freshness = makeFreshness(now: now)
+        let raw = makeRaw(
+            sbcapeJkg: 1450,
+            mlcapeJkg: 1200,
+            mucapeJkg: 1600,
+            mlcinJkg: -35,
+            mllclM: 950,
+            shear06kmKt: 42,
+            srh01kmM2s2: 80,
+            srh03kmM2s2: 160
+        )
+        let cachedEvidence = AnvilIngredientEvidence(
+            response: makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime).response
+        )
+        let cachedSnapshot = makeSnapshot(
+            h3Cell: fixedH3,
+            source: source,
+            fetchedAt: now,
+            raw: raw,
+            assessment: TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness, evidence: cachedEvidence),
+            freshness: freshness,
+            anvilEvidence: cachedEvidence
+        )
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: cachedSnapshot)
+        let subsetLoader = StubStormSetupSubsetLoader { _, _, _ in
+            throw TestFailure.unexpectedDownstreamCall("subset loader should not run on a cache hit")
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, _ in
+            throw TestFailure.unexpectedDownstreamCall("field sampler should not run on a cache hit")
+        }
+        let anvilProvider = CountingAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime.addingTimeInterval(3_600))
+        )
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: .empty)),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: anvilProvider
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+        let anvilRequestCount = await anvilProvider.requestCount
+
+        #expect(snapshot.anvilEvidence?.status == .unavailable)
+        #expect(snapshot.anvilEvidence?.reason?.contains("selected surface HRRR valid time") == true)
+        #expect(snapshot.assessment.overall == .conditional)
+        #expect(snapshot.assessment.confidence == .low)
+        #expect(anvilRequestCount == 1)
+    }
+
     @Test("provider fetches a GRIB subset on snapshot cache miss and stores the sampled snapshot")
     func cacheMissFetchesSubsetAndStoresSnapshot() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -99,14 +238,17 @@ struct StormSetupProviderTests {
                 srh03kmM2s2: 160
             )
         )
-        let assessment = makeAssessment()
+        let anvilProvider = CountingAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime)
+        )
         let provider = makeProvider(
             dateProvider: dateProvider,
             snapshotCache: snapshotCache,
             subsetLoader: subsetLoader,
             fieldSampler: fieldSampler,
             normalizer: StubStormSetupNormalizer(result: normalized),
-            interpreter: StubStormSetupAssessor(assessment: assessment)
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: anvilProvider
         )
 
         let snapshot = try await provider.currentSnapshot(for: fixedH3)
@@ -114,15 +256,20 @@ struct StormSetupProviderTests {
         let storeCount = await snapshotCache.storeCount
         let subsetRequestCount = await subsetLoader.requestCount
         let fieldSampleRequestCount = await fieldSampler.requestCount
+        let anvilRequestCount = await anvilProvider.requestCount
 
         #expect(snapshot.source.runTime == candidate.runTime)
         #expect(snapshot.source.forecastHour == candidate.forecastHour)
         #expect(snapshot.raw.sbcapeJkg == 1450)
-        #expect(snapshot.assessment.overall == assessment.overall)
+        #expect(snapshot.anvilEvidence?.status == .available)
+        #expect(snapshot.anvilEvidence?.reason == nil)
+        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.confidence == .high)
         #expect(loadCount == 1)
         #expect(storeCount == 1)
         #expect(subsetRequestCount == 1)
         #expect(fieldSampleRequestCount == 1)
+        #expect(anvilRequestCount == 1)
     }
 
     @Test("provider augments the snapshot with Anvil evidence and uses it in the assessment")
@@ -875,7 +1022,8 @@ struct StormSetupProviderTests {
         fetchedAt: Date,
         raw: TornadoRawParameters,
         assessment: TornadoIngredientAssessment,
-        freshness: IngredientFreshness
+        freshness: IngredientFreshness,
+        anvilEvidence: AnvilIngredientEvidence? = nil
     ) -> TornadoIngredientSnapshot {
         TornadoIngredientSnapshot(
             h3Cell: h3Cell,
@@ -883,7 +1031,8 @@ struct StormSetupProviderTests {
             source: source,
             raw: raw,
             assessment: assessment,
-            freshness: freshness
+            freshness: freshness,
+            anvilEvidence: anvilEvidence
         )
     }
 }
@@ -999,6 +1148,21 @@ private struct StubAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, 
 
     func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
+        return response
+    }
+}
+
+private actor CountingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
+    private let response: AnvilAnalyzeProfileAnalysisResponse
+    private(set) var requestCount = 0
+
+    init(response: AnvilAnalyzeProfileAnalysisResponse) {
+        self.response = response
+    }
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        requestCount += 1
         return response
     }
 }

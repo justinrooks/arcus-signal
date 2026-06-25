@@ -273,6 +273,35 @@ struct StormSetupSnapshotCacheTests {
         #expect(loaded?.snapshot.assessment.overall == snapshot.assessment.overall)
     }
 
+    @Test("stored snapshots round-trip as surface-only records")
+    func storedSnapshotsRoundTripAsSurfaceOnlyRecords() async throws {
+        let rootURL = testRootURL()
+        let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+        let cache = makeCache(rootURL: rootURL, now: now)
+        let source = makeSourceMetadata(
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9
+        )
+        let h3Cell: Int64 = 882_681_611_511_963_647
+        let key = try StormSetupSnapshotCacheKey(
+            h3Cell: h3Cell,
+            sourceMetadata: source,
+            rulesVersion: .current
+        )
+        let snapshot = makeSnapshot(
+            h3Cell: h3Cell,
+            source: source,
+            fetchedAt: now,
+            expiresAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+            anvilEvidence: AnvilIngredientEvidence.unavailable(reason: "Cached Anvil evidence should not be authoritative.")
+        )
+
+        _ = try await cache.store(snapshot: snapshot, for: key)
+        let loaded = await cache.loadSnapshot(for: key)
+
+        #expect(loaded?.snapshot.anvilEvidence == nil)
+    }
+
     @Test("expired cache entries are ignored")
     func expiredCacheEntriesAreIgnored() async throws {
         let rootURL = testRootURL()
@@ -372,7 +401,8 @@ struct StormSetupSnapshotCacheTests {
         h3Cell: Int64,
         source: StormSetupSourceMetadata,
         fetchedAt: Date,
-        expiresAt: Date? = nil
+        expiresAt: Date? = nil,
+        anvilEvidence: AnvilIngredientEvidence? = nil
     ) -> TornadoIngredientSnapshot {
         let freshness = IngredientFreshness(
             sourceValidTime: source.validTime,
@@ -390,7 +420,8 @@ struct StormSetupSnapshotCacheTests {
             source: source,
             raw: .empty,
             assessment: TornadoIngredientInterpreter().assess(raw: .empty, freshness: freshness),
-            freshness: freshness
+            freshness: freshness,
+            anvilEvidence: anvilEvidence
         )
     }
 
