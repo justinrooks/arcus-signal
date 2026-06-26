@@ -20,4 +20,17 @@ extension Application {
         get { self.storage[ArcusAPNSConfigKey.self]! }
         set { self.storage[ArcusAPNSConfigKey.self] = newValue }
     }
+
+    var workerScheduledJobNames: [String] {
+        get { self.storage[WorkerScheduledJobNamesKey.self] ?? [] }
+        set { self.storage[WorkerScheduledJobNamesKey.self] = newValue }
+    }
+
+    func recordWorkerScheduledJob(_ jobName: String) {
+        workerScheduledJobNames.append(jobName)
+    }
+}
+
+private struct WorkerScheduledJobNamesKey: StorageKey {
+    typealias Value = [String]
 }

@@ -189,6 +189,7 @@ struct AnvilProfileClientTests {
             sampledSnapshotCacheRootURL: URL(fileURLWithPath: "/tmp/sampled-snapshots"),
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+            pressureArtifactProbeIntervalSeconds: 5 * 60,
             wgrib2ExecutableURL: URL(fileURLWithPath: "/usr/local/bin/wgrib2"),
             wgrib2TimeoutSeconds: 15,
             anvilProfileAnalysisBaseURL: URL(string: "https://anvil.example.com"),

@@ -5,6 +5,7 @@ public enum ArcusQueueLane: String, CaseIterable, Sendable {
     case ingest
     case target
     case send
+    case modelArtifacts = "model-artifacts"
 
     public var queueName: QueueName {
         .init(string: rawValue)

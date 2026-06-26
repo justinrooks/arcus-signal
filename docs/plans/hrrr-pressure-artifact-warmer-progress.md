@@ -43,7 +43,8 @@ Related local docs:
 - Issue `#115` implemented the first runtime slice and locked in the expanded pressure contract.
 - Issue `#116` added the persistent pressure artifact catalog model, migration, and focused persistence tests.
 - Issue `#117` implemented the warm-job slice with catalog claim/promotion, byte-range reuse, and validation.
-- The next implementation issue is `#118`.
+- Issue `#118` implemented the worker-owned probe slice and dedicated model-artifacts scheduling lane.
+- The next implementation issue is `#119`.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -63,6 +64,7 @@ Work these issues sequentially:
 2. `#115` - 02: First runtime warmer slice
 3. `#116` - 03: Add pressure artifact catalog and metadata model
 4. `#117` - 04: Warm-job slice, catalog claim, and validation
+5. `#118` - 05: Worker-owned HRRR pressure artifact probe and schedule
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -237,6 +239,57 @@ Handoff notes for issue `#118`:
 - Do not revisit the claim logic or byte-range reuse unless the lane wiring forces it.
 - Preserve the current request-path boundaries.
 
+### Issue #118 - 05: Worker-owned HRRR pressure artifact probe and schedule
+
+Status: Completed
+
+Scope:
+- Add `HRRRPressureArtifactProbeService`.
+- Add `ProbeHRRRPressureArtifactsScheduledJob`.
+- Add the dedicated queue lane `model-artifacts`.
+- Schedule probe work in worker mode only, every 300 seconds by default.
+- Keep the probe limited to `.idx` availability checks and catalog state gating.
+- Enqueue `PressureArtifactWarmJob` only when the catalog state is missing, `failed`, or `expired`.
+
+Files changed:
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/Jobs/ProbeHRRRPressureArtifactsScheduledJob.swift`
+- `Sources/App/Worker/ArcusQueueLane.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/configure.swift`
+- `Sources/App/Extensions/ext+Application.swift`
+- `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`
+- `Tests/AppTests/AppTests.swift`
+- `Tests/AppTests/AnvilProfileClientTests.swift`
+- `Tests/AppTests/StormSetupConfigurationTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Queue lane:
+- `model-artifacts`
+
+Scheduling cadence:
+- 300 seconds by default
+- Environment override: `STORM_SETUP_PRESSURE_ARTIFACT_PROBE_INTERVAL_SECONDS`
+
+Enqueue / skip policy:
+- Enqueue `PressureArtifactWarmJob` when `.idx` is available and the catalog row is missing, `failed`, or `expired`.
+- Transition the catalog row to `pending` before enqueueing.
+- Skip duplicate work when the catalog row is `pending`, `warming`, or `ready`.
+- When `.idx` is unavailable, update `last_checked_at`, keep the row non-ready/non-warming, and do not enqueue warm work.
+
+Validation performed:
+- `swift test --filter HRRRPressureArtifactProbeServiceTests` passed
+- `swift test --filter scheduledDispatchUsesIngestLane` passed
+- `swift test --filter AppTests.workerBootstrapRegistersPressureArtifactProbeSchedule` passed
+- `swift test --filter AppTests.arcusQueueLanesIncludeModelArtifacts` passed
+- `swift test --filter AppTests` failed with unrelated shared-state and catalog-collision issues in broader suite execution
+
+Known failures or follow-up work:
+- The broad `swift test --filter AppTests` pass still reports unrelated failures when suites run together, including existing pressure-artifact catalog collisions and pressure warm-job tests that assume isolated database state.
+- No follow-up work is required for issue `#118` itself.
+- Issue `#119` is next.
+
 ---
 
 ## Decisions Made
@@ -274,5 +327,5 @@ These are intentionally left for the next implementation slice and should be set
 
 ## Current Follow-Up
 
-- `#118` is the next issue to run.
-- `#118` should preserve the boundaries set here and build on the warm-job slice without expanding into request-path lookup.
+- `#119` is the next issue to run.
+- `#119` should preserve the boundaries set here and build on the worker probe slice without expanding into request-path lookup.

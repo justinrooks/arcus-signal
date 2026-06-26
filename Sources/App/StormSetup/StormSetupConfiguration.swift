@@ -49,6 +49,11 @@ struct StormSetupConfiguration: Sendable, Equatable {
             in: environment
         ) ?? 50 * 1024 * 1024
 
+        let pressureArtifactProbeIntervalSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_PROBE_INTERVAL_SECONDS",
+            in: environment
+        ) ?? 5 * 60
+
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
@@ -78,6 +83,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
             ),
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
+            pressureArtifactProbeIntervalSeconds: pressureArtifactProbeIntervalSeconds,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
             anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
@@ -91,6 +97,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
         gribSubsetMaximumByteCount: 50 * 1024 * 1024,
+        pressureArtifactProbeIntervalSeconds: 5 * 60,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
         anvilProfileAnalysisBaseURL: nil,
@@ -102,6 +109,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let sampledSnapshotCacheRootURL: URL
     let gribSubsetCacheRetentionSeconds: TimeInterval
     let gribSubsetMaximumByteCount: Int
+    let pressureArtifactProbeIntervalSeconds: TimeInterval
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
     let anvilProfileAnalysisBaseURL: URL?
@@ -113,6 +121,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         sampledSnapshotCacheRootURL: URL,
         gribSubsetCacheRetentionSeconds: TimeInterval,
         gribSubsetMaximumByteCount: Int,
+        pressureArtifactProbeIntervalSeconds: TimeInterval,
         wgrib2ExecutableURL: URL,
         wgrib2TimeoutSeconds: TimeInterval,
         anvilProfileAnalysisBaseURL: URL? = nil,
@@ -123,6 +132,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         self.sampledSnapshotCacheRootURL = sampledSnapshotCacheRootURL
         self.gribSubsetCacheRetentionSeconds = gribSubsetCacheRetentionSeconds
         self.gribSubsetMaximumByteCount = gribSubsetMaximumByteCount
+        self.pressureArtifactProbeIntervalSeconds = pressureArtifactProbeIntervalSeconds
         self.wgrib2ExecutableURL = wgrib2ExecutableURL
         self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
         self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL

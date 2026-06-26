@@ -37,6 +37,7 @@ struct StormSetupWgrib2ClientTests {
             sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+            pressureArtifactProbeIntervalSeconds: 5 * 60,
             wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/wgrib2"),
             wgrib2TimeoutSeconds: 15
         )
@@ -290,6 +291,7 @@ struct StormSetupWgrib2ClientTests {
             sampledSnapshotCacheRootURL: FileManager.default.temporaryDirectory,
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+            pressureArtifactProbeIntervalSeconds: 5 * 60,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: 15
         )

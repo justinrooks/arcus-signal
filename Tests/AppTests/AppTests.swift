@@ -953,6 +953,21 @@ struct AppTests {
         }
     }
 
+    @Test("Arcus queue lanes include model artifacts")
+    func arcusQueueLanesIncludeModelArtifacts() {
+        #expect(ArcusQueueLane.allCases.contains(.modelArtifacts))
+    }
+
+    @Test("Worker bootstrap registers the HRRR pressure artifact probe schedule")
+    func workerBootstrapRegistersPressureArtifactProbeSchedule() async throws {
+        try await withApp(mode: .worker) { app in
+            #expect(app.workerScheduledJobNames.contains("DispatchIngestNWSAlertsScheduledJob"))
+            #expect(app.workerScheduledJobNames.contains("ProbeHRRRPressureArtifactsScheduledJob"))
+            #expect(app.workerScheduledJobNames.contains("RefreshOperatorDashboardSnapshotScheduledJob"))
+            #expect(app.workerScheduledJobNames.count == 3)
+        }
+    }
+
     @Test("TargetEventRevision dispatch policy gates to changed and active revisions")
     func targetDispatchPolicyGatesChangedAndActive() {
         #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: false))

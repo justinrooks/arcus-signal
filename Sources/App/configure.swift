@@ -45,8 +45,18 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         configureWorkerQueueSettings(on: app)
         configureWorkerRuntime(on: app)
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)
+        app.recordWorkerScheduledJob("DispatchIngestNWSAlertsScheduledJob")
+        app.queues.schedule(ProbeHRRRPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds))
+        app.recordWorkerScheduledJob("ProbeHRRRPressureArtifactsScheduledJob")
         app.queues.schedule(RefreshOperatorDashboardSnapshotScheduledJob()).every(seconds: OperatorDashboardConfig.fastRefreshIntervalSeconds)
+        app.recordWorkerScheduledJob("RefreshOperatorDashboardSnapshotScheduledJob")
         app.logger.info("Configured scheduled ingestion dispatch (every 60 seconds).")
+        app.logger.info(
+            "Configured scheduled HRRR pressure artifact probe.",
+            metadata: [
+                "intervalSeconds": .stringConvertible(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds)
+            ]
+        )
         try configureWorkerRoutes(app)
     }
 }

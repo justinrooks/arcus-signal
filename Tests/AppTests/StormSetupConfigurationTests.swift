@@ -18,6 +18,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.localWgrib2ExecutableURL)
         #expect(configuration.wgrib2TimeoutSeconds == 15)
         #expect(configuration.gribSubsetMaximumByteCount == 50 * 1024 * 1024)
+        #expect(configuration.pressureArtifactProbeIntervalSeconds == 5 * 60)
         #expect(configuration.anvilProfileAnalysisBaseURL == nil)
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == nil)
     }
@@ -44,6 +45,7 @@ struct StormSetupConfigurationTests {
             "STORM_SETUP_WGRIB2_PATH": "/usr/local/bin/wgrib2",
             "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS": "21",
             "STORM_SETUP_GRIB_MAX_BYTES": "4194304",
+            "STORM_SETUP_PRESSURE_ARTIFACT_PROBE_INTERVAL_SECONDS": "600",
             "ANVIL_PROFILE_ANALYSIS_BASE_URL": "https://anvil.example.com",
             "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS": "11"
         ])
@@ -54,6 +56,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.wgrib2ExecutableURL.path == "/usr/local/bin/wgrib2")
         #expect(configuration.wgrib2TimeoutSeconds == 21)
         #expect(configuration.gribSubsetMaximumByteCount == 4_194_304)
+        #expect(configuration.pressureArtifactProbeIntervalSeconds == 600)
         #expect(configuration.anvilProfileAnalysisBaseURL?.absoluteString == "https://anvil.example.com")
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == 11)
     }
