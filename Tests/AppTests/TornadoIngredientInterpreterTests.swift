@@ -13,7 +13,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 400,
                 mlcinJkg: -140,
                 mllclM: 1500,
-                temperatureDewpointSpreadF: 24,
+                tempDewPtDeltaF: 24,
                 shear06kmKt: 20,
                 srh01kmM2s2: 40,
                 srh03kmM2s2: 55
@@ -32,7 +32,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 1500,
                 mlcinJkg: -40,
                 mllclM: 950,
-                temperatureDewpointSpreadF: 17,
+                tempDewPtDeltaF: 17,
                 shear06kmKt: 42,
                 srh01kmM2s2: 90,
                 srh03kmM2s2: 140
@@ -51,7 +51,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 2300,
                 mlcinJkg: -35,
                 mllclM: 850,
-                temperatureDewpointSpreadF: 10,
+                tempDewPtDeltaF: 10,
                 shear06kmKt: 48,
                 srh01kmM2s2: 175,
                 srh03kmM2s2: 300
@@ -70,7 +70,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 3000,
                 mlcinJkg: -15,
                 mllclM: 700,
-                temperatureDewpointSpreadF: 6,
+                tempDewPtDeltaF: 6,
                 shear06kmKt: 58,
                 srh01kmM2s2: 260,
                 srh03kmM2s2: 320,
@@ -102,7 +102,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 1700,
                 mlcinJkg: -35,
                 mllclM: 900,
-                temperatureDewpointSpreadF: 12,
+                tempDewPtDeltaF: 12,
                 shear06kmKt: 45,
                 srh01kmM2s2: 45,
                 srh03kmM2s2: 60
@@ -122,7 +122,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 1700,
                 mlcinJkg: -20,
                 mllclM: 1600,
-                temperatureDewpointSpreadF: 24,
+                tempDewPtDeltaF: 24,
                 shear06kmKt: 45,
                 srh01kmM2s2: 100,
                 srh03kmM2s2: 180
@@ -155,7 +155,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 1700,
                 mlcinJkg: -20,
                 mllclM: 900,
-                temperatureDewpointSpreadF: 12,
+                tempDewPtDeltaF: 12,
                 shear06kmKt: 45,
                 srh01kmM2s2: 100,
                 srh03kmM2s2: 180
@@ -177,7 +177,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 1500,
                 mlcinJkg: -40,
                 mllclM: 950,
-                temperatureDewpointSpreadF: 17,
+                tempDewPtDeltaF: 17,
                 shear06kmKt: 42,
                 srh01kmM2s2: 90,
                 srh03kmM2s2: 140
@@ -199,7 +199,7 @@ struct TornadoIngredientInterpreterTests {
             mucapeJkg: 1500,
             mlcinJkg: -40,
             mllclM: 950,
-            temperatureDewpointSpreadF: 17,
+            tempDewPtDeltaF: 17,
             shear06kmKt: 42,
             srh01kmM2s2: 90,
             srh03kmM2s2: 140
@@ -222,7 +222,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 1500,
                 mlcinJkg: -40,
                 mllclM: 950,
-                temperatureDewpointSpreadF: 17,
+                tempDewPtDeltaF: 17,
                 shear06kmKt: 42,
                 srh01kmM2s2: 90,
                 srh03kmM2s2: 140
@@ -247,7 +247,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 2300,
                 mlcinJkg: -35,
                 mllclM: 850,
-                temperatureDewpointSpreadF: 10,
+                tempDewPtDeltaF: 10,
                 shear06kmKt: 48,
                 srh01kmM2s2: 175,
                 srh03kmM2s2: 300
@@ -269,7 +269,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 2300,
                 mlcinJkg: -35,
                 mllclM: 850,
-                temperatureDewpointSpreadF: 10,
+                tempDewPtDeltaF: 10,
                 shear06kmKt: 48,
                 srh01kmM2s2: 175,
                 srh03kmM2s2: 300
@@ -291,7 +291,7 @@ struct TornadoIngredientInterpreterTests {
                 mucapeJkg: 2300,
                 mlcinJkg: -35,
                 mllclM: 850,
-                temperatureDewpointSpreadF: 10,
+                tempDewPtDeltaF: 10,
                 shear06kmKt: 48,
                 srh01kmM2s2: 175,
                 srh03kmM2s2: 300
@@ -487,7 +487,7 @@ struct TornadoIngredientInterpreterTests {
         mucapeJkg: Double? = nil,
         mlcinJkg: Double? = nil,
         mllclM: Double? = nil,
-        temperatureDewpointSpreadF: Double? = nil,
+        tempDewPtDeltaF: Double? = nil,
         shear06kmKt: Double? = nil,
         effectiveShearKt: Double? = nil,
         srh01kmM2s2: Double? = nil,
@@ -504,7 +504,7 @@ struct TornadoIngredientInterpreterTests {
             mlcinJkg: mlcinJkg,
             dcapeJkg: nil,
             mllclM: mllclM,
-            temperatureDewpointSpreadF: temperatureDewpointSpreadF,
+            tempDewPtDeltaF: tempDewPtDeltaF,
             lclLfcSeparationM: nil,
             lapseRate03kmCkm: nil,
             lapseRate700500mbCkm: nil,

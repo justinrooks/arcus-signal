@@ -540,7 +540,7 @@ private extension TornadoIngredientInterpreter {
     func moistureScore(_ raw: TornadoRawParameters) -> Double? {
         let scores: [Double] = [
             raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
-            raw.temperatureDewpointSpreadF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
+            raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
         ].compactMap { $0 }
 
         guard !scores.isEmpty else {
@@ -553,7 +553,7 @@ private extension TornadoIngredientInterpreter {
     func cloudBaseScore(_ raw: TornadoRawParameters) -> Double? {
         let scores: [Double] = [
             raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
-            raw.temperatureDewpointSpreadF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
+            raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
         ].compactMap { $0 }
 
         guard !scores.isEmpty else {

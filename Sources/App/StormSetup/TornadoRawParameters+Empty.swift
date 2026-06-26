@@ -10,7 +10,6 @@ extension TornadoRawParameters {
         mllclM: nil,
         tempDewPtDeltaF: nil,
         threeCapeJkg: nil,
-        temperatureDewpointSpreadF: nil,
         lclLfcSeparationM: nil,
         lapseRate03kmCkm: nil,
         lapseRate700500mbCkm: nil,

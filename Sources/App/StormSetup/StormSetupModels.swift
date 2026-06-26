@@ -113,7 +113,6 @@ struct TornadoRawParameters: Content, Sendable {
     let mllclM: Double?
     let tempDewPtDeltaF: Double?
     let threeCapeJkg: Double?
-    let temperatureDewpointSpreadF: Double?
     let lclLfcSeparationM: Double?
     let lapseRate03kmCkm: Double?
     let lapseRate700500mbCkm: Double?
@@ -143,7 +142,6 @@ struct TornadoRawParameters: Content, Sendable {
         mllclM: Double?,
         tempDewPtDeltaF: Double? = nil,
         threeCapeJkg: Double? = nil,
-        temperatureDewpointSpreadF: Double?,
         lclLfcSeparationM: Double?,
         lapseRate03kmCkm: Double?,
         lapseRate700500mbCkm: Double?,
@@ -172,7 +170,6 @@ struct TornadoRawParameters: Content, Sendable {
         self.mllclM = mllclM
         self.tempDewPtDeltaF = tempDewPtDeltaF
         self.threeCapeJkg = threeCapeJkg
-        self.temperatureDewpointSpreadF = temperatureDewpointSpreadF
         self.lclLfcSeparationM = lclLfcSeparationM
         self.lapseRate03kmCkm = lapseRate03kmCkm
         self.lapseRate700500mbCkm = lapseRate700500mbCkm
@@ -204,7 +201,7 @@ extension TornadoRawParameters {
             mlcinJkg != nil,
             dcapeJkg != nil,
             mllclM != nil,
-            tempDewPtDeltaF != nil || temperatureDewpointSpreadF != nil,
+            tempDewPtDeltaF != nil,
             threeCapeJkg != nil,
             lclLfcSeparationM != nil,
             lapseRate03kmCkm != nil,

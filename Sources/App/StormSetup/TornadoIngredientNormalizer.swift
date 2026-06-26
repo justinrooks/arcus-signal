@@ -140,7 +140,6 @@ private struct TornadoRawParametersBuilder {
                 mllclM: mllclM?.value,
                 tempDewPtDeltaF: tempDewPtDeltaF,
                 threeCapeJkg: threeCapeJkg?.value,
-                temperatureDewpointSpreadF: tempDewPtDeltaF,
                 lclLfcSeparationM: nil,
                 lapseRate03kmCkm: nil,
                 lapseRate700500mbCkm: nil,

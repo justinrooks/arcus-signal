@@ -26,7 +26,6 @@ struct StormSetupIngredientNormalizationTests {
         )
 
         #expect(result.raw.tempDewPtDeltaF?.isApproximatelyEqual(to: 10.8) == true)
-        #expect(result.raw.temperatureDewpointSpreadF?.isApproximatelyEqual(to: 10.8) == true)
         #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .temperature2mK)
         #expect(result.raw.diagnostics?.last?.matchedRawParameterKey == .dewpoint2mK)
     }

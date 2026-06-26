@@ -471,7 +471,7 @@ struct StormSetupSnapshotCacheTests {
             mlcinJkg: mlcinJkg,
             dcapeJkg: nil,
             mllclM: mllclM,
-            temperatureDewpointSpreadF: nil,
+            tempDewPtDeltaF: nil,
             lclLfcSeparationM: nil,
             lapseRate03kmCkm: nil,
             lapseRate700500mbCkm: nil,
