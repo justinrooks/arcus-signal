@@ -23,6 +23,11 @@ protocol StormSetupFieldSampling: Sendable {
         from subset: GribSubsetCacheResult,
         around centroid: StormSetupCentroid
     ) async throws -> [HrrrFieldSample]
+
+    func sample(
+        localFileURL: URL,
+        around centroid: StormSetupCentroid
+    ) async throws -> [HrrrFieldSample]
 }
 
 protocol StormSetupIngredientNormalizing: Sendable {

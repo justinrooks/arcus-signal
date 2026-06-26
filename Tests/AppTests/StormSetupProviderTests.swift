@@ -1120,6 +1120,33 @@ private actor StubStormSetupFieldSampler: StormSetupFieldSampling {
         requestCount += 1
         return try await responseProvider(subset, centroid)
     }
+
+    func sample(
+        localFileURL: URL,
+        around centroid: StormSetupCentroid
+    ) async throws -> [HrrrFieldSample] {
+        requestCount += 1
+        let syntheticSource = StormSetupSourceMetadata(
+            sourceKind: .directObject,
+            model: nil,
+            product: nil,
+            domain: nil,
+            runTime: nil,
+            forecastHour: nil,
+            validTime: nil,
+            fieldSetVersion: nil,
+            primaryDownloadURL: localFileURL
+        )
+        let subset = GribSubsetCacheResult(
+            source: syntheticSource,
+            localFileURL: localFileURL,
+            byteSize: 0,
+            fetchedAt: .distantPast,
+            expiresAt: .distantFuture,
+            cacheHit: true
+        )
+        return try await responseProvider(subset, centroid)
+    }
 }
 
 private struct StubStormSetupNormalizer: StormSetupIngredientNormalizing, @unchecked Sendable {

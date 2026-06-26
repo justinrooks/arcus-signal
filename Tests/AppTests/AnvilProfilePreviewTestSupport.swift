@@ -113,14 +113,44 @@ actor PreviewStubPressureSourceResolver: HrrrPressureDirectObjectResolving {
     }
 }
 
+actor PreviewStubPressureArtifactCatalogLookupService: PressureArtifactCatalogLookupProviding {
+    private let handler: @Sendable (HrrrRunCandidate) async throws -> PressureArtifactCatalogReadyArtifact?
+    private(set) var callCount = 0
+
+    init(
+        handler: @escaping @Sendable (HrrrRunCandidate) async throws -> PressureArtifactCatalogReadyArtifact?
+    ) {
+        self.handler = handler
+    }
+
+    func readyArtifact(
+        for candidate: HrrrRunCandidate
+    ) async throws -> PressureArtifactCatalogReadyArtifact? {
+        callCount += 1
+        return try await handler(candidate)
+    }
+}
+
 actor PreviewStubPressureProfileLoader: HrrrPressureProfileLoading {
     private let handler: @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
+    private let readyHandler: @Sendable (PressureArtifactCatalogReadyArtifact, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
     private var callCount = 0
 
     init(
         handler: @escaping @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
     ) {
         self.handler = handler
+        self.readyHandler = { _, _, _ in
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "ready artifact path was not configured for this test.")
+        }
+    }
+
+    init(
+        handler: @escaping @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult,
+        readyHandler: @escaping @Sendable (PressureArtifactCatalogReadyArtifact, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
+    ) {
+        self.handler = handler
+        self.readyHandler = readyHandler
     }
 
     func loadPressureProfile(
@@ -131,6 +161,14 @@ actor PreviewStubPressureProfileLoader: HrrrPressureProfileLoading {
         let index = callCount
         callCount += 1
         return try await handler(index, sourceResolution, centroid, surfaceHeightMslM)
+    }
+
+    func loadPressureProfile(
+        for readyArtifact: PressureArtifactCatalogReadyArtifact,
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
+    ) async throws -> HrrrPressureProfileLoadResult {
+        try await readyHandler(readyArtifact, centroid, surfaceHeightMslM)
     }
 }
 
@@ -148,6 +186,33 @@ actor PreviewStubStormSetupFieldSampler: StormSetupFieldSampling {
         around centroid: StormSetupCentroid
     ) async throws -> [HrrrFieldSample] {
         try await handler(subset, centroid)
+    }
+
+    func sample(
+        localFileURL: URL,
+        around centroid: StormSetupCentroid
+    ) async throws -> [HrrrFieldSample] {
+        try await handler(
+            GribSubsetCacheResult(
+                source: StormSetupSourceMetadata(
+                    sourceKind: .directObject,
+                    model: nil,
+                    product: nil,
+                    domain: nil,
+                    runTime: nil,
+                    forecastHour: nil,
+                    validTime: nil,
+                    fieldSetVersion: nil,
+                    primaryDownloadURL: localFileURL
+                ),
+                localFileURL: localFileURL,
+                byteSize: 0,
+                fetchedAt: .distantPast,
+                expiresAt: .distantFuture,
+                cacheHit: true
+            ),
+            centroid
+        )
     }
 }
 
@@ -228,6 +293,78 @@ func previewMakePressureProfileLoadResult(
     )
 }
 
+func previewMakeReadyPressureProfileLoadResult(
+    readyArtifact: PressureArtifactCatalogReadyArtifact,
+    fetchedAt: Date,
+    subsetCacheHit: Bool = true,
+    samples: [HrrrFieldSample]? = nil,
+    surfaceHeightMslM: Double? = nil
+) -> HrrrPressureProfileLoadResult {
+    let sourceResolution = previewMakeReadyPressureSourceResolution(for: readyArtifact)
+    let groupedProfile = StormSetupPressureProfileGrouper().group(
+        samples: samples ?? previewMakePressureSamples(
+            level: 1000,
+            hgt: 1200,
+            tmp: 301.55,
+            dpt: 285.45,
+            ugrd: -2.1,
+            vgrd: 4.6
+        ),
+        surfaceHeightMslM: surfaceHeightMslM
+    )
+    let requestedLevels = StormSetupPressureLevel.preferredDescending
+    let variables = StormSetupPressureProfileVariable.allCases
+    let selectedMessages = groupedProfile.retainedLevels.enumerated().flatMap { levelIndex, level in
+        variables.enumerated().map { variableIndex, variable in
+            HrrrPressureProfileSelectedMessage(
+                inventoryIndex: levelIndex * variables.count + variableIndex,
+                record: HrrrPressureIdxInventoryRecord(
+                    messageNumber: levelIndex * variables.count + variableIndex + 1,
+                    byteOffset: Int64((levelIndex * variables.count + variableIndex) * 1_024),
+                    dateRunToken: nil,
+                    variableToken: variable.rawValue,
+                    levelText: "\(level.pressureMb) mb",
+                    forecastLabel: "ready artifact",
+                    rawLine: "\(level.pressureMb) mb"
+                ),
+                pressureLevel: StormSetupPressureLevel(rawValue: level.pressureMb) ?? .mb1000,
+                variable: variable
+            )
+        }
+    }
+    let selection = HrrrPressureProfileMessageSelectionResult(
+        requestedLevels: requestedLevels,
+        selectedMessages: selectedMessages,
+        missingLevels: groupedProfile.missingLevels,
+        ignoredRecords: []
+    )
+    let byteRangePlan = HrrrGribByteRangePlanner().plan(
+        inventory: HrrrPressureIdxInventory(records: selection.selectedMessages.map(\.record)),
+        selectedMessages: selection.selectedMessages
+    )
+
+    return HrrrPressureProfileLoadResult(
+        sourceResolution: sourceResolution,
+        inventory: HrrrPressureIdxInventory(records: selection.selectedMessages.map(\.record)),
+        selection: selection,
+        byteRangePlan: byteRangePlan,
+        subsetCacheResult: previewMakePressureSubsetCacheResult(
+            source: sourceResolution.source,
+            fetchedAt: fetchedAt,
+            cacheHit: subsetCacheHit
+        ),
+        samples: samples ?? previewMakePressureSamples(
+            level: 1000,
+            hgt: 1200,
+            tmp: 301.55,
+            dpt: 285.45,
+            ugrd: -2.1,
+            vgrd: 4.6
+        ),
+        groupedProfile: groupedProfile
+    )
+}
+
 func previewMakePressureSubsetCacheResult(
     source: StormSetupSourceMetadata,
     fetchedAt: Date,
@@ -241,6 +378,59 @@ func previewMakePressureSubsetCacheResult(
         fetchedAt: fetchedAt,
         expiresAt: fetchedAt.addingTimeInterval(3600),
         cacheHit: cacheHit
+    )
+}
+
+func previewMakeReadyPressureArtifact(
+    runTime: Date,
+    forecastHour: Int,
+    validTime: Date,
+    localPath: String = "/private/tmp/anvil-preview-pressure-artifact.grib2",
+    byteSize: Int64 = 1024,
+    product: HrrrProduct = .wrfprsf,
+    fieldSetVersion: HrrrFieldSetVersion = .tornadoPressureV2
+) -> PressureArtifactCatalogReadyArtifact {
+    PressureArtifactCatalogReadyArtifact(
+        runTime: runTime,
+        forecastHour: forecastHour,
+        validTime: validTime,
+        product: product,
+        fieldSetVersion: fieldSetVersion,
+        localFileURL: URL(fileURLWithPath: localPath),
+        byteSize: byteSize
+    )
+}
+
+private func previewMakeReadyPressureSourceResolution(
+    for readyArtifact: PressureArtifactCatalogReadyArtifact
+) -> HrrrPressureDirectObjectResolution {
+    let candidate = HrrrRunCandidate(
+        product: readyArtifact.product,
+        runTime: readyArtifact.runTime,
+        forecastHour: readyArtifact.forecastHour,
+        fieldSetVersion: readyArtifact.fieldSetVersion
+    )
+    let source = StormSetupSourceMetadata(
+        sourceKind: .directObject,
+        model: candidate.model,
+        product: candidate.product,
+        domain: candidate.domain,
+        runTime: candidate.runTime,
+        forecastHour: candidate.forecastHour,
+        validTime: readyArtifact.validTime,
+        fieldSetVersion: candidate.fieldSetVersion,
+        primaryDownloadURL: readyArtifact.localFileURL
+    )
+
+    return HrrrPressureDirectObjectResolution(
+        candidate: candidate,
+        source: source,
+        idxProbe: HrrrRemoteObjectProbeResult(
+            url: readyArtifact.localFileURL,
+            available: false,
+            status: nil
+        ),
+        gribProbe: nil
     )
 }
 

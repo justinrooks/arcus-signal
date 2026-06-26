@@ -1,0 +1,256 @@
+@testable import App
+import Fluent
+import FluentSQL
+import Foundation
+import Testing
+import Vapor
+
+@Suite("Pressure artifact catalog lookup", .serialized)
+struct PressureArtifactCatalogLookupServiceTests {
+    private func withApp(test: (Application) async throws -> Void) async throws {
+        let app = try await Application.make(.testing)
+        do {
+            try await configure(app, mode: .api)
+            try await app.autoMigrate()
+            try await clearCatalog(on: app.db)
+            try await test(app)
+        } catch {
+            Issue.record("Test DB error: \(String(reflecting: error))")
+            try? await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
+    private func clearCatalog(on db: any Database) async throws {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        try await sql.raw("DELETE FROM pressure_artifact_catalog;").run()
+    }
+
+    @Test("exact ready lookup returns the expected local artifact")
+    func exactReadyLookupReturnsExpectedLocalArtifact() async throws {
+        try await withApp { app in
+            let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let localFileURL = makeTempRegularFile(contents: Data("ready-artifact".utf8))
+            let candidate = HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: runTime,
+                forecastHour: 9,
+                fieldSetVersion: .tornadoPressureV2
+            )
+
+            try await PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 9,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: localFileURL.path,
+                byteSize: 14,
+                source: .aws
+            ).create(on: app.db)
+
+            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let artifact = try await service.readyArtifact(for: candidate)
+
+            #expect(artifact?.runTime == runTime)
+            #expect(artifact?.forecastHour == 9)
+            #expect(artifact?.validTime == validTime)
+            #expect(artifact?.product == .wrfprsf)
+            #expect(artifact?.fieldSetVersion == .tornadoPressureV2)
+            #expect(artifact?.localFileURL == localFileURL)
+            #expect(artifact?.byteSize == 14)
+        }
+    }
+
+    @Test("wrong field-set version is not accepted")
+    func wrongFieldSetVersionIsNotAccepted() async throws {
+        try await withApp { app in
+            let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let localFileURL = makeTempRegularFile(contents: Data("ready-artifact".utf8))
+            let candidate = HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: runTime,
+                forecastHour: 9,
+                fieldSetVersion: .tornadoPressureV2
+            )
+
+            try await PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 9,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV1,
+                status: .ready,
+                localPath: localFileURL.path,
+                byteSize: 14,
+                source: .aws
+            ).create(on: app.db)
+
+            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let artifact = try await service.readyArtifact(for: candidate)
+
+            #expect(artifact == nil)
+        }
+    }
+
+    @Test("non-ready rows are not accepted")
+    func nonReadyRowsAreNotAccepted() async throws {
+        try await withApp { app in
+            let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let localFileURL = makeTempRegularFile(contents: Data("ready-artifact".utf8))
+            for (offset, status) in [PressureArtifactCatalogStatus.pending, .warming, .failed, .expired].enumerated() {
+                let forecastHour = 9 + offset
+                let candidate = HrrrRunCandidate(
+                    product: .wrfprsf,
+                    runTime: runTime,
+                    forecastHour: forecastHour,
+                    fieldSetVersion: .tornadoPressureV2
+                )
+
+                try await PressureArtifactCatalogModel(
+                    runTime: runTime,
+                    forecastHour: forecastHour,
+                    validTime: validTime,
+                    product: .wrfprsf,
+                    fieldSetVersion: .tornadoPressureV2,
+                    status: status,
+                    localPath: localFileURL.path,
+                    byteSize: 14,
+                    source: .aws
+                ).create(on: app.db)
+
+                let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+                let artifact = try await service.readyArtifact(for: candidate)
+
+                #expect(artifact == nil)
+            }
+        }
+    }
+
+    @Test("ready rows with unusable local paths are not accepted")
+    func readyRowsWithUnusableLocalPathsAreNotAccepted() async throws {
+        try await withApp { app in
+            let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let candidate = HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: runTime,
+                forecastHour: 9,
+                fieldSetVersion: .tornadoPressureV2
+            )
+            let missingPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("missing-ready-artifact-\(UUID().uuidString).grib2")
+            let directoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ready-artifact-directory-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            let zeroByteURL = makeTempRegularFile(contents: Data())
+            let noPathRow = PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 9,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                source: .aws
+            )
+            let missingFileRow = PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 10,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: missingPath.path,
+                byteSize: 14,
+                source: .aws
+            )
+            let directoryRow = PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 11,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: directoryURL.path,
+                byteSize: 14,
+                source: .aws
+            )
+            let zeroByteRow = PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 12,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: zeroByteURL.path,
+                byteSize: 0,
+                source: .aws
+            )
+
+            try await noPathRow.create(on: app.db)
+            try await missingFileRow.create(on: app.db)
+            try await directoryRow.create(on: app.db)
+            try await zeroByteRow.create(on: app.db)
+
+            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+
+            #expect(try await service.readyArtifact(for: candidate) == nil)
+            #expect(try await service.readyArtifact(for: candidate.with(forecastHour: 10)) == nil)
+            #expect(try await service.readyArtifact(for: candidate.with(forecastHour: 11)) == nil)
+            #expect(try await service.readyArtifact(for: candidate.with(forecastHour: 12)) == nil)
+        }
+    }
+
+    private func makeUTCDate(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int = 0,
+        second: Int = 0
+    ) -> Date {
+        let components = DateComponents(
+            timeZone: TimeZone(secondsFromGMT: 0),
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second
+        )
+
+        guard let date = StormSetupUTC.calendar.date(from: components) else {
+            preconditionFailure("Unable to create UTC date for test.")
+        }
+
+        return date
+    }
+
+    private func makeTempRegularFile(contents: Data) -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ready-artifact-\(UUID().uuidString).grib2")
+        FileManager.default.createFile(atPath: url.path, contents: contents)
+        return url
+    }
+}
+
+private extension HrrrRunCandidate {
+    func with(forecastHour: Int) -> HrrrRunCandidate {
+        HrrrRunCandidate(
+            model: model,
+            product: product,
+            domain: domain,
+            runTime: runTime,
+            forecastHour: forecastHour,
+            fieldSetVersion: fieldSetVersion
+        )
+    }
+}

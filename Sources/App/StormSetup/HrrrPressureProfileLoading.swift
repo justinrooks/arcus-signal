@@ -6,6 +6,12 @@ protocol HrrrPressureProfileLoading: Sendable {
         centroid: StormSetupCentroid,
         surfaceHeightMslM: Double?
     ) async throws -> HrrrPressureProfileLoadResult
+
+    func loadPressureProfile(
+        for readyArtifact: PressureArtifactCatalogReadyArtifact,
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
+    ) async throws -> HrrrPressureProfileLoadResult
 }
 
 struct HrrrPressureProfileLoadResult: Sendable {
@@ -78,6 +84,49 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
         let groupedProfile = pressureGrouper.group(
             samples: samples,
             surfaceHeightMslM: surfaceHeightMslM
+        )
+
+        return HrrrPressureProfileLoadResult(
+            sourceResolution: sourceResolution,
+            inventory: inventory,
+            selection: selection,
+            byteRangePlan: byteRangePlan,
+            subsetCacheResult: subsetCacheResult,
+            samples: samples,
+            groupedProfile: groupedProfile
+        )
+    }
+
+    func loadPressureProfile(
+        for readyArtifact: PressureArtifactCatalogReadyArtifact,
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
+    ) async throws -> HrrrPressureProfileLoadResult {
+        let now = Date()
+        let samples = try await samplePressureFile(
+            localFileURL: readyArtifact.localFileURL,
+            centroid: centroid
+        )
+        let groupedProfile = pressureGrouper.group(
+            samples: samples,
+            surfaceHeightMslM: surfaceHeightMslM
+        )
+
+        let sourceResolution = makeSourceResolution(for: readyArtifact)
+        let selection = makeSelection(from: groupedProfile)
+        let inventory = makeInventory(from: selection)
+        let byteRangePlan = HrrrGribByteRangePlanner().plan(
+            inventory: inventory,
+            selectedMessages: selection.selectedMessages
+        )
+        let subsetCacheResult = HrrrPressureSubsetGribCacheResult(
+            source: sourceResolution.source,
+            localFileURL: readyArtifact.localFileURL,
+            byteSize: readyArtifact.byteSize,
+            checksumSHA256: "",
+            fetchedAt: now,
+            expiresAt: now.addingTimeInterval(15 * 60),
+            cacheHit: true
         )
 
         return HrrrPressureProfileLoadResult(
@@ -166,6 +215,24 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
         }
     }
 
+    private func samplePressureFile(
+        localFileURL: URL,
+        centroid: StormSetupCentroid
+    ) async throws -> [HrrrFieldSample] {
+        do {
+            return try await fieldSampler.sample(
+                localFileURL: localFileURL,
+                around: centroid
+            )
+        } catch let error as Wgrib2ClientError {
+            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
+        } catch let error as ProcessRunnerError {
+            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
+        } catch {
+            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
+        }
+    }
+
     private var requestHeaders: [String: String] {
         [
             "User-Agent": HTTPRequestHeaders.userAgent(),
@@ -186,5 +253,80 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
         .joined(separator: "; ")
 
         return "No complete pressure profile levels were selected. Missing or incomplete levels: \(details)."
+    }
+
+    private func makeSourceResolution(
+        for readyArtifact: PressureArtifactCatalogReadyArtifact
+    ) -> HrrrPressureDirectObjectResolution {
+        let candidate = HrrrRunCandidate(
+            product: readyArtifact.product,
+            runTime: readyArtifact.runTime,
+            forecastHour: readyArtifact.forecastHour,
+            fieldSetVersion: readyArtifact.fieldSetVersion
+        )
+        let source = StormSetupSourceMetadata(
+            sourceKind: .directObject,
+            model: candidate.model,
+            product: candidate.product,
+            domain: candidate.domain,
+            runTime: candidate.runTime,
+            forecastHour: candidate.forecastHour,
+            validTime: readyArtifact.validTime,
+            fieldSetVersion: candidate.fieldSetVersion,
+            primaryDownloadURL: readyArtifact.localFileURL
+        )
+
+        return HrrrPressureDirectObjectResolution(
+            candidate: candidate,
+            source: source,
+            idxProbe: HrrrRemoteObjectProbeResult(
+                url: readyArtifact.localFileURL,
+                available: false,
+                status: nil
+            ),
+            gribProbe: nil
+        )
+    }
+
+    private func makeSelection(
+        from groupedProfile: StormSetupPressureProfileGroupingResult
+    ) -> HrrrPressureProfileMessageSelectionResult {
+        let requestedLevels = StormSetupPressureLevel.preferredDescending
+        let variables = StormSetupPressureProfileVariable.allCases
+        let selectedMessages = groupedProfile.retainedLevels.enumerated().flatMap { levelIndex, level in
+            variables.enumerated().map { variableIndex, variable in
+                HrrrPressureProfileSelectedMessage(
+                    inventoryIndex: levelIndex * variables.count + variableIndex,
+                    record: HrrrPressureIdxInventoryRecord(
+                        messageNumber: levelIndex * variables.count + variableIndex + 1,
+                        byteOffset: Int64((levelIndex * variables.count + variableIndex) * 1_024),
+                        dateRunToken: nil,
+                        variableToken: variable.rawValue,
+                        levelText: "\(level.pressureMb) mb",
+                        forecastLabel: "ready artifact",
+                        rawLine: "\(level.pressureMb) mb"
+                    ),
+                    pressureLevel: StormSetupPressureLevel(rawValue: level.pressureMb) ?? .mb1000,
+                    variable: variable
+                )
+            }
+        }
+
+        return HrrrPressureProfileMessageSelectionResult(
+            requestedLevels: requestedLevels,
+            selectedMessages: selectedMessages,
+            missingLevels: groupedProfile.missingLevels,
+            ignoredRecords: []
+        )
+    }
+
+    private func makeInventory(
+        from selection: HrrrPressureProfileMessageSelectionResult
+    ) -> HrrrPressureIdxInventory {
+        HrrrPressureIdxInventory(
+            records: selection.selectedMessages.map { selectedMessage in
+                selectedMessage.record
+            }
+        )
     }
 }

@@ -38,6 +38,7 @@ extension AnvilProfilePreviewError {
 struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let h3Resolver: any StormSetupH3Resolving
     private let hrrrRunResolver: any HrrrRunResolving
+    private let pressureArtifactCatalogLookupService: (any PressureArtifactCatalogLookupProviding)?
     private let pressureSourceResolver: any HrrrPressureDirectObjectResolving
     private let pressureProfileLoader: any HrrrPressureProfileLoading
     private let surfaceHeightMslM: Double?
@@ -47,12 +48,14 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         h3Resolver: any StormSetupH3Resolving = DefaultStormSetupH3Resolver(),
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         hrrrRunResolver: (any HrrrRunResolving)? = nil,
+        pressureArtifactCatalogLookupService: (any PressureArtifactCatalogLookupProviding)? = nil,
         pressureSourceResolver: any HrrrPressureDirectObjectResolving,
         pressureProfileLoader: any HrrrPressureProfileLoading,
         surfaceHeightMslM: Double? = nil
     ) {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
+        self.pressureArtifactCatalogLookupService = pressureArtifactCatalogLookupService
         self.pressureSourceResolver = pressureSourceResolver
         self.pressureProfileLoader = pressureProfileLoader
         self.surfaceHeightMslM = surfaceHeightMslM
@@ -63,6 +66,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let configuration = application.stormSetupConfiguration
         let dateProvider = SystemStormSetupDateProvider()
         let httpClient = VaporApplicationHTTPClient(application: application)
+        let pressureArtifactCatalogLookupService = DefaultPressureArtifactCatalogLookupService(
+            database: application.db
+        )
         let pressureSourceResolver = DefaultHrrrPressureDirectObjectResolver(httpClient: httpClient)
         let pressureProfileLoader = DefaultHrrrPressureProfileLoader(
             httpClient: httpClient,
@@ -78,6 +84,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
         self.init(
             dateProvider: dateProvider,
+            pressureArtifactCatalogLookupService: pressureArtifactCatalogLookupService,
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -144,6 +151,15 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         centroid: StormSetupCentroid,
         targetValidTime: Date
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        if pressureArtifactCatalogLookupService != nil {
+            return try await previewReadyArtifactCandidate(
+                candidate,
+                h3Cell: h3Cell,
+                centroid: centroid,
+                targetValidTime: targetValidTime
+            )
+        }
+
         let sourceResolution = try await resolvePressureSource(
             for: candidate,
             targetValidTime: targetValidTime
@@ -205,6 +221,88 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         return AnvilAnalyzeProfilePreviewResponse(request: request, debug: debug)
     }
 
+    private func previewReadyArtifactCandidate(
+        _ candidate: HrrrRunCandidate,
+        h3Cell: Int64,
+        centroid: StormSetupCentroid,
+        targetValidTime: Date
+    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        guard let pressureArtifactCatalogLookupService else {
+            throw AnvilProfilePreviewError.internalExecutionFailure(
+                reason: "Pressure artifact lookup service was not configured."
+            )
+        }
+
+        let readyArtifact: PressureArtifactCatalogReadyArtifact?
+        do {
+            readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(for: candidate)
+        } catch {
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
+        }
+
+        guard let readyArtifact else {
+            throw AnvilProfilePreviewError.upstreamUnavailable(
+                reason: "No ready pressure artifact was available for \(candidate.fileName)."
+            )
+        }
+
+        let loadResult = try await loadPressureProfile(
+            readyArtifact: readyArtifact,
+            centroid: centroid
+        )
+
+        let buildResult: AnvilProfileRequestBuildResult
+        do {
+            buildResult = try requestBuilder.build(
+                h3Cell: h3Cell,
+                runTime: readyArtifact.runTime,
+                forecastHour: readyArtifact.forecastHour,
+                groupedProfile: loadResult.groupedProfile
+            )
+        } catch let error as AnvilProfileRequestBuilderError {
+            throw classifyBuilderError(error, groupedProfile: loadResult.groupedProfile)
+        } catch {
+            throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
+        }
+
+        let request = buildResult.request
+        let debug = AnvilAnalyzeProfilePreviewDebugDTO(
+            sourceKind: .directObject,
+            product: readyArtifact.product,
+            runTime: request.runTime,
+            forecastHour: request.forecastHour,
+            validTime: request.validTime,
+            h3: request.location.h3,
+            centroid: StormSetupCentroid(
+                latitude: request.location.lat,
+                longitude: request.location.lon
+            ),
+            selectedMessageCount: loadResult.selection.selectedMessages.count,
+            selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
+            rangeCount: loadResult.byteRangePlan.ranges.count,
+            totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
+            pressureLevelsRequested: loadResult.selection.requestedLevels.map(\.pressureMb),
+            pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map(\.pressureMb),
+            missingLevels: loadResult.selection.missingLevels.map {
+                AnvilAnalyzeProfilePreviewMissingLevelDTO(
+                    pressureMb: $0.pressureMb,
+                    missingVariables: $0.missingVariables
+                )
+            },
+            warnings: makeWarnings(
+                for: buildResult.warnings,
+                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count
+            ),
+            subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
+            primaryDownloadURL: readyArtifact.localFileURL,
+            idxURL: nil,
+            idxAvailable: nil,
+            gribAvailable: nil
+        )
+
+        return AnvilAnalyzeProfilePreviewResponse(request: request, debug: debug)
+    }
+
     private func resolvePressureSource(
         for candidate: HrrrRunCandidate,
         targetValidTime: Date
@@ -230,6 +328,23 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         do {
             return try await pressureProfileLoader.loadPressureProfile(
                 for: sourceResolution,
+                centroid: centroid,
+                surfaceHeightMslM: surfaceHeightMslM
+            )
+        } catch let error as AnvilProfilePreviewError {
+            throw error
+        } catch {
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
+        }
+    }
+
+    private func loadPressureProfile(
+        readyArtifact: PressureArtifactCatalogReadyArtifact,
+        centroid: StormSetupCentroid
+    ) async throws -> HrrrPressureProfileLoadResult {
+        do {
+            return try await pressureProfileLoader.loadPressureProfile(
+                for: readyArtifact,
                 centroid: centroid,
                 surfaceHeightMslM: surfaceHeightMslM
             )

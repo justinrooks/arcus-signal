@@ -6,6 +6,130 @@ import Vapor
 
 @Suite("Anvil profile preview provider", .serialized)
 struct AnvilProfilePreviewProviderTests {
+    @Test("provider uses ready pressure artifacts without invoking the cold direct-object path")
+    func providerUsesReadyPressureArtifactsWithoutInvokingColdPath() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let expectedCentroid = try DefaultStormSetupH3Resolver().resolve(h3Cell: h3Cell).centroid
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let pressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: surfaceCandidate.runTime,
+            forecastHour: surfaceCandidate.forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let readyArtifact = previewMakeReadyPressureArtifact(
+            runTime: pressureCandidate.runTime,
+            forecastHour: pressureCandidate.forecastHour,
+            validTime: pressureCandidate.validTime,
+            localPath: "/private/tmp/ready-pressure-artifact.grib2",
+            byteSize: 2_048
+        )
+        let lookupService = PreviewStubPressureArtifactCatalogLookupService { lookedUpCandidate in
+            #expect(lookedUpCandidate == pressureCandidate)
+            return readyArtifact
+        }
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            Issue.record("Pressure source resolver should not have been called for a ready pressure artifact.")
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader(
+            handler: { _, _, _, _ in
+                Issue.record("Cold pressure profile loading should not have been called for a ready pressure artifact.")
+                throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+            },
+            readyHandler: { artifact, centroid, surfaceHeightMslM in
+                #expect(artifact == readyArtifact)
+                #expect(centroid == expectedCentroid)
+                #expect(surfaceHeightMslM == nil)
+                return previewMakeReadyPressureProfileLoadResult(
+                    readyArtifact: artifact,
+                    fetchedAt: now,
+                    subsetCacheHit: true,
+                    samples: previewMakeEightLevelPressureSamples()
+                )
+            }
+        )
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
+            ),
+            pressureArtifactCatalogLookupService: lookupService,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+        let lookupCount = await lookupService.callCount
+
+        #expect(lookupCount == 1)
+        #expect(preview.request.runTime == readyArtifact.runTime)
+        #expect(preview.request.forecastHour == readyArtifact.forecastHour)
+        #expect(preview.request.validTime == readyArtifact.validTime)
+        #expect(preview.debug.primaryDownloadURL == readyArtifact.localFileURL)
+        #expect(preview.debug.idxURL == nil)
+        #expect(preview.debug.idxAvailable == nil)
+        #expect(preview.debug.gribAvailable == nil)
+        #expect(preview.debug.selectedPressureLevels == [1000, 925, 850, 700, 600, 500, 400, 300])
+        #expect(preview.request.profile.pressureMb == [1000, 925, 850, 700, 600, 500, 400, 300])
+    }
+
+    @Test("provider reports ready-artifact pressure evidence as unavailable when no catalog row is ready")
+    func providerReportsReadyArtifactPressureEvidenceAsUnavailableWhenNoRowIsReady() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let pressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: surfaceCandidate.runTime,
+            forecastHour: surfaceCandidate.forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let lookupService = PreviewStubPressureArtifactCatalogLookupService { lookedUpCandidate in
+            #expect(lookedUpCandidate == pressureCandidate)
+            return nil
+        }
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            Issue.record("Pressure source resolver should not have been called when no ready artifact exists.")
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader(
+            handler: { _, _, _, _ in
+                Issue.record("Pressure profile loader should not have been called when no ready artifact exists.")
+                throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+            }
+        )
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
+            ),
+            pressureArtifactCatalogLookupService: lookupService,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        do {
+            _ = try await provider.previewProfile(for: h3Cell)
+            Issue.record("Expected the preview provider to report a missing ready artifact.")
+        } catch let error as AnvilProfilePreviewError {
+            if case .upstreamUnavailable(let reason) = error {
+                #expect(reason.contains("No ready pressure artifact was available") == true)
+                let lookupCount = await lookupService.callCount
+                #expect(lookupCount == 1)
+                return
+            }
+            Issue.record("Expected upstream unavailable error but got \(error).")
+        }
+    }
+
     @Test("provider falls back to the next pressure candidate when the newest source is unavailable")
     func providerFallsBackAcrossCandidates() async throws {
         let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)

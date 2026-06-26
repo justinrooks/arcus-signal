@@ -44,7 +44,8 @@ Related local docs:
 - Issue `#116` added the persistent pressure artifact catalog model, migration, and focused persistence tests.
 - Issue `#117` implemented the warm-job slice with catalog claim/promotion, byte-range reuse, and validation.
 - Issue `#118` implemented the worker-owned probe slice and dedicated model-artifacts scheduling lane.
-- The next implementation issue is `#119`.
+- Issue `#119` changed the normal `storm-setup/current` pressure-evidence path to consume exact ready catalog artifacts instead of request-time cold acquisition.
+- The next implementation issue is `#120`.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -65,6 +66,7 @@ Work these issues sequentially:
 3. `#116` - 03: Add pressure artifact catalog and metadata model
 4. `#117` - 04: Warm-job slice, catalog claim, and validation
 5. `#118` - 05: Worker-owned HRRR pressure artifact probe and schedule
+6. `#119` - 06: Change storm-setup/current to consume ready pressure artifacts
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -290,6 +292,51 @@ Known failures or follow-up work:
 - No follow-up work is required for issue `#118` itself.
 - Issue `#119` is next.
 
+### Issue #119 - 06: Change storm-setup/current to consume ready pressure artifacts
+
+Status: Completed
+
+Scope:
+- Add a ready-artifact catalog lookup service for the storm-setup pressure path.
+- Require an exact ready catalog row for each pressure candidate identity.
+- Validate the local artifact path before sampling.
+- Load pressure profiles from the ready local file without request-time `.idx` retrieval, byte-range downloading, subset stitching, artifact warming, or synchronous queue execution.
+- Preserve the existing surface-source versus Anvil valid-time consistency check.
+- Leave the cold acquisition path available only for explicit debug/manual use.
+
+Files changed:
+- `Sources/App/StormSetup/PressureArtifactCatalogLookupService.swift`
+- `Sources/App/StormSetup/HrrrPressureProfileLoading.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Tests/AppTests/PressureArtifactCatalogLookupServiceTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewTestSupport.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Behavior:
+- The request path now derives pressure artifact identity from `runTime`, `forecastHour`, `wrfprsf`, and `wrfprsf.defaultFieldSetVersion`.
+- Only `.ready` catalog rows with a non-empty `localPath` that resolves to an existing non-zero regular file are accepted.
+- Missing, non-ready, missing-file, directory, or zero-byte artifacts are treated as unavailable evidence.
+- The surface `storm-setup/current` response still succeeds when pressure evidence is unavailable.
+- No stale artifact fallback was added.
+- No request-time warming seam was added; the scheduled probe remains the only enqueue path.
+
+Validation run and results:
+- `swift test --filter PressureArtifactCatalogLookupServiceTests` passed
+- `swift test --filter AnvilProfilePreviewProviderTests` passed
+- `swift test --filter StormSetupProviderTests` passed
+- `swift test --filter HrrrPressureProfileLoadingTests` passed
+- `swift test --filter StormSetupControllerTests` passed
+- `swift test` was run and reported unrelated existing failures in broader suites outside the scoped change
+
+Known failures or follow-up work:
+- Stale ready-artifact fallback remains deferred to `#120`.
+- No new probe or queue abstraction was added for request-time work.
+- The cold `DefaultHrrrPressureProfileLoader` path remains available only for explicit debug/manual use.
+- Issue `#120` is next.
+
 ---
 
 ## Decisions Made
@@ -327,5 +374,5 @@ These are intentionally left for the next implementation slice and should be set
 
 ## Current Follow-Up
 
-- `#119` is the next issue to run.
-- `#119` should preserve the boundaries set here and build on the worker probe slice without expanding into request-path lookup.
+- `#120` is the next issue to run.
+- `#120` should preserve the boundaries set here and handle stale ready-artifact fallback, if that remains desired.
