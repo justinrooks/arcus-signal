@@ -41,7 +41,8 @@ Related local docs:
 - Issue `#114` created the planning docs only.
 - No runtime code, migrations, jobs, models, routes, tests, or refactors were added for this issue.
 - Issue `#115` implemented the first runtime slice and locked in the expanded pressure contract.
-- The next implementation issue is `#116`.
+- Issue `#116` added the persistent pressure artifact catalog model, migration, and focused persistence tests.
+- The next implementation issue is `#117`.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -59,7 +60,8 @@ Work these issues sequentially:
 
 1. `#114` - 01: Create HRRR pressure artifact warmer planning docs
 2. `#115` - 02: First runtime warmer slice
-3. `#116` - Next runtime slice
+3. `#116` - 03: Add pressure artifact catalog and metadata model
+4. `#117` - Next runtime slice
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -146,6 +148,45 @@ Handoff notes for issue `#116`:
 - Preserve the new pressure field-set contract.
 - Do not broaden into request-path behavior or warmer scheduling yet.
 
+### Issue #116 - 03: Add pressure artifact catalog and metadata model
+
+Status: Completed
+
+Scope:
+- Add a persistent pressure artifact catalog model.
+- Add a migration for `pressure_artifact_catalog`.
+- Enforce artifact identity uniqueness on `run_time`, `forecast_hour`, `product`, and `field_set_version`.
+- Add focused tests for insert/query behavior, duplicate handling, version separation, and nullable ready/warming fields.
+
+Files changed:
+- `Sources/App/Models/Data/PressureArtifactCatalogModel.swift`
+- `Sources/App/Migrations/CreatePressureArtifactCatalog.swift`
+- `Sources/App/configure.swift`
+- `Sources/App/lib/DbUtils.swift`
+- `Tests/AppTests/PressureArtifactCatalogTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Schema / table:
+- `pressure_artifact_catalog`
+
+Unique constraint decision:
+- Enforced on `run_time`, `forecast_hour`, `product`, and `field_set_version`.
+- `valid_time` is intentionally excluded because it is derived metadata, not part of the identity wall.
+
+Validation run and results:
+- `swift test --filter PressureArtifactCatalogTests` passed
+- `swift test --filter StormSetupHrrrSourceTests` passed
+
+Known failures or follow-up work:
+- None from this slice.
+- `DbUtils.isUniqueConstraintViolation(_:)` now checks both `String(describing:)` and `String(reflecting:)` so Postgres unique violations are detected reliably in tests and existing call sites.
+- Issue `#117` is next.
+
+Handoff notes for issue `#117`:
+- Keep the next slice narrow and issue-scoped.
+- Build on the catalog table without adding request-path lookup yet.
+- Do not introduce queue jobs or live HRRR acquisition.
+
 ---
 
 ## Decisions Made
@@ -181,5 +222,5 @@ No Swift tests were required for this issue.
 
 ## Current Follow-Up
 
-- `#116` is the next issue to run.
-- `#116` should preserve the boundaries set here and build on the v2 pressure contract.
+- `#117` is the next issue to run.
+- `#117` should preserve the boundaries set here and build on the new catalog model without expanding into request-path lookup.

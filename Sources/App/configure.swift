@@ -85,6 +85,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddCompletionFieldsToTargetDispatchOutbox())
     app.migrations.add(CreateNotificationSendAttempts())
     app.migrations.add(CreateOperatorDashboardSnapshots())
+    app.migrations.add(CreatePressureArtifactCatalog())
 }
 
 private func configureAPNs(on app: Application) async throws {
