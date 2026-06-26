@@ -42,7 +42,8 @@ Related local docs:
 - No runtime code, migrations, jobs, models, routes, tests, or refactors were added for this issue.
 - Issue `#115` implemented the first runtime slice and locked in the expanded pressure contract.
 - Issue `#116` added the persistent pressure artifact catalog model, migration, and focused persistence tests.
-- The next implementation issue is `#117`.
+- Issue `#117` implemented the warm-job slice with catalog claim/promotion, byte-range reuse, and validation.
+- The next implementation issue is `#118`.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -61,7 +62,7 @@ Work these issues sequentially:
 1. `#114` - 01: Create HRRR pressure artifact warmer planning docs
 2. `#115` - 02: First runtime warmer slice
 3. `#116` - 03: Add pressure artifact catalog and metadata model
-4. `#117` - Next runtime slice
+4. `#117` - 04: Warm-job slice, catalog claim, and validation
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -187,6 +188,55 @@ Handoff notes for issue `#117`:
 - Build on the catalog table without adding request-path lookup yet.
 - Do not introduce queue jobs or live HRRR acquisition.
 
+### Issue #117 - 04: Warm-job slice, catalog claim, and validation
+
+Status: Completed
+
+Scope:
+- Add `PressureArtifactWarmJob`.
+- Add `PressureArtifactWarmingService`.
+- Add a small `PressureArtifactValidating` protocol plus a default `wgrib2 -s` validation service.
+- Reuse the existing `HrrrPressureIdxInventory`, `HrrrPressureProfileMessageSelector`, `HrrrGribByteRangePlanner`, and `HrrrPressureSubsetGribCache` pipeline.
+- Claim pending/failed/expired catalog rows, skip ready/warming rows, and promote successful warm results to `ready`.
+
+Files changed:
+- `Sources/App/Jobs/PressureArtifactWarmJob.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Sources/App/StormSetup/PressureArtifactValidationService.swift`
+- `Sources/App/configure.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Claim behavior:
+- `pending`, `failed`, and `expired` rows are promoted to `warming` with a conditional SQL update.
+- `ready` and `warming` rows are skipped without rebuilding.
+- Duplicate jobs for the same artifact key collapse to one build path in the tests and the losing job sees the existing `warming` state.
+
+Validation approach:
+- Production validation uses the existing `ProcessRunner` pattern with `wgrib2 <subset> -s`.
+- Tests use a small fake validator that can succeed or fail deterministically.
+- Validation failure leaves the row in `failed` and does not promote the artifact to `ready`.
+
+Artifact storage:
+- Reuses `HrrrPressureSubsetGribCache`.
+- No separate promoted artifact path was added.
+- The catalog is only flipped to `ready` after the subset cache returns and validation succeeds.
+
+Validation commands and results:
+- `swift test --filter PressureArtifactWarmJobTests` passed
+- `swift test --filter HrrrPressureSubsetGribCacheTests` passed
+- `swift test --filter PressureArtifactCatalogTests` passed
+
+Known failures or follow-up work:
+- None from this slice.
+- The job is registered with Vapor Queues, but no new lane or scheduled probe was added.
+- Issue `#118` is next and owns the model-artifacts lane and scheduled probe.
+
+Handoff notes for issue `#118`:
+- Keep the lane and scheduler work separate from the warm-job implementation.
+- Do not revisit the claim logic or byte-range reuse unless the lane wiring forces it.
+- Preserve the current request-path boundaries.
+
 ---
 
 ## Decisions Made
@@ -215,12 +265,14 @@ These are intentionally left for the next implementation slice and should be set
 - Read the existing issue-runbook and progress-doc patterns before writing the new docs.
 - Verified the new files exist under `docs/plans`.
 - Verified the implementation scope for `#114` is documentation only.
-
-No Swift tests were required for this issue.
+- Ran and passed the warm-job verification filters for issue `#117`:
+  - `swift test --filter PressureArtifactWarmJobTests`
+  - `swift test --filter HrrrPressureSubsetGribCacheTests`
+  - `swift test --filter PressureArtifactCatalogTests`
 
 ---
 
 ## Current Follow-Up
 
-- `#117` is the next issue to run.
-- `#117` should preserve the boundaries set here and build on the new catalog model without expanding into request-path lookup.
+- `#118` is the next issue to run.
+- `#118` should preserve the boundaries set here and build on the warm-job slice without expanding into request-path lookup.
