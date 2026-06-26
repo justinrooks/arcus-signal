@@ -4,6 +4,13 @@ import Testing
 
 @Suite("HRRR pressure profile message selector", .serialized)
 struct HrrrPressureProfileMessageSelectorTests {
+    @Test("default selector requests the expanded pressure contract")
+    func defaultSelectorRequestsExpandedPressureContract() {
+        let result = HrrrPressureProfileMessageSelector().select(inventory: HrrrPressureIdxInventory.parse(""))
+
+        #expect(result.requestedLevels.map(\.pressureMb) == expandedPressureLevels)
+    }
+
     @Test("fixture selects the exact required records for a complete level")
     func fixtureSelectsExactRequiredRecordsForCompleteLevel() throws {
         let inventory = try loadFixtureInventory()
@@ -123,3 +130,9 @@ struct HrrrPressureProfileMessageSelectorTests {
 private enum FixtureError: Error {
     case missingFixture
 }
+
+private let expandedPressureLevels = [
+    1000, 975, 950, 925, 900, 875, 850, 825, 800, 775, 750, 725,
+    700, 675, 650, 625, 600, 575, 550, 525, 500, 475, 450, 425,
+    400, 375, 350, 325, 300, 275, 250, 225, 200, 175, 150, 125, 100
+]

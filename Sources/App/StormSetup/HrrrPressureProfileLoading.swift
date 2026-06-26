@@ -19,23 +19,6 @@ struct HrrrPressureProfileLoadResult: Sendable {
 }
 
 struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
-    private static let previewPressureLevels: [StormSetupPressureLevel] = [
-        .mb1000,
-        .mb925,
-        .mb850,
-        .mb700,
-        .mb600,
-        .mb500,
-        .mb400,
-        .mb300,
-        .mb250,
-        .mb200,
-        .mb175,
-        .mb150,
-        .mb125,
-        .mb100
-    ]
-
     private let httpClient: any HTTPClient
     private let subsetCache: HrrrPressureSubsetGribCache
     private let fieldSampler: any StormSetupFieldSampling
@@ -60,7 +43,7 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
     ) async throws -> HrrrPressureProfileLoadResult {
         let inventory = try await loadInventory(for: sourceResolution)
         let selection = HrrrPressureProfileMessageSelector(
-            preferredLevels: Self.previewPressureLevels
+            preferredLevels: StormSetupPressureLevel.preferredDescending
         ).select(inventory: inventory)
 
         guard !selection.selectedMessages.isEmpty else {

@@ -14,7 +14,7 @@ enum HrrrProduct: String, Content, Sendable, Equatable {
         case .wrfsfc:
             return .tornadoV1
         case .wrfprsf:
-            return .tornadoPressureV1
+            return .tornadoPressureV2
         }
     }
 
@@ -40,6 +40,7 @@ enum HrrrDomain: String, Content, Sendable, Equatable {
 enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
     case tornadoV1 = "tornado-v1"
     case tornadoPressureV1 = "tornado-pressure-v1"
+    case tornadoPressureV2 = "tornado-pressure-v2"
 
     var nomadsVariableFlags: [String] {
         switch self {
@@ -56,7 +57,7 @@ enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
                 "var_DPT",
                 "var_TMP"
             ]
-        case .tornadoPressureV1:
+        case .tornadoPressureV1, .tornadoPressureV2:
             return [
                 "var_HGT",
                 "var_TMP",
@@ -90,6 +91,46 @@ enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
                 "lev_500_mb",
                 "lev_300_mb",
                 "lev_250_mb"
+            ]
+        case .tornadoPressureV2:
+            return [
+                "lev_1000_mb",
+                "lev_975_mb",
+                "lev_950_mb",
+                "lev_925_mb",
+                "lev_900_mb",
+                "lev_875_mb",
+                "lev_850_mb",
+                "lev_825_mb",
+                "lev_800_mb",
+                "lev_775_mb",
+                "lev_750_mb",
+                "lev_725_mb",
+                "lev_700_mb",
+                "lev_675_mb",
+                "lev_650_mb",
+                "lev_625_mb",
+                "lev_600_mb",
+                "lev_575_mb",
+                "lev_550_mb",
+                "lev_525_mb",
+                "lev_500_mb",
+                "lev_475_mb",
+                "lev_450_mb",
+                "lev_425_mb",
+                "lev_400_mb",
+                "lev_375_mb",
+                "lev_350_mb",
+                "lev_325_mb",
+                "lev_300_mb",
+                "lev_275_mb",
+                "lev_250_mb",
+                "lev_225_mb",
+                "lev_200_mb",
+                "lev_175_mb",
+                "lev_150_mb",
+                "lev_125_mb",
+                "lev_100_mb"
             ]
         }
     }

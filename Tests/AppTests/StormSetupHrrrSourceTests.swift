@@ -24,6 +24,11 @@ struct StormSetupHrrrSourceTests {
         #expect(pressureCandidate.fileName == "hrrr.t13z.wrfprsf09.grib2")
     }
 
+    @Test("pressure products default to the expanded pressure field-set version")
+    func pressureProductsDefaultToExpandedFieldSetVersion() throws {
+        #expect(HrrrProduct.wrfprsf.defaultFieldSetVersion == .tornadoPressureV2)
+    }
+
     @Test("fixed clock produces ordered HRRR candidates and valid times")
     func resolverProducesOrderedCandidates() throws {
         let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -236,7 +241,7 @@ struct StormSetupHrrrSourceTests {
         #expect(metadata.runTime == makeUTCDate(year: 2026, month: 6, day: 19, hour: 20))
         #expect(metadata.forecastHour == 1)
         #expect(metadata.validTime == makeUTCDate(year: 2026, month: 6, day: 19, hour: 21))
-        #expect(metadata.fieldSetVersion == .tornadoPressureV1)
+        #expect(metadata.fieldSetVersion == .tornadoPressureV2)
         #expect(metadata.bbox == nil)
         #expect(metadata.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t20z.wrfprsf01.grib2")
         #expect(metadata.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t20z.wrfprsf01.grib2.idx")
@@ -248,13 +253,13 @@ struct StormSetupHrrrSourceTests {
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
             forecastHour: 0,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         )
         let older = HrrrRunCandidate(
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
             forecastHour: 1,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         )
         let resolution = HrrrRunResolution(
             targetValidTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
@@ -278,7 +283,7 @@ struct StormSetupHrrrSourceTests {
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
             forecastHour: 1,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         ))
         #expect(result.source.sourceKind == HrrrSourceKind.directObject)
         #expect(result.source.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t20z.wrfprsf01.grib2")
@@ -289,7 +294,7 @@ struct StormSetupHrrrSourceTests {
                 product: .wrfprsf,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
                 forecastHour: 1,
-                fieldSetVersion: .tornadoPressureV1
+                fieldSetVersion: .tornadoPressureV2
             )).absoluteString
         ])
     }
@@ -300,19 +305,19 @@ struct StormSetupHrrrSourceTests {
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
             forecastHour: 0,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         )
         let middle = HrrrRunCandidate(
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
             forecastHour: 1,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         )
         let oldest = HrrrRunCandidate(
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 19),
             forecastHour: 2,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         )
         let builder = HrrrPressureDirectObjectURLBuilder()
         let checker = StubHrrrRemoteObjectChecking(
@@ -349,7 +354,7 @@ struct StormSetupHrrrSourceTests {
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 19),
             forecastHour: 2,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         ))
         #expect(result.idxProbe.available == true)
         #expect(result.gribProbe == nil)
@@ -358,19 +363,19 @@ struct StormSetupHrrrSourceTests {
                 product: .wrfprsf,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
                 forecastHour: 1,
-                fieldSetVersion: .tornadoPressureV1
+                fieldSetVersion: .tornadoPressureV2
             )).absoluteString,
             builder.makeGribURL(for: HrrrRunCandidate(
                 product: .wrfprsf,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
                 forecastHour: 1,
-                fieldSetVersion: .tornadoPressureV1
+                fieldSetVersion: .tornadoPressureV2
             )).absoluteString,
             builder.makeIdxURL(for: HrrrRunCandidate(
                 product: .wrfprsf,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 19),
                 forecastHour: 2,
-                fieldSetVersion: .tornadoPressureV1
+                fieldSetVersion: .tornadoPressureV2
             )).absoluteString
         ])
     }
@@ -381,7 +386,7 @@ struct StormSetupHrrrSourceTests {
             product: .wrfprsf,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
             forecastHour: 1,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: .tornadoPressureV2
         )
         let builder = HrrrPressureDirectObjectURLBuilder()
         let checker = StubHrrrRemoteObjectChecking(
@@ -398,7 +403,7 @@ struct StormSetupHrrrSourceTests {
                     product: .wrfprsf,
                     runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
                     forecastHour: 0,
-                    fieldSetVersion: .tornadoPressureV1
+                    fieldSetVersion: .tornadoPressureV2
                 )
             ]
         )

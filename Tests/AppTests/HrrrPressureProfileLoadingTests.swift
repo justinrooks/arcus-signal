@@ -63,7 +63,7 @@ struct HrrrPressureProfileLoadingTests {
         #expect(result.byteRangePlan.ranges.count == 40)
         #expect(result.subsetCacheResult.cacheHit == false)
         #expect(result.groupedProfile.retainedLevels.count == 8)
-        #expect(result.selection.requestedLevels == [.mb1000, .mb925, .mb850, .mb700, .mb600, .mb500, .mb400, .mb300, .mb250, .mb200, .mb175, .mb150, .mb125, .mb100])
+        #expect(result.selection.requestedLevels == StormSetupPressureLevel.preferredDescending)
         #expect(client.requests.contains(where: { $0.url == idxURL }))
         #expect(client.requests.filter { $0.url == gribURL }.count == 40)
         #expect(client.requests.filter { $0.url == gribURL && $0.headers["Range"] == nil }.isEmpty)

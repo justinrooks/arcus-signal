@@ -247,7 +247,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             domain: candidate.domain,
             runTime: candidate.runTime,
             forecastHour: candidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
         )
     }
 

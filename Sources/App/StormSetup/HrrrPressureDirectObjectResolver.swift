@@ -12,7 +12,7 @@ struct HrrrPressureDirectObjectURLBuilder: Sendable {
             runTime: candidate.runTime,
             forecastHour: candidate.forecastHour,
             validTime: candidate.validTime,
-            fieldSetVersion: .tornadoPressureV1,
+            fieldSetVersion: candidate.fieldSetVersion,
             primaryDownloadURL: makeGribURL(for: candidate),
             idxURL: makeIdxURL(for: candidate)
         )
@@ -176,7 +176,7 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
             domain: candidate.domain,
             runTime: runTime,
             forecastHour: candidate.forecastHour + 1,
-            fieldSetVersion: .tornadoPressureV1
+            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
         )
     }
 
