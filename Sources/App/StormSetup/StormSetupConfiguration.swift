@@ -54,6 +54,21 @@ struct StormSetupConfiguration: Sendable, Equatable {
             in: environment
         ) ?? 5 * 60
 
+        let pressureArtifactMaxStaleAgeSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_MAX_STALE_AGE_SECONDS",
+            in: environment
+        ) ?? 2 * 60 * 60
+
+        let pressureArtifactDeleteGraceSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_DELETE_GRACE_SECONDS",
+            in: environment
+        ) ?? 60 * 60
+
+        let pressureArtifactCleanupIntervalSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_CLEANUP_INTERVAL_SECONDS",
+            in: environment
+        ) ?? 15 * 60
+
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
@@ -84,6 +99,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
             pressureArtifactProbeIntervalSeconds: pressureArtifactProbeIntervalSeconds,
+            pressureArtifactMaxStaleAgeSeconds: pressureArtifactMaxStaleAgeSeconds,
+            pressureArtifactDeleteGraceSeconds: pressureArtifactDeleteGraceSeconds,
+            pressureArtifactCleanupIntervalSeconds: pressureArtifactCleanupIntervalSeconds,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
             anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
@@ -98,6 +116,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
         gribSubsetMaximumByteCount: 50 * 1024 * 1024,
         pressureArtifactProbeIntervalSeconds: 5 * 60,
+        pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
+        pressureArtifactDeleteGraceSeconds: 60 * 60,
+        pressureArtifactCleanupIntervalSeconds: 15 * 60,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
         anvilProfileAnalysisBaseURL: nil,
@@ -110,6 +131,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let gribSubsetCacheRetentionSeconds: TimeInterval
     let gribSubsetMaximumByteCount: Int
     let pressureArtifactProbeIntervalSeconds: TimeInterval
+    let pressureArtifactMaxStaleAgeSeconds: TimeInterval
+    let pressureArtifactDeleteGraceSeconds: TimeInterval
+    let pressureArtifactCleanupIntervalSeconds: TimeInterval
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
     let anvilProfileAnalysisBaseURL: URL?
@@ -122,6 +146,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
         gribSubsetCacheRetentionSeconds: TimeInterval,
         gribSubsetMaximumByteCount: Int,
         pressureArtifactProbeIntervalSeconds: TimeInterval,
+        pressureArtifactMaxStaleAgeSeconds: TimeInterval,
+        pressureArtifactDeleteGraceSeconds: TimeInterval,
+        pressureArtifactCleanupIntervalSeconds: TimeInterval,
         wgrib2ExecutableURL: URL,
         wgrib2TimeoutSeconds: TimeInterval,
         anvilProfileAnalysisBaseURL: URL? = nil,
@@ -133,6 +160,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
         self.gribSubsetCacheRetentionSeconds = gribSubsetCacheRetentionSeconds
         self.gribSubsetMaximumByteCount = gribSubsetMaximumByteCount
         self.pressureArtifactProbeIntervalSeconds = pressureArtifactProbeIntervalSeconds
+        self.pressureArtifactMaxStaleAgeSeconds = pressureArtifactMaxStaleAgeSeconds
+        self.pressureArtifactDeleteGraceSeconds = pressureArtifactDeleteGraceSeconds
+        self.pressureArtifactCleanupIntervalSeconds = pressureArtifactCleanupIntervalSeconds
         self.wgrib2ExecutableURL = wgrib2ExecutableURL
         self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
         self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL

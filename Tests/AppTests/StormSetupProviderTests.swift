@@ -130,6 +130,89 @@ struct StormSetupProviderTests {
         #expect(anvilRequestCount == 1)
     }
 
+    @Test("stale Anvil evidence is marked degraded while retaining metric support")
+    func snapshotCacheHitMarksStaleAnvilEvidenceDegraded() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let candidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: candidate, centroid: expected.centroid)
+        let freshness = makeFreshness(now: now)
+        let raw = makeRaw(
+            sbcapeJkg: 1450,
+            mlcapeJkg: 1200,
+            mucapeJkg: 1600,
+            mlcinJkg: -35,
+            mllclM: 950,
+            shear06kmKt: 42,
+            srh01kmM2s2: 80,
+            srh03kmM2s2: 160
+        )
+        let staleWarning = "Pressure artifact stale fallback selected: 3600s older than target valid time 2026-06-03T22:00:00Z."
+        let cachedSnapshot = makeSnapshot(
+            h3Cell: fixedH3,
+            source: source,
+            fetchedAt: now,
+            raw: raw,
+            assessment: TornadoIngredientInterpreter().assess(
+                raw: raw,
+                freshness: freshness,
+                evidence: AnvilIngredientEvidence(
+                    response: makeStormSetupRouteAnalysisResponse(
+                        validTime: candidate.validTime.addingTimeInterval(-3_600),
+                        warnings: [staleWarning]
+                    ).response,
+                    additionalWarnings: [staleWarning]
+                )
+            ),
+            freshness: freshness,
+            anvilEvidence: AnvilIngredientEvidence(
+                response: makeStormSetupRouteAnalysisResponse(
+                    validTime: candidate.validTime.addingTimeInterval(-3_600),
+                    warnings: [staleWarning]
+                ).response,
+                additionalWarnings: [staleWarning]
+            )
+        )
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: cachedSnapshot)
+        let subsetLoader = StubStormSetupSubsetLoader { _, _, _ in
+            throw TestFailure.unexpectedDownstreamCall("subset loader should not run on a cache hit")
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, _ in
+            throw TestFailure.unexpectedDownstreamCall("field sampler should not run on a cache hit")
+        }
+        let anvilProvider = CountingAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse(
+                validTime: candidate.validTime.addingTimeInterval(-3_600),
+                warnings: [staleWarning]
+            )
+        )
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: .empty)),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: anvilProvider
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+
+        #expect(snapshot.anvilEvidence?.status == .degraded)
+        #expect(snapshot.anvilEvidence?.diagnostics.warnings.contains(staleWarning) == true)
+        #expect(snapshot.anvilEvidence?.scp?.support == .strong)
+        #expect(snapshot.anvilEvidence?.stp?.support == .strong)
+        #expect(snapshot.anvilEvidence?.ship?.support == .strong)
+        #expect(snapshot.anvilEvidence?.strongestSupport == .strong)
+    }
+
     @Test("cache hits ignore stale Anvil evidence when the current provider changes")
     func snapshotCacheHitIgnoresStaleAnvilEvidence() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -1319,7 +1402,8 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
 }
 
     private func makeStormSetupRouteAnalysisResponse(
-        validTime: Date = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+        validTime: Date = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+        warnings: [String] = []
     ) -> AnvilAnalyzeProfileAnalysisResponse {
         AnvilAnalyzeProfileAnalysisResponse(
             request: AnvilAnalyzeProfileRequest(
@@ -1355,7 +1439,7 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
                 pressureLevelsRequested: [1000, 925, 850],
                 pressureLevelsRetained: [1000, 925, 850],
                 missingLevels: [],
-                warnings: [],
+                warnings: warnings,
                 subsetCacheHit: false,
                 primaryDownloadURL: nil,
                 idxURL: nil,

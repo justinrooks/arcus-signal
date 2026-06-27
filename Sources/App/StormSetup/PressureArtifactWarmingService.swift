@@ -210,6 +210,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
 private extension PressureArtifactWarmingService {
     func makeSourceMetadata(for payload: PressureArtifactWarmJobPayload) -> StormSetupSourceMetadata {
         let candidate = HrrrRunCandidate(
+            product: payload.product,
             runTime: payload.runTime,
             forecastHour: payload.forecastHour,
             fieldSetVersion: payload.fieldSetVersion

@@ -78,6 +78,180 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.request.profile.pressureMb == [1000, 925, 850, 700, 600, 500, 400, 300])
     }
 
+    @Test("provider prefers exact ready artifacts before stale fallback")
+    func providerPrefersExactReadyArtifactsBeforeStaleFallback() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let expectedCentroid = try DefaultStormSetupH3Resolver().resolve(h3Cell: h3Cell).centroid
+        let firstCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let secondCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
+            forecastHour: 1
+        )
+        let firstPressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: firstCandidate.runTime,
+            forecastHour: firstCandidate.forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let secondPressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: secondCandidate.runTime,
+            forecastHour: secondCandidate.forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let exactArtifact = previewMakeReadyPressureArtifact(
+            runTime: secondPressureCandidate.runTime,
+            forecastHour: secondPressureCandidate.forecastHour,
+            validTime: secondPressureCandidate.validTime,
+            localPath: "/private/tmp/exact-ready-pressure-artifact.grib2",
+            byteSize: 2_048
+        )
+        let staleArtifact = previewMakeReadyPressureArtifact(
+            runTime: firstPressureCandidate.runTime,
+            forecastHour: firstPressureCandidate.forecastHour,
+            validTime: firstPressureCandidate.validTime.addingTimeInterval(-3_600),
+            localPath: "/private/tmp/stale-ready-pressure-artifact.grib2",
+            byteSize: 2_048,
+            freshness: .stale(ageSeconds: 3_600)
+        )
+        let lookupService = PreviewStubPressureArtifactCatalogLookupService(
+            handler: { lookedUpCandidate in
+                if lookedUpCandidate == firstPressureCandidate {
+                    return nil
+                }
+                if lookedUpCandidate == secondPressureCandidate {
+                    return exactArtifact
+                }
+                Issue.record("Unexpected exact lookup candidate \(lookedUpCandidate.fileName).")
+                return nil
+            },
+            staleHandler: { _ in
+                Issue.record("Stale lookup should not have been used when an exact artifact exists.")
+                return staleArtifact
+            }
+        )
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            Issue.record("Pressure source resolver should not have been called for exact ready artifacts.")
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader(
+            handler: { _, _, _, _ in
+                Issue.record("Cold pressure profile loading should not have been called for exact ready artifacts.")
+                throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+            },
+            readyHandler: { artifact, centroid, surfaceHeightMslM in
+                #expect(artifact == exactArtifact)
+                #expect(centroid == expectedCentroid)
+                #expect(surfaceHeightMslM == nil)
+                return previewMakeReadyPressureProfileLoadResult(
+                    readyArtifact: artifact,
+                    fetchedAt: now,
+                    subsetCacheHit: true,
+                    samples: previewMakeEightLevelPressureSamples()
+                )
+            }
+        )
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [firstCandidate, secondCandidate])
+            ),
+            pressureArtifactCatalogLookupService: lookupService,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+        let lookupCount = await lookupService.callCount
+        let staleLookupCount = await lookupService.staleCallCount
+
+        #expect(lookupCount == 2)
+        #expect(staleLookupCount == 0)
+        #expect(preview.request.runTime == exactArtifact.runTime)
+        #expect(preview.request.forecastHour == exactArtifact.forecastHour)
+        #expect(preview.request.validTime == exactArtifact.validTime)
+        #expect(preview.debug.warnings.contains(where: { $0.contains("stale fallback selected") }) == false)
+    }
+
+    @Test("provider uses stale pressure artifacts only after all exact candidates miss")
+    func providerUsesStalePressureArtifactsOnlyAfterAllExactCandidatesMiss() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let expectedCentroid = try DefaultStormSetupH3Resolver().resolve(h3Cell: h3Cell).centroid
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let pressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: surfaceCandidate.runTime,
+            forecastHour: surfaceCandidate.forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let staleArtifact = previewMakeReadyPressureArtifact(
+            runTime: pressureCandidate.runTime.addingTimeInterval(-3_600),
+            forecastHour: 0,
+            validTime: pressureCandidate.validTime.addingTimeInterval(-3_600),
+            localPath: "/private/tmp/stale-pressure-artifact.grib2",
+            byteSize: 2_048,
+            freshness: .stale(ageSeconds: 3_600)
+        )
+        let staleWarning = "Pressure artifact stale fallback selected: 3600s older than target valid time 2026-06-03T22:00:00Z."
+        let lookupService = PreviewStubPressureArtifactCatalogLookupService(
+            handler: { _ in nil },
+            staleHandler: { resolution in
+                #expect(resolution.targetValidTime == now.truncatedToHour)
+                return staleArtifact
+            }
+        )
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            Issue.record("Pressure source resolver should not have been called for stale ready artifacts.")
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader(
+            handler: { _, _, _, _ in
+                Issue.record("Cold pressure profile loading should not have been called for stale ready artifacts.")
+                throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+            },
+            readyHandler: { artifact, centroid, surfaceHeightMslM in
+                #expect(artifact == staleArtifact)
+                #expect(artifact.freshness == .stale(ageSeconds: 3_600))
+                #expect(centroid == expectedCentroid)
+                #expect(surfaceHeightMslM == nil)
+                return previewMakeReadyPressureProfileLoadResult(
+                    readyArtifact: artifact,
+                    fetchedAt: now,
+                    subsetCacheHit: true,
+                    samples: previewMakeEightLevelPressureSamples()
+                )
+            }
+        )
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
+            ),
+            pressureArtifactCatalogLookupService: lookupService,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+        let lookupCount = await lookupService.callCount
+        let staleLookupCount = await lookupService.staleCallCount
+
+        #expect(lookupCount == 1)
+        #expect(staleLookupCount == 1)
+        #expect(preview.request.runTime == staleArtifact.runTime)
+        #expect(preview.request.forecastHour == staleArtifact.forecastHour)
+        #expect(preview.request.validTime == staleArtifact.validTime)
+        #expect(preview.debug.warnings.contains(staleWarning))
+    }
+
     @Test("provider reports ready-artifact pressure evidence as unavailable when no catalog row is ready")
     func providerReportsReadyArtifactPressureEvidenceAsUnavailableWhenNoRowIsReady() async throws {
         let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -121,7 +295,7 @@ struct AnvilProfilePreviewProviderTests {
             Issue.record("Expected the preview provider to report a missing ready artifact.")
         } catch let error as AnvilProfilePreviewError {
             if case .upstreamUnavailable(let reason) = error {
-                #expect(reason.contains("No ready pressure artifact was available") == true)
+                #expect(reason.contains("No ready or stale pressure artifact was available") == true)
                 let lookupCount = await lookupService.callCount
                 #expect(lookupCount == 1)
                 return

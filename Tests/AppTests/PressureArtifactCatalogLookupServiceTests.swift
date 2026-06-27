@@ -65,6 +65,7 @@ struct PressureArtifactCatalogLookupServiceTests {
             #expect(artifact?.fieldSetVersion == .tornadoPressureV2)
             #expect(artifact?.localFileURL == localFileURL)
             #expect(artifact?.byteSize == 14)
+            #expect(artifact?.freshness == .exact)
         }
     }
 
@@ -97,6 +98,166 @@ struct PressureArtifactCatalogLookupServiceTests {
             let artifact = try await service.readyArtifact(for: candidate)
 
             #expect(artifact == nil)
+        }
+    }
+
+    @Test("stale lookup returns the newest eligible valid artifact after exact misses")
+    func staleLookupReturnsTheNewestEligibleValidArtifactAfterExactMisses() async throws {
+        try await withApp { app in
+            let targetValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let candidate = HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: targetValidTime,
+                forecastHour: 0,
+                fieldSetVersion: .tornadoPressureV2
+            )
+
+            let futureRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(3_600),
+                forecastHour: 0,
+                validTime: targetValidTime.addingTimeInterval(3_600),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data("future".utf8)).path,
+                byteSize: 6,
+                source: .aws
+            )
+            let wrongVersionRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-3_600),
+                forecastHour: 1,
+                validTime: targetValidTime.addingTimeInterval(-3_600),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV1,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data("wrong-version".utf8)).path,
+                byteSize: 13,
+                source: .aws
+            )
+            let nonReadyRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-7_200),
+                forecastHour: 2,
+                validTime: targetValidTime.addingTimeInterval(-7_200),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .warming,
+                localPath: makeTempRegularFile(contents: Data("warming".utf8)).path,
+                byteSize: 7,
+                source: .aws
+            )
+            let missingPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("missing-stale-artifact-\(UUID().uuidString).grib2")
+            let missingFileRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-5_400),
+                forecastHour: 3,
+                validTime: targetValidTime.addingTimeInterval(-5_400),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: missingPath.path,
+                byteSize: 9,
+                source: .aws
+            )
+            let zeroByteRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-5_100),
+                forecastHour: 4,
+                validTime: targetValidTime.addingTimeInterval(-5_100),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data()).path,
+                byteSize: 0,
+                source: .aws
+            )
+            let boundaryRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-7_200),
+                forecastHour: 5,
+                validTime: targetValidTime.addingTimeInterval(-7_200),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data("boundary".utf8)).path,
+                byteSize: 8,
+                source: .aws
+            )
+            let newestValidRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-3_600),
+                forecastHour: 6,
+                validTime: targetValidTime.addingTimeInterval(-3_600),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data("newest-valid".utf8)).path,
+                byteSize: 12,
+                source: .aws
+            )
+
+            try await futureRow.create(on: app.db)
+            try await wrongVersionRow.create(on: app.db)
+            try await nonReadyRow.create(on: app.db)
+            try await missingFileRow.create(on: app.db)
+            try await zeroByteRow.create(on: app.db)
+            try await boundaryRow.create(on: app.db)
+            try await newestValidRow.create(on: app.db)
+
+            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let artifact = try await service.staleArtifact(
+                for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [candidate])
+            )
+
+            #expect(artifact?.runTime == newestValidRow.runTime)
+            #expect(artifact?.forecastHour == newestValidRow.forecastHour)
+            #expect(artifact?.validTime == newestValidRow.validTime)
+            #expect(artifact?.freshness == .stale(ageSeconds: 3_600))
+        }
+    }
+
+    @Test("stale lookup accepts the exact two-hour boundary")
+    func staleLookupAcceptsTheExactTwoHourBoundary() async throws {
+        try await withApp { app in
+            let targetValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let candidate = HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: targetValidTime,
+                forecastHour: 0,
+                fieldSetVersion: .tornadoPressureV2
+            )
+
+            let boundaryRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-7_200),
+                forecastHour: 5,
+                validTime: targetValidTime.addingTimeInterval(-7_200),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data("boundary".utf8)).path,
+                byteSize: 8,
+                source: .aws
+            )
+            let tooOldRow = PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-7_201),
+                forecastHour: 6,
+                validTime: targetValidTime.addingTimeInterval(-7_201),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: makeTempRegularFile(contents: Data("too-old".utf8)).path,
+                byteSize: 7,
+                source: .aws
+            )
+
+            try await boundaryRow.create(on: app.db)
+            try await tooOldRow.create(on: app.db)
+
+            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let artifact = try await service.staleArtifact(
+                for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [candidate])
+            )
+
+            #expect(artifact?.runTime == boundaryRow.runTime)
+            #expect(artifact?.forecastHour == boundaryRow.forecastHour)
+            #expect(artifact?.validTime == boundaryRow.validTime)
+            #expect(artifact?.freshness == .stale(ageSeconds: 7_200))
         }
     }
 

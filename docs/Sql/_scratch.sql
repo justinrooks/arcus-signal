@@ -156,3 +156,10 @@ SELECT
     (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY conversion_seconds) FROM successful) AS "p95ConversionSeconds";
 
 
+
+
+
+SELECT run_time, forecast_hour, valid_time, status, local_path, byte_size, error_summary
+   FROM pressure_artifact_catalog
+   ORDER BY valid_time DESC, updated_at DESC
+   LIMIT 10;

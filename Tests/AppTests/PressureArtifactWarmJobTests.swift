@@ -7,6 +7,33 @@ import Vapor
 
 @Suite("Pressure artifact warm job", .serialized)
 struct PressureArtifactWarmJobTests {
+    @Test("pressure payload requests wrfprsf source URLs")
+    func pressurePayloadRequestsPressureProductSourceURLs() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: PressureArtifactWarmValidatorStub(),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount
+            )
+
+            try await service.warm(payload: payload, on: app, logger: app.logger)
+
+            #expect(client.requestedURLs.isEmpty == false)
+            #expect(client.requestedURLs.allSatisfy { $0.contains(".wrfprsf") })
+        }
+    }
+
     @Test("two concurrent warm jobs do not both build the same artifact")
     func duplicateWarmJobsDoNotBothBuildSameArtifact() async throws {
         try await withApp { app in
@@ -325,6 +352,7 @@ private extension PressureArtifactWarmJobTests {
 
     func makeSourceURLs(for payload: PressureArtifactWarmJobPayload) -> (idx: URL, grib: URL) {
         let candidate = HrrrRunCandidate(
+            product: payload.product,
             runTime: payload.runTime,
             forecastHour: payload.forecastHour,
             fieldSetVersion: payload.fieldSetVersion
@@ -409,6 +437,7 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
     private let lock = NSLock()
     private var _idxRequestCount = 0
     private var _rangeRequestCount = 0
+    private var _requestedURLs: [String] = []
 
     init(
         idxResponses: [String: Data] = [:],
@@ -426,7 +455,13 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
         lock.withLock { _rangeRequestCount }
     }
 
+    var requestedURLs: [String] {
+        lock.withLock { _requestedURLs }
+    }
+
     func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        lock.withLock { _requestedURLs.append(url.absoluteString) }
+
         if headers["Range"] == nil {
             lock.withLock { _idxRequestCount += 1 }
             guard let data = idxResponses[url.absoluteString] else {

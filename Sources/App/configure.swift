@@ -28,6 +28,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.queues.add(TargetEventRevisionJob())
     app.queues.add(NotificationSendJob())
     app.queues.add(PressureArtifactWarmJob())
+    app.queues.add(CleanupPressureArtifactsJob())
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
@@ -48,6 +49,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         app.recordWorkerScheduledJob("DispatchIngestNWSAlertsScheduledJob")
         app.queues.schedule(ProbeHRRRPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds))
         app.recordWorkerScheduledJob("ProbeHRRRPressureArtifactsScheduledJob")
+        app.queues.schedule(CleanupPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactCleanupIntervalSeconds))
+        app.recordWorkerScheduledJob("CleanupPressureArtifactsScheduledJob")
         app.queues.schedule(RefreshOperatorDashboardSnapshotScheduledJob()).every(seconds: OperatorDashboardConfig.fastRefreshIntervalSeconds)
         app.recordWorkerScheduledJob("RefreshOperatorDashboardSnapshotScheduledJob")
         app.logger.info("Configured scheduled ingestion dispatch (every 60 seconds).")
@@ -55,6 +58,12 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
             "Configured scheduled HRRR pressure artifact probe.",
             metadata: [
                 "intervalSeconds": .stringConvertible(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds)
+            ]
+        )
+        app.logger.info(
+            "Configured scheduled HRRR pressure artifact cleanup.",
+            metadata: [
+                "intervalSeconds": .stringConvertible(app.stormSetupConfiguration.pressureArtifactCleanupIntervalSeconds)
             ]
         )
         try configureWorkerRoutes(app)

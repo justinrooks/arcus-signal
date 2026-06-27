@@ -16,11 +16,19 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
     let diagnostics: AnvilIngredientDiagnostics
 
     init(response: AnvilAnalyzeProfileResponse) {
+        self.init(response: response, additionalWarnings: [])
+    }
+
+    init(
+        response: AnvilAnalyzeProfileResponse,
+        additionalWarnings: [String]
+    ) {
+        let combinedWarnings = response.quality.warnings + additionalWarnings
         let diagnostics = AnvilIngredientDiagnostics(
             hasEffectiveLayer: response.effectiveLayer.status.lowercased() == "found",
             hasStormMotion: response.stormMotion.status.lowercased() == "computed",
             qualityProfileLevelCount: response.quality.profileLevelCount,
-            warnings: response.quality.warnings
+            warnings: combinedWarnings
         )
 
         let scp = response.scp.map { AnvilIngredientMetricEvidence(support: Self.supportBand(forSCP: $0)) }

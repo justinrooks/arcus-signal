@@ -67,7 +67,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let dateProvider = SystemStormSetupDateProvider()
         let httpClient = VaporApplicationHTTPClient(application: application)
         let pressureArtifactCatalogLookupService = DefaultPressureArtifactCatalogLookupService(
-            database: application.db
+            database: application.db,
+            maximumStaleAgeSeconds: configuration.pressureArtifactMaxStaleAgeSeconds
         )
         let pressureSourceResolver = DefaultHrrrPressureDirectObjectResolver(httpClient: httpClient)
         let pressureProfileLoader = DefaultHrrrPressureProfileLoader(
@@ -103,6 +104,79 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         var upstreamFailures: [String] = []
         var unusableProfileFailures: [String] = []
         var internalFailures: [String] = []
+
+        if let pressureArtifactCatalogLookupService {
+            let pressureResolution = HrrrRunResolution(
+                targetValidTime: runResolution.targetValidTime,
+                candidates: runResolution.candidates.map(makePressureCandidate(from:))
+            )
+
+            for candidate in runResolution.candidates {
+                let pressureCandidate = makePressureCandidate(from: candidate)
+                do {
+                    if let readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(
+                        for: pressureCandidate
+                    ) {
+                        return try await previewReadyArtifact(
+                            readyArtifact,
+                            h3Cell: resolved.h3Cell,
+                            centroid: resolved.centroid
+                        )
+                    }
+                } catch let error as AnvilProfilePreviewError {
+                    switch error {
+                    case .upstreamUnavailable:
+                        upstreamFailures.append(error.description)
+                    case .unusableProfile:
+                        unusableProfileFailures.append(error.description)
+                    case .internalExecutionFailure:
+                        internalFailures.append(error.description)
+                    }
+                } catch {
+                    internalFailures.append(String(describing: error))
+                }
+            }
+
+            do {
+                if let staleArtifact = try await pressureArtifactCatalogLookupService.staleArtifact(
+                    for: pressureResolution
+                ) {
+                    return try await previewReadyArtifact(
+                        staleArtifact,
+                        h3Cell: resolved.h3Cell,
+                        centroid: resolved.centroid,
+                        staleWarning: makeStaleWarning(for: staleArtifact, targetValidTime: pressureResolution.targetValidTime)
+                    )
+                }
+            } catch let error as AnvilProfilePreviewError {
+                switch error {
+                case .upstreamUnavailable:
+                    upstreamFailures.append(error.description)
+                case .unusableProfile:
+                    unusableProfileFailures.append(error.description)
+                case .internalExecutionFailure:
+                    internalFailures.append(error.description)
+                }
+            } catch {
+                internalFailures.append(String(describing: error))
+            }
+
+            if !internalFailures.isEmpty {
+                throw AnvilProfilePreviewError.internalExecutionFailure(
+                    reason: internalFailures.joined(separator: "; ")
+                )
+            }
+
+            if !upstreamFailures.isEmpty {
+                throw AnvilProfilePreviewError.upstreamUnavailable(
+                    reason: upstreamFailures.joined(separator: "; ")
+                )
+            }
+
+            throw AnvilProfilePreviewError.upstreamUnavailable(
+                reason: "No ready or stale pressure artifact was available for \(pressureResolution.candidates.first?.fileName ?? "the requested pressure candidate")."
+            )
+        }
 
         for candidate in runResolution.candidates {
             let pressureCandidate = makePressureCandidate(from: candidate)
@@ -151,15 +225,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         centroid: StormSetupCentroid,
         targetValidTime: Date
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
-        if pressureArtifactCatalogLookupService != nil {
-            return try await previewReadyArtifactCandidate(
-                candidate,
-                h3Cell: h3Cell,
-                centroid: centroid,
-                targetValidTime: targetValidTime
-            )
-        }
-
         let sourceResolution = try await resolvePressureSource(
             for: candidate,
             targetValidTime: targetValidTime
@@ -221,31 +286,12 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         return AnvilAnalyzeProfilePreviewResponse(request: request, debug: debug)
     }
 
-    private func previewReadyArtifactCandidate(
-        _ candidate: HrrrRunCandidate,
+    private func previewReadyArtifact(
+        _ readyArtifact: PressureArtifactCatalogReadyArtifact,
         h3Cell: Int64,
         centroid: StormSetupCentroid,
-        targetValidTime: Date
+        staleWarning: String? = nil
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
-        guard let pressureArtifactCatalogLookupService else {
-            throw AnvilProfilePreviewError.internalExecutionFailure(
-                reason: "Pressure artifact lookup service was not configured."
-            )
-        }
-
-        let readyArtifact: PressureArtifactCatalogReadyArtifact?
-        do {
-            readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(for: candidate)
-        } catch {
-            throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
-        }
-
-        guard let readyArtifact else {
-            throw AnvilProfilePreviewError.upstreamUnavailable(
-                reason: "No ready pressure artifact was available for \(candidate.fileName)."
-            )
-        }
-
         let loadResult = try await loadPressureProfile(
             readyArtifact: readyArtifact,
             centroid: centroid
@@ -291,7 +337,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             },
             warnings: makeWarnings(
                 for: buildResult.warnings,
-                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count
+                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count,
+                additionalWarnings: staleWarning.map { [$0] } ?? []
             ),
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
             primaryDownloadURL: readyArtifact.localFileURL,
@@ -435,7 +482,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
     private func makeWarnings(
         for warnings: [AnvilProfileRequestWarning],
-        ignoredSampleCount: Int
+        ignoredSampleCount: Int,
+        additionalWarnings: [String] = []
     ) -> [String] {
         var values = warnings.map { warning -> String in
             switch warning {
@@ -476,7 +524,25 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             values.append("Ignored \(ignoredSampleCount) non-profile HRRR samples while grouping.")
         }
 
+        values.append(contentsOf: additionalWarnings)
+
         return values
+    }
+
+    private func makeStaleWarning(
+        for readyArtifact: PressureArtifactCatalogReadyArtifact,
+        targetValidTime: Date
+    ) -> String {
+        let ageSeconds: Int
+        switch readyArtifact.freshness {
+        case .exact:
+            ageSeconds = 0
+        case .stale(let value):
+            ageSeconds = Int(value.rounded(.down))
+        }
+
+        let targetLabel = ISO8601DateFormatter().string(from: targetValidTime)
+        return "Pressure artifact stale fallback selected: \(ageSeconds)s older than target valid time \(targetLabel)."
     }
 }
 

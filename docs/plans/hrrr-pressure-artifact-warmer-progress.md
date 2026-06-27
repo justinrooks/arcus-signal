@@ -45,7 +45,8 @@ Related local docs:
 - Issue `#117` implemented the warm-job slice with catalog claim/promotion, byte-range reuse, and validation.
 - Issue `#118` implemented the worker-owned probe slice and dedicated model-artifacts scheduling lane.
 - Issue `#119` changed the normal `storm-setup/current` pressure-evidence path to consume exact ready catalog artifacts instead of request-time cold acquisition.
-- The next implementation issue is `#120`.
+- Issue `#120` added bounded stale pressure-artifact fallback plus worker-owned expiration and deletion.
+- The currently scoped warmer issues are complete.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -67,6 +68,7 @@ Work these issues sequentially:
 4. `#117` - 04: Warm-job slice, catalog claim, and validation
 5. `#118` - 05: Worker-owned HRRR pressure artifact probe and schedule
 6. `#119` - 06: Change storm-setup/current to consume ready pressure artifacts
+7. `#120` - 07: Add pressure artifact cleanup, expiration, and stale fallback
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -335,7 +337,63 @@ Known failures or follow-up work:
 - Stale ready-artifact fallback remains deferred to `#120`.
 - No new probe or queue abstraction was added for request-time work.
 - The cold `DefaultHrrrPressureProfileLoader` path remains available only for explicit debug/manual use.
-- Issue `#120` is next.
+- Issue `#120` completed this sequence.
+
+### Issue #120 - 07: Add pressure artifact cleanup, expiration, and stale fallback
+
+Status: Completed
+
+Scope:
+- Add bounded stale fallback for pressure-artifact lookup after exact misses.
+- Preserve exact ready-artifact lookup behavior and request-time no-download behavior.
+- Mark stale Anvil evidence as degraded while retaining the computed metric evidence.
+- Add worker-owned pressure-artifact expiration and deletion with a one-hour grace period.
+- Schedule cleanup work in worker mode on the existing `model-artifacts` lane.
+
+Files changed:
+- `Sources/App/StormSetup/PressureArtifactCatalogLookupService.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Sources/App/StormSetup/AnvilIngredientEvidence.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/PressureArtifactCleanupService.swift`
+- `Sources/App/Jobs/CleanupPressureArtifactsJob.swift`
+- `Sources/App/Jobs/CleanupPressureArtifactsScheduledJob.swift`
+- `Sources/App/configure.swift`
+- `Tests/AppTests/AnvilProfilePreviewTestSupport.swift`
+- `Tests/AppTests/PressureArtifactCatalogLookupServiceTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `Tests/AppTests/StormSetupConfigurationTests.swift`
+- `Tests/AppTests/AnvilProfileClientTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+- `Tests/AppTests/AppTests.swift`
+- `Tests/AppTests/PressureArtifactCleanupServiceTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Behavior:
+- Exact pressure artifacts still win over stale artifacts.
+- Stale lookup runs only after all exact candidates miss.
+- Stale artifacts are limited to ready `wrfprsf` rows at the current field-set version, older than the requested target, and within the configured max stale age.
+- Boundary stale age is inclusive at 2 hours.
+- The request path still refuses any cold-acquisition fallback.
+- Cleanup first expires old ready rows, then deletes only rows that were already expired before the run and whose files are safe to remove.
+- Files outside the configured cache root, directories, shared ready/warming paths, and missing files are handled conservatively and idempotently.
+
+Validation run and results:
+- `swift test --filter PressureArtifactCleanupServiceTests` passed
+- `swift test --filter PressureArtifactCatalogLookupServiceTests` passed
+- `swift test --filter AnvilProfilePreviewProviderTests` passed
+- `swift test --filter StormSetupProviderTests` passed
+- `swift test --filter StormSetupConfigurationTests` passed
+- `swift test --filter scheduledDispatchUsesModelArtifactsLane` passed
+- `swift test --filter workerBootstrapRegistersPressureArtifactProbeSchedule` passed
+- `swift test` still reports unrelated broad-suite failures in shared-state pressure tests when the full suite runs together
+
+Known failures or follow-up work:
+- No follow-up work is required for `#120`.
+- Broad-suite failures remain unrelated and are not part of this slice.
+- The warmer sequence is complete for the currently scoped issues.
 
 ---
 
@@ -351,12 +409,7 @@ Known failures or follow-up work:
 
 ## Open Questions
 
-- What exact warmer cadence will `#115` use?
-- What is the initial pressure field-set version number?
-- Which cache-retention policy should apply when a field-set version changes?
-- Should a stale warmed artifact be consumed for degraded responses, or only a fresh matching artifact?
-
-These are intentionally left for the next implementation slice and should be settled before code is written.
+- No open questions remain for the currently scoped warmer issues.
 
 ---
 
@@ -369,10 +422,18 @@ These are intentionally left for the next implementation slice and should be set
   - `swift test --filter PressureArtifactWarmJobTests`
   - `swift test --filter HrrrPressureSubsetGribCacheTests`
   - `swift test --filter PressureArtifactCatalogTests`
+- Ran and passed the targeted verification filters for issue `#120`:
+  - `swift test --filter PressureArtifactCleanupServiceTests`
+  - `swift test --filter PressureArtifactCatalogLookupServiceTests`
+  - `swift test --filter AnvilProfilePreviewProviderTests`
+  - `swift test --filter StormSetupProviderTests`
+  - `swift test --filter StormSetupConfigurationTests`
+  - `swift test --filter scheduledDispatchUsesModelArtifactsLane`
+  - `swift test --filter workerBootstrapRegistersPressureArtifactProbeSchedule`
 
 ---
 
 ## Current Follow-Up
 
-- `#120` is the next issue to run.
-- `#120` should preserve the boundaries set here and handle stale ready-artifact fallback, if that remains desired.
+- The currently scoped warmer issues are complete.
+- Broader suite isolation issues remain outside the scope of `#120`.

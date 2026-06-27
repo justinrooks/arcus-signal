@@ -953,6 +953,27 @@ struct AppTests {
         }
     }
 
+    @Test("Scheduler dispatches cleanup job to model artifacts lane")
+    func scheduledDispatchUsesModelArtifactsLane() async throws {
+        try await withApp(mode: .worker) { app in
+            app.queues.use(.test)
+            let hook = DispatchCaptureHook()
+            app.queues.add(hook)
+
+            let context = QueueContext(
+                queueName: QueueName(string: "scheduled"),
+                configuration: app.queues.configuration,
+                application: app,
+                logger: app.logger,
+                on: app.eventLoopGroup.any()
+            )
+            try await CleanupPressureArtifactsScheduledJob().run(context: context)
+
+            #expect(app.queues.test.contains(CleanupPressureArtifactsJob.self))
+            #expect(await hook.dispatchedQueueNames().contains(ArcusQueueLane.modelArtifacts.rawValue))
+        }
+    }
+
     @Test("Arcus queue lanes include model artifacts")
     func arcusQueueLanesIncludeModelArtifacts() {
         #expect(ArcusQueueLane.allCases.contains(.modelArtifacts))
@@ -963,8 +984,9 @@ struct AppTests {
         try await withApp(mode: .worker) { app in
             #expect(app.workerScheduledJobNames.contains("DispatchIngestNWSAlertsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("ProbeHRRRPressureArtifactsScheduledJob"))
+            #expect(app.workerScheduledJobNames.contains("CleanupPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("RefreshOperatorDashboardSnapshotScheduledJob"))
-            #expect(app.workerScheduledJobNames.count == 3)
+            #expect(app.workerScheduledJobNames.count == 4)
         }
     }
 

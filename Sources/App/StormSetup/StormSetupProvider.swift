@@ -358,13 +358,23 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 )
             }
 
-            guard analysis.request.validTime == selectedSurfaceValidTime else {
+            let staleWarnings = makeStaleWarnings(from: analysis.debug.warnings)
+
+            if analysis.request.validTime == selectedSurfaceValidTime {
+                return AnvilIngredientEvidence(response: analysis.response)
+            }
+
+            guard !staleWarnings.isEmpty,
+                  analysis.request.validTime < selectedSurfaceValidTime else {
                 return .unavailable(
                     reason: "Anvil evidence valid time \(analysis.request.validTime) did not match the selected surface HRRR valid time \(selectedSurfaceValidTime)."
                 )
             }
 
-            return AnvilIngredientEvidence(response: analysis.response)
+            return AnvilIngredientEvidence(
+                response: analysis.response,
+                additionalWarnings: staleWarnings
+            )
         } catch {
             return .unavailable(reason: String(describing: error))
         }
@@ -396,6 +406,12 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             freshness: snapshot.freshness,
             anvilEvidence: anvilEvidence
         )
+    }
+
+    private func makeStaleWarnings(from warnings: [String]) -> [String] {
+        warnings.filter { warning in
+            warning.hasPrefix("Pressure artifact stale fallback selected:")
+        }
     }
 
     private func classify(

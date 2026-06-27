@@ -115,12 +115,16 @@ actor PreviewStubPressureSourceResolver: HrrrPressureDirectObjectResolving {
 
 actor PreviewStubPressureArtifactCatalogLookupService: PressureArtifactCatalogLookupProviding {
     private let handler: @Sendable (HrrrRunCandidate) async throws -> PressureArtifactCatalogReadyArtifact?
+    private let staleHandler: @Sendable (HrrrRunResolution) async throws -> PressureArtifactCatalogReadyArtifact?
     private(set) var callCount = 0
+    private(set) var staleCallCount = 0
 
     init(
-        handler: @escaping @Sendable (HrrrRunCandidate) async throws -> PressureArtifactCatalogReadyArtifact?
+        handler: @escaping @Sendable (HrrrRunCandidate) async throws -> PressureArtifactCatalogReadyArtifact?,
+        staleHandler: @escaping @Sendable (HrrrRunResolution) async throws -> PressureArtifactCatalogReadyArtifact? = { _ in nil }
     ) {
         self.handler = handler
+        self.staleHandler = staleHandler
     }
 
     func readyArtifact(
@@ -128,6 +132,13 @@ actor PreviewStubPressureArtifactCatalogLookupService: PressureArtifactCatalogLo
     ) async throws -> PressureArtifactCatalogReadyArtifact? {
         callCount += 1
         return try await handler(candidate)
+    }
+
+    func staleArtifact(
+        for resolution: HrrrRunResolution
+    ) async throws -> PressureArtifactCatalogReadyArtifact? {
+        staleCallCount += 1
+        return try await staleHandler(resolution)
     }
 }
 
@@ -388,7 +399,8 @@ func previewMakeReadyPressureArtifact(
     localPath: String = "/private/tmp/anvil-preview-pressure-artifact.grib2",
     byteSize: Int64 = 1024,
     product: HrrrProduct = .wrfprsf,
-    fieldSetVersion: HrrrFieldSetVersion = .tornadoPressureV2
+    fieldSetVersion: HrrrFieldSetVersion = .tornadoPressureV2,
+    freshness: PressureArtifactCatalogReadyArtifactFreshness = .exact
 ) -> PressureArtifactCatalogReadyArtifact {
     PressureArtifactCatalogReadyArtifact(
         runTime: runTime,
@@ -397,7 +409,8 @@ func previewMakeReadyPressureArtifact(
         product: product,
         fieldSetVersion: fieldSetVersion,
         localFileURL: URL(fileURLWithPath: localPath),
-        byteSize: byteSize
+        byteSize: byteSize,
+        freshness: freshness
     )
 }
 
