@@ -163,3 +163,5 @@ SELECT run_time, forecast_hour, valid_time, status, local_path, byte_size, error
    FROM pressure_artifact_catalog
    ORDER BY valid_time DESC, updated_at DESC
    LIMIT 10;
+
+DELETE FROM pressure_artifact_catalog

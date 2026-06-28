@@ -100,6 +100,50 @@ struct HrrrPressureSubsetGribCacheTests {
         #expect(try Data(contentsOf: first.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
     }
 
+    @Test("expired cached subset files are invalidated and redownloaded")
+    func expiredCacheEntryTriggersRedownload() async throws {
+        let rootURL = testRootURL()
+        let source = makeSourceMetadata(
+            primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
+            idxURL: URL(string: "https://example.com/a.idx")!
+        )
+        let plan = makePlan()
+        let client = PressureSubsetStubHTTPClient(
+            plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
+                Data("hgt-".utf8),
+                Data("tmp-".utf8),
+                Data("dpt-".utf8),
+                Data("ugrd".utf8),
+                Data("vgrd".utf8)
+            ])
+        )
+        let cache = HrrrPressureSubsetGribCache(
+            httpClient: client,
+            rootURL: rootURL,
+            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+            retentionDuration: 30 * 60,
+            maximumByteCount: 1024
+        )
+
+        let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+
+        let expiredCache = HrrrPressureSubsetGribCache(
+            httpClient: client,
+            rootURL: rootURL,
+            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)),
+            retentionDuration: 30 * 60,
+            maximumByteCount: 1024
+        )
+
+        let second = try await expiredCache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+
+        #expect(first.cacheHit == false)
+        #expect(second.cacheHit == false)
+        #expect(first.localFileURL == second.localFileURL)
+        #expect(client.requestCount == 10)
+        #expect(try Data(contentsOf: second.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+    }
+
     @Test("corrupt cached subset files are invalidated and redownloaded")
     func corruptCacheEntryTriggersRedownload() async throws {
         let rootURL = testRootURL()

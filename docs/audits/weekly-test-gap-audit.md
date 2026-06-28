@@ -59,3 +59,14 @@
 - Implementation recommended: yes
 - Implementation status: added [`/Users/justin/Code/arcus-signal/Tests/AppTests/StormSetupProviderTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/StormSetupProviderTests.swift) regression coverage for empty-normalization fallback
 - Out-of-scope repositories intentionally not scanned: none
+
+## 2026-06-28
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-06-16T15:02:20Z` through `2026-06-22T09:16:42-06:00`)
+- High-risk areas inspected: `Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift` and `Sources/App/StormSetup/HrrrPressureSubsetGribCache.swift`
+- Existing relevant tests found: `HrrrPressureSubsetGribCacheTests` now includes cache hit/miss, corruption recovery, and expiry invalidation coverage
+- Top recommended test: already implemented
+- Watchlist items: none
+- Implementation recommended: no
+- Implementation status: implemented on 2026-06-28 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift)
+- Out-of-scope repositories intentionally not scanned: none
