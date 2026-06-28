@@ -2,7 +2,7 @@ import Foundation
 import Vapor
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -21,6 +21,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var zeroCandidateRate: StoredZeroCandidateRateMetric
     public var targetableCoverage: StoredTargetableCoverageMetric
     public var h3Derivation: StoredH3DerivationMetric
+    public var modelArtifacts: StoredPressureArtifactDashboardMetric
     public var recentNotificationDebugEntries: [StoredRecentNotificationDebugEntry]
     public var touchedSeries: [StoredTouchedSeriesEntry]
 
@@ -40,6 +41,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         zeroCandidateRate: StoredZeroCandidateRateMetric = .init(),
         targetableCoverage: StoredTargetableCoverageMetric = .init(),
         h3Derivation: StoredH3DerivationMetric = .init(),
+        modelArtifacts: StoredPressureArtifactDashboardMetric = .init(),
         recentNotificationDebugEntries: [StoredRecentNotificationDebugEntry] = [],
         touchedSeries: [StoredTouchedSeriesEntry] = []
     ) {
@@ -58,6 +60,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.zeroCandidateRate = zeroCandidateRate
         self.targetableCoverage = targetableCoverage
         self.h3Derivation = h3Derivation
+        self.modelArtifacts = modelArtifacts
         self.recentNotificationDebugEntries = recentNotificationDebugEntries
         self.touchedSeries = touchedSeries
     }
@@ -78,6 +81,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case zeroCandidateRate
         case targetableCoverage
         case h3Derivation
+        case modelArtifacts
         case recentNotificationDebugEntries
         case touchedSeries
     }
@@ -99,6 +103,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.zeroCandidateRate = try container.decode(StoredZeroCandidateRateMetric.self, forKey: .zeroCandidateRate)
         self.targetableCoverage = try container.decode(StoredTargetableCoverageMetric.self, forKey: .targetableCoverage)
         self.h3Derivation = try container.decode(StoredH3DerivationMetric.self, forKey: .h3Derivation)
+        self.modelArtifacts = try container.decodeIfPresent(StoredPressureArtifactDashboardMetric.self, forKey: .modelArtifacts) ?? .init()
         self.recentNotificationDebugEntries = try container.decode([StoredRecentNotificationDebugEntry].self, forKey: .recentNotificationDebugEntries)
         self.touchedSeries = try container.decode([StoredTouchedSeriesEntry].self, forKey: .touchedSeries)
     }
@@ -326,6 +331,152 @@ public struct StoredH3DerivationMetric: Codable, Sendable {
     }
 }
 
+public struct StoredPressureArtifactDashboardMetric: Codable, Sendable {
+    public var pressureArtifactReadiness: StoredPressureArtifactDashboardReadinessMetric
+    public var pressureArtifactCatalog: StoredPressureArtifactDashboardCatalogMetric
+    public var recentPressureArtifacts: StoredPressureArtifactDashboardRecentEntriesMetric
+
+    public init(
+        pressureArtifactReadiness: StoredPressureArtifactDashboardReadinessMetric = .init(),
+        pressureArtifactCatalog: StoredPressureArtifactDashboardCatalogMetric = .init(),
+        recentPressureArtifacts: StoredPressureArtifactDashboardRecentEntriesMetric = .init()
+    ) {
+        self.pressureArtifactReadiness = pressureArtifactReadiness
+        self.pressureArtifactCatalog = pressureArtifactCatalog
+        self.recentPressureArtifacts = recentPressureArtifacts
+    }
+}
+
+public struct StoredPressureArtifactDashboardReadinessMetric: Codable, Sendable {
+    public var refreshedAt: Date?
+    public var status: String?
+    public var runTime: Date?
+    public var forecastHour: Int?
+    public var validTime: Date?
+    public var fieldSetVersion: String?
+    public var byteSize: Int64?
+    public var source: String?
+    public var updatedAt: Date?
+    public var lastCheckedAt: Date?
+    public var errorSummary: String?
+
+    public init(
+        refreshedAt: Date? = nil,
+        status: String? = nil,
+        runTime: Date? = nil,
+        forecastHour: Int? = nil,
+        validTime: Date? = nil,
+        fieldSetVersion: String? = nil,
+        byteSize: Int64? = nil,
+        source: String? = nil,
+        updatedAt: Date? = nil,
+        lastCheckedAt: Date? = nil,
+        errorSummary: String? = nil
+    ) {
+        self.refreshedAt = refreshedAt
+        self.status = status
+        self.runTime = runTime
+        self.forecastHour = forecastHour
+        self.validTime = validTime
+        self.fieldSetVersion = fieldSetVersion
+        self.byteSize = byteSize
+        self.source = source
+        self.updatedAt = updatedAt
+        self.lastCheckedAt = lastCheckedAt
+        self.errorSummary = errorSummary
+    }
+}
+
+public struct StoredPressureArtifactDashboardCatalogMetric: Codable, Sendable {
+    public var refreshedAt: Date?
+    public var totalRowCount: Int
+    public var pendingCount: Int
+    public var warmingCount: Int
+    public var readyCount: Int
+    public var failedCount: Int
+    public var expiredCount: Int
+    public var mostRecentFailureAt: Date?
+    public var mostRecentFailureSummary: String?
+
+    public init(
+        refreshedAt: Date? = nil,
+        totalRowCount: Int = 0,
+        pendingCount: Int = 0,
+        warmingCount: Int = 0,
+        readyCount: Int = 0,
+        failedCount: Int = 0,
+        expiredCount: Int = 0,
+        mostRecentFailureAt: Date? = nil,
+        mostRecentFailureSummary: String? = nil
+    ) {
+        self.refreshedAt = refreshedAt
+        self.totalRowCount = totalRowCount
+        self.pendingCount = pendingCount
+        self.warmingCount = warmingCount
+        self.readyCount = readyCount
+        self.failedCount = failedCount
+        self.expiredCount = expiredCount
+        self.mostRecentFailureAt = mostRecentFailureAt
+        self.mostRecentFailureSummary = mostRecentFailureSummary
+    }
+}
+
+public struct StoredPressureArtifactDashboardRecentEntriesMetric: Codable, Sendable {
+    public var refreshedAt: Date?
+    public var entries: [StoredPressureArtifactDashboardEntry]
+
+    public init(
+        refreshedAt: Date? = nil,
+        entries: [StoredPressureArtifactDashboardEntry] = []
+    ) {
+        self.refreshedAt = refreshedAt
+        self.entries = entries
+    }
+}
+
+public struct StoredPressureArtifactDashboardEntry: Codable, Sendable {
+    public var runTime: Date
+    public var forecastHour: Int
+    public var validTime: Date
+    public var product: String
+    public var fieldSetVersion: String
+    public var status: String
+    public var byteSize: Int64?
+    public var source: String
+    public var createdAt: Date?
+    public var updatedAt: Date?
+    public var lastCheckedAt: Date?
+    public var errorSummary: String?
+
+    public init(
+        runTime: Date,
+        forecastHour: Int,
+        validTime: Date,
+        product: String,
+        fieldSetVersion: String,
+        status: String,
+        byteSize: Int64? = nil,
+        source: String,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil,
+        lastCheckedAt: Date? = nil,
+        errorSummary: String? = nil
+    ) {
+        self.runTime = runTime
+        self.forecastHour = forecastHour
+        self.validTime = validTime
+        self.product = product
+        self.fieldSetVersion = fieldSetVersion
+        self.status = status
+        self.byteSize = byteSize
+        self.source = source
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.lastCheckedAt = lastCheckedAt
+        self.errorSummary = errorSummary
+    }
+}
+
 public struct StoredRecentNotificationDebugEntry: Codable, Sendable {
     public var createdAt: Date
     public var seriesID: UUID
@@ -436,6 +587,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
     public var redLights: OperatorDashboardRedLightsSectionResponse
     public var deliveryKPIs: OperatorDashboardDeliveryKPIsSectionResponse
     public var audienceTargeting: OperatorDashboardAudienceTargetingSectionResponse
+    public var modelArtifacts: OperatorDashboardModelArtifactsSectionResponse
     public var operatorContext: OperatorDashboardOperatorContextSectionResponse
 
     public init(snapshot: OperatorDashboardStoredSnapshot, renderedAt: Date = .now) {
@@ -444,6 +596,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
         self.redLights = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.deliveryKPIs = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.audienceTargeting = .init(snapshot: snapshot, renderedAt: renderedAt)
+        self.modelArtifacts = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.operatorContext = .init(snapshot: snapshot)
     }
 }
@@ -521,6 +674,28 @@ public struct OperatorDashboardAudienceTargetingSectionResponse: Content, Sendab
     }
 }
 
+public struct OperatorDashboardModelArtifactsSectionResponse: Content, Sendable {
+    public var pressureArtifactReadiness: PressureArtifactReadinessMetricResponse
+    public var pressureArtifactCatalog: PressureArtifactCatalogMetricResponse
+    public var recentPressureArtifacts: RecentPressureArtifactEntriesResponse
+
+    init(snapshot: OperatorDashboardStoredSnapshot, renderedAt: Date) {
+        self.pressureArtifactReadiness = .init(
+            refreshedAt: snapshot.fastRefreshedAt,
+            renderedAt: renderedAt,
+            metric: snapshot.modelArtifacts.pressureArtifactReadiness
+        )
+        self.pressureArtifactCatalog = .init(
+            refreshedAt: snapshot.fastRefreshedAt,
+            metric: snapshot.modelArtifacts.pressureArtifactCatalog
+        )
+        self.recentPressureArtifacts = .init(
+            refreshedAt: snapshot.fastRefreshedAt,
+            entries: snapshot.modelArtifacts.recentPressureArtifacts.entries
+        )
+    }
+}
+
 public struct OperatorDashboardOperatorContextSectionResponse: Content, Sendable {
     public var recentNotificationDebugEntries: RecentNotificationDebugEntriesResponse
     public var lastTouchedSeries: LastTouchedSeriesResponse
@@ -534,6 +709,101 @@ public struct OperatorDashboardOperatorContextSectionResponse: Content, Sendable
             refreshedAt: snapshot.fastRefreshedAt,
             entries: snapshot.touchedSeries
         )
+    }
+}
+
+public struct PressureArtifactReadinessMetricResponse: Content, Sendable {
+    public var refreshedAt: Date?
+    public var status: String?
+    public var runTime: Date?
+    public var forecastHour: Int?
+    public var validTime: Date?
+    public var validTimeAgeSeconds: Int?
+    public var fieldSetVersion: String?
+    public var byteSize: Int64?
+    public var source: String?
+    public var updatedAt: Date?
+    public var lastCheckedAt: Date?
+    public var errorSummary: String?
+
+    init(refreshedAt: Date?, renderedAt: Date, metric: StoredPressureArtifactDashboardReadinessMetric) {
+        self.refreshedAt = refreshedAt
+        self.status = metric.status
+        self.runTime = metric.runTime
+        self.forecastHour = metric.forecastHour
+        self.validTime = metric.validTime
+        self.validTimeAgeSeconds = OperatorDashboardCalculations.ageSeconds(
+            since: metric.validTime,
+            renderedAt: renderedAt
+        )
+        self.fieldSetVersion = metric.fieldSetVersion
+        self.byteSize = metric.byteSize
+        self.source = metric.source
+        self.updatedAt = metric.updatedAt
+        self.lastCheckedAt = metric.lastCheckedAt
+        self.errorSummary = metric.errorSummary
+    }
+}
+
+public struct PressureArtifactCatalogMetricResponse: Content, Sendable {
+    public var refreshedAt: Date?
+    public var totalCount: Int
+    public var pendingCount: Int
+    public var warmingCount: Int
+    public var readyCount: Int
+    public var failedCount: Int
+    public var expiredCount: Int
+    public var mostRecentFailureAt: Date?
+    public var mostRecentFailureSummary: String?
+
+    init(refreshedAt: Date?, metric: StoredPressureArtifactDashboardCatalogMetric) {
+        self.refreshedAt = refreshedAt
+        self.totalCount = metric.totalRowCount
+        self.pendingCount = metric.pendingCount
+        self.warmingCount = metric.warmingCount
+        self.readyCount = metric.readyCount
+        self.failedCount = metric.failedCount
+        self.expiredCount = metric.expiredCount
+        self.mostRecentFailureAt = metric.mostRecentFailureAt
+        self.mostRecentFailureSummary = metric.mostRecentFailureSummary
+    }
+}
+
+public struct PressureArtifactEntryResponse: Content, Sendable {
+    public var runTime: Date
+    public var forecastHour: Int
+    public var validTime: Date
+    public var product: String
+    public var fieldSetVersion: String
+    public var status: String
+    public var byteSize: Int64?
+    public var source: String
+    public var updatedAt: Date?
+    public var lastCheckedAt: Date?
+    public var errorSummary: String?
+}
+
+public struct RecentPressureArtifactEntriesResponse: Content, Sendable {
+    public var refreshedAt: Date?
+    public var entries: [PressureArtifactEntryResponse]
+
+    init(refreshedAt: Date?, entries: [StoredPressureArtifactDashboardEntry]) {
+        self.refreshedAt = refreshedAt
+        self.entries = entries.map {
+            .init(
+                runTime: $0.runTime,
+                forecastHour: $0.forecastHour,
+                validTime: $0.validTime,
+                product: $0.product,
+                fieldSetVersion: $0.fieldSetVersion,
+                status: $0.status,
+                byteSize: $0.byteSize,
+                source: $0.source,
+                updatedAt: $0.updatedAt,
+                lastCheckedAt: $0.lastCheckedAt,
+                errorSummary: $0.errorSummary
+            )
+        }
     }
 }
 

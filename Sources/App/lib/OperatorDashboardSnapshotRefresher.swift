@@ -33,6 +33,7 @@ struct OperatorDashboardSnapshotRefresher {
             snapshot.ingestFreshness = try await loadIngestFreshness(on: app.db)
             snapshot.pipelineBacklog = try await loadPipelineBacklog(on: app.db)
             snapshot.stuckClaimedRows = try await loadStuckClaimedRows(on: app.db, now: now)
+            snapshot.modelArtifacts = try await loadPressureArtifactCatalog(on: sql, now: now)
             snapshot.recentNotificationDebugEntries = try await loadRecentNotificationDebugEntries(on: sql)
             snapshot.touchedSeries = try await loadTouchedSeries(on: sql)
             snapshot.fastRefreshedAt = now
@@ -341,6 +342,114 @@ struct OperatorDashboardSnapshotRefresher {
         )
     }
 
+    private func loadPressureArtifactCatalog(on sql: any SQLDatabase, now: Date) async throws -> StoredPressureArtifactDashboardMetric {
+        let fieldSetVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion.rawValue
+        let aggregate = try await sql.raw("""
+            SELECT
+                COUNT(*) AS "totalRowCount",
+                COUNT(*) FILTER (WHERE status = 'pending') AS "pendingCount",
+                COUNT(*) FILTER (WHERE status = 'warming') AS "warmingCount",
+                COUNT(*) FILTER (WHERE status = 'ready') AS "readyCount",
+                COUNT(*) FILTER (WHERE status = 'failed') AS "failedCount",
+                COUNT(*) FILTER (WHERE status = 'expired') AS "expiredCount"
+            FROM pressure_artifact_catalog
+            WHERE product = 'wrfprsf'
+              AND field_set_version = \(bind: fieldSetVersion)
+        """).first(decoding: PressureArtifactCatalogAggregateRow.self)
+
+        let recentRows = try await sql.raw("""
+            SELECT
+                run_time AS "runTime",
+                forecast_hour AS "forecastHour",
+                valid_time AS "validTime",
+                product,
+                field_set_version AS "fieldSetVersion",
+                status,
+                byte_size AS "byteSize",
+                source,
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                last_checked_at AS "lastCheckedAt",
+                error_summary AS "errorSummary"
+            FROM pressure_artifact_catalog
+            WHERE product = 'wrfprsf'
+              AND field_set_version = \(bind: fieldSetVersion)
+            ORDER BY valid_time DESC, updated_at DESC
+            LIMIT \(bind: 5)
+        """).all(decoding: PressureArtifactRow.self)
+
+        let latestFailedRow = try await sql.raw("""
+            SELECT
+                run_time AS "runTime",
+                forecast_hour AS "forecastHour",
+                valid_time AS "validTime",
+                product,
+                field_set_version AS "fieldSetVersion",
+                status,
+                byte_size AS "byteSize",
+                source,
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                last_checked_at AS "lastCheckedAt",
+                error_summary AS "errorSummary"
+            FROM pressure_artifact_catalog
+            WHERE product = 'wrfprsf'
+              AND field_set_version = \(bind: fieldSetVersion)
+              AND status = 'failed'
+            ORDER BY updated_at DESC, valid_time DESC
+            LIMIT 1
+        """).first(decoding: PressureArtifactRow.self)
+
+        let latestArtifact = recentRows.first
+        let latestFailure = latestFailedRow ?? recentRows.first(where: { $0.status == PressureArtifactCatalogStatus.failed.rawValue })
+
+        return .init(
+            pressureArtifactReadiness: .init(
+                refreshedAt: now,
+                status: latestArtifact?.status,
+                runTime: latestArtifact?.runTime,
+                forecastHour: latestArtifact?.forecastHour,
+                validTime: latestArtifact?.validTime,
+                fieldSetVersion: latestArtifact?.fieldSetVersion,
+                byteSize: latestArtifact?.byteSize,
+                source: latestArtifact?.source,
+                updatedAt: latestArtifact?.updatedAt,
+                lastCheckedAt: latestArtifact?.lastCheckedAt,
+                errorSummary: latestArtifact?.errorSummary
+            ),
+            pressureArtifactCatalog: .init(
+                refreshedAt: now,
+                totalRowCount: aggregate.map { Int($0.totalRowCount) } ?? 0,
+                pendingCount: aggregate.map { Int($0.pendingCount) } ?? 0,
+                warmingCount: aggregate.map { Int($0.warmingCount) } ?? 0,
+                readyCount: aggregate.map { Int($0.readyCount) } ?? 0,
+                failedCount: aggregate.map { Int($0.failedCount) } ?? 0,
+                expiredCount: aggregate.map { Int($0.expiredCount) } ?? 0,
+                mostRecentFailureAt: latestFailure?.updatedAt,
+                mostRecentFailureSummary: latestFailure?.errorSummary
+            ),
+            recentPressureArtifacts: .init(
+                refreshedAt: now,
+                entries: recentRows.map {
+                    .init(
+                        runTime: $0.runTime,
+                        forecastHour: $0.forecastHour,
+                        validTime: $0.validTime,
+                        product: $0.product,
+                        fieldSetVersion: $0.fieldSetVersion,
+                        status: $0.status,
+                        byteSize: $0.byteSize,
+                        source: $0.source,
+                        createdAt: $0.createdAt,
+                        updatedAt: $0.updatedAt,
+                        lastCheckedAt: $0.lastCheckedAt,
+                        errorSummary: $0.errorSummary
+                    )
+                }
+            )
+        )
+    }
+
     private func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
         let rows = try await sql.raw("""
             SELECT
@@ -451,6 +560,30 @@ private struct ZeroCandidateAggregateRow: Decodable {
 private struct ReasonAggregateRow: Decodable {
     let reason: String
     let count: Int64
+}
+
+private struct PressureArtifactCatalogAggregateRow: Decodable {
+    let totalRowCount: Int64
+    let pendingCount: Int64
+    let warmingCount: Int64
+    let readyCount: Int64
+    let failedCount: Int64
+    let expiredCount: Int64
+}
+
+private struct PressureArtifactRow: Decodable {
+    let runTime: Date
+    let forecastHour: Int
+    let validTime: Date
+    let product: String
+    let fieldSetVersion: String
+    let status: String
+    let byteSize: Int64?
+    let source: String
+    let createdAt: Date?
+    let updatedAt: Date?
+    let lastCheckedAt: Date?
+    let errorSummary: String?
 }
 
 private struct TargetableCoverageRow: Decodable {

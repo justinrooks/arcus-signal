@@ -502,3 +502,55 @@ Final next action:
 
 - The currently scoped warmer issues are complete.
 - Broader suite isolation issues remain outside the scope of `#121`.
+
+### Follow-on Story - Surface HRRR pressure artifact health on the operator dashboard
+
+Status: Completed
+
+Scope:
+- Surface current HRRR pressure artifact readiness on the operator dashboard.
+- Carry the pressure-artifact catalog through the worker-computed snapshot path.
+- Add a model-artifacts dashboard section with readiness, catalog health, and recent rows.
+- Preserve the existing dashboard sections and the pressure-warmer flows.
+
+Dashboard files changed:
+- `Sources/App/Models/API/OperatorDashboardSnapshotResponse.swift`
+- `Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`
+- `Sources/App/lib/OperatorDashboardPageRenderer.swift`
+- `Tests/AppTests/OperatorDashboardPressureArtifactTests.swift`
+
+Snapshot schema version:
+- Incremented `OperatorDashboardStoredSnapshot.currentSchemaVersion` from `2` to `3`.
+- Added `StoredPressureArtifactDashboardMetric` with `StoredPressureArtifactDashboardReadinessMetric`, `StoredPressureArtifactDashboardCatalogMetric`, `StoredPressureArtifactDashboardRecentEntriesMetric`, and `StoredPressureArtifactDashboardEntry`.
+- Legacy snapshots decode with an empty pressure-artifact metric through `decodeIfPresent(... ) ?? .init()`.
+
+Metrics exposed:
+- `modelArtifacts.pressureArtifactReadiness`
+- `modelArtifacts.pressureArtifactCatalog`
+- `modelArtifacts.recentPressureArtifacts`
+
+SQL filtering policy:
+- Fast refresh now queries `pressure_artifact_catalog` only for `product = 'wrfprsf'`.
+- Fast refresh also filters to `field_set_version = wrfprsf.defaultFieldSetVersion`.
+- Counts, recent rows, and the latest failed row all stay on the current field-set version so obsolete artifacts cannot make current readiness look healthy.
+- Recent rows are ordered by `valid_time DESC, updated_at DESC` and limited to five.
+- The most recently updated failed row is selected with a separate narrow query.
+
+Visual states implemented:
+- `NO DATA` when no current-version rows exist.
+- Pending, warming, ready, failed, and expired status pills.
+- Missing byte size renders as `n/a`.
+- Missing timestamps render as `n/a`.
+- Missing error summaries render as `none` or omit the error row on the readiness tile.
+- The readiness tile uses the latest current-version artifact row.
+- The catalog tile shows counts and the most recent failure timestamp/reason.
+- The recent-artifacts table shows five current-version rows without `localPath`.
+
+Validation performed:
+- `swift test --filter OperatorDashboardPressureArtifactTests`
+- `swift test --filter OperatorDashboardTests`
+- `swift test`
+
+Known failures or follow-up work:
+- `swift test` still reports unrelated broad-suite failures that predate this change, including shared-state pressure-artifact catalog and cleanup tests, warm-job tests, and some pressure diagnostics lookups when the full suite runs together.
+- The dashboard change itself passed in the focused dashboard test slices.
