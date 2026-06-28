@@ -36,6 +36,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
     private let validator: any PressureArtifactValidating
     private let subsetCache: HrrrPressureSubsetGribCache
     private let dateProvider: any StormSetupDateProviding
+    private let maximumByteCount: Int
 
     init(
         httpClient: any HTTPClient,
@@ -55,6 +56,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             maximumByteCount: maximumByteCount
         )
         self.dateProvider = dateProvider
+        self.maximumByteCount = maximumByteCount
     }
 
     static func makeDefault(application: Application) -> PressureArtifactWarmingService {
@@ -97,9 +99,11 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                     metadata: [
                         "runTime": .string(payload.runTime.ISO8601Format()),
                         "forecastHour": .stringConvertible(payload.forecastHour),
+                        "validTime": .string(payload.validTime.ISO8601Format()),
                         "status": .string(currentRow.statusRaw),
                         "product": .string(payload.product.rawValue),
-                        "fieldSetVersion": .string(payload.fieldSetVersion.rawValue)
+                        "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                        "catalogSkipReason": .string("existing catalog state")
                     ]
                 )
                 return
@@ -113,7 +117,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             metadata: [
                 "runTime": .string(payload.runTime.ISO8601Format()),
                 "forecastHour": .stringConvertible(payload.forecastHour),
+                "validTime": .string(payload.validTime.ISO8601Format()),
                 "previousStatus": .string(claimedRow.statusRaw),
+                "status": .string(PressureArtifactCatalogStatus.warming.rawValue),
                 "product": .string(payload.product.rawValue),
                 "fieldSetVersion": .string(payload.fieldSetVersion.rawValue)
             ]
@@ -131,6 +137,21 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 throw PressureArtifactWarmingError.noSelectableMessages
             }
 
+            logger.info(
+                "Selected HRRR pressure messages for warming.",
+                metadata: [
+                    "runTime": .string(payload.runTime.ISO8601Format()),
+                    "forecastHour": .stringConvertible(payload.forecastHour),
+                    "validTime": .string(payload.validTime.ISO8601Format()),
+                    "product": .string(payload.product.rawValue),
+                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                    "requestedLevelCount": .stringConvertible(selection.requestedLevels.count),
+                    "selectedPressureLevelCount": .stringConvertible(Set(selection.selectedMessages.map(\.pressureLevel)).count),
+                    "selectedMessageCount": .stringConvertible(selection.selectedMessages.count),
+                    "missingLevelCount": .stringConvertible(selection.missingLevels.count)
+                ]
+            )
+
             let byteRangePlan = HrrrGribByteRangePlanner().plan(
                 inventory: inventory,
                 selectedMessages: selection.selectedMessages
@@ -141,33 +162,68 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 metadata: [
                     "runTime": .string(payload.runTime.ISO8601Format()),
                     "forecastHour": .stringConvertible(payload.forecastHour),
+                    "validTime": .string(payload.validTime.ISO8601Format()),
+                    "product": .string(payload.product.rawValue),
+                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
                     "selectedRangeCount": .stringConvertible(byteRangePlan.ranges.count)
                 ]
             )
 
+            let clock = ContinuousClock()
+            let downloadStart = clock.now
             let subset = try await subsetCache.loadOrFetch(
                 sourceMetadata: source,
                 byteRangePlan: byteRangePlan
             )
+            let downloadDuration = downloadStart.duration(to: clock.now)
+            let downloadDurationMs = durationMilliseconds(downloadDuration)
 
             logger.info(
                 "Pressure subset cache prepared for warming.",
                 metadata: [
                     "runTime": .string(payload.runTime.ISO8601Format()),
                     "forecastHour": .stringConvertible(payload.forecastHour),
-                    "byteSize": .stringConvertible(subset.byteSize),
-                    "cacheHit": .stringConvertible(subset.cacheHit)
+                    "validTime": .string(payload.validTime.ISO8601Format()),
+                    "product": .string(payload.product.rawValue),
+                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                    "sourceURL": .string(source.primaryDownloadURL?.absoluteString ?? "nil"),
+                    "idxURL": .string(source.idxURL?.absoluteString ?? "nil"),
+                    "cacheHit": .stringConvertible(subset.cacheHit),
+                    "artifactByteSize": .stringConvertible(subset.byteSize),
+                    "maximumByteCount": .stringConvertible(maximumByteCount),
+                    "downloadDurationMs": .stringConvertible(downloadDurationMs)
                 ]
             )
 
-            let validation = try await validator.validate(localFileURL: subset.localFileURL)
+            let validation: PressureArtifactValidationResult
+            do {
+                validation = try await validator.validate(localFileURL: subset.localFileURL)
+            } catch {
+                logger.error(
+                    "Pressure artifact validation failed.",
+                    metadata: [
+                        "runTime": .string(payload.runTime.ISO8601Format()),
+                        "forecastHour": .stringConvertible(payload.forecastHour),
+                        "validTime": .string(payload.validTime.ISO8601Format()),
+                        "product": .string(payload.product.rawValue),
+                        "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                        "status": .string(PressureArtifactCatalogStatus.failed.rawValue),
+                        "error": .string(String(reflecting: error))
+                    ]
+                )
+                throw error
+            }
 
             logger.info(
                 "Pressure artifact validation passed.",
                 metadata: [
                     "runTime": .string(payload.runTime.ISO8601Format()),
                     "forecastHour": .stringConvertible(payload.forecastHour),
-                    "validatedLines": .stringConvertible(validation.stdoutLineCount)
+                    "validTime": .string(payload.validTime.ISO8601Format()),
+                    "product": .string(payload.product.rawValue),
+                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                    "validatedLines": .stringConvertible(validation.stdoutLineCount),
+                    "status": .string(PressureArtifactCatalogStatus.ready.rawValue)
                 ]
             )
 
@@ -183,6 +239,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 metadata: [
                     "runTime": .string(payload.runTime.ISO8601Format()),
                     "forecastHour": .stringConvertible(payload.forecastHour),
+                    "validTime": .string(payload.validTime.ISO8601Format()),
+                    "product": .string(payload.product.rawValue),
+                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
                     "status": .string(PressureArtifactCatalogStatus.ready.rawValue)
                 ]
             )
@@ -198,6 +257,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 metadata: [
                     "runTime": .string(payload.runTime.ISO8601Format()),
                     "forecastHour": .stringConvertible(payload.forecastHour),
+                    "validTime": .string(payload.validTime.ISO8601Format()),
+                    "product": .string(payload.product.rawValue),
+                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
                     "error": .string(String(reflecting: error)),
                     "status": .string(PressureArtifactCatalogStatus.failed.rawValue)
                 ]
@@ -264,6 +326,11 @@ private extension PressureArtifactWarmingService {
             metadata: [
                 "runTime": .string(source.runTime?.ISO8601Format() ?? "unknown"),
                 "forecastHour": .stringConvertible(source.forecastHour ?? -1),
+                "validTime": .string(source.validTime?.ISO8601Format() ?? "unknown"),
+                "product": .string(source.product?.rawValue ?? "unknown"),
+                "fieldSetVersion": .string(source.fieldSetVersion?.rawValue ?? "unknown"),
+                "sourceURL": .string(source.primaryDownloadURL?.absoluteString ?? "nil"),
+                "idxURL": .string(source.idxURL?.absoluteString ?? "nil"),
                 "idxLineCount": .stringConvertible(text.split(whereSeparator: \.isNewline).count)
             ]
         )
@@ -389,5 +456,10 @@ private extension PressureArtifactWarmingService {
         row.errorSummary = String(reflecting: error)
         row.lastCheckedAt = dateProvider.now()
         try await row.update(on: database)
+    }
+
+    func durationMilliseconds(_ duration: Duration) -> Int64 {
+        let components = duration.components
+        return Int64(components.seconds) * 1_000 + components.attoseconds / 1_000_000_000_000_000
     }
 }

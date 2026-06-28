@@ -384,6 +384,14 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         from snapshot: TornadoIngredientSnapshot
     ) async -> TornadoIngredientSnapshot {
         guard anvilProfileAnalysisProvider != nil else {
+            logger.info(
+                "Storm Setup Anvil evidence resolved.",
+                metadata: anvilEvidenceResolutionMetadata(
+                    source: snapshot.source,
+                    freshness: snapshot.freshness,
+                    evidence: .unavailable(reason: "Anvil analysis provider is not configured.")
+                )
+            )
             return snapshot
         }
 
@@ -397,7 +405,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             evidence: anvilEvidence
         )
 
-        return TornadoIngredientSnapshot(
+        let composed = TornadoIngredientSnapshot(
             h3Cell: snapshot.h3Cell,
             centroid: snapshot.centroid,
             source: snapshot.source,
@@ -406,11 +414,87 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             freshness: snapshot.freshness,
             anvilEvidence: anvilEvidence
         )
+
+        logger.info(
+            "Storm Setup Anvil evidence resolved.",
+            metadata: anvilEvidenceResolutionMetadata(
+                source: composed.source,
+                freshness: composed.freshness,
+                evidence: anvilEvidence
+            )
+        )
+
+        return composed
     }
 
     private func makeStaleWarnings(from warnings: [String]) -> [String] {
         warnings.filter { warning in
             warning.hasPrefix("Pressure artifact stale fallback selected:")
+        }
+    }
+
+    private func anvilEvidenceResolutionMetadata(
+        source: StormSetupSourceMetadata,
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence
+    ) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [
+            "artifactOutcome": .string(artifactOutcome(for: source, freshness: freshness)),
+            "evidenceStatus": .string(evidence.status.rawValue),
+            "selectedSurfaceValidTime": .string(source.validTime?.ISO8601Format() ?? "nil"),
+            "pressureArtifactValidTime": .string(source.validTime?.ISO8601Format() ?? "nil")
+        ]
+
+        if freshness.isStale {
+            metadata["staleAgeSeconds"] = .stringConvertible(staleAgeSeconds(for: freshness))
+        }
+
+        if let reason = conciseEvidenceReason(for: evidence) {
+            metadata["reason"] = .string(reason)
+        }
+
+        return metadata
+    }
+
+    private func artifactOutcome(
+        for source: StormSetupSourceMetadata,
+        freshness: IngredientFreshness
+    ) -> String {
+        if source.validTime == nil {
+            return "unavailable"
+        }
+
+        if freshness.isStale {
+            return "stale"
+        }
+
+        return "exact"
+    }
+
+    private func staleAgeSeconds(for freshness: IngredientFreshness) -> Int {
+        max(0, Int(freshness.fetchedAt.timeIntervalSince(freshness.expiresAt).rounded(.down)))
+    }
+
+    private func conciseEvidenceReason(for evidence: AnvilIngredientEvidence) -> String? {
+        switch evidence.status {
+        case .available:
+            return nil
+        case .unavailable:
+            return evidence.reason
+        case .degraded:
+            if let warning = evidence.diagnostics.warnings.first {
+                return warning
+            }
+            if !evidence.diagnostics.hasEffectiveLayer {
+                return "effective layer not found"
+            }
+            if !evidence.diagnostics.hasStormMotion {
+                return "storm motion not computed"
+            }
+            if evidence.diagnostics.qualityProfileLevelCount < 5 {
+                return "insufficient profile levels"
+            }
+            return "Anvil evidence is degraded."
         }
     }
 

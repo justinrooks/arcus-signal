@@ -46,6 +46,7 @@ Related local docs:
 - Issue `#118` implemented the worker-owned probe slice and dedicated model-artifacts scheduling lane.
 - Issue `#119` changed the normal `storm-setup/current` pressure-evidence path to consume exact ready catalog artifacts instead of request-time cold acquisition.
 - Issue `#120` added bounded stale pressure-artifact fallback plus worker-owned expiration and deletion.
+- Issue `#121` added structured diagnostics across probe, warm, lookup, and request-path evidence resolution, plus the regression guard for exact-artifact unusable-profile failures.
 - The currently scoped warmer issues are complete.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
@@ -69,6 +70,7 @@ Work these issues sequentially:
 5. `#118` - 05: Worker-owned HRRR pressure artifact probe and schedule
 6. `#119` - 06: Change storm-setup/current to consume ready pressure artifacts
 7. `#120` - 07: Add pressure artifact cleanup, expiration, and stale fallback
+8. `#121` - 08: Add diagnostics for pressure artifact acquisition
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -395,6 +397,60 @@ Known failures or follow-up work:
 - Broad-suite failures remain unrelated and are not part of this slice.
 - The warmer sequence is complete for the currently scoped issues.
 
+### Issue #121 - 08: Add diagnostics for pressure artifact acquisition
+
+Status: Completed
+
+Scope:
+- Add structured observability for pressure artifact probe, warm-job, catalog lookup, and request-path evidence resolution.
+- Preserve existing lifecycle logs while enriching them with stable artifact-key metadata.
+- Add the `wrfsfc` source reconstruction regression guard and preserve the underlying unusable-profile error when an exact artifact is present.
+- Reconcile the warmer runbook and progress log with the verified local acquisition behavior.
+
+Files changed:
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Sources/App/StormSetup/PressureArtifactCatalogLookupService.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Tests/AppTests/PressureArtifactDiagnosticsTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+- `docs/plans/hrrr-pressure-artifact-warmer-runbook.md`
+
+Diagnostics added:
+- Probe start, per-candidate `.idx` availability, enqueue, skip, failure, and exhaustion events.
+- Warm-job start, skip, inventory fetch, level selection, range selection, cache preparation, validation success/failure, ready transition, and failure events.
+- Catalog lookup exact-hit, exact-miss, non-ready, unusable-local-file, stale-hit, stale-skip, and stale-miss events.
+- Request-path evidence resolution with `artifactOutcome`, `evidenceStatus`, pressure artifact valid time, selected surface valid time, stale age, and concise reason metadata.
+
+Regression fix:
+- Verified `PressureArtifactWarmingService.makeSourceMetadata` already constructs the pressure source with `HrrrRunCandidate(product: payload.product, ...)`.
+- Verified the warm-job regression test already proves warm requests use `wrfprsf` URLs.
+- Added a regression test that keeps the exact-artifact unusable-profile error intact instead of degrading it into a false “no ready or stale artifact” miss.
+
+Validation performed:
+- `swift test --filter PressureArtifactDiagnosticsTests` passed
+- `swift test --filter PressureArtifactWarmJobTests` passed
+- `swift test --filter HRRRPressureArtifactProbeServiceTests` passed
+- `swift test --filter PressureArtifactCatalogLookupServiceTests` passed
+- `swift test --filter AnvilProfilePreviewProviderTests` passed
+- `swift test --filter StormSetupProviderTests` passed
+- `swift test` still reports unrelated broad-suite failures in pressure catalog persistence, pressure cleanup, and a few shared-state pressure tests when the full suite runs together
+
+Local end-to-end validation:
+- 37 retained pressure levels
+- pressure range `1000` through `100 mb`
+- matching pressure, height, temperature, dewpoint, U-wind, and V-wind array counts
+- Anvil successfully computed storm motion
+- effective layer was legitimately not found for a zero-CAPE profile
+
+Remaining broad-suite failures:
+- `swift test` still shows unrelated failures in pressure catalog persistence, pressure cleanup, and shared-state pressure tests when the whole suite is run together.
+
+Final next action:
+- Keep issue `#121` closed out at the docs level and move to the next unrelated task only after the broad-suite noise is addressed separately.
+
 ---
 
 ## Decisions Made
@@ -418,6 +474,7 @@ Known failures or follow-up work:
 - Read the existing issue-runbook and progress-doc patterns before writing the new docs.
 - Verified the new files exist under `docs/plans`.
 - Verified the implementation scope for `#114` is documentation only.
+- Verified issue `#121` diagnostics, source metadata, and request-path evidence logging with targeted regression tests.
 - Ran and passed the warm-job verification filters for issue `#117`:
   - `swift test --filter PressureArtifactWarmJobTests`
   - `swift test --filter HrrrPressureSubsetGribCacheTests`
@@ -430,10 +487,18 @@ Known failures or follow-up work:
   - `swift test --filter StormSetupConfigurationTests`
   - `swift test --filter scheduledDispatchUsesModelArtifactsLane`
   - `swift test --filter workerBootstrapRegistersPressureArtifactProbeSchedule`
+- Ran and passed the diagnostics and request-path verification filters for issue `#121`:
+  - `swift test --filter PressureArtifactDiagnosticsTests`
+  - `swift test --filter PressureArtifactWarmJobTests`
+  - `swift test --filter HRRRPressureArtifactProbeServiceTests`
+  - `swift test --filter PressureArtifactCatalogLookupServiceTests`
+  - `swift test --filter AnvilProfilePreviewProviderTests`
+  - `swift test --filter StormSetupProviderTests`
+- Ran `swift test`; the repository still reports unrelated broad-suite failures in pressure catalog persistence, pressure cleanup, and some shared-state pressure tests.
 
 ---
 
 ## Current Follow-Up
 
 - The currently scoped warmer issues are complete.
-- Broader suite isolation issues remain outside the scope of `#120`.
+- Broader suite isolation issues remain outside the scope of `#121`.

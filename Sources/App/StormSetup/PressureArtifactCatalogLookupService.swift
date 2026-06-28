@@ -1,5 +1,6 @@
 import Fluent
 import Foundation
+import Logging
 
 enum PressureArtifactCatalogReadyArtifactFreshness: Sendable, Equatable {
     case exact
@@ -51,15 +52,18 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
     private let database: any Database
     private let fileManager: FileManager
     private let maximumStaleAgeSeconds: TimeInterval
+    private let logger: Logger
 
     init(
         database: any Database,
         fileManager: FileManager = .default,
-        maximumStaleAgeSeconds: TimeInterval = 2 * 60 * 60
+        maximumStaleAgeSeconds: TimeInterval = 2 * 60 * 60,
+        logger: Logger = Logger(label: "pressure-artifact-catalog-lookup")
     ) {
         self.database = database
         self.fileManager = fileManager
         self.maximumStaleAgeSeconds = maximumStaleAgeSeconds
+        self.logger = logger
     }
 
     func readyArtifact(
@@ -72,14 +76,46 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
             fieldSetVersion: candidate.fieldSetVersion,
             on: database
         ) else {
+            logger.info(
+                "Pressure artifact exact lookup missed.",
+                metadata: candidateMetadata(for: candidate, reason: "catalogRowMissing")
+            )
             return nil
         }
 
         guard row.status == .ready else {
+            logger.info(
+                "Pressure artifact exact lookup skipped non-ready row.",
+                metadata: rowMetadata(
+                    row,
+                    freshnessOutcome: "exact",
+                    reason: "catalogStatusNotReady"
+                )
+            )
             return nil
         }
 
-        return makeReadyArtifact(from: row, freshness: .exact)
+        guard let artifact = makeReadyArtifact(from: row, freshness: .exact) else {
+            logger.info(
+                "Pressure artifact exact lookup found unusable local file.",
+                metadata: rowMetadata(
+                    row,
+                    freshnessOutcome: "exact",
+                    reason: "localFileUnusable"
+                )
+            )
+            return nil
+        }
+
+        logger.info(
+            "Pressure artifact exact lookup hit.",
+            metadata: artifactMetadata(
+                artifact: artifact,
+                freshnessOutcome: "exact",
+                source: row.sourceRaw
+            )
+        )
+        return artifact
     }
 
     func staleArtifact(
@@ -105,14 +141,41 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
 
             let ageSeconds = resolution.targetValidTime.timeIntervalSince(row.validTime)
 
-            if let artifact = makeReadyArtifact(
+            guard let artifact = makeReadyArtifact(
                 from: row,
                 freshness: .stale(ageSeconds: ageSeconds)
-            ) {
-                return artifact
+            ) else {
+                logger.info(
+                    "Pressure artifact stale candidate skipped because its file is unusable.",
+                    metadata: rowMetadata(
+                        row,
+                        freshnessOutcome: "stale",
+                        staleAgeSeconds: ageSeconds,
+                        reason: "localFileUnusable"
+                    )
+                )
+                continue
             }
+
+            logger.info(
+                "Pressure artifact stale lookup hit.",
+                metadata: artifactMetadata(
+                    artifact: artifact,
+                    freshnessOutcome: "stale",
+                    staleAgeSeconds: ageSeconds,
+                    source: row.sourceRaw
+                )
+            )
+            return artifact
         }
 
+        logger.info(
+            "Pressure artifact stale lookup missed.",
+            metadata: candidateMetadata(
+                for: pressureCandidate,
+                reason: "noEligibleStaleArtifact"
+            )
+        )
         return nil
     }
 
@@ -144,5 +207,72 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
             byteSize: fileSize.int64Value,
             freshness: freshness
         )
+    }
+
+    func candidateMetadata(
+        for candidate: HrrrRunCandidate,
+        reason: String
+    ) -> Logger.Metadata {
+        [
+            "runTime": .string(candidate.runTime.ISO8601Format()),
+            "forecastHour": .stringConvertible(candidate.forecastHour),
+            "validTime": .string(candidate.validTime.ISO8601Format()),
+            "product": .string(candidate.product.rawValue),
+            "fieldSetVersion": .string(candidate.fieldSetVersion.rawValue),
+            "catalogSkipReason": .string(reason)
+        ]
+    }
+
+    func rowMetadata(
+        _ row: PressureArtifactCatalogModel,
+        freshnessOutcome: String,
+        staleAgeSeconds: TimeInterval? = nil,
+        reason: String? = nil
+    ) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [
+            "runTime": .string(row.runTime.ISO8601Format()),
+            "forecastHour": .stringConvertible(row.forecastHour),
+            "validTime": .string(row.validTime.ISO8601Format()),
+            "product": .string(row.product.rawValue),
+            "fieldSetVersion": .string(row.fieldSetVersion.rawValue),
+            "status": .string(row.statusRaw),
+            "source": .string(row.sourceRaw),
+            "byteSize": .stringConvertible(row.byteSize ?? 0),
+            "freshnessOutcome": .string(freshnessOutcome)
+        ]
+
+        if let staleAgeSeconds {
+            metadata["staleAgeSeconds"] = .stringConvertible(Int(staleAgeSeconds.rounded()))
+        }
+
+        if let reason {
+            metadata["catalogSkipReason"] = .string(reason)
+        }
+
+        return metadata
+    }
+
+    func artifactMetadata(
+        artifact: PressureArtifactCatalogReadyArtifact,
+        freshnessOutcome: String,
+        staleAgeSeconds: TimeInterval? = nil,
+        source: String
+    ) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [
+            "runTime": .string(artifact.runTime.ISO8601Format()),
+            "forecastHour": .stringConvertible(artifact.forecastHour),
+            "validTime": .string(artifact.validTime.ISO8601Format()),
+            "product": .string(artifact.product.rawValue),
+            "fieldSetVersion": .string(artifact.fieldSetVersion.rawValue),
+            "byteSize": .stringConvertible(artifact.byteSize),
+            "freshnessOutcome": .string(freshnessOutcome),
+            "source": .string(source)
+        ]
+
+        if let staleAgeSeconds {
+            metadata["staleAgeSeconds"] = .stringConvertible(Int(staleAgeSeconds.rounded()))
+        }
+
+        return metadata
     }
 }

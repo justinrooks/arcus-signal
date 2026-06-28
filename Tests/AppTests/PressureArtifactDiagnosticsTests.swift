@@ -1,0 +1,1171 @@
+@testable import App
+import Fluent
+import FluentSQL
+import Foundation
+import Logging
+import Queues
+import Testing
+import Vapor
+
+@Suite("Pressure artifact diagnostics", .serialized)
+struct PressureArtifactDiagnosticsTests {
+    @Test("probe logs idx availability, queue metadata, and enqueue details")
+    func probeLogsIdxAvailabilityQueueMetadataAndEnqueueDetails() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14), forecastHour: 8)
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = HrrrPressureDirectObjectURLBuilder().makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = ProbeWarmJobDispatcherRecorder()
+            let loggerContext = makeCapturingLogger(label: "probe")
+            let service = HRRRPressureArtifactProbeService(
+                runResolver: FixedHrrrRunResolving(
+                    resolution: HrrrRunResolution(
+                        targetValidTime: surfaceCandidate.validTime,
+                        candidates: [surfaceCandidate]
+                    )
+                ),
+                remoteObjectChecker: remoteChecker,
+                warmJobDispatcher: dispatcher
+            )
+
+            try await seedCatalogRow(status: .failed, payload: payload, on: app.db)
+            try await service.probe(on: app, logger: loggerContext.logger)
+
+            let warmEnqueue = try #require(try loggerContext.event(matching: "HRRR pressure artifact warm enqueued."))
+            let availability = try #require(try loggerContext.event(matching: "HRRR pressure artifact idx availability checked."))
+
+            #expect(dispatcher.dispatches.count == 1)
+            #expect(metadataString(availability.metadata, "idxAvailable") == "true")
+            #expect(metadataString(availability.metadata, "idxStatus") == "200")
+            #expect(metadataString(availability.metadata, "idxURL") == idxURL.absoluteString)
+            #expect(metadataString(availability.metadata, "runTime") == pressureCandidate.runTime.ISO8601Format())
+            #expect(metadataString(availability.metadata, "forecastHour") == String(pressureCandidate.forecastHour))
+            #expect(metadataString(availability.metadata, "validTime") == pressureCandidate.validTime.ISO8601Format())
+            #expect(metadataString(availability.metadata, "product") == pressureCandidate.product.rawValue)
+            #expect(metadataString(availability.metadata, "fieldSetVersion") == pressureCandidate.fieldSetVersion.rawValue)
+            #expect(metadataString(warmEnqueue.metadata, "queue") == ArcusQueueLane.modelArtifacts.queueName.string)
+            #expect(metadataString(warmEnqueue.metadata, "status") == PressureArtifactCatalogStatus.pending.rawValue)
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
+    @Test("probe logs the existing catalog state when warm enqueue is skipped")
+    func probeLogsExistingCatalogStateWhenWarmEnqueueIsSkipped() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15), forecastHour: 7)
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = HrrrPressureDirectObjectURLBuilder().makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = ProbeWarmJobDispatcherRecorder()
+            let loggerContext = makeCapturingLogger(label: "probe-skip")
+            let service = HRRRPressureArtifactProbeService(
+                runResolver: FixedHrrrRunResolving(
+                    resolution: HrrrRunResolution(
+                        targetValidTime: surfaceCandidate.validTime,
+                        candidates: [surfaceCandidate]
+                    )
+                ),
+                remoteObjectChecker: remoteChecker,
+                warmJobDispatcher: dispatcher
+            )
+
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            try await service.probe(on: app, logger: loggerContext.logger)
+
+            let skipped = try #require(try loggerContext.event(matching: "HRRR pressure artifact warm skipped for existing catalog state."))
+
+            #expect(dispatcher.dispatches.isEmpty)
+            #expect(metadataString(skipped.metadata, "catalogSkipReason") == "catalog state is pending, warming, or ready")
+            #expect(metadataString(skipped.metadata, "status") == PressureArtifactCatalogStatus.pending.rawValue)
+            #expect(metadataString(skipped.metadata, "queue") == nil)
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
+    @Test("probe logs exhaustion when every candidate is unavailable")
+    func probeLogsExhaustionWhenEveryCandidateIsUnavailable() async throws {
+        try await withApp { app in
+            let firstSurface = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15), forecastHour: 7)
+            let secondSurface = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14), forecastHour: 8)
+            let firstPressure = makePressureCandidate(from: firstSurface)
+            let secondPressure = makePressureCandidate(from: secondSurface)
+            let firstIdxURL = HrrrPressureDirectObjectURLBuilder().makeIdxURL(for: firstPressure)
+            let secondIdxURL = HrrrPressureDirectObjectURLBuilder().makeIdxURL(for: secondPressure)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(
+                availableURLs: [
+                    firstIdxURL.absoluteString: false,
+                    secondIdxURL.absoluteString: false
+                ]
+            )
+            let loggerContext = makeCapturingLogger(label: "probe-exhaustion")
+            let service = HRRRPressureArtifactProbeService(
+                runResolver: FixedHrrrRunResolving(
+                    resolution: HrrrRunResolution(
+                        targetValidTime: firstSurface.validTime,
+                        candidates: [firstSurface, secondSurface]
+                    )
+                ),
+                remoteObjectChecker: remoteChecker,
+                warmJobDispatcher: ProbeWarmJobDispatcherRecorder()
+            )
+
+            try await service.probe(on: app, logger: loggerContext.logger)
+
+            let exhaustion = try #require(try loggerContext.event(matching: "HRRR pressure artifact probe finished without an available candidate."))
+            #expect(metadataString(exhaustion.metadata, "targetValidTime") == firstSurface.validTime.ISO8601Format())
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
+    @Test("warm diagnostics include source URLs, selection counts, and validation outcome")
+    func warmDiagnosticsIncludeSourceUrlsSelectionCountsAndValidationOutcome() async throws {
+        try await withApp { app in
+            let payload = makeWarmPayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub()
+            let loggerContext = makeCapturingLogger(label: "warm-success")
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024
+            )
+
+            try await service.warm(payload: payload, on: app, logger: loggerContext.logger)
+
+            let claimed = try #require(try loggerContext.event(matching: "Pressure artifact catalog row claimed for warming."))
+            let selection = try #require(try loggerContext.event(matching: "Selected HRRR pressure messages for warming."))
+            let rangeSelection = try #require(try loggerContext.event(matching: "Selected HRRR pressure byte ranges for warming."))
+            let prepared = try #require(try loggerContext.event(matching: "Pressure subset cache prepared for warming."))
+            let validation = try #require(try loggerContext.event(matching: "Pressure artifact validation passed."))
+            let ready = try #require(try loggerContext.event(matching: "Pressure artifact catalog row transitioned to ready."))
+
+            #expect(metadataString(claimed.metadata, "status") == PressureArtifactCatalogStatus.warming.rawValue)
+            #expect(metadataString(selection.metadata, "requestedLevelCount") == "37")
+            #expect(metadataString(selection.metadata, "selectedPressureLevelCount") == "1")
+            #expect(metadataString(selection.metadata, "selectedMessageCount") == "5")
+            #expect(metadataString(selection.metadata, "missingLevelCount") == "36")
+            #expect(metadataString(rangeSelection.metadata, "selectedRangeCount") == "5")
+            #expect(metadataString(prepared.metadata, "sourceURL")?.contains(".wrfprsf") == true)
+            #expect(metadataString(prepared.metadata, "idxURL")?.contains(".wrfprsf") == true)
+            #expect(metadataString(prepared.metadata, "cacheHit") == "false")
+            #expect(metadataString(prepared.metadata, "artifactByteSize") == "20")
+            #expect(metadataString(prepared.metadata, "maximumByteCount") == "1024")
+            #expect((metadataString(prepared.metadata, "downloadDurationMs").flatMap(Int.init) ?? -1) >= 0)
+            #expect(metadataString(validation.metadata, "status") == PressureArtifactCatalogStatus.ready.rawValue)
+            #expect(metadataString(validation.metadata, "validatedLines") == "5")
+            #expect(metadataString(ready.metadata, "status") == PressureArtifactCatalogStatus.ready.rawValue)
+            #expect(metadataString(ready.metadata, "product") == HrrrProduct.wrfprsf.rawValue)
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
+    @Test("warm validation failure logs a failed transition")
+    func warmValidationFailureLogsFailedTransition() async throws {
+        try await withApp { app in
+            let payload = makeWarmPayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(error: PressureArtifactWarmValidatorStubError.failedValidation)
+            let loggerContext = makeCapturingLogger(label: "warm-failure")
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024
+            )
+
+            await #expect(throws: PressureArtifactWarmValidatorStubError.self) {
+                try await service.warm(payload: payload, on: app, logger: loggerContext.logger)
+            }
+
+            let validationFailed = try #require(try loggerContext.event(matching: "Pressure artifact validation failed."))
+            let warmingFailed = try #require(try loggerContext.event(matching: "Pressure artifact warming failed."))
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(metadataString(validationFailed.metadata, "status") == PressureArtifactCatalogStatus.failed.rawValue)
+            #expect(metadataString(warmingFailed.metadata, "status") == PressureArtifactCatalogStatus.failed.rawValue)
+            #expect(row.status == .failed)
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
+    @Test("lookup diagnostics distinguish exact hits, miss reasons, and stale selection")
+    func lookupDiagnosticsDistinguishExactHitsMissReasonsAndStaleSelection() async throws {
+        try await withApp { app in
+            let loggerContext = makeCapturingLogger(label: "lookup")
+            let service = DefaultPressureArtifactCatalogLookupService(database: app.db, logger: loggerContext.logger)
+
+            let exactRunTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let exactValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let exactCandidate = makePressureCandidate(runTime: exactRunTime, forecastHour: 9)
+            let exactArtifactFile = makeTempRegularFile(contents: Data("exact-artifact".utf8))
+            try await PressureArtifactCatalogModel(
+                runTime: exactRunTime,
+                forecastHour: 9,
+                validTime: exactValidTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: exactArtifactFile.path,
+                byteSize: 14,
+                source: .aws
+            ).create(on: app.db)
+
+            #expect(try await service.readyArtifact(for: exactCandidate) != nil)
+            #expect(try await service.readyArtifact(for: makePressureCandidate(runTime: exactRunTime, forecastHour: 10)) == nil)
+
+            try await PressureArtifactCatalogModel(
+                runTime: exactRunTime,
+                forecastHour: 11,
+                validTime: exactValidTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .pending,
+                localPath: exactArtifactFile.path,
+                byteSize: 14,
+                source: .aws
+            ).create(on: app.db)
+            #expect(try await service.readyArtifact(for: makePressureCandidate(runTime: exactRunTime, forecastHour: 11)) == nil)
+
+            let unusablePath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("missing-ready-\(UUID().uuidString).grib2")
+            try await PressureArtifactCatalogModel(
+                runTime: exactRunTime,
+                forecastHour: 12,
+                validTime: exactValidTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: unusablePath.path,
+                byteSize: 14,
+                source: .aws
+            ).create(on: app.db)
+            #expect(try await service.readyArtifact(for: makePressureCandidate(runTime: exactRunTime, forecastHour: 12)) == nil)
+
+            let targetValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let staleGoodPath = makeTempRegularFile(contents: Data("stale-good".utf8))
+            let staleBadPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("missing-stale-\(UUID().uuidString).grib2")
+            try await PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-5_400),
+                forecastHour: 3,
+                validTime: targetValidTime.addingTimeInterval(-1_800),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: staleBadPath.path,
+                byteSize: 9,
+                source: .aws
+            ).create(on: app.db)
+            try await PressureArtifactCatalogModel(
+                runTime: targetValidTime.addingTimeInterval(-3_600),
+                forecastHour: 6,
+                validTime: targetValidTime.addingTimeInterval(-3_600),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: staleGoodPath.path,
+                byteSize: 10,
+                source: .aws
+            ).create(on: app.db)
+
+            let staleArtifact = try #require(try await service.staleArtifact(
+                for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [makePressureCandidate(runTime: targetValidTime, forecastHour: 0)])
+            ))
+
+            #expect(staleArtifact.freshness == .stale(ageSeconds: 3_600))
+
+            try await clearCatalog(on: app.db)
+            let staleMiss = try await service.staleArtifact(
+                for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [makePressureCandidate(runTime: targetValidTime, forecastHour: 0)])
+            )
+
+            #expect(staleMiss == nil)
+
+            let exactHit = try #require(try loggerContext.event(matching: "Pressure artifact exact lookup hit."))
+            let exactMissing = try #require(try loggerContext.event(matching: "Pressure artifact exact lookup missed."))
+            let nonReady = try #require(try loggerContext.event(matching: "Pressure artifact exact lookup skipped non-ready row."))
+            let unusableExact = try #require(try loggerContext.event(matching: "Pressure artifact exact lookup found unusable local file."))
+            let staleSkip = try #require(try loggerContext.event(matching: "Pressure artifact stale candidate skipped because its file is unusable."))
+            let staleHit = try #require(try loggerContext.event(matching: "Pressure artifact stale lookup hit."))
+            let staleMissEvent = try #require(try loggerContext.event(matching: "Pressure artifact stale lookup missed."))
+
+            #expect(metadataString(exactHit.metadata, "freshnessOutcome") == "exact")
+            #expect(metadataString(exactHit.metadata, "byteSize") == "14")
+            #expect(metadataString(exactMissing.metadata, "catalogSkipReason") == "catalogRowMissing")
+            #expect(metadataString(nonReady.metadata, "catalogSkipReason") == "catalogStatusNotReady")
+            #expect(metadataString(nonReady.metadata, "status") == PressureArtifactCatalogStatus.pending.rawValue)
+            #expect(metadataString(unusableExact.metadata, "catalogSkipReason") == "localFileUnusable")
+            #expect(metadataString(staleSkip.metadata, "catalogSkipReason") == "localFileUnusable")
+            #expect(metadataString(staleHit.metadata, "freshnessOutcome") == "stale")
+            #expect(metadataString(staleHit.metadata, "staleAgeSeconds") == "3600")
+            #expect(metadataString(staleMissEvent.metadata, "catalogSkipReason") == "noEligibleStaleArtifact")
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
+    @Test("request-path diagnostics summarize exact, stale, degraded, and unavailable evidence")
+    func requestPathDiagnosticsSummarizeExactStaleDegradedAndUnavailableEvidence() async throws {
+        let loggerContext = makeCapturingLogger(label: "request-path")
+        let resolvedH3: Int64 = 617_700_169_958_293_503
+        let exactSnapshot = makeSnapshot(
+            h3Cell: resolvedH3,
+            source: makeSurfaceSource(validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+            assessment: makeAssessment(),
+            freshness: makeFreshness(
+                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                forecastHour: 0
+            )
+        )
+        let staleSnapshot = makeSnapshot(
+            h3Cell: resolvedH3,
+            source: makeSurfaceSource(validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15)),
+            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+            assessment: makeAssessment(),
+            freshness: makeFreshness(
+                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
+                forecastHour: 0
+            )
+        )
+        let unavailableSnapshot = makeSnapshot(
+            h3Cell: resolvedH3,
+            source: makeSurfaceSource(validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+            assessment: makeAssessment(),
+            freshness: makeFreshness(
+                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                forecastHour: 0
+            )
+        )
+
+        let exactProvider = DefaultStormSetupProvider(
+            dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)),
+            snapshotCache: StubStormSetupSnapshotCache(snapshot: exactSnapshot),
+            subsetLoader: UnusedStormSetupSubsetLoader(),
+            fieldSampler: UnusedStormSetupFieldSampler(),
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: makeRaw())),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: StaticAnvilProfileAnalysisProvider(
+                response: makeAnalysisResponse(
+                    validTime: exactSnapshot.source.validTime ?? exactSnapshot.source.runTime ?? exactSnapshot.freshness.fetchedAt,
+                    effectiveLayerStatus: "found",
+                    stormMotionStatus: "computed",
+                    warnings: []
+                )
+            ),
+            logger: loggerContext.logger
+        )
+
+        _ = try await exactProvider.currentSnapshot(for: resolvedH3)
+        let exactEvent = try #require(try loggerContext.event(matching: "Storm Setup Anvil evidence resolved."))
+        #expect(metadataString(exactEvent.metadata, "artifactOutcome") == "exact")
+        #expect(metadataString(exactEvent.metadata, "evidenceStatus") == "available")
+
+        let staleLogger = makeCapturingLogger(label: "request-path-stale")
+        let staleProvider = DefaultStormSetupProvider(
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)),
+            snapshotCache: StubStormSetupSnapshotCache(snapshot: staleSnapshot),
+            subsetLoader: UnusedStormSetupSubsetLoader(),
+            fieldSampler: UnusedStormSetupFieldSampler(),
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: makeRaw())),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: StaticAnvilProfileAnalysisProvider(
+                response: makeAnalysisResponse(
+                    validTime: staleSnapshot.source.validTime ?? staleSnapshot.source.runTime ?? staleSnapshot.freshness.fetchedAt,
+                    effectiveLayerStatus: "notFound",
+                    stormMotionStatus: "computed",
+                    warnings: []
+                )
+            ),
+            logger: staleLogger.logger
+        )
+
+        _ = try await staleProvider.currentSnapshot(for: resolvedH3)
+        let staleEvent = try #require(try staleLogger.event(matching: "Storm Setup Anvil evidence resolved."))
+        #expect(metadataString(staleEvent.metadata, "artifactOutcome") == "stale")
+        #expect(metadataString(staleEvent.metadata, "evidenceStatus") == "degraded")
+        #expect(metadataString(staleEvent.metadata, "staleAgeSeconds") == "5400")
+        #expect(metadataString(staleEvent.metadata, "reason") == "effective layer not found")
+
+        let unavailableLogger = makeCapturingLogger(label: "request-path-unavailable")
+        let unavailableProvider = DefaultStormSetupProvider(
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)),
+            snapshotCache: StubStormSetupSnapshotCache(snapshot: unavailableSnapshot),
+            subsetLoader: UnusedStormSetupSubsetLoader(),
+            fieldSampler: UnusedStormSetupFieldSampler(),
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: makeRaw())),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: ThrowingAnvilProfileAnalysisProvider(error: AnvilProfileAnalysisError.upstreamUnavailable(reason: "Anvil offline")),
+            logger: unavailableLogger.logger
+        )
+
+        _ = try await unavailableProvider.currentSnapshot(for: resolvedH3)
+        let unavailableEvent = try #require(try unavailableLogger.event(matching: "Storm Setup Anvil evidence resolved."))
+        #expect(metadataString(unavailableEvent.metadata, "artifactOutcome") == "exact")
+        #expect(metadataString(unavailableEvent.metadata, "evidenceStatus") == "unavailable")
+        #expect(metadataString(unavailableEvent.metadata, "reason")?.contains("Anvil offline") == true)
+        assertNoSensitiveMetadata(in: [exactEvent, staleEvent, unavailableEvent])
+    }
+}
+
+private extension PressureArtifactDiagnosticsTests {
+    func withApp(test: (Application) async throws -> Void) async throws {
+        let app = try await Application.make(.testing)
+        do {
+            try await configure(app, mode: .api)
+            try await app.autoMigrate()
+            try await clearCatalog(on: app.db)
+            try await test(app)
+        } catch {
+            try? await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
+    func clearCatalog(on db: any Database) async throws {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        try await sql.raw("DELETE FROM pressure_artifact_catalog;").run()
+    }
+
+    func seedCatalogRow(
+        status: PressureArtifactCatalogStatus,
+        payload: PressureArtifactWarmJobPayload,
+        on db: any Database
+    ) async throws {
+        try await PressureArtifactCatalogModel(
+            runTime: payload.runTime,
+            forecastHour: payload.forecastHour,
+            validTime: payload.validTime,
+            product: payload.product,
+            fieldSetVersion: payload.fieldSetVersion,
+            status: status,
+            source: .aws
+        ).create(on: db)
+    }
+
+    func makeWarmPayload() -> PressureArtifactWarmJobPayload {
+        let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+        return PressureArtifactWarmJobPayload(
+            runTime: runTime,
+            forecastHour: 9,
+            validTime: runTime.addingTimeInterval(9 * 3_600),
+            product: .wrfprsf,
+            fieldSetVersion: .tornadoPressureV2
+        )
+    }
+
+    func makePressureCandidate(runTime: Date, forecastHour: Int) -> HrrrRunCandidate {
+        HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: runTime,
+            forecastHour: forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+    }
+
+    func makePayload(from candidate: HrrrRunCandidate) -> PressureArtifactWarmJobPayload {
+        PressureArtifactWarmJobPayload(
+            runTime: candidate.runTime,
+            forecastHour: candidate.forecastHour,
+            validTime: candidate.validTime,
+            product: candidate.product,
+            fieldSetVersion: candidate.fieldSetVersion
+        )
+    }
+
+    func makeSurfaceCandidate(
+        runTime: Date,
+        forecastHour: Int
+    ) -> HrrrRunCandidate {
+        HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: runTime,
+            forecastHour: forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+    }
+
+    func makePressureCandidate(from surfaceCandidate: HrrrRunCandidate) -> HrrrRunCandidate {
+        HrrrRunCandidate(
+            model: surfaceCandidate.model,
+            product: .wrfprsf,
+            domain: surfaceCandidate.domain,
+            runTime: StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: surfaceCandidate.runTime) ?? surfaceCandidate.runTime,
+            forecastHour: surfaceCandidate.forecastHour + 1,
+            fieldSetVersion: .tornadoPressureV2
+        )
+    }
+
+    func makeSourceURLs(for payload: PressureArtifactWarmJobPayload) -> (idx: URL, grib: URL) {
+        let candidate = HrrrRunCandidate(
+            product: payload.product,
+            runTime: payload.runTime,
+            forecastHour: payload.forecastHour,
+            fieldSetVersion: payload.fieldSetVersion
+        )
+        let builder = HrrrPressureDirectObjectURLBuilder()
+        return (idx: builder.makeIdxURL(for: candidate), grib: builder.makeGribURL(for: candidate))
+    }
+
+    func makeInventoryText() -> String {
+        """
+        1:0:d=2026060313:HGT:1000 mb:9 hour fcst:
+        2:4:d=2026060313:TMP:1000 mb:9 hour fcst:
+        3:8:d=2026060313:DPT:1000 mb:9 hour fcst:
+        4:12:d=2026060313:UGRD:1000 mb:9 hour fcst:
+        5:16:d=2026060313:VGRD:1000 mb:9 hour fcst:
+        """
+    }
+
+    func makeRangeResponses(for payload: PressureArtifactWarmJobPayload) -> [String: HTTPResponse] {
+        let sourceURLs = makeSourceURLs(for: payload)
+        let inventory = HrrrPressureIdxInventory.parse(makeInventoryText())
+        let selection = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
+        let plan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
+
+        return Dictionary(uniqueKeysWithValues: zip(plan.ranges, [
+            Data("hgt-".utf8),
+            Data("tmp-".utf8),
+            Data("dpt-".utf8),
+            Data("ugrd".utf8),
+            Data("vgrd".utf8)
+        ]).map { range, body in
+            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/20" } ?? "bytes 16-19/20"
+            return (
+                sourceURLs.grib.absoluteString + "|" + range.httpRangeHeaderValue,
+                HTTPResponse(
+                    status: 206,
+                    headers: [
+                        "Content-Type": "application/octet-stream",
+                        "Content-Range": contentRange
+                    ],
+                    data: body
+                )
+            )
+        })
+    }
+
+    func makeTempRegularFile(contents: Data) -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pressure-diagnostics-\(UUID().uuidString).grib2")
+        FileManager.default.createFile(atPath: url.path, contents: contents)
+        return url
+    }
+
+    func testRootURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("pressure-diagnostics-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    func makeUTCDate(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int = 0,
+        second: Int = 0
+    ) -> Date {
+        let components = DateComponents(
+            timeZone: TimeZone(secondsFromGMT: 0),
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second
+        )
+
+        guard let date = StormSetupUTC.calendar.date(from: components) else {
+            preconditionFailure("Unable to create UTC date for test.")
+        }
+
+        return date
+    }
+
+    func makeCapturingLogger(label: String) -> CapturingLoggerContext {
+        let handler = CapturingLogHandler()
+        let logger = Logger(label: label, factory: { _ in handler })
+        return CapturingLoggerContext(logger: logger, handler: handler)
+    }
+
+    func makeFixedStormSetupDateProvider(nowDate: Date) -> some StormSetupDateProviding {
+        FixedStormSetupDateProvider(nowDate: nowDate)
+    }
+
+    func metadataString(_ metadata: Logger.Metadata, _ key: String) -> String? {
+        guard let value = metadata[key] else {
+            return nil
+        }
+
+        switch value {
+        case .string(let value):
+            return value
+        case .stringConvertible(let value):
+            return String(describing: value)
+        case .dictionary(let dictionary):
+            return String(describing: dictionary)
+        case .array(let array):
+            return String(describing: array)
+        }
+    }
+
+    func assertNoSensitiveMetadata(in events: [CapturedLogEvent]) {
+        for event in events {
+            #expect(event.metadata.keys.contains("h3") == false)
+            #expect(event.metadata.keys.contains("latitude") == false)
+            #expect(event.metadata.keys.contains("longitude") == false)
+        }
+    }
+
+    func makeSnapshot(
+        h3Cell: Int64,
+        source: StormSetupSourceMetadata,
+        fetchedAt: Date,
+        assessment: TornadoIngredientAssessment,
+        freshness: IngredientFreshness
+    ) -> TornadoIngredientSnapshot {
+        TornadoIngredientSnapshot(
+            h3Cell: h3Cell,
+            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
+            source: source,
+            raw: makeRaw(),
+            assessment: assessment,
+            freshness: freshness
+        )
+    }
+
+    func makeSourceMetadataForRequest(validTime: Date?) -> StormSetupSourceMetadata {
+        StormSetupSourceMetadata(
+            model: .hrrr,
+            product: .wrfsfc,
+            domain: .conus,
+            runTime: validTime,
+            forecastHour: 0,
+            validTime: validTime,
+            fieldSetVersion: .tornadoV1,
+            nomadsURL: URL(string: "https://example.com/surface.grib2")
+        )
+    }
+
+    func makeSurfaceSource(validTime: Date) -> StormSetupSourceMetadata {
+        makeSourceMetadataForRequest(validTime: validTime)
+    }
+
+    func makeSurfaceSourceWithoutValidTime() -> StormSetupSourceMetadata {
+        StormSetupSourceMetadata(
+            model: .hrrr,
+            product: .wrfsfc,
+            domain: .conus,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0,
+            validTime: nil,
+            fieldSetVersion: .tornadoV1,
+            nomadsURL: URL(string: "https://example.com/surface.grib2")
+        )
+    }
+
+    func makeFreshness(
+        sourceValidTime: Date?,
+        fetchedAt: Date,
+        sourceRunTime: Date? = nil,
+        forecastHour: Int? = nil
+    ) -> IngredientFreshness {
+        IngredientFreshness(
+            sourceValidTime: sourceValidTime,
+            modelRunTime: sourceRunTime,
+            forecastHour: forecastHour,
+            fetchedAt: fetchedAt,
+            expiresAt: (sourceValidTime ?? sourceRunTime ?? fetchedAt).addingTimeInterval(90 * 60),
+            isStale: sourceValidTime.map { fetchedAt >= $0.addingTimeInterval(90 * 60) } ?? true,
+            isDegraded: sourceValidTime == nil || sourceRunTime == nil || forecastHour == nil
+        )
+    }
+
+    func makeAssessment() -> TornadoIngredientAssessment {
+        TornadoIngredientInterpreter().assess(
+            raw: makeRaw(
+                sbcapeJkg: 1450,
+                mlcapeJkg: 1200,
+                mucapeJkg: 1600,
+                mlcinJkg: -35,
+                mllclM: 950,
+                shear06kmKt: 42,
+                srh01kmM2s2: 80,
+                srh03kmM2s2: 160
+            ),
+            freshness: makeFreshness(
+                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)
+            ),
+            evidence: nil
+        )
+    }
+
+    func makeNormalizationResult(raw: TornadoRawParameters) -> TornadoIngredientNormalizationResult {
+        TornadoIngredientNormalizationResult(raw: raw, diagnostics: [])
+    }
+
+    func makeRaw(
+        sbcapeJkg: Double? = nil,
+        mlcapeJkg: Double? = nil,
+        mucapeJkg: Double? = nil,
+        mlcinJkg: Double? = nil,
+        mllclM: Double? = nil,
+        shear06kmKt: Double? = nil,
+        srh01kmM2s2: Double? = nil,
+        srh03kmM2s2: Double? = nil
+    ) -> TornadoRawParameters {
+        TornadoRawParameters(
+            sbcapeJkg: sbcapeJkg,
+            mlcapeJkg: mlcapeJkg,
+            mucapeJkg: mucapeJkg,
+            mlcinJkg: mlcinJkg,
+            dcapeJkg: nil,
+            mllclM: mllclM,
+            tempDewPtDeltaF: nil,
+            threeCapeJkg: nil,
+            lclLfcSeparationM: nil,
+            lapseRate03kmCkm: nil,
+            lapseRate700500mbCkm: nil,
+            shear06kmKt: shear06kmKt,
+            shear03kmKt: nil,
+            shear01kmKt: nil,
+            effectiveShearKt: nil,
+            srh01kmM2s2: srh01kmM2s2,
+            srh03kmM2s2: srh03kmM2s2,
+            effectiveSrhM2s2: nil,
+            supercellComposite: nil,
+            significantTornadoFixed: nil,
+            significantTornadoEffective: nil,
+            significantHail: nil,
+            bunkersRightMotion: nil,
+            bunkersLeftMotion: nil,
+            stormRelativeWind46km: nil,
+            meanWind850300mb: nil,
+            diagnostics: []
+        )
+    }
+
+    func makeAnalysisResponse(
+        validTime: Date,
+        effectiveLayerStatus: String,
+        stormMotionStatus: String,
+        warnings: [String]
+    ) -> AnvilAnalyzeProfileAnalysisResponse {
+        let request = AnvilAnalyzeProfileRequest(
+            runTime: validTime.addingTimeInterval(-3_600),
+            forecastHour: 1,
+            validTime: validTime,
+            location: AnvilLocationDTO(lat: 39.78, lon: -104.46, h3: "88268b1ffffffff"),
+            profile: AnvilProfileDTO(
+                pressureMb: [1000, 925, 850, 700, 600, 500, 400, 300],
+                heightMslM: [1200, 1500, 1800, 2450, 4100, 5600, 7100, 9300],
+                temperatureC: [28, 22, 17, 10, 3, -4, -15, -27],
+                dewpointC: [12, 10, 9, 1, -4, -9, -17, -24],
+                uWindMs: [-2, -5, -6, -12, -15, -18, -23, -29],
+                vWindMs: [4, 7, 8, 14, 18, 22, 27, 33]
+            )
+        )
+
+        let debug = AnvilAnalyzeProfilePreviewDebugDTO(
+            sourceKind: .directObject,
+            product: .wrfprsf,
+            runTime: validTime.addingTimeInterval(-3_600),
+            forecastHour: 1,
+            validTime: validTime,
+            h3: "88268b1ffffffff",
+            centroid: StormSetupCentroid(latitude: 39.78, longitude: -104.46),
+            selectedMessageCount: 0,
+            selectedPressureLevels: [],
+            rangeCount: 0,
+            totalSelectedRangeBytes: 0,
+            pressureLevelsRequested: [],
+            pressureLevelsRetained: [],
+            missingLevels: [],
+            warnings: warnings,
+            subsetCacheHit: true,
+            primaryDownloadURL: nil,
+            idxURL: nil,
+            idxAvailable: nil,
+            gribAvailable: nil
+        )
+
+        let response = AnvilAnalyzeProfileResponse(
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: effectiveLayerStatus,
+                basePressureMb: 1000,
+                topPressureMb: 700,
+                baseMetersAgl: 0,
+                topMetersAgl: 3000
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: stormMotionStatus,
+                bunkersRight: AnvilBunkersRightStormMotionDTO(
+                    uKt: 20,
+                    vKt: 25,
+                    speedKt: 32,
+                    directionTowardDeg: 215,
+                    uMs: 10,
+                    vMs: 12,
+                    speedMs: 16
+                )
+            ),
+            mucape: 1800,
+            mlcape: 1400,
+            mlcin: -35,
+            mllclMetersAgl: 950,
+            effectiveSrh: 130,
+            effectiveBulkShearMs: 22,
+            scp: 1.2,
+            stpCin: 1.1,
+            stpFixed: 0.9,
+            ship: 1.3,
+            quality: AnvilQualityDTO(profileLevelCount: 37, warnings: warnings)
+        )
+
+        return AnvilAnalyzeProfileAnalysisResponse(request: request, debug: debug, response: response)
+    }
+}
+
+private final class CapturingLogHandler: LogHandler, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _logLevel: Logger.Level = .trace
+    private var _metadata: Logger.Metadata = [:]
+    private var _events: [CapturedLogEvent] = []
+
+    var logLevel: Logger.Level {
+        get { lock.withLock { _logLevel } }
+        set { lock.withLock { _logLevel = newValue } }
+    }
+
+    var metadata: Logger.Metadata {
+        get { lock.withLock { _metadata } }
+        set { lock.withLock { _metadata = newValue } }
+    }
+
+    subscript(metadataKey metadataKey: String) -> Logger.MetadataValue? {
+        get { lock.withLock { _metadata[metadataKey] } }
+        set { lock.withLock { _metadata[metadataKey] = newValue } }
+    }
+
+    var events: [CapturedLogEvent] {
+        lock.withLock { _events }
+    }
+
+    func log(
+        level: Logger.Level,
+        message: Logger.Message,
+        metadata: Logger.Metadata?,
+        source: String,
+        file: String,
+        function: String,
+        line: UInt
+    ) {
+        _ = source
+        _ = file
+        _ = function
+        _ = line
+        let event = CapturedLogEvent(
+            level: level,
+            message: message.description,
+            metadata: metadata ?? self.metadata
+        )
+        lock.withLock {
+            _events.append(event)
+        }
+    }
+}
+
+private struct CapturedLogEvent: Sendable, Equatable {
+    let level: Logger.Level
+    let message: String
+    let metadata: Logger.Metadata
+}
+
+private struct CapturingLoggerContext {
+    let logger: Logger
+    let handler: CapturingLogHandler
+
+    var events: [CapturedLogEvent] {
+        handler.events
+    }
+
+    func event(matching message: String) throws -> CapturedLogEvent? {
+        events.first { $0.message == message }
+    }
+}
+
+private struct FixedHrrrRunResolving: HrrrRunResolving {
+    let resolution: HrrrRunResolution
+
+    func resolveRunCandidates() -> HrrrRunResolution {
+        resolution
+    }
+}
+
+private final class ProbeWarmJobDispatcherRecorder: PressureArtifactWarmJobDispatching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _dispatches: [(queueName: String, payload: PressureArtifactWarmJobPayload)] = []
+
+    var dispatches: [(queueName: String, payload: PressureArtifactWarmJobPayload)] {
+        lock.withLock { _dispatches }
+    }
+
+    func dispatch(
+        _ payload: PressureArtifactWarmJobPayload,
+        to queueName: QueueName,
+        on application: Application
+    ) async throws {
+        _ = application
+        lock.withLock {
+            _dispatches.append((queueName: queueName.string, payload: payload))
+        }
+    }
+}
+
+private final class ProbeStubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking, @unchecked Sendable {
+    private let availableURLs: [String: Bool]
+    private let lock = NSLock()
+    private var _requestedURLs: [String] = []
+
+    init(availableURLs: [String: Bool]) {
+        self.availableURLs = availableURLs
+    }
+
+    var requestedURLs: [String] {
+        lock.withLock { _requestedURLs }
+    }
+
+    func probe(url: URL) async -> HrrrRemoteObjectProbeResult {
+        lock.withLock {
+            _requestedURLs.append(url.absoluteString)
+        }
+
+        let available = availableURLs[url.absoluteString] ?? false
+        return HrrrRemoteObjectProbeResult(
+            url: url,
+            available: available,
+            status: available ? 200 : 404
+        )
+    }
+}
+
+private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked Sendable {
+    private let idxResponses: [String: Data]
+    private let rangeResponses: [String: HTTPResponse]
+
+    init(
+        idxResponses: [String: Data] = [:],
+        rangeResponses: [String: HTTPResponse] = [:]
+    ) {
+        self.idxResponses = idxResponses
+        self.rangeResponses = rangeResponses
+    }
+
+    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        if headers["Range"] == nil {
+            guard let data = idxResponses[url.absoluteString] else {
+                throw URLError(.badServerResponse)
+            }
+            return HTTPResponse(
+                status: 200,
+                headers: ["Content-Type": "text/plain; charset=utf-8"],
+                data: data
+            )
+        }
+
+        let key = url.absoluteString + "|" + (headers["Range"] ?? "")
+        guard let response = rangeResponses[key] else {
+            throw URLError(.badServerResponse)
+        }
+
+        return response
+    }
+
+    func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func post(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
+    }
+
+    func clearCache() {}
+}
+
+private final class PressureArtifactWarmValidatorStub: PressureArtifactValidating, @unchecked Sendable {
+    private let error: (any Error)?
+
+    init(error: (any Error)? = nil) {
+        self.error = error
+    }
+
+    func validate(localFileURL: URL) async throws -> PressureArtifactValidationResult {
+        _ = localFileURL
+        if let error {
+            throw error
+        }
+        return PressureArtifactValidationResult(stdoutLineCount: 5)
+    }
+}
+
+private enum PressureArtifactWarmValidatorStubError: Error, CustomStringConvertible {
+    case failedValidation
+
+    var description: String {
+        "failedValidation"
+    }
+}
+
+private actor StubStormSetupSnapshotCache: StormSetupSnapshotCaching {
+    private let snapshot: TornadoIngredientSnapshot?
+
+    init(snapshot: TornadoIngredientSnapshot?) {
+        self.snapshot = snapshot
+    }
+
+    func loadSnapshot(for key: StormSetupSnapshotCacheKey) async -> StormSetupSnapshotCacheResult? {
+        _ = key
+        guard let snapshot else {
+            return nil
+        }
+
+        return StormSetupSnapshotCacheResult(
+            snapshot: snapshot,
+            cacheHit: true,
+            fetchedAt: snapshot.freshness.fetchedAt,
+            expiresAt: snapshot.freshness.expiresAt,
+            sourceValidTime: snapshot.freshness.sourceValidTime,
+            rulesVersion: .current
+        )
+    }
+
+    func store(snapshot: TornadoIngredientSnapshot, for key: StormSetupSnapshotCacheKey) async throws -> StormSetupSnapshotCacheResult {
+        _ = snapshot
+        _ = key
+        return StormSetupSnapshotCacheResult(
+            snapshot: snapshot,
+            cacheHit: true,
+            fetchedAt: snapshot.freshness.fetchedAt,
+            expiresAt: snapshot.freshness.expiresAt,
+            sourceValidTime: snapshot.freshness.sourceValidTime,
+            rulesVersion: .current
+        )
+    }
+}
+
+private struct UnusedStormSetupSubsetLoader: StormSetupSubsetLoading {
+    func loadFirstAvailableSubset(
+        for resolution: HrrrRunResolution,
+        around centroid: StormSetupCentroid
+    ) async throws -> GribSubsetCacheResult {
+        throw TestFailure.unexpectedDownstreamCall("subset loader should not run in request-path diagnostics")
+    }
+}
+
+private struct UnusedStormSetupFieldSampler: StormSetupFieldSampling {
+    func sample(from subset: GribSubsetCacheResult, around centroid: StormSetupCentroid) async throws -> [HrrrFieldSample] {
+        throw TestFailure.unexpectedDownstreamCall("field sampler should not run in request-path diagnostics")
+    }
+
+    func sample(localFileURL: URL, around centroid: StormSetupCentroid) async throws -> [HrrrFieldSample] {
+        throw TestFailure.unexpectedDownstreamCall("field sampler should not run in request-path diagnostics")
+    }
+}
+
+private struct StubStormSetupNormalizer: StormSetupIngredientNormalizing {
+    let result: TornadoIngredientNormalizationResult
+
+    func normalize(samples: [HrrrFieldSample]) -> TornadoIngredientNormalizationResult {
+        _ = samples
+        return result
+    }
+}
+
+private struct StaticAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
+    let response: AnvilAnalyzeProfileAnalysisResponse
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        return response
+    }
+}
+
+private struct FixedStormSetupDateProvider: StormSetupDateProviding {
+    let nowDate: Date
+
+    func now() -> Date {
+        nowDate
+    }
+}
+
+private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
+    let error: any Error
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        throw error
+    }
+}
+
+private enum TestFailure: Error, Sendable {
+    case unexpectedDownstreamCall(String)
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock()
+        defer { unlock() }
+        return try body()
+    }
+}

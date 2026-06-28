@@ -304,6 +304,69 @@ struct AnvilProfilePreviewProviderTests {
         }
     }
 
+    @Test("provider preserves unusable-profile errors when an exact artifact exists")
+    func providerPreservesUnusableProfileErrorsWhenAnExactArtifactExists() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let pressureCandidate = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: surfaceCandidate.runTime,
+            forecastHour: surfaceCandidate.forecastHour,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let exactArtifact = previewMakeReadyPressureArtifact(
+            runTime: surfaceCandidate.runTime,
+            forecastHour: surfaceCandidate.forecastHour,
+            validTime: surfaceCandidate.validTime
+        )
+        let lookupService = PreviewStubPressureArtifactCatalogLookupService { lookedUpCandidate in
+            #expect(lookedUpCandidate == pressureCandidate)
+            return exactArtifact
+        }
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            Issue.record("Pressure source resolver should not have been called when an exact artifact exists.")
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected cold-path call")
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader(
+            handler: { _, _, _, _ in
+                throw AnvilProfilePreviewError.unusableProfile(
+                    reason: "No retained levels were available. Missing or dropped pressure levels were not reported."
+                )
+            },
+            readyHandler: { _, _, _ in
+                throw AnvilProfilePreviewError.unusableProfile(
+                    reason: "No retained levels were available. Missing or dropped pressure levels were not reported."
+                )
+            }
+        )
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
+            ),
+            pressureArtifactCatalogLookupService: lookupService,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        do {
+            _ = try await provider.previewProfile(for: h3Cell)
+            Issue.record("Expected the preview provider to report an unusable profile.")
+        } catch let error as AnvilProfilePreviewError {
+            if case .unusableProfile(let reason) = error {
+                #expect(reason.contains("No retained levels were available") == true)
+                let lookupCount = await lookupService.callCount
+                #expect(lookupCount == 1)
+                return
+            }
+            Issue.record("Expected unusable profile error but got \(error).")
+        }
+    }
+
     @Test("provider falls back to the next pressure candidate when the newest source is unavailable")
     func providerFallsBackAcrossCandidates() async throws {
         let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)

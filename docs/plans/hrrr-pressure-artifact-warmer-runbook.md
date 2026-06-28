@@ -173,6 +173,13 @@ The warmer is a separate planning and scheduling layer around existing pressure-
 - Keep the cache identity explicit enough to diagnose stale or mismatched artifacts.
 - Keep request-path work bounded to read, validate, and degrade.
 
+### Verified guardrails
+
+- Worker and API must point at the artifact cache using the same absolute path.
+- The expanded 185-message pressure artifact was approximately 121 MiB during local testing.
+- `STORM_SETUP_GRIB_MAX_BYTES` must be high enough for the expanded artifact; `209715200` bytes was the tested value.
+- Warm diagnostics must show a `wrfprsf` source URL, not a `wrfsfcf` source URL.
+
 ---
 
 ## Issue Sequence

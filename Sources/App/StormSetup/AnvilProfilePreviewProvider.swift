@@ -68,7 +68,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let httpClient = VaporApplicationHTTPClient(application: application)
         let pressureArtifactCatalogLookupService = DefaultPressureArtifactCatalogLookupService(
             database: application.db,
-            maximumStaleAgeSeconds: configuration.pressureArtifactMaxStaleAgeSeconds
+            maximumStaleAgeSeconds: configuration.pressureArtifactMaxStaleAgeSeconds,
+            logger: application.logger
         )
         let pressureSourceResolver = DefaultHrrrPressureDirectObjectResolver(httpClient: httpClient)
         let pressureProfileLoader = DefaultHrrrPressureProfileLoader(
@@ -164,6 +165,12 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             if !internalFailures.isEmpty {
                 throw AnvilProfilePreviewError.internalExecutionFailure(
                     reason: internalFailures.joined(separator: "; ")
+                )
+            }
+
+            if !unusableProfileFailures.isEmpty {
+                throw AnvilProfilePreviewError.unusableProfile(
+                    reason: unusableProfileFailures.joined(separator: "; ")
                 )
             }
 

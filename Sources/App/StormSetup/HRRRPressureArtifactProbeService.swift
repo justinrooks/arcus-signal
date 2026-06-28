@@ -87,12 +87,13 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
             guard let idxURL = source.idxURL else {
                 logger.warning(
                     "HRRR pressure artifact probe skipped candidate with missing idx URL.",
-                    metadata: [
-                        "runTime": .string(pressureCandidate.runTime.ISO8601Format()),
-                        "forecastHour": .stringConvertible(pressureCandidate.forecastHour),
-                        "product": .string(pressureCandidate.product.rawValue),
-                        "fieldSetVersion": .string(pressureCandidate.fieldSetVersion.rawValue)
-                    ]
+                    metadata: candidateMetadata(
+                        for: pressureCandidate,
+                        source: source,
+                        extra: [
+                            "catalogSkipReason": .string("missing idx URL")
+                        ]
+                    )
                 )
                 continue
             }
@@ -100,15 +101,34 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
             let idxProbe = await remoteObjectChecker.probe(url: idxURL)
             let payload = makePayload(from: pressureCandidate)
 
+            logger.info(
+                "HRRR pressure artifact idx availability checked.",
+                metadata: candidateMetadata(
+                    for: pressureCandidate,
+                    source: source,
+                    idxURL: idxURL,
+                    idxProbe: idxProbe
+                )
+            )
+
             if idxProbe.available {
                 do {
                     guard try await claimWarmableCatalogRow(for: payload, on: application.db) else {
+                        let currentRow = try await PressureArtifactCatalogModel.find(
+                            runTime: payload.runTime,
+                            forecastHour: payload.forecastHour,
+                            product: payload.product,
+                            fieldSetVersion: payload.fieldSetVersion,
+                            on: application.db
+                        )
                         logger.info(
                             "HRRR pressure artifact warm skipped for existing catalog state.",
                             metadata: skipMetadata(
                                 for: pressureCandidate,
+                                source: source,
                                 idxURL: idxURL,
                                 idxProbe: idxProbe,
+                                catalogStatus: currentRow?.statusRaw,
                                 reason: "catalog state is pending, warming, or ready"
                             )
                         )
@@ -125,6 +145,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                         "HRRR pressure artifact warm enqueued.",
                         metadata: enqueueMetadata(
                             for: pressureCandidate,
+                            source: source,
                             idxURL: idxURL,
                             idxProbe: idxProbe,
                             queueName: ArcusQueueLane.modelArtifacts.queueName.string
@@ -141,6 +162,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                         "HRRR pressure artifact probe failed while enqueueing warm job.",
                         metadata: enqueueMetadata(
                             for: pressureCandidate,
+                            source: source,
                             idxURL: idxURL,
                             idxProbe: idxProbe,
                             queueName: ArcusQueueLane.modelArtifacts.queueName.string,
@@ -161,6 +183,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                 "HRRR pressure artifact idx unavailable.",
                 metadata: unavailabilityMetadata(
                     for: pressureCandidate,
+                    source: source,
                     idxURL: idxURL,
                     idxProbe: idxProbe
                 )
@@ -323,24 +346,32 @@ private extension HRRRPressureArtifactProbeService {
 
     func skipMetadata(
         for candidate: HrrrRunCandidate,
+        source: StormSetupSourceMetadata,
         idxURL: URL,
         idxProbe: HrrrRemoteObjectProbeResult,
+        catalogStatus: String? = nil,
         reason: String
     ) -> Logger.Metadata {
-        var metadata = baseMetadata(for: candidate, idxURL: idxURL, idxProbe: idxProbe)
-        metadata["reason"] = .string(reason)
+        var metadata = baseMetadata(for: candidate, source: source, idxURL: idxURL, idxProbe: idxProbe)
+        metadata["catalogSkipReason"] = .string(reason)
+        if let catalogStatus {
+            metadata["status"] = .string(catalogStatus)
+        }
         return metadata
     }
 
     func enqueueMetadata(
         for candidate: HrrrRunCandidate,
+        source: StormSetupSourceMetadata,
         idxURL: URL,
         idxProbe: HrrrRemoteObjectProbeResult,
         queueName: String,
         error: (any Error)? = nil
     ) -> Logger.Metadata {
-        var metadata = baseMetadata(for: candidate, idxURL: idxURL, idxProbe: idxProbe)
+        var metadata = baseMetadata(for: candidate, source: source, idxURL: idxURL, idxProbe: idxProbe)
         metadata["queue"] = .string(queueName)
+        metadata["status"] = .string(PressureArtifactCatalogStatus.pending.rawValue)
+        metadata["queueReason"] = .string("warm enqueue")
         if let error {
             metadata["error"] = .string(String(reflecting: error))
         }
@@ -349,27 +380,63 @@ private extension HRRRPressureArtifactProbeService {
 
     func unavailabilityMetadata(
         for candidate: HrrrRunCandidate,
+        source: StormSetupSourceMetadata,
         idxURL: URL,
         idxProbe: HrrrRemoteObjectProbeResult
     ) -> Logger.Metadata {
-        var metadata = baseMetadata(for: candidate, idxURL: idxURL, idxProbe: idxProbe)
-        metadata["reason"] = .string("idx unavailable")
+        var metadata = baseMetadata(for: candidate, source: source, idxURL: idxURL, idxProbe: idxProbe)
+        metadata["status"] = .string(PressureArtifactCatalogStatus.failed.rawValue)
+        metadata["catalogSkipReason"] = .string("idx unavailable")
         return metadata
     }
 
     func baseMetadata(
         for candidate: HrrrRunCandidate,
+        source: StormSetupSourceMetadata,
         idxURL: URL,
         idxProbe: HrrrRemoteObjectProbeResult
     ) -> Logger.Metadata {
         [
+            "source": .string(source.sourceKind.rawValue),
             "runTime": .string(candidate.runTime.ISO8601Format()),
             "forecastHour": .stringConvertible(candidate.forecastHour),
+            "validTime": .string(candidate.validTime.ISO8601Format()),
             "product": .string(candidate.product.rawValue),
             "fieldSetVersion": .string(candidate.fieldSetVersion.rawValue),
             "idxURL": .string(idxURL.absoluteString),
             "idxStatus": .string(idxProbe.status.map(String.init) ?? "unknown"),
             "idxAvailable": .stringConvertible(idxProbe.available)
         ]
+    }
+
+    func candidateMetadata(
+        for candidate: HrrrRunCandidate,
+        source: StormSetupSourceMetadata,
+        idxURL: URL? = nil,
+        idxProbe: HrrrRemoteObjectProbeResult? = nil,
+        extra: [String: Logger.MetadataValue] = [:]
+    ) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [
+            "source": .string(source.sourceKind.rawValue),
+            "runTime": .string(candidate.runTime.ISO8601Format()),
+            "forecastHour": .stringConvertible(candidate.forecastHour),
+            "validTime": .string(candidate.validTime.ISO8601Format()),
+            "product": .string(candidate.product.rawValue),
+            "fieldSetVersion": .string(candidate.fieldSetVersion.rawValue)
+        ]
+
+        if let idxURL {
+            metadata["idxURL"] = .string(idxURL.absoluteString)
+        }
+
+        if let idxProbe {
+            metadata["idxStatus"] = .string(idxProbe.status.map(String.init) ?? "unknown")
+            metadata["idxAvailable"] = .stringConvertible(idxProbe.available)
+        }
+
+        for (key, value) in extra {
+            metadata[key] = value
+        }
+        return metadata
     }
 }
