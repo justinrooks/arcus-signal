@@ -47,7 +47,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         let gribSubsetMaximumByteCount = Self.environmentInt(
             for: "STORM_SETUP_GRIB_MAX_BYTES",
             in: environment
-        ) ?? 50 * 1024 * 1024
+        ) ?? 200 * 1024 * 1024
 
         let pressureArtifactProbeIntervalSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_PRESSURE_ARTIFACT_PROBE_INTERVAL_SECONDS",
@@ -114,7 +114,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureGribSubsetCacheRootURL: localPressureGribSubsetCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
-        gribSubsetMaximumByteCount: 50 * 1024 * 1024,
+        gribSubsetMaximumByteCount: 200 * 1024 * 1024,
         pressureArtifactProbeIntervalSeconds: 5 * 60,
         pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
         pressureArtifactDeleteGraceSeconds: 60 * 60,

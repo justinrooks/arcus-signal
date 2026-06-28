@@ -17,7 +17,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.sampledSnapshotCacheRootURL == StormSetupConfiguration.localSampledSnapshotCacheRootURL)
         #expect(configuration.wgrib2ExecutableURL == StormSetupConfiguration.localWgrib2ExecutableURL)
         #expect(configuration.wgrib2TimeoutSeconds == 15)
-        #expect(configuration.gribSubsetMaximumByteCount == 50 * 1024 * 1024)
+        #expect(configuration.gribSubsetMaximumByteCount == 200 * 1024 * 1024)
         #expect(configuration.pressureArtifactProbeIntervalSeconds == 5 * 60)
         #expect(configuration.pressureArtifactMaxStaleAgeSeconds == 2 * 60 * 60)
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 60 * 60)
