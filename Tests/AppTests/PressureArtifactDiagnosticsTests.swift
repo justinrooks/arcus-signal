@@ -334,47 +334,32 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("request-path diagnostics summarize exact, stale, degraded, and unavailable evidence")
     func requestPathDiagnosticsSummarizeExactStaleDegradedAndUnavailableEvidence() async throws {
-        let loggerContext = makeCapturingLogger(label: "request-path")
         let resolvedH3: Int64 = 617_700_169_958_293_503
+        let exactSurfaceValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)
+        let exactPressureValidTime = exactSurfaceValidTime
+        let staleSurfaceValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)
+        let stalePressureValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15)
+
+        let exactLogger = makeCapturingLogger(label: "request-path-exact")
         let exactSnapshot = makeSnapshot(
             h3Cell: resolvedH3,
-            source: makeSurfaceSource(validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
+            source: makeSurfaceSource(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 15),
+                forecastHour: 4,
+                validTime: exactSurfaceValidTime
+            ),
+            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30),
             assessment: makeAssessment(),
             freshness: makeFreshness(
-                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
-                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
-                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
-                forecastHour: 0
-            )
-        )
-        let staleSnapshot = makeSnapshot(
-            h3Cell: resolvedH3,
-            source: makeSurfaceSource(validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15)),
-            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
-            assessment: makeAssessment(),
-            freshness: makeFreshness(
-                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
-                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
-                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
-                forecastHour: 0
-            )
-        )
-        let unavailableSnapshot = makeSnapshot(
-            h3Cell: resolvedH3,
-            source: makeSurfaceSource(validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
-            assessment: makeAssessment(),
-            freshness: makeFreshness(
-                sourceValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
-                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15),
-                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
-                forecastHour: 0
+                sourceValidTime: exactSurfaceValidTime,
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30),
+                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 15),
+                forecastHour: 4
             )
         )
 
         let exactProvider = DefaultStormSetupProvider(
-            dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)),
+            dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30)),
             snapshotCache: StubStormSetupSnapshotCache(snapshot: exactSnapshot),
             subsetLoader: UnusedStormSetupSubsetLoader(),
             fieldSampler: UnusedStormSetupFieldSampler(),
@@ -382,23 +367,49 @@ struct PressureArtifactDiagnosticsTests {
             interpreter: TornadoIngredientInterpreter(),
             anvilProfileAnalysisProvider: StaticAnvilProfileAnalysisProvider(
                 response: makeAnalysisResponse(
-                    validTime: exactSnapshot.source.validTime ?? exactSnapshot.source.runTime ?? exactSnapshot.freshness.fetchedAt,
-                    effectiveLayerStatus: "found",
+                    requestValidTime: exactPressureValidTime,
+                    debugRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
+                    debugForecastHour: 3,
+                    debugValidTime: exactPressureValidTime,
+                    effectiveLayerStatus: "notFound",
                     stormMotionStatus: "computed",
                     warnings: []
                 )
             ),
-            logger: loggerContext.logger
+            logger: exactLogger.logger
         )
 
         _ = try await exactProvider.currentSnapshot(for: resolvedH3)
-        let exactEvent = try #require(try loggerContext.event(matching: "Storm Setup Anvil evidence resolved."))
+        let exactEvent = try #require(try exactLogger.event(matching: "Storm Setup Anvil evidence resolved."))
         #expect(metadataString(exactEvent.metadata, "artifactOutcome") == "exact")
-        #expect(metadataString(exactEvent.metadata, "evidenceStatus") == "available")
+        #expect(metadataString(exactEvent.metadata, "evidenceStatus") == "degraded")
+        #expect(metadataString(exactEvent.metadata, "selectedSurfaceValidTime") == exactSurfaceValidTime.ISO8601Format())
+        #expect(metadataString(exactEvent.metadata, "pressureArtifactValidTime") == exactPressureValidTime.ISO8601Format())
+        #expect(metadataString(exactEvent.metadata, "pressureArtifactRunTime") == makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15).ISO8601Format())
+        #expect(metadataString(exactEvent.metadata, "pressureArtifactForecastHour") == "3")
+        #expect(metadataString(exactEvent.metadata, "pressureArtifactProduct") == HrrrProduct.wrfprsf.rawValue)
+        #expect(metadataString(exactEvent.metadata, "staleAgeSeconds") == nil)
+        #expect(metadataString(exactEvent.metadata, "reason") == "effective layer not found")
 
         let staleLogger = makeCapturingLogger(label: "request-path-stale")
+        let staleSnapshot = makeSnapshot(
+            h3Cell: resolvedH3,
+            source: makeSurfaceSource(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21, minute: 15),
+                forecastHour: 1,
+                validTime: staleSurfaceValidTime
+            ),
+            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30),
+            assessment: makeAssessment(),
+            freshness: makeFreshness(
+                sourceValidTime: staleSurfaceValidTime,
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30),
+                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21, minute: 15),
+                forecastHour: 1
+            )
+        )
         let staleProvider = DefaultStormSetupProvider(
-            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)),
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30)),
             snapshotCache: StubStormSetupSnapshotCache(snapshot: staleSnapshot),
             subsetLoader: UnusedStormSetupSubsetLoader(),
             fieldSampler: UnusedStormSetupFieldSampler(),
@@ -406,10 +417,15 @@ struct PressureArtifactDiagnosticsTests {
             interpreter: TornadoIngredientInterpreter(),
             anvilProfileAnalysisProvider: StaticAnvilProfileAnalysisProvider(
                 response: makeAnalysisResponse(
-                    validTime: staleSnapshot.source.validTime ?? staleSnapshot.source.runTime ?? staleSnapshot.freshness.fetchedAt,
-                    effectiveLayerStatus: "notFound",
+                    requestValidTime: stalePressureValidTime,
+                    debugRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 15),
+                    debugForecastHour: 4,
+                    debugValidTime: stalePressureValidTime,
+                    effectiveLayerStatus: "found",
                     stormMotionStatus: "computed",
-                    warnings: []
+                    warnings: [
+                        "Pressure artifact stale fallback selected: 10800s older than target valid time 2026-06-03T22:15:00Z."
+                    ]
                 )
             ),
             logger: staleLogger.logger
@@ -419,12 +435,33 @@ struct PressureArtifactDiagnosticsTests {
         let staleEvent = try #require(try staleLogger.event(matching: "Storm Setup Anvil evidence resolved."))
         #expect(metadataString(staleEvent.metadata, "artifactOutcome") == "stale")
         #expect(metadataString(staleEvent.metadata, "evidenceStatus") == "degraded")
-        #expect(metadataString(staleEvent.metadata, "staleAgeSeconds") == "5400")
-        #expect(metadataString(staleEvent.metadata, "reason") == "effective layer not found")
+        #expect(metadataString(staleEvent.metadata, "selectedSurfaceValidTime") == staleSurfaceValidTime.ISO8601Format())
+        #expect(metadataString(staleEvent.metadata, "pressureArtifactValidTime") == stalePressureValidTime.ISO8601Format())
+        #expect(metadataString(staleEvent.metadata, "pressureArtifactRunTime") == makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 15).ISO8601Format())
+        #expect(metadataString(staleEvent.metadata, "pressureArtifactForecastHour") == "4")
+        #expect(metadataString(staleEvent.metadata, "pressureArtifactProduct") == HrrrProduct.wrfprsf.rawValue)
+        #expect(metadataString(staleEvent.metadata, "staleAgeSeconds") == "10800")
+        #expect(metadataString(staleEvent.metadata, "reason") == "Pressure artifact stale fallback selected: 10800s older than target valid time 2026-06-03T22:15:00Z.")
 
         let unavailableLogger = makeCapturingLogger(label: "request-path-unavailable")
+        let unavailableSnapshot = makeSnapshot(
+            h3Cell: resolvedH3,
+            source: makeSurfaceSource(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 15),
+                forecastHour: 4,
+                validTime: exactSurfaceValidTime
+            ),
+            fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30),
+            assessment: makeAssessment(),
+            freshness: makeFreshness(
+                sourceValidTime: exactSurfaceValidTime,
+                fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30),
+                sourceRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 15),
+                forecastHour: 4
+            )
+        )
         let unavailableProvider = DefaultStormSetupProvider(
-            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 15)),
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30)),
             snapshotCache: StubStormSetupSnapshotCache(snapshot: unavailableSnapshot),
             subsetLoader: UnusedStormSetupSubsetLoader(),
             fieldSampler: UnusedStormSetupFieldSampler(),
@@ -436,10 +473,90 @@ struct PressureArtifactDiagnosticsTests {
 
         _ = try await unavailableProvider.currentSnapshot(for: resolvedH3)
         let unavailableEvent = try #require(try unavailableLogger.event(matching: "Storm Setup Anvil evidence resolved."))
-        #expect(metadataString(unavailableEvent.metadata, "artifactOutcome") == "exact")
+        #expect(metadataString(unavailableEvent.metadata, "artifactOutcome") == "unavailable")
         #expect(metadataString(unavailableEvent.metadata, "evidenceStatus") == "unavailable")
         #expect(metadataString(unavailableEvent.metadata, "reason")?.contains("Anvil offline") == true)
-        assertNoSensitiveMetadata(in: [exactEvent, staleEvent, unavailableEvent])
+
+        let mismatchLogger = makeCapturingLogger(label: "request-path-mismatch")
+        let mismatchProvider = DefaultStormSetupProvider(
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30)),
+            snapshotCache: StubStormSetupSnapshotCache(snapshot: exactSnapshot),
+            subsetLoader: UnusedStormSetupSubsetLoader(),
+            fieldSampler: UnusedStormSetupFieldSampler(),
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: makeRaw())),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: StaticAnvilProfileAnalysisProvider(
+                response: makeAnalysisResponse(
+                    requestValidTime: exactPressureValidTime,
+                    debugRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
+                    debugForecastHour: 3,
+                    debugValidTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21, minute: 15),
+                    effectiveLayerStatus: "found",
+                    stormMotionStatus: "computed",
+                    warnings: []
+                )
+            ),
+            logger: mismatchLogger.logger
+        )
+
+        _ = try await mismatchProvider.currentSnapshot(for: resolvedH3)
+        let mismatchEvent = try #require(try mismatchLogger.event(matching: "Storm Setup Anvil evidence resolved."))
+        #expect(metadataString(mismatchEvent.metadata, "artifactOutcome") == "unavailable")
+        #expect(metadataString(mismatchEvent.metadata, "pressureArtifactValidTime") == "nil")
+        #expect(metadataString(mismatchEvent.metadata, "reason")?.contains("did not match debug valid time") == true)
+
+        let missingProviderLogger = makeCapturingLogger(label: "request-path-missing-provider")
+        let missingProvider = DefaultStormSetupProvider(
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30)),
+            snapshotCache: StubStormSetupSnapshotCache(snapshot: exactSnapshot),
+            subsetLoader: UnusedStormSetupSubsetLoader(),
+            fieldSampler: UnusedStormSetupFieldSampler(),
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: makeRaw())),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: nil,
+            logger: missingProviderLogger.logger
+        )
+
+        _ = try await missingProvider.currentSnapshot(for: resolvedH3)
+        let missingProviderEvent = try #require(try missingProviderLogger.event(matching: "Storm Setup Anvil evidence resolved."))
+        #expect(metadataString(missingProviderEvent.metadata, "artifactOutcome") == "unavailable")
+        #expect(metadataString(missingProviderEvent.metadata, "pressureArtifactValidTime") == "nil")
+        #expect(metadataString(missingProviderEvent.metadata, "staleAgeSeconds") == nil)
+        #expect(metadataString(missingProviderEvent.metadata, "reason") == "Anvil analysis provider is not configured.")
+
+        let cancellationLogger = makeCapturingLogger(label: "request-path-cancelled")
+        let cancellationProvider = DefaultStormSetupProvider(
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 30)),
+            snapshotCache: StubStormSetupSnapshotCache(snapshot: exactSnapshot),
+            subsetLoader: UnusedStormSetupSubsetLoader(),
+            fieldSampler: UnusedStormSetupFieldSampler(),
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: makeRaw())),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: SuspendedAnvilProfileAnalysisProvider(
+                response: makeAnalysisResponse(
+                    requestValidTime: exactPressureValidTime,
+                    debugRunTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19, minute: 15),
+                    debugForecastHour: 3,
+                    debugValidTime: exactPressureValidTime,
+                    effectiveLayerStatus: "found",
+                    stormMotionStatus: "computed",
+                    warnings: []
+                )
+            ),
+            logger: cancellationLogger.logger
+        )
+
+        let cancellationTask = Task {
+            try await cancellationProvider.currentSnapshot(for: resolvedH3)
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        cancellationTask.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await cancellationTask.value
+        }
+        #expect(try cancellationLogger.event(matching: "Storm Setup Anvil evidence resolved.") == nil)
+        assertNoRequestPathSensitiveMetadata(in: [exactEvent, staleEvent, unavailableEvent, mismatchEvent, missingProviderEvent])
+        assertNoSensitiveMetadata(in: [exactEvent, staleEvent, unavailableEvent, mismatchEvent, missingProviderEvent])
     }
 }
 
@@ -671,6 +788,18 @@ private extension PressureArtifactDiagnosticsTests {
         }
     }
 
+    func assertNoRequestPathSensitiveMetadata(in events: [CapturedLogEvent]) {
+        for event in events {
+            #expect(event.metadata.keys.contains("primaryDownloadURL") == false)
+            #expect(event.metadata.keys.contains("idxURL") == false)
+            #expect(event.metadata.keys.contains("sourceURL") == false)
+            #expect(event.metadata.keys.contains("localPath") == false)
+            #expect(event.metadata.keys.contains("claimToken") == false)
+            #expect(event.metadata.keys.contains("requestPayload") == false)
+            #expect(event.metadata.keys.contains("coordinates") == false)
+        }
+    }
+
     func makeSnapshot(
         h3Cell: Int64,
         source: StormSetupSourceMetadata,
@@ -701,8 +830,21 @@ private extension PressureArtifactDiagnosticsTests {
         )
     }
 
-    func makeSurfaceSource(validTime: Date) -> StormSetupSourceMetadata {
-        makeSourceMetadataForRequest(validTime: validTime)
+    func makeSurfaceSource(
+        runTime: Date,
+        forecastHour: Int,
+        validTime: Date
+    ) -> StormSetupSourceMetadata {
+        StormSetupSourceMetadata(
+            model: .hrrr,
+            product: .wrfsfc,
+            domain: .conus,
+            runTime: runTime,
+            forecastHour: forecastHour,
+            validTime: validTime,
+            fieldSetVersion: .tornadoV1,
+            nomadsURL: URL(string: "https://example.com/surface.grib2")
+        )
     }
 
     func makeSurfaceSourceWithoutValidTime() -> StormSetupSourceMetadata {
@@ -801,15 +943,18 @@ private extension PressureArtifactDiagnosticsTests {
     }
 
     func makeAnalysisResponse(
-        validTime: Date,
+        requestValidTime: Date,
+        debugRunTime: Date,
+        debugForecastHour: Int,
+        debugValidTime: Date,
         effectiveLayerStatus: String,
         stormMotionStatus: String,
         warnings: [String]
     ) -> AnvilAnalyzeProfileAnalysisResponse {
         let request = AnvilAnalyzeProfileRequest(
-            runTime: validTime.addingTimeInterval(-3_600),
-            forecastHour: 1,
-            validTime: validTime,
+            runTime: debugRunTime,
+            forecastHour: debugForecastHour,
+            validTime: requestValidTime,
             location: AnvilLocationDTO(lat: 39.78, lon: -104.46, h3: "88268b1ffffffff"),
             profile: AnvilProfileDTO(
                 pressureMb: [1000, 925, 850, 700, 600, 500, 400, 300],
@@ -824,9 +969,9 @@ private extension PressureArtifactDiagnosticsTests {
         let debug = AnvilAnalyzeProfilePreviewDebugDTO(
             sourceKind: .directObject,
             product: .wrfprsf,
-            runTime: validTime.addingTimeInterval(-3_600),
-            forecastHour: 1,
-            validTime: validTime,
+            runTime: debugRunTime,
+            forecastHour: debugForecastHour,
+            validTime: debugValidTime,
             h3: "88268b1ffffffff",
             centroid: StormSetupCentroid(latitude: 39.78, longitude: -104.46),
             selectedMessageCount: 0,
@@ -1175,6 +1320,16 @@ private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidi
     func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
         throw error
+    }
+}
+
+private struct SuspendedAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
+    let response: AnvilAnalyzeProfileAnalysisResponse
+
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        try await Task.sleep(for: .seconds(10))
+        return response
     }
 }
 

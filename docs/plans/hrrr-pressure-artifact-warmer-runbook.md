@@ -180,6 +180,23 @@ The warmer is a separate planning and scheduling layer around existing pressure-
 - `STORM_SETUP_GRIB_MAX_BYTES` must be high enough for the expanded artifact; `209715200` bytes was the tested value.
 - Warm diagnostics must show a `wrfprsf` source URL, not a `wrfsfcf` source URL.
 
+### Request-Path Diagnostics
+
+The Storm Setup request path emits one structured evidence-resolution event for debugging:
+`Storm Setup Anvil evidence resolved.`
+
+That event reports pressure artifact selection metadata from the Anvil analysis debug payload, not surface-source freshness.
+
+- `artifactOutcome` describes the pressure artifact selection result
+  - `exact` when the pressure artifact valid time matches the selected surface valid time
+  - `stale` when the pressure artifact valid time is older than the selected surface valid time and a stale-fallback warning is present
+  - `unavailable` when the provider is missing, the selected surface valid time is missing, request/debug valid times mismatch, the valid-time relationship is invalid, or analysis fails
+- `evidenceStatus` still reports the Anvil evidence state (`available`, `degraded`, or `unavailable`)
+- `pressureArtifactValidTime` and `selectedSurfaceValidTime` are logged independently
+- `staleAgeSeconds` is computed from `selectedSurfaceValidTime - pressureArtifactValidTime`, clamped at zero, and is not derived from surface cache freshness or cache expiry
+- Pressure artifact run time, forecast hour, and product are emitted only when known
+- The event must not log source URLs, local paths, H3 values, request payload arrays, coordinates, or claim tokens
+
 ---
 
 ## Issue Sequence

@@ -794,3 +794,34 @@ Remaining blocking-I/O concurrency work:
 - Some filesystem and cache APIs are still synchronous, so cancellation can only be enforced at the boundaries around those calls.
 - There is still no mid-call interruption for local file deletion, directory creation, or synchronous cache access.
 - That is a platform/API limitation, not an excuse to start sprinkling optimism confetti over the code.
+
+### Request-Path Diagnostics Metadata Correction
+
+Status: Completed
+
+Scope:
+- Correct the `Storm Setup Anvil evidence resolved.` request-path log so it reports pressure artifact selection metadata from Anvil analysis debug output.
+- Distinguish `artifactOutcome` from `evidenceStatus`.
+- Compute stale age from `selectedSurfaceValidTime - pressureArtifactValidTime` instead of surface cache freshness.
+- Preserve request-path behavior, dashboard behavior, and artifact-selection policy.
+
+Files changed:
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Tests/AppTests/PressureArtifactDiagnosticsTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-runbook.md`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Validation performed:
+- `swift test --filter PressureArtifactDiagnosticsTests`
+- `swift build`
+- `swift test --filter StormSetupProviderTests`
+
+Validation results:
+- The request-path diagnostics test now passes with distinct surface and pressure times for exact, stale, unavailable, mismatch, missing-provider, and cancellation cases.
+- `artifactOutcome` now reflects pressure artifact selection, not surface freshness.
+- `pressureArtifactValidTime` is sourced from Anvil debug metadata and logs `nil` for unavailable cases.
+- `staleAgeSeconds` is derived from the pressure artifact valid time delta and is no longer tied to surface cache expiry.
+
+Remaining diagnostic limitations:
+- Blocking filesystem and Process work elsewhere in Storm Setup still remains synchronous, so cancellation is enforced at the boundaries rather than interrupting the middle of local I/O.
+- The request-path event is still a diagnostic log only; it does not change response payloads, dashboards, or artifact fallback behavior.
