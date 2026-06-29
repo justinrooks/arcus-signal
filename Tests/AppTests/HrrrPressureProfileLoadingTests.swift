@@ -34,40 +34,43 @@ struct HrrrPressureProfileLoadingTests {
                 payloads: payloads
             )
         )
-        let subsetCache = HrrrPressureSubsetGribCache(
-            httpClient: client,
-            rootURL: rootURL,
-            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            retentionDuration: 12 * 60 * 60,
-            maximumByteCount: 1024
-        )
-        let loader = DefaultHrrrPressureProfileLoader(
-            httpClient: client,
-            subsetCache: subsetCache,
-            fieldSampler: PreviewStubStormSetupFieldSampler { subset, centroid in
-                #expect(subset.cacheHit == false)
-                #expect(centroid == StormSetupCentroid(latitude: 39.7825, longitude: -104.4661))
-                return previewMakeEightLevelPressureSamples()
-            }
-        )
+        try await withPressureArtifactThreadPoolExecutor { blockingWorkExecutor in
+            let subsetCache = HrrrPressureSubsetGribCache(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                rootURL: rootURL,
+                dateProvider: PreviewFixedStormSetupDateProvider(nowDate: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024
+            )
+            let loader = DefaultHrrrPressureProfileLoader(
+                httpClient: client,
+                subsetCache: subsetCache,
+                fieldSampler: PreviewStubStormSetupFieldSampler { subset, centroid in
+                    #expect(subset.cacheHit == false)
+                    #expect(centroid == StormSetupCentroid(latitude: 39.7825, longitude: -104.4661))
+                    return previewMakeEightLevelPressureSamples()
+                }
+            )
 
-        let result = try await loader.loadPressureProfile(
-            for: sourceResolution,
-            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
-            surfaceHeightMslM: nil
-        )
+            let result = try await loader.loadPressureProfile(
+                for: sourceResolution,
+                centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
+                surfaceHeightMslM: nil
+            )
 
-        let idxURL = try #require(sourceResolution.source.idxURL)
-        let gribURL = try #require(sourceResolution.source.primaryDownloadURL)
-        #expect(result.selection.selectedMessages.count == 40)
-        #expect(result.byteRangePlan.ranges.count == 40)
-        #expect(result.subsetCacheResult.cacheHit == false)
-        #expect(result.groupedProfile.retainedLevels.count == 8)
-        #expect(result.selection.requestedLevels == StormSetupPressureLevel.preferredDescending)
-        #expect(client.requests.contains(where: { $0.url == idxURL }))
-        #expect(client.requests.filter { $0.url == gribURL }.count == 40)
-        #expect(client.requests.filter { $0.url == gribURL && $0.headers["Range"] == nil }.isEmpty)
-        #expect(result.groupedProfile.missingLevels.isEmpty == false)
+            let idxURL = try #require(sourceResolution.source.idxURL)
+            let gribURL = try #require(sourceResolution.source.primaryDownloadURL)
+            #expect(result.selection.selectedMessages.count == 40)
+            #expect(result.byteRangePlan.ranges.count == 40)
+            #expect(result.subsetCacheResult.cacheHit == false)
+            #expect(result.groupedProfile.retainedLevels.count == 8)
+            #expect(result.selection.requestedLevels == StormSetupPressureLevel.preferredDescending)
+            #expect(client.requests.contains(where: { $0.url == idxURL }))
+            #expect(client.requests.filter { $0.url == gribURL }.count == 40)
+            #expect(client.requests.filter { $0.url == gribURL && $0.headers["Range"] == nil }.isEmpty)
+            #expect(result.groupedProfile.missingLevels.isEmpty == false)
+        }
     }
 
     private func makePlannedResponses(

@@ -11,7 +11,7 @@ import Vapor
 struct PressureArtifactDiagnosticsTests {
     @Test("probe logs idx availability, queue metadata, and enqueue details")
     func probeLogsIdxAvailabilityQueueMetadataAndEnqueueDetails() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14), forecastHour: 8)
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -53,7 +53,7 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("probe logs the existing catalog state when warm enqueue is skipped")
     func probeLogsExistingCatalogStateWhenWarmEnqueueIsSkipped() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15), forecastHour: 7)
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -87,7 +87,7 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("probe logs exhaustion when every candidate is unavailable")
     func probeLogsExhaustionWhenEveryCandidateIsUnavailable() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let firstSurface = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15), forecastHour: 7)
             let secondSurface = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14), forecastHour: 8)
             let firstPressure = makePressureCandidate(from: firstSurface)
@@ -122,7 +122,7 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("warm diagnostics include source URLs, selection counts, and validation outcome")
     func warmDiagnosticsIncludeSourceUrlsSelectionCountsAndValidationOutcome() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makeWarmPayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -135,6 +135,7 @@ struct PressureArtifactDiagnosticsTests {
             let loggerContext = makeCapturingLogger(label: "warm-success")
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)),
@@ -173,7 +174,7 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("warm validation failure logs a failed transition")
     func warmValidationFailureLogsFailedTransition() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makeWarmPayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -189,6 +190,7 @@ struct PressureArtifactDiagnosticsTests {
             let loggerContext = makeCapturingLogger(label: "warm-failure")
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: makeFixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)),
@@ -219,9 +221,13 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("lookup diagnostics distinguish exact hits, miss reasons, and stale selection")
     func lookupDiagnosticsDistinguishExactHitsMissReasonsAndStaleSelection() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let loggerContext = makeCapturingLogger(label: "lookup")
-            let service = DefaultPressureArtifactCatalogLookupService(database: app.db, logger: loggerContext.logger)
+            let service = DefaultPressureArtifactCatalogLookupService(
+                database: app.db,
+                blockingWorkExecutor: blockingWorkExecutor,
+                logger: loggerContext.logger
+            )
 
             let exactRunTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             let exactValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
@@ -561,14 +567,17 @@ struct PressureArtifactDiagnosticsTests {
 }
 
 private extension PressureArtifactDiagnosticsTests {
-    func withApp(test: (Application) async throws -> Void) async throws {
+    func withApp(
+        test: (Application, NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> Void
+    ) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
             let app = try await Application.make(.testing)
             do {
                 try await configure(app, mode: .api)
                 try await app.autoMigrate()
                 try await clearCatalog(on: app.db)
-                try await test(app)
+                let blockingWorkExecutor = makePressureArtifactBlockingWorkExecutor(application: app)
+                try await test(app, blockingWorkExecutor)
             } catch {
                 try? await app.asyncShutdown()
                 throw error

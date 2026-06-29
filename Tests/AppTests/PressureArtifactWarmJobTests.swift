@@ -9,7 +9,7 @@ import Vapor
 struct PressureArtifactWarmJobTests {
     @Test("pressure payload requests wrfprsf source URLs")
     func pressurePayloadRequestsPressureProductSourceURLs() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -20,6 +20,7 @@ struct PressureArtifactWarmJobTests {
             )
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -36,7 +37,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("two concurrent warm jobs do not both build the same artifact")
     func duplicateWarmJobsDoNotBothBuildSameArtifact() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -49,6 +50,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount)
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -83,7 +85,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("full expanded pressure contract succeeds")
     func fullExpandedPressureContractSucceeds() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -96,6 +98,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount)
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -127,7 +130,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("failed warm marks the catalog row failed and stores an error summary")
     func failedWarmMarksTheCatalogRowFailedAndStoresErrorSummary() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -143,6 +146,7 @@ struct PressureArtifactWarmJobTests {
             )
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -172,7 +176,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("warm cancellation leaves the catalog claim available for recovery")
     func warmCancellationLeavesTheCatalogClaimAvailableForRecovery() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -185,6 +189,7 @@ struct PressureArtifactWarmJobTests {
             let cacheRoot = testRootURL()
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: cacheRoot,
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -227,7 +232,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("ready artifact is skipped without rebuilding")
     func readyArtifactIsSkippedWithoutRebuilding() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             try await seedCatalogRow(status: .ready, payload: payload, on: app.db)
 
@@ -235,6 +240,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -257,7 +263,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("warming artifact is skipped without rebuilding")
     func warmingArtifactIsSkippedWithoutRebuilding() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             try await seedCatalogRow(status: .warming, payload: payload, on: app.db)
 
@@ -265,6 +271,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -287,7 +294,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("expired rows with active cleanup claims are skipped without rebuilding")
     func expiredRowsWithActiveCleanupClaimsAreSkippedWithoutRebuilding() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             let claimToken = UUID()
@@ -306,6 +313,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -334,7 +342,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("warm claim stores a token and lease")
     func warmClaimStoresATokenAndLease() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -346,6 +354,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -368,7 +377,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("successful owner clears claim metadata and marks ready")
     func successfulOwnerClearsClaimMetadataAndMarksReady() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -380,6 +389,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -406,7 +416,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("failed owner clears claim metadata and marks failed")
     func failedOwnerClearsClaimMetadataAndMarksFailed() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -421,6 +431,7 @@ struct PressureArtifactWarmJobTests {
             )
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -449,7 +460,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("an old token cannot mark ready after a newer claim exists")
     func oldTokenCannotMarkReadyAfterANewerClaimExists() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -461,6 +472,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -533,7 +545,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("validation line-count mismatch marks the catalog row failed")
     func validationLineCountMismatchMarksTheCatalogRowFailed() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -546,6 +558,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount - 1)
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -575,7 +588,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("incomplete pressure inventory fails before any range download")
     func incompletePressureInventoryFailsBeforeAnyRangeDownload() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -586,6 +599,7 @@ struct PressureArtifactWarmJobTests {
             let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: validator,
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -616,7 +630,7 @@ struct PressureArtifactWarmJobTests {
 
     @Test("validation failure removes the failed cache and the next warm redownloads")
     func validationFailureRemovesFailedCacheAndNextWarmRedownloads() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -630,6 +644,7 @@ struct PressureArtifactWarmJobTests {
 
             let failedService = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: PressureArtifactWarmValidatorStub(lineCount: expectedLineCount - 1),
                 cacheRootURL: cacheRoot,
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
@@ -650,6 +665,7 @@ struct PressureArtifactWarmJobTests {
 
             let retryService = PressureArtifactWarmingService(
                 httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
                 validator: PressureArtifactWarmValidatorStub(lineCount: expectedLineCount),
                 cacheRootURL: cacheRoot,
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate(hour: 14)),
@@ -665,14 +681,17 @@ struct PressureArtifactWarmJobTests {
 }
 
 private extension PressureArtifactWarmJobTests {
-    func withApp(test: (Application) async throws -> Void) async throws {
+    func withApp(
+        test: (Application, NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> Void
+    ) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
             let app = try await Application.make(.testing)
             do {
                 try await configure(app, mode: .api)
                 try await app.autoMigrate()
                 try await clearCatalog(on: app.db)
-                try await test(app)
+                let blockingWorkExecutor = makePressureArtifactBlockingWorkExecutor(application: app)
+                try await test(app, blockingWorkExecutor)
             } catch {
                 try? await app.asyncShutdown()
                 throw error

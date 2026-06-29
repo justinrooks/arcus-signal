@@ -66,152 +66,165 @@ struct HrrrPressureSubsetGribCacheTests {
 
     @Test("cache miss downloads then cache hit skips the downloader")
     func cacheMissWritesThenHitSkipsDownloader() async throws {
-        let rootURL = testRootURL()
-        let source = makeSourceMetadata(
-            primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
-            idxURL: URL(string: "https://example.com/a.idx")!
-        )
-        let plan = makePlan()
-        let client = PressureSubsetStubHTTPClient(
-            plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
-                Data("hgt-".utf8),
-                Data("tmp-".utf8),
-                Data("dpt-".utf8),
-                Data("ugrd".utf8),
-                Data("vgrd".utf8)
-            ])
-        )
-        let cache = HrrrPressureSubsetGribCache(
-            httpClient: client,
-            rootURL: rootURL,
-            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            retentionDuration: 12 * 60 * 60,
-            maximumByteCount: 1024
-        )
+        try await withPressureArtifactThreadPoolExecutor { blockingWorkExecutor in
+            let rootURL = testRootURL()
+            let source = makeSourceMetadata(
+                primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
+                idxURL: URL(string: "https://example.com/a.idx")!
+            )
+            let plan = makePlan()
+            let client = PressureSubsetStubHTTPClient(
+                plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
+                    Data("hgt-".utf8),
+                    Data("tmp-".utf8),
+                    Data("dpt-".utf8),
+                    Data("ugrd".utf8),
+                    Data("vgrd".utf8)
+                ])
+            )
+            let cache = HrrrPressureSubsetGribCache(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                rootURL: rootURL,
+                dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024
+            )
 
-        let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
-        let second = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            let second = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
 
-        #expect(first.cacheHit == false)
-        #expect(second.cacheHit == true)
-        #expect(first.localFileURL == second.localFileURL)
-        #expect(first.byteSize == 20)
-        #expect(client.requestCount == 5)
-        #expect(try Data(contentsOf: first.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+            #expect(first.cacheHit == false)
+            #expect(second.cacheHit == true)
+            #expect(first.localFileURL == second.localFileURL)
+            #expect(first.byteSize == 20)
+            #expect(client.requestCount == 5)
+            #expect(try Data(contentsOf: first.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+        }
     }
 
     @Test("expired cached subset files are invalidated and redownloaded")
     func expiredCacheEntryTriggersRedownload() async throws {
-        let rootURL = testRootURL()
-        let source = makeSourceMetadata(
-            primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
-            idxURL: URL(string: "https://example.com/a.idx")!
-        )
-        let plan = makePlan()
-        let client = PressureSubsetStubHTTPClient(
-            plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
-                Data("hgt-".utf8),
-                Data("tmp-".utf8),
-                Data("dpt-".utf8),
-                Data("ugrd".utf8),
-                Data("vgrd".utf8)
-            ])
-        )
-        let cache = HrrrPressureSubsetGribCache(
-            httpClient: client,
-            rootURL: rootURL,
-            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            retentionDuration: 30 * 60,
-            maximumByteCount: 1024
-        )
+        try await withPressureArtifactThreadPoolExecutor { blockingWorkExecutor in
+            let rootURL = testRootURL()
+            let source = makeSourceMetadata(
+                primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
+                idxURL: URL(string: "https://example.com/a.idx")!
+            )
+            let plan = makePlan()
+            let client = PressureSubsetStubHTTPClient(
+                plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
+                    Data("hgt-".utf8),
+                    Data("tmp-".utf8),
+                    Data("dpt-".utf8),
+                    Data("ugrd".utf8),
+                    Data("vgrd".utf8)
+                ])
+            )
+            let cache = HrrrPressureSubsetGribCache(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                rootURL: rootURL,
+                dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+                retentionDuration: 30 * 60,
+                maximumByteCount: 1024
+            )
 
-        let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
 
-        let expiredCache = HrrrPressureSubsetGribCache(
-            httpClient: client,
-            rootURL: rootURL,
-            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)),
-            retentionDuration: 30 * 60,
-            maximumByteCount: 1024
-        )
+            let expiredCache = HrrrPressureSubsetGribCache(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                rootURL: rootURL,
+                dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)),
+                retentionDuration: 30 * 60,
+                maximumByteCount: 1024
+            )
 
-        let second = try await expiredCache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            let second = try await expiredCache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
 
-        #expect(first.cacheHit == false)
-        #expect(second.cacheHit == false)
-        #expect(first.localFileURL == second.localFileURL)
-        #expect(client.requestCount == 10)
-        #expect(try Data(contentsOf: second.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+            #expect(first.cacheHit == false)
+            #expect(second.cacheHit == false)
+            #expect(first.localFileURL == second.localFileURL)
+            #expect(client.requestCount == 10)
+            #expect(try Data(contentsOf: second.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+        }
     }
 
     @Test("corrupt cached subset files are invalidated and redownloaded")
     func corruptCacheEntryTriggersRedownload() async throws {
-        let rootURL = testRootURL()
-        let source = makeSourceMetadata(
-            primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
-            idxURL: URL(string: "https://example.com/a.idx")!
-        )
-        let plan = makePlan()
-        let client = PressureSubsetStubHTTPClient(
-            plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
-                Data("hgt-".utf8),
-                Data("tmp-".utf8),
-                Data("dpt-".utf8),
-                Data("ugrd".utf8),
-                Data("vgrd".utf8)
-            ])
-        )
-        let cache = HrrrPressureSubsetGribCache(
-            httpClient: client,
-            rootURL: rootURL,
-            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            retentionDuration: 12 * 60 * 60,
-            maximumByteCount: 1024
-        )
+        try await withPressureArtifactThreadPoolExecutor { blockingWorkExecutor in
+            let rootURL = testRootURL()
+            let source = makeSourceMetadata(
+                primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
+                idxURL: URL(string: "https://example.com/a.idx")!
+            )
+            let plan = makePlan()
+            let client = PressureSubsetStubHTTPClient(
+                plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
+                    Data("hgt-".utf8),
+                    Data("tmp-".utf8),
+                    Data("dpt-".utf8),
+                    Data("ugrd".utf8),
+                    Data("vgrd".utf8)
+                ])
+            )
+            let cache = HrrrPressureSubsetGribCache(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                rootURL: rootURL,
+                dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024
+            )
 
-        let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
-        try Data("corrupt".utf8).write(to: first.localFileURL, options: [.atomic])
+            let first = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            try Data("corrupt".utf8).write(to: first.localFileURL, options: [.atomic])
 
-        let second = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            let second = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
 
-        #expect(second.cacheHit == false)
-        #expect(client.requestCount == 10)
-        #expect(try Data(contentsOf: second.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+            #expect(second.cacheHit == false)
+            #expect(client.requestCount == 10)
+            #expect(try Data(contentsOf: second.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
+        }
     }
 
     @Test("invalidate removes both cached subset and metadata")
     func invalidateRemovesBothCachedSubsetAndMetadata() async throws {
-        let rootURL = testRootURL()
-        let source = makeSourceMetadata(
-            primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
-            idxURL: URL(string: "https://example.com/a.idx")!
-        )
-        let plan = makePlan()
-        let client = PressureSubsetStubHTTPClient(
-            plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
-                Data("hgt-".utf8),
-                Data("tmp-".utf8),
-                Data("dpt-".utf8),
-                Data("ugrd".utf8),
-                Data("vgrd".utf8)
-            ])
-        )
-        let cache = HrrrPressureSubsetGribCache(
-            httpClient: client,
-            rootURL: rootURL,
-            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
-            retentionDuration: 12 * 60 * 60,
-            maximumByteCount: 1024
-        )
+        try await withPressureArtifactThreadPoolExecutor { blockingWorkExecutor in
+            let rootURL = testRootURL()
+            let source = makeSourceMetadata(
+                primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
+                idxURL: URL(string: "https://example.com/a.idx")!
+            )
+            let plan = makePlan()
+            let client = PressureSubsetStubHTTPClient(
+                plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
+                    Data("hgt-".utf8),
+                    Data("tmp-".utf8),
+                    Data("dpt-".utf8),
+                    Data("ugrd".utf8),
+                    Data("vgrd".utf8)
+                ])
+            )
+            let cache = HrrrPressureSubsetGribCache(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                rootURL: rootURL,
+                dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024
+            )
 
-        let loaded = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
-        let key = try HrrrPressureSubsetGribCacheKey(sourceMetadata: source, byteRangePlan: plan)
+            let loaded = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+            let key = try HrrrPressureSubsetGribCacheKey(sourceMetadata: source, byteRangePlan: plan)
 
-        await cache.invalidate(sourceMetadata: source, byteRangePlan: plan)
+            try await cache.invalidate(sourceMetadata: source, byteRangePlan: plan)
 
-        #expect(FileManager.default.fileExists(atPath: key.subsetFileURL(rootURL: rootURL).path) == false)
-        #expect(FileManager.default.fileExists(atPath: key.metadataFileURL(rootURL: rootURL).path) == false)
-        #expect(FileManager.default.fileExists(atPath: loaded.localFileURL.path) == false)
+            #expect(FileManager.default.fileExists(atPath: key.subsetFileURL(rootURL: rootURL).path) == false)
+            #expect(FileManager.default.fileExists(atPath: key.metadataFileURL(rootURL: rootURL).path) == false)
+            #expect(FileManager.default.fileExists(atPath: loaded.localFileURL.path) == false)
+        }
     }
 
     private func makePlan(reversedInventory: Bool = false) -> HrrrGribByteRangePlan {

@@ -66,8 +66,12 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let configuration = application.stormSetupConfiguration
         let dateProvider = SystemStormSetupDateProvider()
         let httpClient = VaporApplicationHTTPClient(application: application)
+        let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+            threadPool: application.threadPool
+        )
         let pressureArtifactCatalogLookupService = DefaultPressureArtifactCatalogLookupService(
             database: application.db,
+            blockingWorkExecutor: blockingWorkExecutor,
             maximumStaleAgeSeconds: configuration.pressureArtifactMaxStaleAgeSeconds,
             logger: application.logger
         )
@@ -76,6 +80,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             httpClient: httpClient,
             subsetCache: HrrrPressureSubsetGribCache(
                 httpClient: httpClient,
+                blockingWorkExecutor: blockingWorkExecutor,
                 rootURL: configuration.pressureGribSubsetCacheRootURL,
                 dateProvider: dateProvider,
                 retentionDuration: configuration.gribSubsetCacheRetentionSeconds,

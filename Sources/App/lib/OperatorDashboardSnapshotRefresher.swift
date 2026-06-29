@@ -464,8 +464,12 @@ struct OperatorDashboardSnapshotRefresher {
     ) async throws -> StoredPressureArtifactDashboardReadinessMetric {
         let dateProvider = FixedStormSetupDateProvider(nowDate: now)
         let hrrrRunResolver = DefaultHrrrRunResolver(dateProvider: dateProvider)
+        let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+            threadPool: app.threadPool
+        )
         let lookupService = DefaultPressureArtifactCatalogLookupService(
             database: app.db,
+            blockingWorkExecutor: blockingWorkExecutor,
             maximumStaleAgeSeconds: app.stormSetupConfiguration.pressureArtifactMaxStaleAgeSeconds,
             logger: app.logger
         )

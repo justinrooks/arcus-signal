@@ -7,14 +7,17 @@ import Vapor
 
 @Suite("Pressure artifact catalog lookup", .serialized)
 struct PressureArtifactCatalogLookupServiceTests {
-    private func withApp(test: (Application) async throws -> Void) async throws {
+    private func withApp(
+        test: (Application, NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> Void
+    ) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
             let app = try await Application.make(.testing)
             do {
                 try await configure(app, mode: .api)
                 try await app.autoMigrate()
                 try await clearCatalog(on: app.db)
-                try await test(app)
+                let blockingWorkExecutor = makePressureArtifactBlockingWorkExecutor(application: app)
+                try await test(app, blockingWorkExecutor)
             } catch {
                 Issue.record("Test DB error: \(String(reflecting: error))")
                 try? await app.asyncShutdown()
@@ -34,7 +37,7 @@ struct PressureArtifactCatalogLookupServiceTests {
 
     @Test("exact ready lookup returns the expected local artifact")
     func exactReadyLookupReturnsExpectedLocalArtifact() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
             let localFileURL = makeTempRegularFile(contents: Data("ready-artifact".utf8))
@@ -57,7 +60,10 @@ struct PressureArtifactCatalogLookupServiceTests {
                 source: .aws
             ).create(on: app.db)
 
-            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let service = DefaultPressureArtifactCatalogLookupService(
+                database: app.db,
+                blockingWorkExecutor: blockingWorkExecutor
+            )
             let artifact = try await service.readyArtifact(for: candidate)
 
             #expect(artifact?.runTime == runTime)
@@ -73,7 +79,7 @@ struct PressureArtifactCatalogLookupServiceTests {
 
     @Test("wrong field-set version is not accepted")
     func wrongFieldSetVersionIsNotAccepted() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
             let localFileURL = makeTempRegularFile(contents: Data("ready-artifact".utf8))
@@ -96,7 +102,10 @@ struct PressureArtifactCatalogLookupServiceTests {
                 source: .aws
             ).create(on: app.db)
 
-            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let service = DefaultPressureArtifactCatalogLookupService(
+                database: app.db,
+                blockingWorkExecutor: blockingWorkExecutor
+            )
             let artifact = try await service.readyArtifact(for: candidate)
 
             #expect(artifact == nil)
@@ -105,7 +114,7 @@ struct PressureArtifactCatalogLookupServiceTests {
 
     @Test("stale lookup returns the newest eligible valid artifact after exact misses")
     func staleLookupReturnsTheNewestEligibleValidArtifactAfterExactMisses() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let targetValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
             let candidate = HrrrRunCandidate(
                 product: .wrfprsf,
@@ -202,7 +211,10 @@ struct PressureArtifactCatalogLookupServiceTests {
             try await boundaryRow.create(on: app.db)
             try await newestValidRow.create(on: app.db)
 
-            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let service = DefaultPressureArtifactCatalogLookupService(
+                database: app.db,
+                blockingWorkExecutor: blockingWorkExecutor
+            )
             let artifact = try await service.staleArtifact(
                 for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [candidate])
             )
@@ -216,7 +228,7 @@ struct PressureArtifactCatalogLookupServiceTests {
 
     @Test("stale lookup accepts the exact two-hour boundary")
     func staleLookupAcceptsTheExactTwoHourBoundary() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let targetValidTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
             let candidate = HrrrRunCandidate(
                 product: .wrfprsf,
@@ -251,7 +263,10 @@ struct PressureArtifactCatalogLookupServiceTests {
             try await boundaryRow.create(on: app.db)
             try await tooOldRow.create(on: app.db)
 
-            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let service = DefaultPressureArtifactCatalogLookupService(
+                database: app.db,
+                blockingWorkExecutor: blockingWorkExecutor
+            )
             let artifact = try await service.staleArtifact(
                 for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [candidate])
             )
@@ -265,7 +280,7 @@ struct PressureArtifactCatalogLookupServiceTests {
 
     @Test("non-ready rows are not accepted")
     func nonReadyRowsAreNotAccepted() async throws {
-        try await withApp { app in
+            try await withApp { app, blockingWorkExecutor in
             let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
             let localFileURL = makeTempRegularFile(contents: Data("ready-artifact".utf8))
@@ -290,7 +305,10 @@ struct PressureArtifactCatalogLookupServiceTests {
                     source: .aws
                 ).create(on: app.db)
 
-                let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+                let service = DefaultPressureArtifactCatalogLookupService(
+                    database: app.db,
+                    blockingWorkExecutor: blockingWorkExecutor
+                )
                 let artifact = try await service.readyArtifact(for: candidate)
 
                 #expect(artifact == nil)
@@ -300,7 +318,7 @@ struct PressureArtifactCatalogLookupServiceTests {
 
     @Test("ready rows with unusable local paths are not accepted")
     func readyRowsWithUnusableLocalPathsAreNotAccepted() async throws {
-        try await withApp { app in
+        try await withApp { app, blockingWorkExecutor in
             let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
             let candidate = HrrrRunCandidate(
@@ -363,7 +381,10 @@ struct PressureArtifactCatalogLookupServiceTests {
             try await directoryRow.create(on: app.db)
             try await zeroByteRow.create(on: app.db)
 
-            let service = DefaultPressureArtifactCatalogLookupService(database: app.db)
+            let service = DefaultPressureArtifactCatalogLookupService(
+                database: app.db,
+                blockingWorkExecutor: blockingWorkExecutor
+            )
 
             #expect(try await service.readyArtifact(for: candidate) == nil)
             #expect(try await service.readyArtifact(for: candidate.with(forecastHour: 10)) == nil)

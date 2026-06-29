@@ -173,6 +173,16 @@ The warmer is a separate planning and scheduling layer around existing pressure-
 - Keep the cache identity explicit enough to diagnose stale or mismatched artifacts.
 - Keep request-path work bounded to read, validate, and degrade.
 
+### Blocking Work Boundary
+
+Pressure-artifact disk I/O and checksum work run through the application-owned bounded Vapor/NIO thread pool, not on actors, request executors, or ad hoc global queues.
+
+- Reuse the existing `application.threadPool` in production construction.
+- Keep actors responsible for state coordination only.
+- Treat Foundation filesystem calls and SHA-256 work as blocking, non-preemptive operations.
+- Cancellation is cooperative around scheduling and completion checkpoints only; it does not interrupt in-flight POSIX/Foundation work.
+- Preserve atomic-write behavior when writing cache payloads and metadata.
+
 ### Verified guardrails
 
 - Worker and API must point at the artifact cache using the same absolute path.

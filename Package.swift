@@ -52,6 +52,7 @@ let package = Package(
                 "Infrastructure/Hashing",
                 "Infrastructure/Networking",
                 "Infrastructure/Notifications",
+                "Infrastructure/PressureArtifactBlockingWorkExecutor.swift",
                 "Infrastructure/Cancellation.swift",
                 "Services",
                 "StormSetup",

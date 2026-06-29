@@ -34,6 +34,18 @@ Related local docs:
 - Treat request-path degradation as preferable to on-demand cold fetching.
 - Keep the warmer separate from notification/APNs behavior.
 
+## Blocking-Work Boundary
+
+Pressure-artifact disk I/O and checksum work run through the shared application `NIOThreadPool` behind a small blocking-work adapter.
+
+- Production construction reuses `application.threadPool`.
+- The adapter is pressure-artifact-specific and keeps actors focused on state coordination.
+- The subset cache pushes directory creation, subset and metadata reads/writes, cache invalidation, and checksum verification through the adapter.
+- The byte-range downloader pushes SHA-256 generation through the adapter.
+- The catalog lookup service pushes regular-file and positive-size checks through the adapter.
+- Cancellation only applies before scheduling and after completion checks; it does not preempt in-flight Foundation file work.
+- Remaining performance risk: the work is bounded, but disk I/O and hashing still occupy a thread-pool thread for the duration of each blocking operation.
+
 ---
 
 ## Current State Summary
@@ -51,6 +63,8 @@ Related local docs:
 - The currently scoped warmer issue set is complete, including cleanup claim fencing and active-deletion exclusion.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
+- Pressure-artifact cache reads, atomic writes, directory management, request-path file inspection, and SHA-256 checksums now run on the shared bounded blocking pool instead of actor or request executors.
+- Cancellation remains cooperative around scheduling and completion only; Foundation disk operations are still non-preemptive.
 
 ## Warm Invariant
 

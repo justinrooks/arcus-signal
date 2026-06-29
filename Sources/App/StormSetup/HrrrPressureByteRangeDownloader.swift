@@ -50,9 +50,14 @@ enum HrrrPressureByteRangeDownloaderError: Error, Sendable, CustomStringConverti
 
 struct HrrrPressureByteRangeDownloader: Sendable {
     private let httpClient: any HTTPClient
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
 
-    init(httpClient: any HTTPClient) {
+    init(
+        httpClient: any HTTPClient,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    ) {
         self.httpClient = httpClient
+        self.blockingWorkExecutor = blockingWorkExecutor
     }
 
     func download(
@@ -126,7 +131,11 @@ struct HrrrPressureByteRangeDownloader: Sendable {
         }
 
         let fetchedAt = Date()
-        let checksum = Self.sha256Hex(of: assembled)
+        let checksumInput = assembled
+        let checksum = try await blockingWorkExecutor.execute {
+            Self.sha256Hex(of: checksumInput)
+        }
+        try Task.checkCancellation()
 
         return HrrrPressureByteRangeDownloadResult(
             source: sourceMetadata,

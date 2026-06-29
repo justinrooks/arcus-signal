@@ -226,24 +226,26 @@ struct HrrrPressureSubsetGribCacheKey: Sendable, Hashable, Codable, Equatable {
 
 actor HrrrPressureSubsetGribCache {
     private let downloader: HrrrPressureByteRangeDownloader
-    private let fileManager: FileManager
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
     private let rootURL: URL
     private let dateProvider: any StormSetupDateProviding
     private let retentionDuration: TimeInterval
     private let maximumByteCount: Int
     private let jsonEncoder: JSONEncoder
-    private let jsonDecoder: JSONDecoder
 
     init(
         httpClient: any HTTPClient,
-        fileManager: FileManager = .default,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         rootURL: URL = StormSetupConfiguration.localPressureGribSubsetCacheRootURL,
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         retentionDuration: TimeInterval = StormSetupConfiguration.default.gribSubsetCacheRetentionSeconds,
         maximumByteCount: Int = StormSetupConfiguration.default.gribSubsetMaximumByteCount
     ) {
-        self.downloader = HrrrPressureByteRangeDownloader(httpClient: httpClient)
-        self.fileManager = fileManager
+        self.downloader = HrrrPressureByteRangeDownloader(
+            httpClient: httpClient,
+            blockingWorkExecutor: blockingWorkExecutor
+        )
+        self.blockingWorkExecutor = blockingWorkExecutor
         self.rootURL = rootURL
         self.dateProvider = dateProvider
         self.retentionDuration = retentionDuration
@@ -253,9 +255,6 @@ actor HrrrPressureSubsetGribCache {
         encoder.dateEncodingStrategy = .iso8601
         self.jsonEncoder = encoder
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        self.jsonDecoder = decoder
     }
 
     func loadOrFetch(
@@ -267,7 +266,12 @@ actor HrrrPressureSubsetGribCache {
         let metadataURL = key.metadataFileURL(rootURL: rootURL)
         let now = dateProvider.now()
 
-        if let record = loadValidRecord(key: key, fileURL: fileURL, metadataURL: metadataURL, now: now) {
+        if let record = try await loadValidRecord(
+            key: key,
+            fileURL: fileURL,
+            metadataURL: metadataURL,
+            now: now
+        ) {
             return HrrrPressureSubsetGribCacheResult(
                 source: record.source,
                 localFileURL: fileURL,
@@ -280,7 +284,13 @@ actor HrrrPressureSubsetGribCache {
         }
 
         do {
-            try fileManager.createDirectory(at: key.directoryURL(rootURL: rootURL), withIntermediateDirectories: true)
+            let directoryURL = key.directoryURL(rootURL: rootURL)
+            try await blockingWorkExecutor.execute {
+                try FileManager.default.createDirectory(
+                    at: directoryURL,
+                    withIntermediateDirectories: true
+                )
+            }
         } catch {
             try rethrowCancellationIfNeeded(error)
             throw HrrrPressureSubsetGribCacheError.unableToCreateDirectory(
@@ -315,12 +325,17 @@ actor HrrrPressureSubsetGribCache {
         )
 
         do {
-            try downloadResult.data.write(to: fileURL, options: [.atomic])
-            try write(record: record, to: metadataURL)
+            try await blockingWorkExecutor.execute {
+                try downloadResult.data.write(to: fileURL, options: [.atomic])
+            }
+            let metadataData = try jsonEncoder.encode(record)
+            try await blockingWorkExecutor.execute {
+                try metadataData.write(to: metadataURL, options: [.atomic])
+            }
+            try Task.checkCancellation()
         } catch {
             try rethrowCancellationIfNeeded(error)
-            try? fileManager.removeItem(at: fileURL)
-            try? fileManager.removeItem(at: metadataURL)
+            try await invalidate(fileURL: fileURL, metadataURL: metadataURL)
             throw HrrrPressureSubsetGribCacheError.unableToWriteCache(path: fileURL, reason: String(describing: error))
         }
 
@@ -338,12 +353,12 @@ actor HrrrPressureSubsetGribCache {
     func invalidate(
         sourceMetadata: StormSetupSourceMetadata,
         byteRangePlan: HrrrGribByteRangePlan
-    ) async {
+    ) async throws {
         guard let key = try? HrrrPressureSubsetGribCacheKey(sourceMetadata: sourceMetadata, byteRangePlan: byteRangePlan) else {
             return
         }
 
-        invalidate(
+        try await invalidate(
             fileURL: key.subsetFileURL(rootURL: rootURL),
             metadataURL: key.metadataFileURL(rootURL: rootURL)
         )
@@ -354,71 +369,78 @@ actor HrrrPressureSubsetGribCache {
         fileURL: URL,
         metadataURL: URL,
         now: Date
-    ) -> HrrrPressureSubsetGribCacheRecord? {
-        guard fileManager.fileExists(atPath: fileURL.path),
-              fileManager.fileExists(atPath: metadataURL.path) else {
-            return nil
-        }
+    ) async throws -> HrrrPressureSubsetGribCacheRecord? {
+        let cachedMaximumByteCount = maximumByteCount
+        return try await blockingWorkExecutor.execute {
+            () -> HrrrPressureSubsetGribCacheRecord? in
+            do {
+                let metadataData = try Data(contentsOf: metadataURL)
+                let decoder = Self.makeJSONDecoder()
+                let record = try decoder.decode(HrrrPressureSubsetGribCacheRecord.self, from: metadataData)
 
-        do {
-            let metadataData = try Data(contentsOf: metadataURL)
-            let record = try jsonDecoder.decode(HrrrPressureSubsetGribCacheRecord.self, from: metadataData)
+                guard record.expiresAt > now else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    return nil
+                }
 
-            guard record.expiresAt > now else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                guard record.key == key else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    return nil
+                }
+
+                guard record.byteSize <= cachedMaximumByteCount else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    return nil
+                }
+
+                let data = try Data(contentsOf: fileURL)
+                guard !data.isEmpty else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    return nil
+                }
+
+                guard data.count == Int(record.byteSize) else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    return nil
+                }
+
+                let checksum = Self.sha256Hex(of: data)
+                guard checksum == record.checksumSHA256 else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    return nil
+                }
+
+                return record
+            } catch {
+                try? FileManager.default.removeItem(at: fileURL)
+                try? FileManager.default.removeItem(at: metadataURL)
                 return nil
             }
-
-            guard record.key == key else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            guard record.byteSize <= maximumByteCount else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            let data = try Data(contentsOf: fileURL)
-            guard !data.isEmpty else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            guard data.count == Int(record.byteSize) else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            let checksum = Self.sha256Hex(of: data)
-            guard checksum == record.checksumSHA256 else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            return record
-        } catch {
-            invalidate(fileURL: fileURL, metadataURL: metadataURL)
-            return nil
-        }
-    }
-
-    private func write(record: HrrrPressureSubsetGribCacheRecord, to metadataURL: URL) throws {
-        do {
-            let data = try jsonEncoder.encode(record)
-            try data.write(to: metadataURL, options: [.atomic])
-        } catch {
-            throw HrrrPressureSubsetGribCacheError.unableToWriteCache(path: metadataURL, reason: String(describing: error))
         }
     }
 
-    private func invalidate(fileURL: URL, metadataURL: URL) {
-        try? fileManager.removeItem(at: fileURL)
-        try? fileManager.removeItem(at: metadataURL)
+    private func invalidate(fileURL: URL, metadataURL: URL) async throws {
+        try await blockingWorkExecutor.execute {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: metadataURL)
+            return ()
+        }
     }
 
     private static func sha256Hex(of data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func makeJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }

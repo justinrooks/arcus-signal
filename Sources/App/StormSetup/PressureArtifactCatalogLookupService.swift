@@ -50,18 +50,18 @@ protocol PressureArtifactCatalogLookupProviding: Sendable {
 
 struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLookupProviding, @unchecked Sendable {
     private let database: any Database
-    private let fileManager: FileManager
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
     private let maximumStaleAgeSeconds: TimeInterval
     private let logger: Logger
 
     init(
         database: any Database,
-        fileManager: FileManager = .default,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         maximumStaleAgeSeconds: TimeInterval = 2 * 60 * 60,
         logger: Logger = Logger(label: "pressure-artifact-catalog-lookup")
     ) {
         self.database = database
-        self.fileManager = fileManager
+        self.blockingWorkExecutor = blockingWorkExecutor
         self.maximumStaleAgeSeconds = maximumStaleAgeSeconds
         self.logger = logger
     }
@@ -95,7 +95,7 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
             return nil
         }
 
-        guard let artifact = makeReadyArtifact(from: row, freshness: .exact) else {
+        guard let artifact = try await makeReadyArtifact(from: row, freshness: .exact) else {
             logger.info(
                 "Pressure artifact exact lookup found unusable local file.",
                 metadata: rowMetadata(
@@ -141,7 +141,7 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
 
             let ageSeconds = resolution.targetValidTime.timeIntervalSince(row.validTime)
 
-            guard let artifact = makeReadyArtifact(
+            guard let artifact = try await makeReadyArtifact(
                 from: row,
                 freshness: .stale(ageSeconds: ageSeconds)
             ) else {
@@ -182,18 +182,23 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
     private func makeReadyArtifact(
         from row: PressureArtifactCatalogModel,
         freshness: PressureArtifactCatalogReadyArtifactFreshness
-    ) -> PressureArtifactCatalogReadyArtifact? {
+    ) async throws -> PressureArtifactCatalogReadyArtifact? {
         guard let localPath = row.localPath?.trimmingCharacters(in: .whitespacesAndNewlines),
               !localPath.isEmpty else {
             return nil
         }
 
         let localFileURL = URL(fileURLWithPath: localPath)
-        guard let fileAttributes = try? fileManager.attributesOfItem(atPath: localFileURL.path),
-              let fileType = fileAttributes[.type] as? FileAttributeType,
-              fileType == .typeRegular,
-              let fileSize = fileAttributes[.size] as? NSNumber,
-              fileSize.int64Value > 0 else {
+        let fileInfo: FileInfo?
+        do {
+            fileInfo = try await blockingWorkExecutor.execute {
+                try Self.inspectRegularFile(at: localFileURL)
+            }
+        } catch {
+            return nil
+        }
+
+        guard let fileInfo else {
             return nil
         }
 
@@ -204,9 +209,27 @@ struct DefaultPressureArtifactCatalogLookupService: PressureArtifactCatalogLooku
             product: row.product,
             fieldSetVersion: row.fieldSetVersion,
             localFileURL: localFileURL,
-            byteSize: fileSize.int64Value,
+            byteSize: fileInfo.byteSize,
             freshness: freshness
         )
+    }
+
+    private struct FileInfo: Sendable {
+        let byteSize: Int64
+    }
+
+    private static func inspectRegularFile(
+        at localFileURL: URL
+    ) throws -> FileInfo? {
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: localFileURL.path)
+        guard let fileType = fileAttributes[.type] as? FileAttributeType,
+              fileType == .typeRegular,
+              let fileSize = fileAttributes[.size] as? NSNumber,
+              fileSize.int64Value > 0 else {
+            return nil
+        }
+
+        return FileInfo(byteSize: fileSize.int64Value)
     }
 
     func candidateMetadata(

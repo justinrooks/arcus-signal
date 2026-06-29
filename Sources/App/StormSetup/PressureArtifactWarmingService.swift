@@ -51,6 +51,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
 
     init(
         httpClient: any HTTPClient,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         validator: any PressureArtifactValidating,
         cacheRootURL: URL,
         dateProvider: any StormSetupDateProviding,
@@ -62,6 +63,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         self.validator = validator
         self.subsetCache = HrrrPressureSubsetGribCache(
             httpClient: httpClient,
+            blockingWorkExecutor: blockingWorkExecutor,
             rootURL: cacheRootURL,
             dateProvider: dateProvider,
             retentionDuration: retentionDuration,
@@ -73,8 +75,12 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
     }
 
     static func makeDefault(application: Application) -> PressureArtifactWarmingService {
-        PressureArtifactWarmingService(
+        let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+            threadPool: application.threadPool
+        )
+        return PressureArtifactWarmingService(
             httpClient: VaporApplicationHTTPClient(application: application),
+            blockingWorkExecutor: blockingWorkExecutor,
             validator: DefaultPressureArtifactValidationService(
                 configuration: application.stormSetupConfiguration,
                 runner: ProcessRunner()
@@ -229,7 +235,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 try Task.checkCancellation()
             } catch {
                 try rethrowCancellationIfNeeded(error)
-                await subsetCache.invalidate(
+                try await subsetCache.invalidate(
                     sourceMetadata: source,
                     byteRangePlan: byteRangePlan
                 )
@@ -250,7 +256,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
 
             try Task.checkCancellation()
             guard validation.stdoutLineCount == selection.selectedMessages.count else {
-                await subsetCache.invalidate(
+                try await subsetCache.invalidate(
                     sourceMetadata: source,
                     byteRangePlan: byteRangePlan
                 )
