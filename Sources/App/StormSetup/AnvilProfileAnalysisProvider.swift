@@ -81,16 +81,6 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
     }
 
     func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
-        let preview: AnvilAnalyzeProfilePreviewResponse
-        do {
-            preview = try await previewProvider.previewProfile(for: h3Cell)
-        } catch let error as AnvilProfilePreviewError {
-            throw classify(previewError: error)
-        } catch {
-            try rethrowCancellationIfNeeded(error)
-            throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
-        }
-
         let client: any AnvilProfileClient
         if let directClient {
             client = directClient
@@ -105,6 +95,16 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
             }
         } else {
             throw AnvilProfileAnalysisError.internalExecutionFailure(reason: "Anvil analysis provider was misconfigured.")
+        }
+
+        let preview: AnvilAnalyzeProfilePreviewResponse
+        do {
+            preview = try await previewProvider.previewProfile(for: h3Cell)
+        } catch let error as AnvilProfilePreviewError {
+            throw classify(previewError: error)
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
         }
 
         let response: AnvilAnalyzeProfileResponse

@@ -56,6 +56,45 @@ struct AnvilProfileAnalysisProviderTests {
         #expect(client.requestCount == 1)
     }
 
+    @Test("analysis provider fails before preview work when Anvil analysis configuration is missing")
+    func analysisProviderFailsBeforePreviewWorkWhenAnvilAnalysisConfigurationIsMissing() async throws {
+        let previewProvider = RecordingAnvilProfilePreviewProvider(result: .success(makePreviewResponse()))
+        let configuration = StormSetupConfiguration(
+            gribSubsetCacheRootURL: URL(fileURLWithPath: "/tmp/grib-subsets"),
+            pressureGribSubsetCacheRootURL: URL(fileURLWithPath: "/tmp/pressure-grib-subsets"),
+            sampledSnapshotCacheRootURL: URL(fileURLWithPath: "/tmp/sampled-snapshots"),
+            gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
+            gribSubsetMaximumByteCount: 200 * 1024 * 1024,
+            pressureArtifactProbeIntervalSeconds: 5 * 60,
+            pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
+            pressureArtifactDeleteGraceSeconds: 60 * 60,
+            pressureArtifactCleanupIntervalSeconds: 15 * 60,
+            pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
+            wgrib2ExecutableURL: URL(fileURLWithPath: "/usr/local/bin/wgrib2"),
+            wgrib2TimeoutSeconds: 15,
+            anvilProfileAnalysisBaseURL: nil,
+            anvilProfileAnalysisTimeoutSeconds: nil
+        )
+        let provider = DefaultAnvilProfileAnalysisProvider(
+            previewProvider: previewProvider,
+            configuration: configuration,
+            httpClient: StubHTTPClient()
+        )
+
+        do {
+            _ = try await provider.analyzeProfile(for: 617_700_169_958_293_503)
+            Issue.record("Expected missing Anvil configuration to fail before preview generation.")
+        } catch let error as AnvilProfileAnalysisError {
+            guard case .internalExecutionFailure(let reason) = error else {
+                Issue.record("Expected internalExecutionFailure, got \(error).")
+                return
+            }
+
+            #expect(reason.contains("Missing Anvil configuration"))
+            #expect(previewProvider.requestCount == 0)
+        }
+    }
+
     private func makePreviewResponse() -> AnvilAnalyzeProfilePreviewResponse {
         let request = AnvilAnalyzeProfileRequest(
             runTime: isoDate("2026-06-19T22:00:00Z"),
@@ -180,5 +219,25 @@ private final class AnalysisStubAnvilProfileClient: AnvilProfileClient, @uncheck
         }
 
         return response
+    }
+}
+
+private final class RecordingAnvilProfilePreviewProvider: AnvilProfilePreviewProviding, @unchecked Sendable {
+    let result: Result<AnvilAnalyzeProfilePreviewResponse, AnvilProfilePreviewError>
+    private(set) var requestCount = 0
+
+    init(result: Result<AnvilAnalyzeProfilePreviewResponse, AnvilProfilePreviewError>) {
+        self.result = result
+    }
+
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        _ = h3Cell
+        requestCount += 1
+        switch result {
+        case .success(let response):
+            return response
+        case .failure(let error):
+            throw error
+        }
     }
 }

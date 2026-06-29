@@ -61,6 +61,7 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 - Issue `#120` added bounded stale pressure-artifact fallback plus worker-owned expiration and deletion.
 - Issue `#121` added structured diagnostics across probe, warm, lookup, and request-path evidence resolution, plus the regression guard for exact-artifact unusable-profile failures.
 - Issue `#122` added claim fencing, stale `pending` recovery, expired `warming` reclamation, and unusable-ready repair.
+- This slice moved Anvil profile analysis client resolution ahead of pressure-preview generation so missing analysis configuration fails before any preview work runs.
 - This slice moved HRRR pressure artifact probe ready-file usability inspection onto the blocking-work executor.
 - The currently scoped warmer issue set is complete, including cleanup claim fencing and active-deletion exclusion.
 - The normal Storm Setup request path remains unchanged.
@@ -76,21 +77,21 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 Status: Completed
 
 Changed:
-- `HRRRPressureArtifactProbeService` now depends on `PressureArtifactBlockingWorkExecuting`.
-- `HRRRPressureArtifactProbeService.makeDefault(application:)` now uses `NIOThreadPoolPressureArtifactBlockingWorkExecutor(threadPool: application.threadPool)`.
-- Ready-row usability inspection now runs through the blocking executor and preserves the existing false-for-unusable, throw-on-cancellation behavior.
-- `HRRRPressureArtifactProbeServiceTests` now inject the existing test blocking executor and adds a narrow count-based seam proving the probe path uses it.
-- `PressureArtifactDiagnosticsTests` now passes the blocking executor into the probe service constructors it owns directly.
+- `DefaultAnvilProfileAnalysisProvider.analyzeProfile(for:)` now resolves the Anvil client before invoking `previewProvider.previewProfile(for:)`.
+- Missing Anvil analysis configuration now fails with `AnvilProfileAnalysisError.internalExecutionFailure` before any pressure preview work runs.
+- `AnvilProfileAnalysisProviderTests` now includes a regression test proving missing config fails before preview generation and that preview invocation count stays at zero.
+- The existing direct-client and cancellation paths remain intact.
 
 Validated:
 - `swift build`
-- `swift test --no-parallel --filter HRRRPressureArtifactProbeServiceTests`
-- `swift test --parallel --num-workers 8 --filter HRRRPressureArtifactProbeServiceTests`
+- `swift test --no-parallel --filter AnvilProfileAnalysisProviderTests`
+- `swift test --parallel --num-workers 8 --filter AnvilProfileAnalysisProviderTests`
 - `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
 
 Remaining:
-- No additional probe behavior changes are scoped in this slice.
-- The remaining warmer work should stay issue-scoped and avoid broader probe or scheduling changes.
+- No additional Anvil analysis behavior changes are scoped in this slice.
+- The remaining warmer work should stay issue-scoped and avoid broader request-path or preview changes.
 
 ## Warm Invariant
 
