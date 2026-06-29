@@ -230,6 +230,53 @@ struct PressureArtifactWarmJobTests {
         }
     }
 
+    @Test("expired rows with active cleanup claims are skipped without rebuilding")
+    func expiredRowsWithActiveCleanupClaimsAreSkippedWithoutRebuilding() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            let claimToken = UUID()
+            try await seedCatalogRow(
+                status: .expired,
+                payload: payload,
+                claimToken: claimToken,
+                leaseExpiresAt: makeDate(year: 2026, month: 6, day: 30, hour: 13, minute: 30),
+                on: app.db
+            )
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount
+            )
+
+            try await service.warm(payload: payload, on: app, logger: app.logger)
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(client.idxRequestCount == 0)
+            #expect(client.rangeRequestCount == 0)
+            #expect(validator.validationCount == 0)
+            #expect(row.status == .expired)
+            #expect(row.claimToken == claimToken)
+            #expect(row.leaseExpiresAt != nil)
+        }
+    }
+
     @Test("warm claim stores a token and lease")
     func warmClaimStoresATokenAndLease() async throws {
         try await withApp { app in
@@ -590,6 +637,8 @@ private extension PressureArtifactWarmJobTests {
     func seedCatalogRow(
         status: PressureArtifactCatalogStatus,
         payload: PressureArtifactWarmJobPayload,
+        claimToken: UUID? = nil,
+        leaseExpiresAt: Date? = nil,
         on db: any Database
     ) async throws {
         let row = PressureArtifactCatalogModel(
@@ -598,7 +647,9 @@ private extension PressureArtifactWarmJobTests {
             validTime: payload.validTime,
             product: payload.product,
             fieldSetVersion: payload.fieldSetVersion,
-            status: status
+            status: status,
+            claimToken: claimToken,
+            leaseExpiresAt: leaseExpiresAt
         )
         try await row.create(on: db)
     }

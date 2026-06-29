@@ -48,7 +48,7 @@ Related local docs:
 - Issue `#120` added bounded stale pressure-artifact fallback plus worker-owned expiration and deletion.
 - Issue `#121` added structured diagnostics across probe, warm, lookup, and request-path evidence resolution, plus the regression guard for exact-artifact unusable-profile failures.
 - Issue `#122` added claim fencing, stale `pending` recovery, expired `warming` reclamation, and unusable-ready repair.
-- The currently scoped warmer issue set is complete, with cleanup TOCTOU work still deferred.
+- The currently scoped warmer issue set is complete, including cleanup claim fencing and active-deletion exclusion.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -530,8 +530,7 @@ Validation performed:
 - `git diff --check`
 
 Known failures or follow-up work:
-- Cleanup deletion races are still deferred to the next issue.
-- No heartbeat renewal was added; warming still assumes it completes within the configured lease.
+- No heartbeat renewal was added; warming and cleanup still assume they complete within the configured lease.
 - The broader suite remains noisy outside the scoped pressure-artifact tests, but the targeted lifecycle and configuration filters passed.
 
 ## Decisions Made
@@ -570,19 +569,62 @@ Known failures or follow-up work:
   - `swift test --filter workerBootstrapRegistersPressureArtifactProbeSchedule`
 - Ran and passed the diagnostics and request-path verification filters for issue `#121`:
   - `swift test --filter PressureArtifactDiagnosticsTests`
-  - `swift test --filter PressureArtifactWarmJobTests`
-  - `swift test --filter HRRRPressureArtifactProbeServiceTests`
-  - `swift test --filter PressureArtifactCatalogLookupServiceTests`
-  - `swift test --filter AnvilProfilePreviewProviderTests`
-  - `swift test --filter StormSetupProviderTests`
+- `swift test --filter PressureArtifactWarmJobTests`
+- `swift test --filter HRRRPressureArtifactProbeServiceTests`
+- `swift test --filter PressureArtifactCatalogLookupServiceTests`
+- `swift test --filter AnvilProfilePreviewProviderTests`
+- `swift test --filter StormSetupProviderTests`
 - Ran `swift test`; the repository still reports unrelated broad-suite failures in pressure catalog persistence, pressure cleanup, and some shared-state pressure tests.
+
+### Follow-on Slice - Cleanup claim fencing and active-deletion exclusion
+
+Status: Completed
+
+Scope:
+- Atomically claim expired cleanup candidates with a UUID cleanup token and leased expiration.
+- Reclaim abandoned expired cleanup leases by replacing the token and lease atomically.
+- Refuse probe and warm claims for expired rows while a cleanup claim is active.
+- Fence cleanup completion metadata updates with the same cleanup token used to claim the row.
+- Recheck shared-path protection immediately before filesystem removal.
+- Preserve path safety, missing-file idempotency, and cleanup recovery after lease expiry.
+
+Files changed:
+- `Sources/App/StormSetup/PressureArtifactCleanupService.swift`
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Tests/AppTests/PressureArtifactCleanupServiceTests.swift`
+- `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-runbook.md`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Cleanup claim state transitions:
+- `expired` with no active cleanup claim -> atomically claimed for deletion with `claim_token` and `lease_expires_at`
+- `expired` with an active but expired cleanup lease -> atomically reclaimed with a new cleanup token
+- `expired` with an active cleanup lease -> skipped by probe and warm claim SQL
+- claimed cleanup row -> filesystem work only while the same token remains fenced
+- successful deletion or already-missing file -> clear `local_path`, `byte_size`, `error_summary`, `claim_token`, and `lease_expires_at`
+- deletion failure, unsafe path, or non-regular path -> preserve path and size, clear claim token and lease, and keep the row `expired`
+- lost ownership during completion -> no metadata mutation and no further filesystem deletion
+
+Validation performed:
+- `swift build` passed
+- `swift test --filter PressureArtifactCleanupServiceTests` passed
+- `swift test --filter HRRRPressureArtifactProbeServiceTests` passed
+- `swift test --filter PressureArtifactWarmJobTests` passed
+- `swift test --no-parallel` passed
+
+Remaining risks:
+- Cleanup still depends on a leased claim rather than a heartbeat-renewed lock, so an overlong deletion can be reclaimed after lease expiry.
+- The broader suite still has unrelated shared-state noise outside the targeted cleanup/probe/warm slices.
+- Path-safety checks remain intentionally conservative and will keep skipping suspicious paths instead of trying to be clever.
 
 ---
 
 ## Current Follow-Up
 
 - The currently scoped warmer issues are complete.
-- Cleanup deletion TOCTOU work remains outside the scope of `#122`.
+- No further cleanup-claim lifecycle work is currently open in the warmer ledger.
 - Broader suite isolation issues remain outside the scope of the scoped pressure-artifact lifecycle work.
 
 ### Pressure Artifact Test Isolation

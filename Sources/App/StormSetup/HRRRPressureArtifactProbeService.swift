@@ -344,8 +344,7 @@ private extension HRRRPressureArtifactProbeService {
                 claim_token = NULL,
                 lease_expires_at = NULL
             WHERE pressure_artifact_catalog.status IN (
-                \(bind: PressureArtifactCatalogStatus.failed.rawValue),
-                \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+                \(bind: PressureArtifactCatalogStatus.failed.rawValue)
             )
             OR (
                 pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.pending.rawValue)
@@ -353,6 +352,14 @@ private extension HRRRPressureArtifactProbeService {
             )
             OR (
                 pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.warming.rawValue)
+                AND (
+                    pressure_artifact_catalog.lease_expires_at IS NULL
+                    OR pressure_artifact_catalog.lease_expires_at <= NOW()
+                )
+            )
+            OR (
+                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+                AND pressure_artifact_catalog.claim_token IS NULL
                 AND (
                     pressure_artifact_catalog.lease_expires_at IS NULL
                     OR pressure_artifact_catalog.lease_expires_at <= NOW()
@@ -504,6 +511,14 @@ private extension HRRRPressureArtifactProbeService {
         case .failed:
             return "failed row"
         case .expired:
+            if row.claimToken != nil {
+                if let leaseExpiresAt = row.leaseExpiresAt, leaseExpiresAt > dateProvider.now() {
+                    return "active cleanup claim"
+                }
+
+                return "cleanup claim present"
+            }
+
             return "expired row"
         case .ready:
             return nil
@@ -534,6 +549,14 @@ private extension HRRRPressureArtifactProbeService {
         case .failed:
             return "failed row"
         case .expired:
+            if row.claimToken != nil {
+                if let leaseExpiresAt = row.leaseExpiresAt, leaseExpiresAt > dateProvider.now() {
+                    return "active cleanup claim"
+                }
+
+                return "cleanup claim present"
+            }
+
             return "expired row"
         }
     }

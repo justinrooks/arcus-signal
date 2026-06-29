@@ -1,4 +1,5 @@
 import Fluent
+import FluentSQL
 import Foundation
 import Vapor
 
@@ -12,19 +13,25 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
     private let cacheRootURL: URL
     private let maxStaleAgeSeconds: TimeInterval
     private let deleteGraceSeconds: TimeInterval
+    private let recoveryTimeoutSeconds: TimeInterval
+    private let beforePhysicalRemovalHook: @Sendable () async -> Void
 
     init(
         dateProvider: any StormSetupDateProviding,
         fileManager: FileManager = .default,
         cacheRootURL: URL,
         maxStaleAgeSeconds: TimeInterval,
-        deleteGraceSeconds: TimeInterval
+        deleteGraceSeconds: TimeInterval,
+        recoveryTimeoutSeconds: TimeInterval,
+        beforePhysicalRemovalHook: @escaping @Sendable () async -> Void = {}
     ) {
         self.dateProvider = dateProvider
         self.fileManager = fileManager
         self.cacheRootURL = cacheRootURL
         self.maxStaleAgeSeconds = max(0, maxStaleAgeSeconds)
         self.deleteGraceSeconds = max(0, deleteGraceSeconds)
+        self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
+        self.beforePhysicalRemovalHook = beforePhysicalRemovalHook
     }
 
     static func makeDefault(application: Application) -> PressureArtifactCleanupService {
@@ -32,7 +39,8 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
             dateProvider: SystemStormSetupDateProvider(),
             cacheRootURL: application.stormSetupConfiguration.pressureGribSubsetCacheRootURL,
             maxStaleAgeSeconds: application.stormSetupConfiguration.pressureArtifactMaxStaleAgeSeconds,
-            deleteGraceSeconds: application.stormSetupConfiguration.pressureArtifactDeleteGraceSeconds
+            deleteGraceSeconds: application.stormSetupConfiguration.pressureArtifactDeleteGraceSeconds,
+            recoveryTimeoutSeconds: application.stormSetupConfiguration.pressureArtifactRecoveryTimeoutSeconds
         )
     }
 
@@ -40,6 +48,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
         let now = dateProvider.now()
         let expirationCutoff = now.addingTimeInterval(-maxStaleAgeSeconds)
         let deletionCutoff = now.addingTimeInterval(-deleteGraceSeconds)
+        let cleanupLeaseExpiresAt = now.addingTimeInterval(recoveryTimeoutSeconds)
 
         let expiredRowsBeforeExpiration = try await loadExpiredRows(on: application.db)
         try await expireReadyArtifacts(before: expirationCutoff, on: application.db, logger: logger)
@@ -47,6 +56,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
         try await deleteExpiredArtifacts(
             rows: expiredRowsBeforeExpiration,
             olderThan: deletionCutoff,
+            cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
             protectedPaths: protectedPaths,
             on: application.db,
             logger: logger
@@ -54,7 +64,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
     }
 }
 
-private extension PressureArtifactCleanupService {
+extension PressureArtifactCleanupService {
     func expireReadyArtifacts(
         before cutoff: Date,
         on database: any Database,
@@ -82,6 +92,7 @@ private extension PressureArtifactCleanupService {
     func deleteExpiredArtifacts(
         rows expiredRows: [PressureArtifactCatalogModel],
         olderThan cutoff: Date,
+        cleanupLeaseExpiresAt: Date,
         protectedPaths: Set<String>,
         on database: any Database,
         logger: Logger
@@ -94,17 +105,30 @@ private extension PressureArtifactCleanupService {
                 continue
             }
 
-            guard let refreshed = try await PressureArtifactCatalogModel.find(row.id, on: database),
-                  refreshed.status == PressureArtifactCatalogStatus.expired else {
+            guard let claimedRow = try await claimDeletionCandidate(
+                for: row,
+                olderThan: cutoff,
+                cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
+                on: database
+            ) else {
                 continue
             }
 
-            guard let localPath = refreshed.localPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+            guard let localPath = claimedRow.localPath?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !localPath.isEmpty else {
-                if refreshed.byteSize != nil {
-                    refreshed.byteSize = nil
-                    refreshed.errorSummary = nil
-                    try await refreshed.save(on: database)
+                if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
+                    logger.info(
+                        "Pressure artifact cleanup cleared missing file metadata.",
+                        metadata: [
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
                 }
                 continue
             }
@@ -114,31 +138,44 @@ private extension PressureArtifactCleanupService {
 
             guard fileExists else {
                 guard localURL.path == canonicalRootPath || localURL.path.hasPrefix(canonicalRootPrefix) else {
-                    try await recordUnsafePath(
-                        refreshed,
+                    if try await completeFailedCleanup(
+                        for: claimedRow,
+                        claimToken: claimedRow.claimToken,
                         reason: "cleanup path outside cache root",
                         on: database
-                    )
-                    logger.warning(
-                        "Pressure artifact cleanup refused missing path outside cache root.",
-                        metadata: [
-                            "path": .string(localURL.path),
-                            "runTime": .string(refreshed.runTime.ISO8601Format()),
-                            "forecastHour": .stringConvertible(refreshed.forecastHour)
-                        ]
-                    )
+                    ) {
+                        logger.warning(
+                            "Pressure artifact cleanup refused missing path outside cache root.",
+                            metadata: [
+                                "path": .string(localURL.path),
+                                "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                                "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                            ]
+                        )
+                    } else {
+                        logger.info(
+                            "Pressure artifact cleanup lost claim ownership.",
+                            metadata: cleanupClaimLostMetadata(for: claimedRow)
+                        )
+                    }
                     continue
                 }
 
-                try await clearArtifactMetadata(refreshed, on: database)
-                logger.info(
-                    "Pressure artifact cleanup cleared missing file metadata.",
-                    metadata: [
-                        "path": .string(localURL.path),
-                        "runTime": .string(refreshed.runTime.ISO8601Format()),
-                        "forecastHour": .stringConvertible(refreshed.forecastHour)
-                    ]
-                )
+                if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
+                    logger.info(
+                        "Pressure artifact cleanup cleared missing file metadata.",
+                        metadata: [
+                            "path": .string(localURL.path),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
                 continue
             }
 
@@ -146,19 +183,26 @@ private extension PressureArtifactCleanupService {
             let canonicalPath = canonicalPath(for: resolvedURL)
 
             guard canonicalPath == canonicalRootPath || canonicalPath.hasPrefix(canonicalRootPrefix) else {
-                try await recordUnsafePath(
-                    refreshed,
+                if try await completeFailedCleanup(
+                    for: claimedRow,
+                    claimToken: claimedRow.claimToken,
                     reason: "cleanup path outside cache root",
                     on: database
-                )
-                logger.warning(
-                    "Pressure artifact cleanup refused unsafe path.",
-                    metadata: [
-                        "path": .string(canonicalPath),
-                        "runTime": .string(refreshed.runTime.ISO8601Format()),
-                        "forecastHour": .stringConvertible(refreshed.forecastHour)
-                    ]
-                )
+                ) {
+                    logger.warning(
+                        "Pressure artifact cleanup refused unsafe path.",
+                        metadata: [
+                            "path": .string(canonicalPath),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
                 continue
             }
 
@@ -166,51 +210,85 @@ private extension PressureArtifactCleanupService {
                 continue
             }
 
+            guard try await isPathCurrentlyProtected(canonicalPath, on: database) == false else {
+                continue
+            }
+
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: resolvedURL.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue else {
-                try await recordUnsafePath(
-                    refreshed,
+                if try await completeFailedCleanup(
+                    for: claimedRow,
+                    claimToken: claimedRow.claimToken,
                     reason: "cleanup path is not a regular file",
                     on: database
-                )
-                logger.warning(
-                    "Pressure artifact cleanup refused non-regular path.",
-                    metadata: [
-                        "path": .string(canonicalPath),
-                        "runTime": .string(refreshed.runTime.ISO8601Format()),
-                        "forecastHour": .stringConvertible(refreshed.forecastHour)
-                    ]
+                ) {
+                    logger.warning(
+                        "Pressure artifact cleanup refused non-regular path.",
+                        metadata: [
+                            "path": .string(canonicalPath),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
+                continue
+            }
+
+            await beforePhysicalRemovalHook()
+
+            guard try await ownsCleanupClaim(for: claimedRow, claimToken: claimedRow.claimToken, on: database) else {
+                logger.info(
+                    "Pressure artifact cleanup lost claim ownership.",
+                    metadata: cleanupClaimLostMetadata(for: claimedRow)
                 )
                 continue
             }
 
             do {
                 try fileManager.removeItem(at: resolvedURL)
-                try await clearArtifactMetadata(refreshed, on: database)
-                logger.info(
-                    "Pressure artifact deleted from cache.",
-                    metadata: [
-                        "path": .string(canonicalPath),
-                        "runTime": .string(refreshed.runTime.ISO8601Format()),
-                        "forecastHour": .stringConvertible(refreshed.forecastHour)
-                    ]
-                )
+                if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
+                    logger.info(
+                        "Pressure artifact deleted from cache.",
+                        metadata: [
+                            "path": .string(canonicalPath),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
             } catch {
-                try await recordUnsafePath(
-                    refreshed,
+                if try await completeFailedCleanup(
+                    for: claimedRow,
+                    claimToken: claimedRow.claimToken,
                     reason: "cleanup delete failed: \(String(describing: error))",
                     on: database
-                )
-                logger.error(
-                    "Pressure artifact cleanup failed to delete file.",
-                    metadata: [
-                        "path": .string(canonicalPath),
-                        "runTime": .string(refreshed.runTime.ISO8601Format()),
-                        "forecastHour": .stringConvertible(refreshed.forecastHour),
-                        "error": .string(String(reflecting: error))
-                    ]
-                )
+                ) {
+                    logger.error(
+                        "Pressure artifact cleanup failed to delete file.",
+                        metadata: [
+                            "path": .string(canonicalPath),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour),
+                            "error": .string(String(reflecting: error))
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
             }
         }
     }
@@ -242,23 +320,139 @@ private extension PressureArtifactCleanupService {
         })
     }
 
-    func clearArtifactMetadata(
-        _ row: PressureArtifactCatalogModel,
+    func claimDeletionCandidate(
+        for row: PressureArtifactCatalogModel,
+        olderThan cutoff: Date,
+        cleanupLeaseExpiresAt: Date,
         on database: any Database
-    ) async throws {
-        row.localPath = nil
-        row.byteSize = nil
-        row.errorSummary = nil
-        try await row.save(on: database)
+    ) async throws -> PressureArtifactCatalogModel? {
+        guard let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return nil
+        }
+
+        let claimToken = UUID()
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET claim_token = \(bind: claimToken),
+                lease_expires_at = \(bind: cleanupLeaseExpiresAt)
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND updated_at <= \(bind: cutoff)
+              AND (
+                (
+                  claim_token IS NULL
+                  AND (
+                    lease_expires_at IS NULL
+                    OR lease_expires_at <= NOW()
+                  )
+                )
+                OR lease_expires_at <= NOW()
+              )
+            RETURNING id
+            """)
+            .first()
+
+        guard updatedRow != nil else {
+            return nil
+        }
+
+        return try await PressureArtifactCatalogModel.find(rowID, on: database)
     }
 
-    func recordUnsafePath(
-        _ row: PressureArtifactCatalogModel,
+    func completeSuccessfulCleanup(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET local_path = NULL,
+                byte_size = NULL,
+                error_summary = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func completeFailedCleanup(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
         reason: String,
         on database: any Database
-    ) async throws {
-        row.errorSummary = reason
-        try await row.save(on: database)
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET error_summary = \(bind: reason),
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func ownsCleanupClaim(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let currentRow = try await sql.raw("""
+            SELECT id
+            FROM pressure_artifact_catalog
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            LIMIT 1
+            """)
+            .first()
+
+        return currentRow != nil
+    }
+
+    func isPathCurrentlyProtected(
+        _ path: String,
+        on database: any Database
+    ) async throws -> Bool {
+        let currentProtectedPaths = try await loadProtectedPaths(on: database)
+        return currentProtectedPaths.contains(path)
+    }
+
+    func cleanupClaimLostMetadata(for row: PressureArtifactCatalogModel) -> Logger.Metadata {
+        [
+            "runTime": .string(row.runTime.ISO8601Format()),
+            "forecastHour": .stringConvertible(row.forecastHour),
+            "path": .string(row.localPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "nil")
+        ]
     }
 
     func canonicalPath(for url: URL) -> String {

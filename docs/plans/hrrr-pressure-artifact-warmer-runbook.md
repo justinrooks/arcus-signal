@@ -228,7 +228,7 @@ Treat pressure artifacts as versioned, replaceable cached outputs.
 
 - `expired`
   - The artifact was previously valid but is no longer acceptable for request-path use.
-  - Expired rows are eligible to be reclaimed by warming.
+  - Expired rows are eligible to be reclaimed by warming unless cleanup currently owns them.
 
 ### Lifecycle rules
 
@@ -240,7 +240,9 @@ Treat pressure artifacts as versioned, replaceable cached outputs.
 - Actively leased `warming` rows remain duplicate-protected until the lease expires.
 - Expired `warming` leases are reclaimed and redispatched.
 - A `ready` row whose local file is missing, empty, or not a regular file is downgraded back to `pending` and re-enqueued.
-- `ready`, `failed`, and `expired` rows must not retain claim metadata.
+- `ready` and `failed` rows must not retain claim metadata.
+- `expired` rows may temporarily carry a cleanup `claim_token` and `lease_expires_at` while cleanup owns them.
+- Probe and warm claim SQL must refuse expired rows with any cleanup claim metadata present.
 - A worker that loses its claim must not overwrite a newer catalog state.
 - Request-path reads must not mutate lifecycle state except for safe bookkeeping such as last-seen timestamps if those are already part of the design.
 
@@ -253,6 +255,8 @@ Treat pressure artifacts as versioned, replaceable cached outputs.
 - The implementation assumes a normal warming attempt finishes within the configured lease.
 - There is no heartbeat renewal in this slice.
 - Claim completion must be conditional on the same claim token that was assigned when the job dequeued.
+- Cleanup reuses the same recovery timeout for its leased deletion claim and may atomically reclaim an abandoned expired cleanup lease before filesystem work.
+- Cleanup completion must be conditional on the same claim token that was assigned when the expired row was claimed for deletion.
 
 ---
 
@@ -269,6 +273,8 @@ The warmer must be driven by explicit scheduling, not by the live request path.
 - Prefer bounded concurrency and explicit backpressure over hidden fan-out.
 - Probe dispatch should treat stale `pending`, expired `warming`, and unusable `ready` rows as recoverable work.
 - Probe dispatch should keep recent `pending`, actively leased `warming`, and usable `ready` rows skipped.
+- Probe dispatch must also skip expired rows that still carry a cleanup claim.
+- Warm dispatch must also skip expired rows that still carry a cleanup claim.
 
 ### Scheduling constraints
 
@@ -292,6 +298,8 @@ The request path must remain conservative.
 - Preserve the existing surface GRIB path and its behavior.
 - Before treating `ready` as complete, verify the local path using the same nonempty-path, regular-file, positive-size rules used by request lookup.
 - If a `ready` file is unusable, downgrade that exact row to `pending`, clear the local path, size, claim metadata, and stale error state, then enqueue one warm job.
+- Cleanup must recheck whether another ready or warming row still references the same canonical path immediately before physical removal.
+- Cleanup must treat a conditional completion update that affects no row as lost ownership and must not mutate catalog metadata in that case.
 
 ### Degradation rules
 

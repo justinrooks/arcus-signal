@@ -2,6 +2,7 @@
 import Fluent
 import FluentSQL
 import Foundation
+import Dispatch
 import Testing
 import Vapor
 
@@ -63,7 +64,123 @@ struct PressureArtifactCleanupServiceTests {
             #expect(refreshed.status == .expired)
             #expect(refreshed.localPath == nil)
             #expect(refreshed.byteSize == nil)
+            #expect(refreshed.claimToken == nil)
+            #expect(refreshed.leaseExpiresAt == nil)
             #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        }
+    }
+
+    @Test("only one cleanup token owns a candidate")
+    func onlyOneCleanupTokenOwnsACandidate() async throws {
+        try await withApp { app, rootURL in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let service = makeService(rootURL: rootURL, now: now)
+            let fileURL = makeTempRegularFile(in: rootURL, name: "concurrent.grib2", contents: Data("delete-me".utf8))
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 9
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            let deletionCutoff = now.addingTimeInterval(-60 * 60)
+            let cleanupLeaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 30, hour: 22)
+            let firstClaim = try #require(try await service.claimDeletionCandidate(
+                for: row,
+                olderThan: deletionCutoff,
+                cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
+                on: app.db
+            ))
+            let secondClaim = try await service.claimDeletionCandidate(
+                for: row,
+                olderThan: deletionCutoff,
+                cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
+                on: app.db
+            )
+
+            #expect(firstClaim.claimToken != nil)
+            #expect(firstClaim.leaseExpiresAt == cleanupLeaseExpiresAt)
+            #expect(secondClaim == nil)
+            #expect(FileManager.default.fileExists(atPath: fileURL.path))
+        }
+    }
+
+    @Test("expired cleanup leases can be reclaimed")
+    func expiredCleanupLeasesCanBeReclaimed() async throws {
+        try await withApp { app, rootURL in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let service = makeService(rootURL: rootURL, now: now)
+            let fileURL = makeTempRegularFile(in: rootURL, name: "reclaim.grib2", contents: Data("reclaim".utf8))
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 7,
+                claimToken: UUID(),
+                leaseExpiresAt: now.addingTimeInterval(-60)
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            try await service.cleanup(on: app, logger: app.logger)
+
+            let refreshed = try #require(try await PressureArtifactCatalogModel.find(row.id, on: app.db))
+            #expect(refreshed.localPath == nil)
+            #expect(refreshed.byteSize == nil)
+            #expect(refreshed.claimToken == nil)
+            #expect(refreshed.leaseExpiresAt == nil)
+            #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        }
+    }
+
+    @Test("old cleanup tokens cannot clear metadata after ownership changes")
+    func oldCleanupTokensCannotClearMetadataAfterOwnershipChanges() async throws {
+        try await withApp { app, rootURL in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let service = makeService(rootURL: rootURL, now: now)
+            let fileURL = makeTempRegularFile(in: rootURL, name: "ownership.grib2", contents: Data("ownership".utf8))
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 9
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            let deletionCutoff = now.addingTimeInterval(-60 * 60)
+            let cleanupLeaseExpiresAt = now.addingTimeInterval(30 * 60)
+            let claimedRow = try #require(try await service.claimDeletionCandidate(
+                for: row,
+                olderThan: deletionCutoff,
+                cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
+                on: app.db
+            ))
+            let oldClaimToken = try #require(claimedRow.claimToken)
+            let newClaimToken = UUID()
+            try await reclaimCleanupOwnership(
+                on: app.db,
+                rowID: try #require(row.id),
+                claimToken: newClaimToken,
+                leaseExpiresAt: makeUTCDate(year: 2026, month: 6, day: 30, hour: 22)
+            )
+
+            let didFinish = try await service.completeSuccessfulCleanup(
+                for: claimedRow,
+                claimToken: oldClaimToken,
+                on: app.db
+            )
+
+            #expect(didFinish == false)
+
+            let refreshed = try #require(try await PressureArtifactCatalogModel.find(row.id, on: app.db))
+            #expect(refreshed.localPath == fileURL.path)
+            #expect(refreshed.byteSize == 9)
+            #expect(refreshed.claimToken == newClaimToken)
+            #expect(refreshed.leaseExpiresAt != nil)
+            #expect(FileManager.default.fileExists(atPath: fileURL.path))
         }
     }
 
@@ -160,6 +277,78 @@ struct PressureArtifactCleanupServiceTests {
             #expect(refreshed.localPath == nil)
             #expect(refreshed.byteSize == nil)
             #expect(refreshed.status == .expired)
+            #expect(refreshed.claimToken == nil)
+            #expect(refreshed.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("deletion failures release the cleanup claim and preserve metadata")
+    func deletionFailuresReleaseTheCleanupClaimAndPreserveMetadata() async throws {
+        try await withApp { app, rootURL in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let service = makeService(rootURL: rootURL, now: now)
+            let lockedDirectoryURL = rootURL.appendingPathComponent("locked", isDirectory: true)
+            try FileManager.default.createDirectory(at: lockedDirectoryURL, withIntermediateDirectories: true)
+            let fileURL = lockedDirectoryURL.appendingPathComponent("locked.grib2")
+            FileManager.default.createFile(atPath: fileURL.path, contents: Data("locked".utf8))
+            defer {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: lockedDirectoryURL.path
+                )
+            }
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o555],
+                ofItemAtPath: lockedDirectoryURL.path
+            )
+
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 6
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            try await service.cleanup(on: app, logger: app.logger)
+
+            let refreshed = try #require(try await PressureArtifactCatalogModel.find(row.id, on: app.db))
+            #expect(refreshed.localPath == fileURL.path)
+            #expect(refreshed.byteSize == 6)
+            #expect(refreshed.errorSummary?.contains("cleanup delete failed") == true)
+            #expect(refreshed.claimToken == nil)
+            #expect(refreshed.leaseExpiresAt == nil)
+            #expect(FileManager.default.fileExists(atPath: fileURL.path))
+        }
+    }
+
+    @Test("directories remain protected")
+    func directoriesRemainProtected() async throws {
+        try await withApp { app, rootURL in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let service = makeService(rootURL: rootURL, now: now)
+            let directoryURL = rootURL.appendingPathComponent("artifact-dir", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: directoryURL.path,
+                byteSize: 0
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            try await service.cleanup(on: app, logger: app.logger)
+
+            let refreshed = try #require(try await PressureArtifactCatalogModel.find(row.id, on: app.db))
+            #expect(refreshed.localPath == directoryURL.path)
+            #expect(refreshed.byteSize == 0)
+            #expect(refreshed.errorSummary?.contains("not a regular file") == true)
+            #expect(refreshed.claimToken == nil)
+            #expect(refreshed.leaseExpiresAt == nil)
+            #expect(FileManager.default.fileExists(atPath: directoryURL.path))
         }
     }
 
@@ -188,6 +377,8 @@ struct PressureArtifactCleanupServiceTests {
             #expect(refreshed.localPath == symlinkURL.path)
             #expect(refreshed.byteSize == 7)
             #expect(refreshed.errorSummary?.contains("outside cache root") == true)
+            #expect(refreshed.claimToken == nil)
+            #expect(refreshed.leaseExpiresAt == nil)
             #expect(FileManager.default.fileExists(atPath: outsideURL.path))
         }
     }
@@ -213,11 +404,21 @@ private extension PressureArtifactCleanupServiceTests {
     }
 
     func makeService(rootURL: URL, now: Date) -> PressureArtifactCleanupService {
+        makeService(rootURL: rootURL, now: now, beforePhysicalRemovalHook: {})
+    }
+
+    func makeService(
+        rootURL: URL,
+        now: Date,
+        beforePhysicalRemovalHook: @escaping @Sendable () async -> Void
+    ) -> PressureArtifactCleanupService {
         PressureArtifactCleanupService(
             dateProvider: FixedCleanupDateProvider(nowDate: now),
             cacheRootURL: rootURL,
             maxStaleAgeSeconds: 2 * 60 * 60,
-            deleteGraceSeconds: 60 * 60
+            deleteGraceSeconds: 60 * 60,
+            recoveryTimeoutSeconds: 30 * 60,
+            beforePhysicalRemovalHook: beforePhysicalRemovalHook
         )
     }
 
@@ -226,7 +427,9 @@ private extension PressureArtifactCleanupServiceTests {
         status: PressureArtifactCatalogStatus,
         validTime: Date,
         localPath: String,
-        byteSize: Int64
+        byteSize: Int64,
+        claimToken: UUID? = nil,
+        leaseExpiresAt: Date? = nil
     ) async throws -> PressureArtifactCatalogModel {
         let row = PressureArtifactCatalogModel(
             runTime: validTime.addingTimeInterval(-3_600),
@@ -237,6 +440,8 @@ private extension PressureArtifactCleanupServiceTests {
             status: status,
             localPath: localPath,
             byteSize: byteSize,
+            claimToken: claimToken,
+            leaseExpiresAt: leaseExpiresAt,
             source: .aws
         )
         try await row.create(on: db)
@@ -302,6 +507,25 @@ private extension PressureArtifactCleanupServiceTests {
         }
 
         try await sql.raw("DELETE FROM pressure_artifact_catalog;").run()
+    }
+
+    func reclaimCleanupOwnership(
+        on db: any Database,
+        rowID: UUID,
+        claimToken: UUID,
+        leaseExpiresAt: Date
+    ) async throws {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET claim_token = \(bind: claimToken),
+                lease_expires_at = \(bind: leaseExpiresAt)
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+            """).run()
     }
 }
 

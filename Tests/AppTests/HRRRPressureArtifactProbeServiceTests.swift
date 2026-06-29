@@ -335,6 +335,50 @@ struct HRRRPressureArtifactProbeServiceTests {
             }
         }
     }
+
+    @Test("expired rows with active cleanup claims are not claimed for warming")
+    func expiredRowsWithActiveCleanupClaimsAreNotClaimedForWarming() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = WarmJobDispatcherRecorder()
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            )
+
+            let claimToken = UUID()
+            try await seedCatalogRow(
+                status: .expired,
+                payload: payload,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 0),
+                leaseExpiresAt: makeUTCDate(year: 2026, month: 6, day: 30, hour: 13, minute: 30),
+                claimToken: claimToken,
+                on: app.db
+            )
+
+            try await service.probe(on: app, logger: app.logger)
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(dispatcher.dispatches.isEmpty)
+            #expect(row.status == .expired)
+            #expect(row.claimToken == claimToken)
+            #expect(row.leaseExpiresAt != nil)
+            #expect(remoteChecker.requestedURLs == [idxURL.absoluteString])
+        }
+    }
 }
 
 private extension HRRRPressureArtifactProbeServiceTests {
@@ -409,6 +453,7 @@ private extension HRRRPressureArtifactProbeServiceTests {
         payload: PressureArtifactWarmJobPayload,
         lastCheckedAt: Date? = nil,
         leaseExpiresAt: Date? = nil,
+        claimToken: UUID? = nil,
         localPath: String? = nil,
         byteSize: Int64? = nil,
         on db: any Database
@@ -422,6 +467,7 @@ private extension HRRRPressureArtifactProbeServiceTests {
             status: status,
             localPath: localPath,
             byteSize: byteSize,
+            claimToken: claimToken,
             lastCheckedAt: lastCheckedAt
         )
         row.leaseExpiresAt = leaseExpiresAt
