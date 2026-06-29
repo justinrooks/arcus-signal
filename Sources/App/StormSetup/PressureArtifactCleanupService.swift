@@ -207,10 +207,48 @@ extension PressureArtifactCleanupService {
             }
 
             guard !isProtectedPath(canonicalPath, protectedPaths: protectedPaths) else {
+                if try await releaseCleanupClaim(
+                    for: claimedRow,
+                    claimToken: claimedRow.claimToken,
+                    on: database
+                ) {
+                    logger.info(
+                        "Pressure artifact cleanup released claim for protected path.",
+                        metadata: [
+                            "path": .string(canonicalPath),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
                 continue
             }
 
             guard try await isPathCurrentlyProtected(canonicalPath, on: database) == false else {
+                if try await releaseCleanupClaim(
+                    for: claimedRow,
+                    claimToken: claimedRow.claimToken,
+                    on: database
+                ) {
+                    logger.info(
+                        "Pressure artifact cleanup released claim for protected path.",
+                        metadata: [
+                            "path": .string(canonicalPath),
+                            "runTime": .string(claimedRow.runTime.ISO8601Format()),
+                            "forecastHour": .stringConvertible(claimedRow.forecastHour)
+                        ]
+                    )
+                } else {
+                    logger.info(
+                        "Pressure artifact cleanup lost claim ownership.",
+                        metadata: cleanupClaimLostMetadata(for: claimedRow)
+                    )
+                }
                 continue
             }
 
@@ -405,6 +443,31 @@ extension PressureArtifactCleanupService {
             UPDATE pressure_artifact_catalog
             SET error_summary = \(bind: reason),
                 claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func releaseCleanupClaim(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET claim_token = NULL,
                 lease_expires_at = NULL
             WHERE id = \(bind: rowID)
               AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)

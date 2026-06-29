@@ -191,10 +191,17 @@ struct PressureArtifactCleanupServiceTests {
             let service = makeService(rootURL: rootURL, now: now)
             let warmingURL = makeTempRegularFile(in: rootURL, name: "warming.grib2", contents: Data("warming".utf8))
             let boundaryURL = makeTempRegularFile(in: rootURL, name: "boundary.grib2", contents: Data("boundary".utf8))
+            let protectedExpiredRow = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: warmingURL.path,
+                byteSize: 7
+            )
             let warmingRow = try await seedRow(
                 on: app.db,
                 status: .warming,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19),
                 localPath: warmingURL.path,
                 byteSize: 7
             )
@@ -205,17 +212,26 @@ struct PressureArtifactCleanupServiceTests {
                 localPath: boundaryURL.path,
                 byteSize: 8
             )
+            try await backdateRow(protectedExpiredRow, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
 
             try await service.cleanup(on: app, logger: app.logger)
 
+            let protectedExpiredRefreshed = try #require(try await PressureArtifactCatalogModel.find(protectedExpiredRow.id, on: app.db))
             let warmingRefreshed = try #require(try await PressureArtifactCatalogModel.find(warmingRow.id, on: app.db))
             let boundaryRefreshed = try #require(try await PressureArtifactCatalogModel.find(boundaryRow.id, on: app.db))
 
+            #expect(protectedExpiredRefreshed.status == .expired)
+            #expect(protectedExpiredRefreshed.localPath == warmingURL.path)
+            #expect(protectedExpiredRefreshed.byteSize == 7)
+            #expect(protectedExpiredRefreshed.claimToken == nil)
+            #expect(protectedExpiredRefreshed.leaseExpiresAt == nil)
             #expect(warmingRefreshed.status == .warming)
             #expect(warmingRefreshed.localPath == warmingURL.path)
+            #expect(warmingRefreshed.byteSize == 7)
             #expect(FileManager.default.fileExists(atPath: warmingURL.path))
             #expect(boundaryRefreshed.status == .ready)
             #expect(boundaryRefreshed.localPath == boundaryURL.path)
+            #expect(boundaryRefreshed.byteSize == 8)
             #expect(FileManager.default.fileExists(atPath: boundaryURL.path))
         }
     }
@@ -248,10 +264,16 @@ struct PressureArtifactCleanupServiceTests {
             let expiredRefreshed = try #require(try await PressureArtifactCatalogModel.find(expiredRow.id, on: app.db))
             let readyRefreshed = try #require(try await PressureArtifactCatalogModel.find(readyRow.id, on: app.db))
 
+            #expect(expiredRefreshed.status == .expired)
             #expect(expiredRefreshed.localPath == sharedURL.path)
             #expect(expiredRefreshed.byteSize == 6)
             #expect(expiredRefreshed.errorSummary == nil)
+            #expect(expiredRefreshed.claimToken == nil)
+            #expect(expiredRefreshed.leaseExpiresAt == nil)
+            #expect(FileManager.default.fileExists(atPath: sharedURL.path))
+            #expect(readyRefreshed.status == .ready)
             #expect(readyRefreshed.localPath == sharedURL.path)
+            #expect(readyRefreshed.byteSize == 6)
             #expect(FileManager.default.fileExists(atPath: sharedURL.path))
         }
     }

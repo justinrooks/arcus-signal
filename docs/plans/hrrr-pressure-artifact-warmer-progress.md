@@ -66,6 +66,26 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 - Pressure-artifact cache reads, atomic writes, directory management, request-path file inspection, and SHA-256 checksums now run on the shared bounded blocking pool instead of actor or request executors.
 - Cancellation remains cooperative around scheduling and completion only; Foundation disk operations are still non-preemptive.
 
+## Latest Slice
+
+Status: Completed
+
+Changed:
+- `PressureArtifactCleanupService` now releases a cleanup claim when an expired row is skipped because its path is protected by a ready or warming row.
+- The cleanup claim release preserves `status`, `localPath`, `byteSize`, and `errorSummary` while clearing only `claimToken` and `leaseExpiresAt`.
+- `PressureArtifactCleanupServiceTests` now covers both protected-path branches:
+  - shared ready-path protection
+  - warming-path protection
+
+Validated:
+- `swift build`
+- `swift test --no-parallel --filter PressureArtifactCleanupServiceTests`
+- `swift test --parallel --num-workers 8 --filter PressureArtifactCleanupServiceTests`
+
+Remaining:
+- No additional cleanup-claim changes are scoped in this slice.
+- The next warmer issue should stay issue-scoped and avoid broader cleanup behavior changes.
+
 ## Warm Invariant
 
 Pressure artifact promotion now requires all of the following before a row may become `ready`:
