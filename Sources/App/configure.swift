@@ -106,6 +106,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateNotificationSendAttempts())
     app.migrations.add(CreateOperatorDashboardSnapshots())
     app.migrations.add(CreatePressureArtifactCatalog())
+    app.migrations.add(AddClaimFencingToPressureArtifactCatalog())
 }
 
 private func configureAPNs(on app: Application) async throws {

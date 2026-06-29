@@ -230,6 +230,179 @@ struct PressureArtifactWarmJobTests {
         }
     }
 
+    @Test("warm claim stores a token and lease")
+    func warmClaimStoresATokenAndLease() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 1_800
+            )
+            let claimToken = UUID()
+            let row = try #require(try await service.claimCatalogRow(
+                for: payload,
+                claimToken: claimToken,
+                on: app.db
+            ))
+
+            #expect(row.status == .warming)
+            #expect(row.claimToken != nil)
+            #expect(row.leaseExpiresAt != nil)
+        }
+    }
+
+    @Test("successful owner clears claim metadata and marks ready")
+    func successfulOwnerClearsClaimMetadataAndMarksReady() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 1_800
+            )
+
+            try await service.warm(payload: payload, on: app, logger: app.logger)
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(row.status == .ready)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("failed owner clears claim metadata and marks failed")
+    func failedOwnerClearsClaimMetadataAndMarksFailed() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(
+                error: PressureArtifactWarmValidatorStubError.failedValidation,
+                lineCount: makeExpectedValidationLineCount()
+            )
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 1_800
+            )
+
+            await #expect(throws: PressureArtifactWarmValidatorStubError.self) {
+                try await service.warm(payload: payload, on: app, logger: app.logger)
+            }
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(row.status == .failed)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("an old token cannot mark ready after a newer claim exists")
+    func oldTokenCannotMarkReadyAfterANewerClaimExists() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 1_800
+            )
+
+            let claimToken = UUID()
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+            row.status = .warming
+            row.claimToken = UUID()
+            row.leaseExpiresAt = makeDate().addingTimeInterval(1_800)
+            try await row.update(on: app.db)
+
+            let result = try await service.markReady(
+                payload: payload,
+                claimToken: claimToken,
+                localPath: "/tmp/pressure-artifact.grib2",
+                byteSize: 99,
+                on: app.db
+            )
+
+            #expect(result == false)
+            let refetched = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(refetched.status == .warming)
+            #expect(refetched.claimToken != nil)
+            #expect(refetched.leaseExpiresAt != nil)
+        }
+    }
+
     @Test("default selector includes the expanded pressure ladder and excludes shallow legacy levels")
     func defaultSelectorIncludesExpandedPressureLadderAndExcludesShallowLegacyLevels() {
         let result = HrrrPressureProfileMessageSelector().select(inventory: HrrrPressureIdxInventory.parse(""))

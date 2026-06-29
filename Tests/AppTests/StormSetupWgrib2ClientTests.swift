@@ -41,6 +41,7 @@ struct StormSetupWgrib2ClientTests {
             pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
             pressureArtifactDeleteGraceSeconds: 60 * 60,
             pressureArtifactCleanupIntervalSeconds: 15 * 60,
+            pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
             wgrib2ExecutableURL: URL(fileURLWithPath: "/tmp/wgrib2"),
             wgrib2TimeoutSeconds: 15
         )
@@ -298,6 +299,7 @@ struct StormSetupWgrib2ClientTests {
             pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
             pressureArtifactDeleteGraceSeconds: 60 * 60,
             pressureArtifactCleanupIntervalSeconds: 15 * 60,
+            pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: 15
         )

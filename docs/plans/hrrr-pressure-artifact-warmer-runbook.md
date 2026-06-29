@@ -201,12 +201,17 @@ Treat pressure artifacts as versioned, replaceable cached outputs.
 
 ### Lifecycle stages
 
+- `pending`
+  - The artifact has been discovered but has not yet been claimed for warming.
+  - Recent rows remain duplicate-protected.
+
 - `missing`
   - No warmed artifact exists for the requested key.
   - The request path must not start a cold fetch.
 
 - `warming`
   - A dedicated warmer job is preparing the artifact.
+  - The row must carry a claim token and lease expiration.
   - Duplicate warming attempts should collapse under deterministic identity or DB/queue uniqueness.
 
 - `ready`
@@ -221,12 +226,33 @@ Treat pressure artifacts as versioned, replaceable cached outputs.
   - The warmer could not produce the artifact.
   - Follow the rollback/degradation behavior below.
 
+- `expired`
+  - The artifact was previously valid but is no longer acceptable for request-path use.
+  - Expired rows are eligible to be reclaimed by warming.
+
 ### Lifecycle rules
 
 - Artifact identity must include the source metadata required to prevent collisions.
 - Field-set version changes must invalidate prior artifacts explicitly.
 - A warmed artifact may be superseded, but the old artifact must remain diagnosable until retention cleanup.
+- Recent `pending` rows remain duplicate-protected.
+- Stale `pending` rows are redispatched.
+- Actively leased `warming` rows remain duplicate-protected until the lease expires.
+- Expired `warming` leases are reclaimed and redispatched.
+- A `ready` row whose local file is missing, empty, or not a regular file is downgraded back to `pending` and re-enqueued.
+- `ready`, `failed`, and `expired` rows must not retain claim metadata.
+- A worker that loses its claim must not overwrite a newer catalog state.
 - Request-path reads must not mutate lifecycle state except for safe bookkeeping such as last-seen timestamps if those are already part of the design.
+
+### Claim fencing
+
+- Warming claims are fenced with a UUID claim token and a lease expiration timestamp.
+- The lease timeout is configured with `STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS`.
+- The default recovery timeout is 30 minutes.
+- Invalid or nonpositive recovery timeout values clamp to a safe positive minimum using the existing configuration conventions.
+- The implementation assumes a normal warming attempt finishes within the configured lease.
+- There is no heartbeat renewal in this slice.
+- Claim completion must be conditional on the same claim token that was assigned when the job dequeued.
 
 ---
 
@@ -241,12 +267,14 @@ The warmer must be driven by explicit scheduling, not by the live request path.
 - Preserve sequential issue implementation so the first runtime slice can be validated in isolation.
 - Ensure warmer work is idempotent and safe to retry.
 - Prefer bounded concurrency and explicit backpressure over hidden fan-out.
+- Probe dispatch should treat stale `pending`, expired `warming`, and unusable `ready` rows as recoverable work.
+- Probe dispatch should keep recent `pending`, actively leased `warming`, and usable `ready` rows skipped.
 
 ### Scheduling constraints
 
 - The warmer should not fire on every request.
 - The warmer should not be coupled to the normal alert polling cadence.
-- If a scheduler exists, it should enqueue warming work only for missing or stale artifacts that are within the current operational policy.
+- If a scheduler exists, it should enqueue warming work only for missing, stale `pending`, expired `warming`, or repaired `ready` artifacts that are within the current operational policy.
 - If a queue is unavailable or degraded, the request path still must not acquire cold artifacts.
 
 ---
@@ -262,6 +290,8 @@ The request path must remain conservative.
 - Do not block the request path on a cold artifact fetch.
 - If the artifact is missing, stale, or failed, return the best available degraded response rather than expanding the path.
 - Preserve the existing surface GRIB path and its behavior.
+- Before treating `ready` as complete, verify the local path using the same nonempty-path, regular-file, positive-size rules used by request lookup.
+- If a `ready` file is unusable, downgrade that exact row to `pending`, clear the local path, size, claim metadata, and stale error state, then enqueue one warm job.
 
 ### Degradation rules
 
@@ -291,6 +321,7 @@ Cache identity must be explicit and boring.
 - Increment the field-set version when the warmer changes the selected pressure variables, levels, or message group in a way that would affect the resulting artifact.
 - Do not reuse incompatible artifacts across field-set versions.
 - Make the version visible in progress logs and debugging output.
+- Keep the field-set identity unchanged unless the selected messages truly change.
 
 ### Retention implications
 
@@ -331,6 +362,7 @@ If the warmer is partially implemented or fails operationally:
 - Disable or stop the warmer scheduling path.
 - Keep cached artifacts readable if they are still valid, but do not treat them as required for correctness.
 - Fall back to degraded pressure output rather than cold acquisition on request.
+- Treat cleanup deletion races as a separate follow-on issue; do not broaden this slice to solve them.
 - Document the failure and any manual cleanup required in the progress log.
 
 Rollback should prefer turning off warming over broad code rollback when the request path remains healthy.

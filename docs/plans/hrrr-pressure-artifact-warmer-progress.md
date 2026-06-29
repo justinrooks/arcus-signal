@@ -47,7 +47,8 @@ Related local docs:
 - Issue `#119` changed the normal `storm-setup/current` pressure-evidence path to consume exact ready catalog artifacts instead of request-time cold acquisition.
 - Issue `#120` added bounded stale pressure-artifact fallback plus worker-owned expiration and deletion.
 - Issue `#121` added structured diagnostics across probe, warm, lookup, and request-path evidence resolution, plus the regression guard for exact-artifact unusable-profile failures.
-- The currently scoped warmer issues are complete.
+- Issue `#122` added claim fencing, stale `pending` recovery, expired `warming` reclamation, and unusable-ready repair.
+- The currently scoped warmer issue set is complete, with cleanup TOCTOU work still deferred.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
@@ -80,6 +81,7 @@ Work these issues sequentially:
 6. `#119` - 06: Change storm-setup/current to consume ready pressure artifacts
 7. `#120` - 07: Add pressure artifact cleanup, expiration, and stale fallback
 8. `#121` - 08: Add diagnostics for pressure artifact acquisition
+9. `#122` - 09: Add claim fencing and stale-state recovery
 
 Issue `#114` is complete and only created planning documentation.
 
@@ -481,6 +483,57 @@ Final next action:
 
 ---
 
+### Issue #122 - 09: Add claim fencing and stale-state recovery
+
+Status: Completed
+
+Scope:
+- Add claim fencing metadata to the pressure artifact catalog.
+- Recover stale `pending` rows and expired `warming` rows during probe dispatch.
+- Repair unusable `ready` rows by downgrading them back to `pending` and enqueueing one warm job.
+- Fence warm-job completion with a per-attempt claim token and lease expiration.
+
+Files changed:
+- `Sources/App/Models/Data/PressureArtifactCatalogModel.swift`
+- `Sources/App/Migrations/AddClaimFencingToPressureArtifactCatalog.swift`
+- `Sources/App/configure.swift`
+- `Sources/App/StormSetup/StormSetupConfiguration.swift`
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Tests/AppTests/PressureArtifactCatalogTests.swift`
+- `Tests/AppTests/StormSetupConfigurationTests.swift`
+- `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+- `Tests/AppTests/AnvilProfileClientTests.swift`
+- `Tests/AppTests/StormSetupWgrib2ClientTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-runbook.md`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Behavior:
+- Recent `pending` rows remain duplicate-protected.
+- Stale `pending` rows are redispatched.
+- Actively leased `warming` rows remain duplicate-protected until the lease expires.
+- Expired `warming` leases are reclaimed and redispatched.
+- `ready` rows with missing, empty, or non-regular files are downgraded to `pending` and enqueued once.
+- Warm-job completion is conditional on both `status = warming` and the same claim token.
+- A worker that loses its claim cannot overwrite a newer catalog state.
+
+Validation performed:
+- `swift build`
+- `swift test --filter StormSetupConfigurationTests`
+- `swift test --filter PressureArtifactCatalogTests`
+- `swift test --filter HRRRPressureArtifactProbeServiceTests`
+- `swift test --filter PressureArtifactWarmJobTests`
+- `swift test --filter PressureArtifactCatalogLookupServiceTests`
+- `swift test --no-parallel`
+- `swift test --parallel --num-workers 8`
+- `git diff --check`
+
+Known failures or follow-up work:
+- Cleanup deletion races are still deferred to the next issue.
+- No heartbeat renewal was added; warming still assumes it completes within the configured lease.
+- The broader suite remains noisy outside the scoped pressure-artifact tests, but the targeted lifecycle and configuration filters passed.
+
 ## Decisions Made
 
 - The planning docs are the only deliverable for `#114`.
@@ -529,7 +582,8 @@ Final next action:
 ## Current Follow-Up
 
 - The currently scoped warmer issues are complete.
-- Broader suite isolation issues remain outside the scope of `#121`.
+- Cleanup deletion TOCTOU work remains outside the scope of `#122`.
+- Broader suite isolation issues remain outside the scope of the scoped pressure-artifact lifecycle work.
 
 ### Pressure Artifact Test Isolation
 

@@ -22,6 +22,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactMaxStaleAgeSeconds == 2 * 60 * 60)
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 60 * 60)
         #expect(configuration.pressureArtifactCleanupIntervalSeconds == 15 * 60)
+        #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 30 * 60)
         #expect(configuration.anvilProfileAnalysisBaseURL == nil)
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == nil)
     }
@@ -52,6 +53,7 @@ struct StormSetupConfigurationTests {
             "STORM_SETUP_PRESSURE_ARTIFACT_MAX_STALE_AGE_SECONDS": "5400",
             "STORM_SETUP_PRESSURE_ARTIFACT_DELETE_GRACE_SECONDS": "1200",
             "STORM_SETUP_PRESSURE_ARTIFACT_CLEANUP_INTERVAL_SECONDS": "1800",
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "540",
             "ANVIL_PROFILE_ANALYSIS_BASE_URL": "https://anvil.example.com",
             "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS": "11"
         ])
@@ -66,7 +68,25 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactMaxStaleAgeSeconds == 5_400)
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 1_200)
         #expect(configuration.pressureArtifactCleanupIntervalSeconds == 1_800)
+        #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 540)
         #expect(configuration.anvilProfileAnalysisBaseURL?.absoluteString == "https://anvil.example.com")
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == 11)
+    }
+
+    @Test("recovery timeout clamps nonpositive or invalid overrides to a positive minimum")
+    func recoveryTimeoutClampsNonpositiveOrInvalidOverridesToAPositiveMinimum() {
+        let zero = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "0"
+        ])
+        let negative = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "-60"
+        ])
+        let invalid = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "banana"
+        ])
+
+        #expect(zero.pressureArtifactRecoveryTimeoutSeconds == 1)
+        #expect(negative.pressureArtifactRecoveryTimeoutSeconds == 1)
+        #expect(invalid.pressureArtifactRecoveryTimeoutSeconds == 1)
     }
 }

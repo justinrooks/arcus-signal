@@ -193,6 +193,7 @@ struct AnvilProfileClientTests {
             pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
             pressureArtifactDeleteGraceSeconds: 60 * 60,
             pressureArtifactCleanupIntervalSeconds: 15 * 60,
+            pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
             wgrib2ExecutableURL: URL(fileURLWithPath: "/usr/local/bin/wgrib2"),
             wgrib2TimeoutSeconds: 15,
             anvilProfileAnalysisBaseURL: URL(string: "https://anvil.example.com"),

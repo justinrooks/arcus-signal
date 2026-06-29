@@ -78,7 +78,7 @@ struct PressureArtifactDiagnosticsTests {
             let skipped = try #require(try loggerContext.event(matching: "HRRR pressure artifact warm skipped for existing catalog state."))
 
             #expect(dispatcher.dispatches.isEmpty)
-            #expect(metadataString(skipped.metadata, "catalogSkipReason") == "catalog state is pending, warming, or ready")
+            #expect(metadataString(skipped.metadata, "catalogSkipReason") == "pending row without recovery eligibility")
             #expect(metadataString(skipped.metadata, "status") == PressureArtifactCatalogStatus.pending.rawValue)
             #expect(metadataString(skipped.metadata, "queue") == nil)
             assertNoSensitiveMetadata(in: loggerContext.events)

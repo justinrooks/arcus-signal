@@ -45,6 +45,12 @@ final class PressureArtifactCatalogModel: Model, @unchecked Sendable {
     @OptionalField(key: "byte_size")
     var byteSize: Int64?
 
+    @OptionalField(key: "claim_token")
+    var claimToken: UUID?
+
+    @OptionalField(key: "lease_expires_at")
+    var leaseExpiresAt: Date?
+
     @Field(key: "source")
     var sourceRaw: String
 
@@ -72,6 +78,8 @@ final class PressureArtifactCatalogModel: Model, @unchecked Sendable {
         status: PressureArtifactCatalogStatus = .pending,
         localPath: String? = nil,
         byteSize: Int64? = nil,
+        claimToken: UUID? = nil,
+        leaseExpiresAt: Date? = nil,
         source: PressureArtifactCatalogSource = .unknown,
         lastCheckedAt: Date? = nil,
         errorSummary: String? = nil
@@ -85,6 +93,8 @@ final class PressureArtifactCatalogModel: Model, @unchecked Sendable {
         self.statusRaw = status.rawValue
         self.localPath = localPath
         self.byteSize = byteSize
+        self.claimToken = claimToken
+        self.leaseExpiresAt = leaseExpiresAt
         self.sourceRaw = source.rawValue
         self.lastCheckedAt = lastCheckedAt
         self.errorSummary = errorSummary

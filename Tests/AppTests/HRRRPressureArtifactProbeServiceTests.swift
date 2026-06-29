@@ -19,7 +19,8 @@ struct HRRRPressureArtifactProbeServiceTests {
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
-                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate])
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             )
 
             try await seedCatalogRow(status: .failed, payload: payload, lastCheckedAt: nil, on: app.db)
@@ -55,7 +56,8 @@ struct HRRRPressureArtifactProbeServiceTests {
                 let service = makeService(
                     remoteChecker: remoteChecker,
                     dispatcher: dispatcher,
-                    runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate])
+                    runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                    now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
                 )
 
                 if let status {
@@ -85,6 +87,187 @@ struct HRRRPressureArtifactProbeServiceTests {
         }
     }
 
+    @Test("recent pending rows remain skipped while stale pending rows are redispatched once")
+    func recentPendingRowsRemainSkippedWhileStalePendingRowsAreRedispatchedOnce() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = WarmJobDispatcherRecorder()
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                recoveryTimeoutSeconds: 1_800
+            )
+
+            try await seedCatalogRow(
+                status: .pending,
+                payload: payload,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 45),
+                on: app.db
+            )
+
+            try await service.probe(on: app, logger: app.logger)
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(dispatcher.dispatches.isEmpty)
+            #expect(row.status == .pending)
+            #expect(remoteChecker.requestedURLs == [idxURL.absoluteString])
+        }
+    }
+
+    @Test("expired warming leases are reclaimed and redispatched once while active leases stay skipped")
+    func expiredWarmingLeasesAreReclaimedAndRedispatchedOnceWhileActiveLeasesStaySkipped() async throws {
+        try await withApp { app in
+            let statuses: [(status: PressureArtifactCatalogStatus, leaseExpiresAt: Date?, expectedDispatches: Int)] = [
+                (.warming, makeUTCDate(year: 2026, month: 6, day: 30, hour: 13, minute: 15), 0),
+                (.warming, makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 30), 1)
+            ]
+
+            for item in statuses {
+                let surfaceCandidate = makeSurfaceCandidate()
+                let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+                let payload = makePayload(from: pressureCandidate)
+                let idxURL = makeIdxURL(for: pressureCandidate)
+                let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+                let dispatcher = WarmJobDispatcherRecorder()
+                let service = makeService(
+                    remoteChecker: remoteChecker,
+                    dispatcher: dispatcher,
+                    runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                    now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                    recoveryTimeoutSeconds: 1_800
+                )
+
+                try await seedCatalogRow(
+                    status: item.status,
+                    payload: payload,
+                    lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 0),
+                    leaseExpiresAt: item.leaseExpiresAt,
+                    on: app.db
+                )
+
+                try await service.probe(on: app, logger: app.logger)
+
+                let row = try #require(try await PressureArtifactCatalogModel.find(
+                    runTime: payload.runTime,
+                    forecastHour: payload.forecastHour,
+                    product: payload.product,
+                    fieldSetVersion: payload.fieldSetVersion,
+                    on: app.db
+                ))
+
+                #expect(dispatcher.dispatches.count == item.expectedDispatches)
+                if item.expectedDispatches == 0 {
+                    #expect(row.status == .warming)
+                } else {
+                    #expect(row.status == .pending)
+                    #expect(row.claimToken == nil)
+                    #expect(row.leaseExpiresAt == nil)
+                }
+                try await clearCatalog(on: app.db)
+            }
+        }
+    }
+
+    @Test("ready rows with unusable local files are reset to pending and redispatched")
+    func readyRowsWithUnusableLocalFilesAreResetToPendingAndRedispatched() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = WarmJobDispatcherRecorder()
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                recoveryTimeoutSeconds: 1_800
+            )
+            let missingPath = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).grib2")
+            try await seedCatalogRow(
+                status: .ready,
+                payload: payload,
+                localPath: missingPath.path,
+                byteSize: 9,
+                on: app.db
+            )
+
+            try await service.probe(on: app, logger: app.logger)
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(dispatcher.dispatches.count == 1)
+            #expect(row.status == .pending)
+            #expect(row.localPath == nil)
+            #expect(row.byteSize == nil)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("concurrent probes reclaim or repair at most once")
+    func concurrentProbesReclaimOrRepairAtMostOnce() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = WarmJobDispatcherRecorder()
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                recoveryTimeoutSeconds: 1_800
+            )
+            let missingPath = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).grib2")
+            try await seedCatalogRow(
+                status: .ready,
+                payload: payload,
+                localPath: missingPath.path,
+                byteSize: 9,
+                on: app.db
+            )
+
+            async let first = service.probe(on: app, logger: app.logger)
+            async let second = service.probe(on: app, logger: app.logger)
+            try await first
+            try await second
+
+            let rows = try await PressureArtifactCatalogModel.query(on: app.db)
+                .filter(\.$runTime == payload.runTime)
+                .filter(\.$forecastHour == payload.forecastHour)
+                .filter(\.$productRaw == payload.product.rawValue)
+                .filter(\.$fieldSetVersionRaw == payload.fieldSetVersion.rawValue)
+                .all()
+
+            #expect(dispatcher.dispatches.count == 1)
+            #expect(rows.count == 1)
+            #expect(rows.first?.status == .pending)
+        }
+    }
+
     @Test("probe skips duplicate warm jobs for pending, warming, and ready states")
     func probeSkipsDuplicateWarmJobsForPendingWarmingAndReady() async throws {
         try await withApp { app in
@@ -96,13 +279,43 @@ struct HRRRPressureArtifactProbeServiceTests {
                 let idxURL = makeIdxURL(for: pressureCandidate)
                 let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
                 let dispatcher = WarmJobDispatcherRecorder()
-                let service = makeService(
-                    remoteChecker: remoteChecker,
-                    dispatcher: dispatcher,
-                    runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate])
-                )
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            )
 
-                try await seedCatalogRow(status: status, payload: payload, lastCheckedAt: nil, on: app.db)
+                switch status {
+                case .pending:
+                    try await seedCatalogRow(
+                        status: .pending,
+                        payload: payload,
+                        lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 45),
+                        on: app.db
+                    )
+                case .warming:
+                    try await seedCatalogRow(
+                        status: .warming,
+                        payload: payload,
+                        lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 0),
+                        leaseExpiresAt: makeUTCDate(year: 2026, month: 6, day: 30, hour: 13, minute: 30),
+                        on: app.db
+                    )
+                case .ready:
+                    let readyURL = FileManager.default.temporaryDirectory.appendingPathComponent("ready-\(UUID().uuidString).grib2")
+                    FileManager.default.createFile(atPath: readyURL.path, contents: Data("ready".utf8))
+                    try await seedCatalogRow(
+                        status: .ready,
+                        payload: payload,
+                        lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 0),
+                        localPath: readyURL.path,
+                        byteSize: 5,
+                        on: app.db
+                    )
+                default:
+                    break
+                }
 
                 try await service.probe(on: app, logger: app.logger)
 
@@ -144,12 +357,16 @@ private extension HRRRPressureArtifactProbeServiceTests {
     func makeService<RemoteChecker: HrrrRemoteObjectChecking, Dispatcher: PressureArtifactWarmJobDispatching>(
         remoteChecker: RemoteChecker,
         dispatcher: Dispatcher,
-        runResolution: HrrrRunResolution
+        runResolution: HrrrRunResolution,
+        now: Date,
+        recoveryTimeoutSeconds: TimeInterval = 1_800
     ) -> HRRRPressureArtifactProbeService {
         HRRRPressureArtifactProbeService(
             runResolver: FixedHrrrRunResolving(resolution: runResolution),
             remoteObjectChecker: remoteChecker,
-            warmJobDispatcher: dispatcher
+            warmJobDispatcher: dispatcher,
+            dateProvider: FixedStormSetupDateProvider(nowDate: now),
+            recoveryTimeoutSeconds: recoveryTimeoutSeconds
         )
     }
 
@@ -190,7 +407,10 @@ private extension HRRRPressureArtifactProbeServiceTests {
     func seedCatalogRow(
         status: PressureArtifactCatalogStatus,
         payload: PressureArtifactWarmJobPayload,
-        lastCheckedAt: Date?,
+        lastCheckedAt: Date? = nil,
+        leaseExpiresAt: Date? = nil,
+        localPath: String? = nil,
+        byteSize: Int64? = nil,
         on db: any Database
     ) async throws {
         let row = PressureArtifactCatalogModel(
@@ -200,8 +420,11 @@ private extension HRRRPressureArtifactProbeServiceTests {
             product: payload.product,
             fieldSetVersion: payload.fieldSetVersion,
             status: status,
+            localPath: localPath,
+            byteSize: byteSize,
             lastCheckedAt: lastCheckedAt
         )
+        row.leaseExpiresAt = leaseExpiresAt
         try await row.create(on: db)
     }
 
@@ -211,6 +434,14 @@ private extension HRRRPressureArtifactProbeServiceTests {
         }
 
         try await sql.raw("DELETE FROM pressure_artifact_catalog;").run()
+    }
+
+    private struct FixedStormSetupDateProvider: StormSetupDateProviding {
+        let nowDate: Date
+
+        func now() -> Date {
+            nowDate
+        }
     }
 
     func makeUTCDate(

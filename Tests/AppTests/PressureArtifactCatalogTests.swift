@@ -217,6 +217,94 @@ struct PressureArtifactCatalogTests {
         }
     }
 
+    @Test("claim fencing columns round-trip through the catalog model")
+    func claimFencingColumnsRoundTripThroughTheCatalogModel() async throws {
+        try await withApp { app in
+            let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let claimToken = UUID()
+            let leaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 3, hour: 14)
+
+            let row = PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 9,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .warming,
+                source: .aws,
+                lastCheckedAt: nil,
+                errorSummary: nil
+            )
+            row.claimToken = claimToken
+            row.leaseExpiresAt = leaseExpiresAt
+            try await row.create(on: app.db)
+
+            let fetched = try await PressureArtifactCatalogModel.find(
+                runTime: runTime,
+                forecastHour: 9,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                on: app.db
+            )
+
+            #expect(fetched?.claimToken == claimToken)
+            #expect(fetched?.leaseExpiresAt == leaseExpiresAt)
+        }
+    }
+
+    @Test("claim fencing columns can be cleared on terminal states")
+    func claimFencingColumnsCanBeClearedOnTerminalStates() async throws {
+        try await withApp { app in
+            let runTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            let validTime = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+
+            let row = PressureArtifactCatalogModel(
+                runTime: runTime,
+                forecastHour: 9,
+                validTime: validTime,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                status: .ready,
+                localPath: "/var/tmp/pressure-artifact.grib2",
+                byteSize: 4096,
+                source: .aws
+            )
+            row.claimToken = UUID()
+            row.leaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 3, hour: 14)
+            try await row.create(on: app.db)
+
+            let fetched = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: runTime,
+                forecastHour: 9,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                on: app.db
+            ))
+
+            fetched.status = .failed
+            fetched.claimToken = nil
+            fetched.leaseExpiresAt = nil
+            fetched.localPath = nil
+            fetched.byteSize = nil
+            try await fetched.update(on: app.db)
+
+            let refetched = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: runTime,
+                forecastHour: 9,
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV2,
+                on: app.db
+            ))
+
+            #expect(refetched.status == .failed)
+            #expect(refetched.claimToken == nil)
+            #expect(refetched.leaseExpiresAt == nil)
+            #expect(refetched.localPath == nil)
+            #expect(refetched.byteSize == nil)
+        }
+    }
+
     @Test("ready rows can store a local path and byte size")
     func readyRowsStoreLocalPathAndByteSize() async throws {
         try await withApp { app in
