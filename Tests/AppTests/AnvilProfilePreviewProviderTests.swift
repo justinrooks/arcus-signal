@@ -15,12 +15,7 @@ struct AnvilProfilePreviewProviderTests {
             runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
             forecastHour: 0
         )
-        let pressureCandidate = HrrrRunCandidate(
-            product: .wrfprsf,
-            runTime: surfaceCandidate.runTime,
-            forecastHour: surfaceCandidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV2
-        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
         let readyArtifact = previewMakeReadyPressureArtifact(
             runTime: pressureCandidate.runTime,
             forecastHour: pressureCandidate.forecastHour,
@@ -91,18 +86,8 @@ struct AnvilProfilePreviewProviderTests {
             runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
             forecastHour: 1
         )
-        let firstPressureCandidate = HrrrRunCandidate(
-            product: .wrfprsf,
-            runTime: firstCandidate.runTime,
-            forecastHour: firstCandidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV2
-        )
-        let secondPressureCandidate = HrrrRunCandidate(
-            product: .wrfprsf,
-            runTime: secondCandidate.runTime,
-            forecastHour: secondCandidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV2
-        )
+        let firstPressureCandidate = makePressureCandidate(from: firstCandidate)
+        let secondPressureCandidate = makePressureCandidate(from: secondCandidate)
         let exactArtifact = previewMakeReadyPressureArtifact(
             runTime: secondPressureCandidate.runTime,
             forecastHour: secondPressureCandidate.forecastHour,
@@ -113,7 +98,7 @@ struct AnvilProfilePreviewProviderTests {
         let staleArtifact = previewMakeReadyPressureArtifact(
             runTime: firstPressureCandidate.runTime,
             forecastHour: firstPressureCandidate.forecastHour,
-            validTime: firstPressureCandidate.validTime.addingTimeInterval(-3_600),
+            validTime: firstPressureCandidate.validTime,
             localPath: "/private/tmp/stale-ready-pressure-artifact.grib2",
             byteSize: 2_048,
             freshness: .stale(ageSeconds: 3_600)
@@ -186,16 +171,11 @@ struct AnvilProfilePreviewProviderTests {
             runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
             forecastHour: 0
         )
-        let pressureCandidate = HrrrRunCandidate(
-            product: .wrfprsf,
-            runTime: surfaceCandidate.runTime,
-            forecastHour: surfaceCandidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV2
-        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
         let staleArtifact = previewMakeReadyPressureArtifact(
             runTime: pressureCandidate.runTime.addingTimeInterval(-3_600),
             forecastHour: 0,
-            validTime: pressureCandidate.validTime.addingTimeInterval(-3_600),
+            validTime: pressureCandidate.runTime.addingTimeInterval(-3_600),
             localPath: "/private/tmp/stale-pressure-artifact.grib2",
             byteSize: 2_048,
             freshness: .stale(ageSeconds: 3_600)
@@ -260,12 +240,7 @@ struct AnvilProfilePreviewProviderTests {
             runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
             forecastHour: 0
         )
-        let pressureCandidate = HrrrRunCandidate(
-            product: .wrfprsf,
-            runTime: surfaceCandidate.runTime,
-            forecastHour: surfaceCandidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV2
-        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
         let lookupService = PreviewStubPressureArtifactCatalogLookupService { lookedUpCandidate in
             #expect(lookedUpCandidate == pressureCandidate)
             return nil
@@ -312,16 +287,11 @@ struct AnvilProfilePreviewProviderTests {
             runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
             forecastHour: 0
         )
-        let pressureCandidate = HrrrRunCandidate(
-            product: .wrfprsf,
-            runTime: surfaceCandidate.runTime,
-            forecastHour: surfaceCandidate.forecastHour,
-            fieldSetVersion: .tornadoPressureV2
-        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
         let exactArtifact = previewMakeReadyPressureArtifact(
-            runTime: surfaceCandidate.runTime,
-            forecastHour: surfaceCandidate.forecastHour,
-            validTime: surfaceCandidate.validTime
+            runTime: pressureCandidate.runTime,
+            forecastHour: pressureCandidate.forecastHour,
+            validTime: pressureCandidate.validTime
         )
         let lookupService = PreviewStubPressureArtifactCatalogLookupService { lookedUpCandidate in
             #expect(lookedUpCandidate == pressureCandidate)
@@ -437,16 +407,16 @@ struct AnvilProfilePreviewProviderTests {
         )
         let expectedRequest = try AnvilProfileRequestBuilder().build(
             h3Cell: h3Cell,
-            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
-            forecastHour: 1,
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 20),
+            forecastHour: 2,
             groupedProfile: expectedGrouping
         ).request
 
         #expect(preview.request == expectedRequest)
         #expect(preview.debug.sourceKind == .directObject)
         #expect(preview.debug.product == .wrfprsf)
-        #expect(preview.debug.runTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21))
-        #expect(preview.debug.forecastHour == 1)
+        #expect(preview.debug.runTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 20))
+        #expect(preview.debug.forecastHour == 2)
         #expect(preview.debug.validTime == previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
         #expect(preview.debug.h3 == H3Cell(UInt64(bitPattern: expected.h3Cell)).description)
         #expect(preview.debug.centroid == expected.centroid)
@@ -456,8 +426,8 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.totalSelectedRangeBytes == 1024)
         #expect(preview.debug.pressureLevelsRequested == [1000])
         #expect(preview.debug.subsetCacheHit == true)
-        #expect(preview.debug.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2")
-        #expect(preview.debug.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t21z.wrfprsf01.grib2.idx")
+        #expect(preview.debug.primaryDownloadURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t20z.wrfprsf02.grib2")
+        #expect(preview.debug.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260603/conus/hrrr.t20z.wrfprsf02.grib2.idx")
         #expect(preview.debug.idxAvailable == true)
         #expect(preview.debug.gribAvailable == nil)
         #expect(preview.debug.pressureLevelsRetained == [1000, 925, 850, 700, 600, 500, 400, 300])
@@ -1037,6 +1007,18 @@ struct AnvilProfilePreviewProviderTests {
     }
 }
 
+private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
+    let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
+    return HrrrRunCandidate(
+        model: candidate.model,
+        product: .wrfprsf,
+        domain: candidate.domain,
+        runTime: runTime,
+        forecastHour: candidate.forecastHour + 1,
+        fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
+    )
+}
+
 private func previewMakePressureSourceResolution(
     candidate: HrrrRunCandidate,
     idxAvailable: Bool
@@ -1057,9 +1039,6 @@ private func previewMakePressureSourceResolution(
     )
 }
 
-private func makeShiftedPressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-    candidate
-}
 
 private extension Date {
     var truncatedToHour: Date {

@@ -5,3 +5,4 @@
 - When a user corrects a finished slice, update the lesson log immediately so the next issue does not repeat the same mismatch.
 - Production bootstrap tests must set every earlier fail-fast prerequisite explicitly, or the assertion will drift to the wrong config gate and stop proving the intended behavior.
 - For one-value handoffs, prefer threading the value through the existing explicit call boundary over ambient state or a broader request-shape rewrite. If the bug is "missing input," do not solve it by inventing a new pipeline.
+- When a provider intentionally shifts HRRR pressure candidates before lookup, tests must derive their expected lookup keys from the same shifted helper. Comparing against the unshifted surface candidate just hides the bug behind a broken assertion.
