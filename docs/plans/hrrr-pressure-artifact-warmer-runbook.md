@@ -307,6 +307,14 @@ The request path must remain conservative.
 - Missing warmed artifact should surface as degraded or incomplete pressure data, not as a silent cold fetch.
 - If a later issue adds stronger failure semantics, those semantics must be documented before implementation.
 
+### Dashboard readiness semantics
+
+- The operator-dashboard readiness tile is a request-path diagnostic, not a catalog summary.
+- Its `exact`, `stale`, and `unavailable` outcomes must come from the same request-path lookup behavior used by Storm Setup.
+- Exact candidates are tried in order before any bounded stale fallback is considered.
+- The tile may reuse the newest current-version catalog row as diagnostic context when no usable artifact is found, but catalog counts remain catalog-oriented operational views.
+- The tile must not expose `localPath`.
+
 ---
 
 ## Cache Keys and Field-Set Versioning

@@ -1,6 +1,12 @@
 import Foundation
 import Vapor
 
+public enum PressureArtifactReadinessSelectionOutcome: String, Codable, Sendable {
+    case exact
+    case stale
+    case unavailable
+}
+
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public static let currentSchemaVersion = 3
 
@@ -349,6 +355,7 @@ public struct StoredPressureArtifactDashboardMetric: Codable, Sendable {
 
 public struct StoredPressureArtifactDashboardReadinessMetric: Codable, Sendable {
     public var refreshedAt: Date?
+    public var selectionOutcome: PressureArtifactReadinessSelectionOutcome?
     public var status: String?
     public var runTime: Date?
     public var forecastHour: Int?
@@ -359,9 +366,11 @@ public struct StoredPressureArtifactDashboardReadinessMetric: Codable, Sendable 
     public var updatedAt: Date?
     public var lastCheckedAt: Date?
     public var errorSummary: String?
+    public var readinessReason: String?
 
     public init(
         refreshedAt: Date? = nil,
+        selectionOutcome: PressureArtifactReadinessSelectionOutcome? = nil,
         status: String? = nil,
         runTime: Date? = nil,
         forecastHour: Int? = nil,
@@ -371,9 +380,11 @@ public struct StoredPressureArtifactDashboardReadinessMetric: Codable, Sendable 
         source: String? = nil,
         updatedAt: Date? = nil,
         lastCheckedAt: Date? = nil,
-        errorSummary: String? = nil
+        errorSummary: String? = nil,
+        readinessReason: String? = nil
     ) {
         self.refreshedAt = refreshedAt
+        self.selectionOutcome = selectionOutcome
         self.status = status
         self.runTime = runTime
         self.forecastHour = forecastHour
@@ -384,6 +395,7 @@ public struct StoredPressureArtifactDashboardReadinessMetric: Codable, Sendable 
         self.updatedAt = updatedAt
         self.lastCheckedAt = lastCheckedAt
         self.errorSummary = errorSummary
+        self.readinessReason = readinessReason
     }
 }
 
@@ -714,6 +726,7 @@ public struct OperatorDashboardOperatorContextSectionResponse: Content, Sendable
 
 public struct PressureArtifactReadinessMetricResponse: Content, Sendable {
     public var refreshedAt: Date?
+    public var selectionOutcome: PressureArtifactReadinessSelectionOutcome?
     public var status: String?
     public var runTime: Date?
     public var forecastHour: Int?
@@ -725,9 +738,11 @@ public struct PressureArtifactReadinessMetricResponse: Content, Sendable {
     public var updatedAt: Date?
     public var lastCheckedAt: Date?
     public var errorSummary: String?
+    public var readinessReason: String?
 
     init(refreshedAt: Date?, renderedAt: Date, metric: StoredPressureArtifactDashboardReadinessMetric) {
         self.refreshedAt = refreshedAt
+        self.selectionOutcome = metric.selectionOutcome
         self.status = metric.status
         self.runTime = metric.runTime
         self.forecastHour = metric.forecastHour
@@ -742,6 +757,7 @@ public struct PressureArtifactReadinessMetricResponse: Content, Sendable {
         self.updatedAt = metric.updatedAt
         self.lastCheckedAt = metric.lastCheckedAt
         self.errorSummary = metric.errorSummary
+        self.readinessReason = metric.readinessReason
     }
 }
 

@@ -684,23 +684,42 @@ SQL filtering policy:
 - The most recently updated failed row is selected with a separate narrow query.
 
 Visual states implemented:
-- `NO DATA` when no current-version rows exist.
+- `EXACT`, `STALE`, and `UNAVAILABLE` readiness outcomes now drive the readiness tile.
+- `NO DATA` remains the legacy neutral state for snapshots that do not carry the new readiness outcome.
 - Pending, warming, ready, failed, and expired status pills.
 - Missing byte size renders as `n/a`.
 - Missing timestamps render as `n/a`.
 - Missing error summaries render as `none` or omit the error row on the readiness tile.
-- The readiness tile uses the latest current-version artifact row.
+- The readiness tile follows request-path selection semantics: exact candidates first, then bounded stale fallback, then unavailable.
+- The catalog tile continues to report catalog counts and the newest current-version row only as diagnostic context.
 - The catalog tile shows counts and the most recent failure timestamp/reason.
 - The recent-artifacts table shows five current-version rows without `localPath`.
 
+Readiness semantics:
+- `exact` means the request-path lookup resolved a usable current-version `wrfprsf` artifact for one of the exact candidates derived from the current Storm Setup request path.
+- `stale` means all exact candidates missed and the bounded stale lookup returned a usable artifact.
+- `unavailable` means no usable exact or stale artifact was found.
+- `status` remains diagnostic context, so an unavailable readiness tile can still surface the newest current-version row state when one exists.
+- `readinessReason` explains whether stale fallback was used, whether the newest row was unusable, or whether no current-version catalog row existed.
+- `localPath` stays hidden from both the metrics JSON and the HTML.
+
+Catalog vs readiness:
+- Catalog counts remain catalog-oriented operational totals.
+- Recent artifacts remain catalog-oriented operational rows.
+- Usable readiness is a separate request-path outcome and must not be inferred from the catalog counts alone.
+
 Validation performed:
+- `swift build`
 - `swift test --filter OperatorDashboardPressureArtifactTests`
-- `swift test --filter OperatorDashboardTests`
-- `swift test`
+- `swift test --filter PressureArtifactCatalogLookupServiceTests`
+- `swift test --no-parallel`
+- `swift test --parallel --num-workers 8`
+- `git diff --check`
 
 Known failures or follow-up work:
-- `swift test` still reports unrelated broad-suite failures that predate this change, including shared-state pressure-artifact catalog and cleanup tests, warm-job tests, and some pressure diagnostics lookups when the full suite runs together.
-- The dashboard change itself passed in the focused dashboard test slices.
+- The dashboard readiness tile now reflects request-path usability, but the surrounding diagnostics still depend on synchronous filesystem and SQL lookup work inside the snapshot refresher.
+- Catalog counts and recent-artifact rows remain intentionally catalog-oriented, so they can disagree with readiness when the newest row is unusable or stale.
+- Any future cleanup of blocking I/O should stay inside the lookup/service layer rather than moving the dashboard tile back toward catalog-only semantics.
 
 ### Cancellation Hardening - Probe, Warm, Anvil, and Storm Setup
 

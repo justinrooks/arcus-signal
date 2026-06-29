@@ -665,11 +665,12 @@ enum OperatorDashboardPageRenderer {
             return codes.join(', ');
           }
 
-          function renderCard(title, primary, refreshedAt, lines) {
+          function renderCard(title, primary, refreshedAt, lines, primaryClass = '') {
+            const primaryClassSuffix = primaryClass ? ` ${primaryClass}` : '';
             return `
               <div class="card">
                 <h3>${escapeHtml(title)}</h3>
-                <div class="primary">${escapeHtml(primary)}</div>
+                <div class="primary${primaryClassSuffix}">${escapeHtml(primary)}</div>
                 <div class="subtle">Refreshed ${escapeHtml(formatDate(refreshedAt))}</div>
                 <ul class="meta-list">
                   ${lines.map((line) => `<li><span>${escapeHtml(line.label)}</span><strong>${escapeHtml(line.value)}</strong></li>`).join('')}
@@ -773,6 +774,27 @@ enum OperatorDashboardPageRenderer {
             }
           }
 
+          function renderPressureArtifactOutcome(outcome) {
+            if (!outcome) {
+              return 'NO DATA';
+            }
+
+            return String(outcome).toUpperCase();
+          }
+
+          function renderPressureArtifactOutcomeClass(outcome) {
+            switch (String(outcome ?? '').toLowerCase()) {
+              case 'exact':
+                return 'accent';
+              case 'stale':
+                return 'warn';
+              case 'unavailable':
+                return 'danger';
+              default:
+                return '';
+            }
+          }
+
           function renderPressureArtifactStatus(status) {
             if (!status) {
               return 'NO DATA';
@@ -795,20 +817,25 @@ enum OperatorDashboardPageRenderer {
           }
 
           function renderPressureArtifactReadinessCard(metric) {
+            const lines = [
+              { label: 'Catalog status', value: metric?.status ?? 'n/a' },
+              { label: 'Valid time', value: formatDate(metric?.validTime) },
+              { label: 'Valid-time age', value: formatDuration(metric?.validTimeAgeSeconds) },
+              { label: 'Run / FH', value: renderPressureArtifactRunAndForecast(metric?.runTime, metric?.forecastHour) },
+              { label: 'Field-set version', value: metric?.fieldSetVersion ?? 'n/a' },
+              { label: 'Size', value: formatByteSize(metric?.byteSize) },
+              { label: 'Source', value: metric?.source ?? 'n/a' },
+              { label: 'Last checked / updated', value: formatDate(metric?.lastCheckedAt ?? metric?.updatedAt) },
+              ...(metric?.readinessReason ? [{ label: 'Readiness reason', value: metric.readinessReason }] : []),
+              ...(metric?.errorSummary ? [{ label: 'Error', value: metric.errorSummary }] : [])
+            ];
+
             return renderCard(
               'Pressure artifact readiness',
-              renderPressureArtifactStatus(metric?.status),
+              renderPressureArtifactOutcome(metric?.selectionOutcome),
               metric?.refreshedAt,
-              [
-                { label: 'Valid time', value: formatDate(metric?.validTime) },
-                { label: 'Valid-time age', value: formatDuration(metric?.validTimeAgeSeconds) },
-                { label: 'Run / FH', value: renderPressureArtifactRunAndForecast(metric?.runTime, metric?.forecastHour) },
-                { label: 'Field-set version', value: metric?.fieldSetVersion ?? 'n/a' },
-                { label: 'Size', value: formatByteSize(metric?.byteSize) },
-                { label: 'Source', value: metric?.source ?? 'n/a' },
-                { label: 'Last checked / updated', value: formatDate(metric?.lastCheckedAt ?? metric?.updatedAt) },
-                ...(metric?.errorSummary ? [{ label: 'Error', value: metric.errorSummary }] : [])
-              ]
+              lines,
+              renderPressureArtifactOutcomeClass(metric?.selectionOutcome)
             );
           }
 
@@ -1280,6 +1307,7 @@ enum OperatorDashboardPageRenderer {
     private static func pressureArtifactReadinessCard(_ metric: PressureArtifactReadinessMetricResponse?) -> String {
         let metric = metric ?? .init(refreshedAt: nil, renderedAt: .now, metric: .init())
         var lines: [(String, String)] = [
+            ("Catalog status", metric.status ?? "n/a"),
             ("Valid time", maybeDate(metric.validTime)),
             ("Valid-time age", maybeDuration(metric.validTimeAgeSeconds)),
             ("Run / FH", pressureArtifactRunAndForecast(metric.runTime, metric.forecastHour)),
@@ -1288,13 +1316,17 @@ enum OperatorDashboardPageRenderer {
             ("Source", metric.source ?? "n/a"),
             ("Last checked / updated", maybeDate(metric.lastCheckedAt ?? metric.updatedAt))
         ]
+        if let readinessReason = metric.readinessReason {
+            lines.insert(("Readiness reason", readinessReason), at: 1)
+        }
         if let errorSummary = metric.errorSummary {
             lines.append(("Error", errorSummary))
         }
 
         return card(
             title: "Pressure artifact readiness",
-            primary: pressureArtifactStatus(metric.status),
+            primary: pressureArtifactOutcome(metric.selectionOutcome),
+            primaryClass: pressureArtifactOutcomeClass(metric.selectionOutcome),
             refreshedAt: metric.refreshedAt,
             lines: lines
         )
@@ -1489,13 +1521,15 @@ enum OperatorDashboardPageRenderer {
     private static func card(
         title: String,
         primary: String,
+        primaryClass: String? = nil,
         refreshedAt: Date?,
         lines: [(String, String)]
     ) -> String {
-        """
+        let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
+        return """
         <div class="card">
           <h3>\(escape(title))</h3>
-          <div class="primary">\(escape(primary))</div>
+          <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
           <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
           <ul class="meta-list">
             \(lines.map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined())
@@ -1512,6 +1546,23 @@ enum OperatorDashboardPageRenderer {
     private static func joinedCodes(_ codes: [String]) -> String {
         guard codes.isEmpty == false else { return "none" }
         return codes.joined(separator: ", ")
+    }
+
+    private static func pressureArtifactOutcome(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String {
+        guard let outcome else { return "NO DATA" }
+        return outcome.rawValue.uppercased()
+    }
+
+    private static func pressureArtifactOutcomeClass(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String? {
+        guard let outcome else { return nil }
+        switch outcome {
+        case .exact:
+            return "accent"
+        case .stale:
+            return "warn"
+        case .unavailable:
+            return "danger"
+        }
     }
 
     private static func pressureArtifactStatus(_ status: String?) -> String {

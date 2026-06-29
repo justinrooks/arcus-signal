@@ -32,58 +32,60 @@ struct OperatorDashboardPressureArtifactTests {
         try await sql.raw("DELETE FROM pressure_artifact_catalog;").run()
     }
 
-    @Test("fast refresh surfaces current-version pressure artifact catalog metrics")
-    func fastRefreshSurfacesCurrentVersionPressureArtifactCatalogMetrics() async throws {
+    @Test("fast refresh selects an exact usable pressure artifact and preserves catalog views")
+    func fastRefreshSelectsAnExactUsablePressureArtifactAndPreservesCatalogViews() async throws {
         try await withApp { app in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)
             let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
-
-            let obsoleteFutureRow = PressureArtifactCatalogModel(
+            let exactFileURL = makeTempRegularFile(contents: Data("exact".utf8))
+            let exactPressureRow = PressureArtifactCatalogModel(
                 runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
                 forecastHour: 0,
                 validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
                 product: .wrfprsf,
-                fieldSetVersion: .tornadoPressureV1,
+                fieldSetVersion: currentVersion,
                 status: .ready,
-                localPath: "/tmp/obsolete.grib2",
-                byteSize: 99,
-                source: .aws
+                localPath: exactFileURL.path,
+                byteSize: 9_999,
+                source: .aws,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 2),
+                errorSummary: nil
             )
-            try await obsoleteFutureRow.create(on: app.db)
+            try await exactPressureRow.create(on: app.db)
 
-            let readyLatestRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 16),
+            let newerFailedRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 24),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 24),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .failed,
+                localPath: nil,
+                byteSize: nil,
+                source: .aws,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 45),
+                errorSummary: "most recent failure"
+            )
+            try await newerFailedRow.create(on: app.db)
+
+            let readyLaterRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
                 forecastHour: 0,
                 validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
                 product: .wrfprsf,
                 fieldSetVersion: currentVersion,
-                status: .failed,
-                localPath: "/tmp/latest-failed.grib2",
-                byteSize: 20,
-                source: .aws,
-                lastCheckedAt: nil,
-                errorSummary: "pressure artifact validation failed"
-            )
-            try await readyLatestRow.create(on: app.db)
-
-            let readyLaterRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15),
-                forecastHour: 1,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
-                product: .wrfprsf,
-                fieldSetVersion: currentVersion,
                 status: .ready,
-                localPath: "/tmp/ready.grib2",
-                byteSize: 2_048,
+                localPath: makeTempRegularFile(contents: Data("later".utf8)).path,
+                byteSize: 5,
                 source: .nomads,
                 lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21, minute: 2)
             )
             try await readyLaterRow.create(on: app.db)
 
             let warmingRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14),
-                forecastHour: 2,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20),
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
                 product: .wrfprsf,
                 fieldSetVersion: currentVersion,
                 status: .warming,
@@ -95,9 +97,9 @@ struct OperatorDashboardPressureArtifactTests {
             try await warmingRow.create(on: app.db)
 
             let pendingRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
-                forecastHour: 3,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19),
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20),
                 product: .wrfprsf,
                 fieldSetVersion: currentVersion,
                 status: .pending,
@@ -109,9 +111,9 @@ struct OperatorDashboardPressureArtifactTests {
             try await pendingRow.create(on: app.db)
 
             let expiredRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12),
-                forecastHour: 4,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 19),
                 product: .wrfprsf,
                 fieldSetVersion: currentVersion,
                 status: .expired,
@@ -122,10 +124,10 @@ struct OperatorDashboardPressureArtifactTests {
             )
             try await expiredRow.create(on: app.db)
 
-            let failedLaterRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 11),
-                forecastHour: 5,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 17),
+            let failedOlderRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
                 product: .wrfprsf,
                 fieldSetVersion: currentVersion,
                 status: .failed,
@@ -133,28 +135,16 @@ struct OperatorDashboardPressureArtifactTests {
                 byteSize: nil,
                 source: .aws,
                 lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 17, minute: 30),
-                errorSummary: "most recent failure"
+                errorSummary: "older failure"
             )
-            try await failedLaterRow.create(on: app.db)
-
-            let readyOmittedRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 10),
-                forecastHour: 6,
-                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 16),
-                product: .wrfprsf,
-                fieldSetVersion: currentVersion,
-                status: .ready,
-                localPath: "/tmp/omitted.grib2",
-                byteSize: 4_096,
-                source: .aws
-            )
-            try await readyOmittedRow.create(on: app.db)
+            try await failedOlderRow.create(on: app.db)
 
             try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
 
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let artifacts = snapshot.modelArtifacts
             let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response)
 
             #expect(snapshot.schemaVersion == OperatorDashboardStoredSnapshot.currentSchemaVersion)
             #expect(artifacts.pressureArtifactCatalog.totalRowCount == 7)
@@ -163,32 +153,40 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(artifacts.pressureArtifactCatalog.readyCount == 2)
             #expect(artifacts.pressureArtifactCatalog.failedCount == 2)
             #expect(artifacts.pressureArtifactCatalog.expiredCount == 1)
-            #expect(artifacts.pressureArtifactReadiness.status == PressureArtifactCatalogStatus.failed.rawValue)
-            #expect(artifacts.pressureArtifactReadiness.runTime == readyLatestRow.runTime)
-            #expect(artifacts.pressureArtifactReadiness.forecastHour == readyLatestRow.forecastHour)
-            #expect(artifacts.pressureArtifactReadiness.validTime == readyLatestRow.validTime)
+            #expect(artifacts.pressureArtifactReadiness.selectionOutcome == .exact)
+            #expect(artifacts.pressureArtifactReadiness.status == PressureArtifactCatalogStatus.ready.rawValue)
+            #expect(artifacts.pressureArtifactReadiness.runTime == exactPressureRow.runTime)
+            #expect(artifacts.pressureArtifactReadiness.forecastHour == exactPressureRow.forecastHour)
+            #expect(artifacts.pressureArtifactReadiness.validTime == exactPressureRow.validTime)
             #expect(artifacts.pressureArtifactReadiness.fieldSetVersion == currentVersion.rawValue)
-            #expect(artifacts.pressureArtifactReadiness.byteSize == 20)
+            #expect(artifacts.pressureArtifactReadiness.byteSize == 5)
             #expect(artifacts.pressureArtifactReadiness.source == PressureArtifactCatalogSource.aws.rawValue)
-            #expect(artifacts.pressureArtifactReadiness.updatedAt == readyLatestRow.updatedAt)
-            #expect(artifacts.pressureArtifactReadiness.lastCheckedAt == nil)
-            #expect(artifacts.pressureArtifactReadiness.errorSummary == "pressure artifact validation failed")
-            #expect(artifacts.pressureArtifactCatalog.mostRecentFailureAt == failedLaterRow.updatedAt)
-            #expect(artifacts.pressureArtifactCatalog.mostRecentFailureSummary == "most recent failure")
+            #expect(artifacts.pressureArtifactReadiness.updatedAt == exactPressureRow.updatedAt)
+            #expect(artifacts.pressureArtifactReadiness.lastCheckedAt == exactPressureRow.lastCheckedAt)
+            #expect(artifacts.pressureArtifactReadiness.errorSummary == exactPressureRow.errorSummary)
+            #expect(artifacts.pressureArtifactReadiness.readinessReason == nil)
+            #expect(artifacts.pressureArtifactCatalog.mostRecentFailureAt == failedOlderRow.updatedAt)
+            #expect(artifacts.pressureArtifactCatalog.mostRecentFailureSummary == "older failure")
             #expect(artifacts.recentPressureArtifacts.entries.count == 5)
             #expect(artifacts.recentPressureArtifacts.entries.map(\.validTime) == [
-                readyLatestRow.validTime,
+                newerFailedRow.validTime,
+                exactPressureRow.validTime,
                 readyLaterRow.validTime,
                 warmingRow.validTime,
-                pendingRow.validTime,
-                expiredRow.validTime
+                pendingRow.validTime
             ])
             #expect(artifacts.recentPressureArtifacts.entries.first?.status == PressureArtifactCatalogStatus.failed.rawValue)
-            #expect(artifacts.recentPressureArtifacts.entries.first?.errorSummary == "pressure artifact validation failed")
+            #expect(artifacts.recentPressureArtifacts.entries.first?.errorSummary == "most recent failure")
             #expect(artifacts.recentPressureArtifacts.entries.contains { $0.byteSize == nil })
             #expect(artifacts.recentPressureArtifacts.entries.contains { $0.lastCheckedAt == nil })
             #expect(artifacts.recentPressureArtifacts.entries.allSatisfy { $0.fieldSetVersion == currentVersion.rawValue })
-            #expect(response.modelArtifacts.pressureArtifactReadiness.validTimeAgeSeconds == 3_600)
+            #expect(response.modelArtifacts.pressureArtifactReadiness.validTimeAgeSeconds == 0)
+            #expect(response.modelArtifacts.pressureArtifactReadiness.selectionOutcome == .exact)
+            #expect(response.modelArtifacts.pressureArtifactReadiness.readinessReason == nil)
+            #expect(html.contains("EXACT"))
+            #expect(html.contains("accent"))
+            #expect(html.contains("Catalog status"))
+            #expect(html.contains("localPath") == false)
         }
     }
 
@@ -200,12 +198,174 @@ struct OperatorDashboardPressureArtifactTests {
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let artifacts = snapshot.modelArtifacts
 
+            #expect(artifacts.pressureArtifactReadiness.selectionOutcome == .unavailable)
             #expect(artifacts.pressureArtifactReadiness.status == nil)
             #expect(artifacts.pressureArtifactReadiness.runTime == nil)
+            #expect(artifacts.pressureArtifactReadiness.readinessReason == "No current-version catalog artifact exists.")
             #expect(artifacts.pressureArtifactCatalog.totalRowCount == 0)
             #expect(artifacts.pressureArtifactCatalog.readyCount == 0)
             #expect(artifacts.pressureArtifactCatalog.mostRecentFailureAt == nil)
             #expect(artifacts.recentPressureArtifacts.entries.isEmpty)
+        }
+    }
+
+    @Test("newer failed rows do not hide an eligible stale pressure artifact")
+    func newerFailedRowsDoNotHideAnEligibleStalePressureArtifact() async throws {
+        try await withApp { app in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)
+            let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+            let missingExactPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("missing-exact-\(UUID().uuidString).grib2")
+            let missingExactRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .ready,
+                localPath: missingExactPath.path,
+                byteSize: 111,
+                source: .aws
+            )
+            let staleFileURL = makeTempRegularFile(contents: Data("stale".utf8))
+            let staleRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .ready,
+                localPath: staleFileURL.path,
+                byteSize: 4_096,
+                source: .nomads,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 2)
+            )
+            let newerFailedRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 24),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 24),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .failed,
+                localPath: nil,
+                byteSize: nil,
+                source: .aws,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 45),
+                errorSummary: "most recent failure"
+            )
+
+            try await missingExactRow.create(on: app.db)
+            try await staleRow.create(on: app.db)
+            try await newerFailedRow.create(on: app.db)
+
+            try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+
+            let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+            let readiness = snapshot.modelArtifacts.pressureArtifactReadiness
+            let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response)
+
+            #expect(readiness.selectionOutcome == .stale)
+            #expect(readiness.status == PressureArtifactCatalogStatus.ready.rawValue)
+            #expect(readiness.readinessReason?.contains("Bounded stale fallback selected") == true)
+            #expect(readiness.runTime == staleRow.runTime)
+            #expect(readiness.forecastHour == staleRow.forecastHour)
+            #expect(readiness.validTime == staleRow.validTime)
+            #expect(readiness.byteSize == 5)
+            #expect(readiness.source == PressureArtifactCatalogSource.nomads.rawValue)
+            #expect(html.contains("STALE"))
+            #expect(html.contains("warn"))
+        }
+    }
+
+    @Test("current-version exact misses do not fall back to older field-set versions")
+    func currentVersionExactMissesDoNotFallBackToOlderFieldSetVersions() async throws {
+        try await withApp { app in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)
+            let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+            let oldVersionFileURL = makeTempRegularFile(contents: Data("older-version".utf8))
+            let currentMissingPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("missing-current-\(UUID().uuidString).grib2")
+
+            let currentMissingRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .ready,
+                localPath: currentMissingPath.path,
+                byteSize: 123,
+                source: .aws
+            )
+            let oldVersionRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+                product: .wrfprsf,
+                fieldSetVersion: .tornadoPressureV1,
+                status: .ready,
+                localPath: oldVersionFileURL.path,
+                byteSize: 13,
+                source: .aws,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 1)
+            )
+
+            try await currentMissingRow.create(on: app.db)
+            try await oldVersionRow.create(on: app.db)
+
+            try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+
+            let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+            let readiness = snapshot.modelArtifacts.pressureArtifactReadiness
+            let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response)
+
+            #expect(readiness.selectionOutcome == .unavailable)
+            #expect(readiness.status == PressureArtifactCatalogStatus.ready.rawValue)
+            #expect(readiness.fieldSetVersion == currentVersion.rawValue)
+            #expect(readiness.readinessReason?.contains("no usable local artifact file") == true)
+            #expect(readiness.byteSize == 123)
+            #expect(html.contains("UNAVAILABLE"))
+            #expect(html.contains("danger"))
+        }
+    }
+
+    @Test("pressure artifacts older than the stale window are unavailable")
+    func pressureArtifactsOlderThanTheStaleWindowAreUnavailable() async throws {
+        try await withApp { app in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)
+            let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+            let oldFileURL = makeTempRegularFile(contents: Data("too-old".utf8))
+            let oldRow = PressureArtifactCatalogModel(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20),
+                forecastHour: 0,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .ready,
+                localPath: oldFileURL.path,
+                byteSize: 7,
+                source: .aws,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20, minute: 5)
+            )
+
+            try await oldRow.create(on: app.db)
+
+            try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+
+            let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+            let readiness = snapshot.modelArtifacts.pressureArtifactReadiness
+            let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response)
+
+            #expect(readiness.selectionOutcome == .unavailable)
+            #expect(readiness.status == PressureArtifactCatalogStatus.ready.rawValue)
+            #expect(readiness.readinessReason?.contains("outside the bounded stale window") == true)
+            #expect(readiness.runTime == oldRow.runTime)
+            #expect(readiness.byteSize == 7)
+            #expect(html.contains("UNAVAILABLE"))
+            #expect(html.contains("danger"))
         }
     }
 
@@ -293,7 +453,9 @@ struct OperatorDashboardPressureArtifactTests {
         let snapshot = try decoder.decode(OperatorDashboardStoredSnapshot.self, from: Data(json.utf8))
         #expect(snapshot.modelArtifacts.pressureArtifactCatalog.totalRowCount == 0)
         #expect(snapshot.modelArtifacts.recentPressureArtifacts.entries.isEmpty)
+        #expect(snapshot.modelArtifacts.pressureArtifactReadiness.selectionOutcome == nil)
         #expect(snapshot.modelArtifacts.pressureArtifactReadiness.status == nil)
+        #expect(snapshot.modelArtifacts.pressureArtifactReadiness.readinessReason == nil)
     }
 
     @Test("/v1/metrics exposes the model artifacts section")
@@ -309,12 +471,16 @@ struct OperatorDashboardPressureArtifactTests {
                 let payload = try res.content.decode(OperatorDashboardSnapshotResponse.self)
 
                 #expect(payload.modelArtifacts.pressureArtifactReadiness.status == snapshot.modelArtifacts.pressureArtifactReadiness.status)
+                #expect(payload.modelArtifacts.pressureArtifactReadiness.selectionOutcome == snapshot.modelArtifacts.pressureArtifactReadiness.selectionOutcome)
+                #expect(payload.modelArtifacts.pressureArtifactReadiness.readinessReason == snapshot.modelArtifacts.pressureArtifactReadiness.readinessReason)
                 #expect(payload.modelArtifacts.pressureArtifactCatalog.totalCount == snapshot.modelArtifacts.pressureArtifactCatalog.totalRowCount)
                 #expect(payload.modelArtifacts.recentPressureArtifacts.entries.count == 1)
                 #expect(body.contains("modelArtifacts"))
                 #expect(body.contains("pressureArtifactReadiness"))
                 #expect(body.contains("pressureArtifactCatalog"))
                 #expect(body.contains("recentPressureArtifacts"))
+                #expect(body.contains("selectionOutcome"))
+                #expect(body.contains("readinessReason"))
                 #expect(body.contains("localPath") == false)
             })
         }
@@ -332,11 +498,14 @@ struct OperatorDashboardPressureArtifactTests {
                 #expect(res.body.string.contains("Pressure artifact readiness"))
                 #expect(res.body.string.contains("Pressure artifact catalog"))
                 #expect(res.body.string.contains("Recent pressure artifacts"))
-                #expect(res.body.string.contains("FAILED"))
+                #expect(res.body.string.contains("UNAVAILABLE"))
+                #expect(res.body.string.contains("danger"))
                 #expect(res.body.string.contains("20 B"))
                 #expect(res.body.string.contains("FH 9"))
-                #expect(res.body.string.contains("validation failed"))
+                #expect(res.body.string.contains("Newest catalog row is failed"))
                 #expect(res.body.string.contains("localPath") == false)
+                #expect(res.body.string.contains("renderPressureArtifactOutcome"))
+                #expect(res.body.string.contains("renderPressureArtifactOutcomeClass"))
                 #expect(res.body.string.contains("renderPressureArtifactReadinessCard"))
                 #expect(res.body.string.contains("renderPressureArtifactCatalogCard"))
                 #expect(res.body.string.contains("renderRecentPressureArtifactsTable"))
@@ -344,6 +513,60 @@ struct OperatorDashboardPressureArtifactTests {
                 #expect(res.body.string.contains("snapshot.modelArtifacts?.pressureArtifactCatalog?.refreshedAt"))
                 #expect(res.body.string.contains("snapshot.modelArtifacts?.recentPressureArtifacts?.refreshedAt"))
             })
+        }
+    }
+
+    @Test("dashboard renderer covers exact, stale, unavailable, and legacy readiness states")
+    func dashboardRendererCoversExactStaleUnavailableAndLegacyReadinessStates() {
+        let exactSnapshot = makeSnapshot(readiness: makeExactReadinessMetric())
+        let staleSnapshot = makeSnapshot(readiness: makeStaleReadinessMetric())
+        let unavailableSnapshot = makeSnapshot(readiness: makeUnavailableReadinessMetric())
+        let legacySnapshot = OperatorDashboardStoredSnapshot(
+            generatedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+            fastRefreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+            modelArtifacts: .init(
+                pressureArtifactReadiness: .init(
+                    refreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                    status: nil,
+                    runTime: nil,
+                    forecastHour: nil,
+                    validTime: nil,
+                    fieldSetVersion: nil,
+                    byteSize: nil,
+                    source: nil,
+                    updatedAt: nil,
+                    lastCheckedAt: nil,
+                    errorSummary: nil,
+                    readinessReason: nil
+                ),
+                pressureArtifactCatalog: .init(),
+                recentPressureArtifacts: .init()
+            )
+        )
+
+        let cases: [(snapshot: OperatorDashboardStoredSnapshot, expectedPrimary: String, expectedClass: String?, expectedReason: String?)] = [
+            (exactSnapshot, "EXACT", "accent", nil),
+            (staleSnapshot, "STALE", "warn", "Bounded stale fallback selected"),
+            (unavailableSnapshot, "UNAVAILABLE", "danger", "Newest catalog row is failed"),
+            (legacySnapshot, "NO DATA", nil, nil)
+        ]
+
+        for testCase in cases {
+            let response = OperatorDashboardSnapshotResponse(snapshot: testCase.snapshot, renderedAt: testCase.snapshot.generatedAt)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response)
+
+            #expect(response.modelArtifacts.pressureArtifactReadiness.selectionOutcome == testCase.snapshot.modelArtifacts.pressureArtifactReadiness.selectionOutcome)
+            #expect(html.contains(testCase.expectedPrimary))
+            #expect(html.contains("renderPressureArtifactOutcome"))
+            #expect(html.contains("renderPressureArtifactOutcomeClass"))
+
+            if let expectedClass = testCase.expectedClass {
+                #expect(html.contains("primary \(expectedClass)"))
+            }
+
+            if let expectedReason = testCase.expectedReason {
+                #expect(html.contains(expectedReason))
+            }
         }
     }
 }
@@ -361,25 +584,16 @@ private extension OperatorDashboardPressureArtifactTests {
         }
     }
 
-    func makeSnapshot() -> OperatorDashboardStoredSnapshot {
+    func makeSnapshot(
+        readiness: StoredPressureArtifactDashboardReadinessMetric? = nil
+    ) -> OperatorDashboardStoredSnapshot {
         let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+        let readiness = readiness ?? makeUnavailableReadinessMetric()
         return .init(
             generatedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
             fastRefreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
             modelArtifacts: .init(
-                pressureArtifactReadiness: .init(
-                    refreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
-                    status: PressureArtifactCatalogStatus.failed.rawValue,
-                    runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
-                    forecastHour: 9,
-                    validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
-                    fieldSetVersion: currentVersion.rawValue,
-                    byteSize: 20,
-                    source: PressureArtifactCatalogSource.aws.rawValue,
-                    updatedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 1),
-                    lastCheckedAt: nil,
-                    errorSummary: "validation failed"
-                ),
+                pressureArtifactReadiness: readiness,
                 pressureArtifactCatalog: .init(
                     refreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
                     totalRowCount: 1,
@@ -414,6 +628,63 @@ private extension OperatorDashboardPressureArtifactTests {
         )
     }
 
+    func makeExactReadinessMetric() -> StoredPressureArtifactDashboardReadinessMetric {
+        let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+        return .init(
+            refreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+            selectionOutcome: .exact,
+            status: PressureArtifactCatalogStatus.ready.rawValue,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            fieldSetVersion: currentVersion.rawValue,
+            byteSize: 20,
+            source: PressureArtifactCatalogSource.aws.rawValue,
+            updatedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 1),
+            lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 2),
+            errorSummary: nil,
+            readinessReason: nil
+        )
+    }
+
+    func makeStaleReadinessMetric() -> StoredPressureArtifactDashboardReadinessMetric {
+        let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+        return .init(
+            refreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+            selectionOutcome: .stale,
+            status: PressureArtifactCatalogStatus.ready.rawValue,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12),
+            forecastHour: 10,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+            fieldSetVersion: currentVersion.rawValue,
+            byteSize: 4_096,
+            source: PressureArtifactCatalogSource.nomads.rawValue,
+            updatedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 1),
+            lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 2),
+            errorSummary: nil,
+            readinessReason: "Bounded stale fallback selected after all exact candidates missed."
+        )
+    }
+
+    func makeUnavailableReadinessMetric() -> StoredPressureArtifactDashboardReadinessMetric {
+        let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+        return .init(
+            refreshedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+            selectionOutcome: .unavailable,
+            status: PressureArtifactCatalogStatus.failed.rawValue,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            fieldSetVersion: currentVersion.rawValue,
+            byteSize: 20,
+            source: PressureArtifactCatalogSource.aws.rawValue,
+            updatedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18, minute: 1),
+            lastCheckedAt: nil,
+            errorSummary: "validation failed",
+            readinessReason: "Newest catalog row is failed: validation failed."
+        )
+    }
+
     func makeUTCDate(
         year: Int,
         month: Int,
@@ -430,5 +701,12 @@ private extension OperatorDashboardPressureArtifactTests {
         components.hour = hour
         components.minute = minute
         return components.date!
+    }
+
+    func makeTempRegularFile(contents: Data) -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pressure-artifact-\(UUID().uuidString).grib2")
+        FileManager.default.createFile(atPath: url.path, contents: contents)
+        return url
     }
 }
