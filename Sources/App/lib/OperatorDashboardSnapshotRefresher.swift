@@ -621,12 +621,13 @@ struct OperatorDashboardSnapshotRefresher {
     }
 
     private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-        HrrrRunCandidate(
+        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
+        return HrrrRunCandidate(
             model: candidate.model,
             product: .wrfprsf,
             domain: candidate.domain,
-            runTime: candidate.runTime,
-            forecastHour: candidate.forecastHour,
+            runTime: runTime,
+            forecastHour: candidate.forecastHour + 1,
             fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
         )
     }

@@ -39,8 +39,8 @@ struct OperatorDashboardPressureArtifactTests {
             let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
             let exactFileURL = makeTempRegularFile(contents: Data("exact".utf8))
             let exactPressureRow = PressureArtifactCatalogModel(
-                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
-                forecastHour: 0,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+                forecastHour: 1,
                 validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
                 product: .wrfprsf,
                 fieldSetVersion: currentVersion,
