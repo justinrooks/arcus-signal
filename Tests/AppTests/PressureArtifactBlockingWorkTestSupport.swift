@@ -1,4 +1,5 @@
 @testable import App
+import Foundation
 import NIOPosix
 import Vapor
 
@@ -22,5 +23,33 @@ func withPressureArtifactThreadPoolExecutor<T>(
     } catch {
         try? await threadPool.shutdownGracefully()
         throw error
+    }
+}
+
+final class CountingPressureArtifactBlockingWorkExecutor: PressureArtifactBlockingWorkExecuting, @unchecked Sendable {
+    private let wrapped: any PressureArtifactBlockingWorkExecuting
+    private let counter = ExecutionCounter()
+
+    init(wrapping wrapped: any PressureArtifactBlockingWorkExecuting) {
+        self.wrapped = wrapped
+    }
+
+    func executionCount() async -> Int {
+        await counter.value
+    }
+
+    func execute<T: Sendable>(
+        _ operation: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        await counter.increment()
+        return try await wrapped.execute(operation)
+    }
+}
+
+private actor ExecutionCounter {
+    var value = 0
+
+    func increment() {
+        value += 1
     }
 }

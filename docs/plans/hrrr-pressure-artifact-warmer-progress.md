@@ -43,6 +43,7 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 - The subset cache pushes directory creation, subset and metadata reads/writes, cache invalidation, and checksum verification through the adapter.
 - The byte-range downloader pushes SHA-256 generation through the adapter.
 - The catalog lookup service pushes regular-file and positive-size checks through the adapter.
+- The cleanup service pushes filesystem existence checks, symlink/canonical path resolution, regular-file checks, and physical deletion through the adapter.
 - Cancellation only applies before scheduling and after completion checks; it does not preempt in-flight Foundation file work.
 - Remaining performance risk: the work is bounded, but disk I/O and hashing still occupy a thread-pool thread for the duration of each blocking operation.
 
@@ -64,26 +65,34 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 - Pressure-artifact cache reads, atomic writes, directory management, request-path file inspection, and SHA-256 checksums now run on the shared bounded blocking pool instead of actor or request executors.
+- Pressure-artifact cleanup filesystem work now also runs on the shared bounded blocking pool instead of the cooperative executor.
 - Cancellation remains cooperative around scheduling and completion only; Foundation disk operations are still non-preemptive.
+- Cleanup still preserves lifecycle semantics, claim fencing, and protected-path behavior.
 
 ## Latest Slice
 
 Status: Completed
 
 Changed:
-- `PressureArtifactCleanupService` now releases a cleanup claim when an expired row is skipped because its path is protected by a ready or warming row.
-- The cleanup claim release preserves `status`, `localPath`, `byteSize`, and `errorSummary` while clearing only `claimToken` and `leaseExpiresAt`.
-- `PressureArtifactCleanupServiceTests` now covers both protected-path branches:
-  - shared ready-path protection
-  - warming-path protection
+- `PressureArtifactCleanupService` now depends on `PressureArtifactBlockingWorkExecuting`.
+- `PressureArtifactCleanupService.makeDefault(application:)` now uses `NIOThreadPoolPressureArtifactBlockingWorkExecutor(threadPool: application.threadPool)`.
+- Cleanup filesystem operations now route through the blocking executor:
+  - file existence checks
+  - standardized path resolution
+  - symlink/canonical path resolution
+  - regular-file checks
+  - physical file deletion
+- `PressureArtifactCleanupServiceTests` now injects the existing test blocking executor and adds a narrow count-based seam proving the cleanup path uses it.
 
 Validated:
 - `swift build`
 - `swift test --no-parallel --filter PressureArtifactCleanupServiceTests`
 - `swift test --parallel --num-workers 8 --filter PressureArtifactCleanupServiceTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
 
 Remaining:
-- No additional cleanup-claim changes are scoped in this slice.
+- No additional cleanup lifecycle changes are scoped in this slice.
 - The next warmer issue should stay issue-scoped and avoid broader cleanup behavior changes.
 
 ## Warm Invariant

@@ -9,6 +9,7 @@ protocol PressureArtifactCleaning: Sendable {
 
 struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Sendable {
     private let dateProvider: any StormSetupDateProviding
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
     private let fileManager: FileManager
     private let cacheRootURL: URL
     private let maxStaleAgeSeconds: TimeInterval
@@ -18,6 +19,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
 
     init(
         dateProvider: any StormSetupDateProviding,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         fileManager: FileManager = .default,
         cacheRootURL: URL,
         maxStaleAgeSeconds: TimeInterval,
@@ -26,6 +28,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
         beforePhysicalRemovalHook: @escaping @Sendable () async -> Void = {}
     ) {
         self.dateProvider = dateProvider
+        self.blockingWorkExecutor = blockingWorkExecutor
         self.fileManager = fileManager
         self.cacheRootURL = cacheRootURL
         self.maxStaleAgeSeconds = max(0, maxStaleAgeSeconds)
@@ -37,6 +40,9 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
     static func makeDefault(application: Application) -> PressureArtifactCleanupService {
         PressureArtifactCleanupService(
             dateProvider: SystemStormSetupDateProvider(),
+            blockingWorkExecutor: NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+                threadPool: application.threadPool
+            ),
             cacheRootURL: application.stormSetupConfiguration.pressureGribSubsetCacheRootURL,
             maxStaleAgeSeconds: application.stormSetupConfiguration.pressureArtifactMaxStaleAgeSeconds,
             deleteGraceSeconds: application.stormSetupConfiguration.pressureArtifactDeleteGraceSeconds,
@@ -97,7 +103,7 @@ extension PressureArtifactCleanupService {
         on database: any Database,
         logger: Logger
     ) async throws {
-        let canonicalRootPath = canonicalPath(for: cacheRootURL)
+        let canonicalRootPath = try await canonicalPath(for: cacheRootURL)
         let canonicalRootPrefix = canonicalRootPath.hasSuffix("/") ? canonicalRootPath : canonicalRootPath + "/"
 
         for row in expiredRows {
@@ -133,8 +139,8 @@ extension PressureArtifactCleanupService {
                 continue
             }
 
-            let localURL = URL(fileURLWithPath: localPath).standardizedFileURL
-            let fileExists = fileManager.fileExists(atPath: localURL.path)
+            let localURL = try await standardizedFileURL(for: localPath)
+            let fileExists = try await fileExists(at: localURL)
 
             guard fileExists else {
                 guard localURL.path == canonicalRootPath || localURL.path.hasPrefix(canonicalRootPrefix) else {
@@ -179,8 +185,8 @@ extension PressureArtifactCleanupService {
                 continue
             }
 
-            let resolvedURL = localURL.resolvingSymlinksInPath()
-            let canonicalPath = canonicalPath(for: resolvedURL)
+            let resolvedURL = try await resolvedURL(for: localURL)
+            let canonicalPath = try await canonicalPath(for: resolvedURL)
 
             guard canonicalPath == canonicalRootPath || canonicalPath.hasPrefix(canonicalRootPrefix) else {
                 if try await completeFailedCleanup(
@@ -252,9 +258,7 @@ extension PressureArtifactCleanupService {
                 continue
             }
 
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: resolvedURL.path, isDirectory: &isDirectory),
-                  !isDirectory.boolValue else {
+            guard try await isRegularFile(at: resolvedURL) else {
                 if try await completeFailedCleanup(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,
@@ -289,7 +293,7 @@ extension PressureArtifactCleanupService {
             }
 
             do {
-                try fileManager.removeItem(at: resolvedURL)
+                try await removeItem(at: resolvedURL)
                 if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
                     logger.info(
                         "Pressure artifact deleted from cache.",
@@ -348,15 +352,21 @@ extension PressureArtifactCleanupService {
             .all()
 
         let rows = activeRows + warmingRows
-        return Set(rows.compactMap { row in
+        var protectedPaths = Set<String>()
+        protectedPaths.reserveCapacity(rows.count)
+
+        for row in rows {
             guard let localPath = row.localPath?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !localPath.isEmpty else {
-                return nil
+                continue
             }
 
-            let localURL = URL(fileURLWithPath: localPath).standardizedFileURL
-            return canonicalPath(for: localURL.resolvingSymlinksInPath())
-        })
+            let localURL = try await standardizedFileURL(for: localPath)
+            let canonicalPath = try await canonicalPath(for: localURL)
+            protectedPaths.insert(canonicalPath)
+        }
+
+        return protectedPaths
     }
 
     func claimDeletionCandidate(
@@ -511,16 +521,56 @@ extension PressureArtifactCleanupService {
         return currentProtectedPaths.contains(path)
     }
 
+    func standardizedFileURL(for localPath: String) async throws -> URL {
+        let localPath = localPath
+        return try await blockingWorkExecutor.execute {
+            URL(fileURLWithPath: localPath).standardizedFileURL
+        }
+    }
+
+    func resolvedURL(for localURL: URL) async throws -> URL {
+        let localURL = localURL
+        return try await blockingWorkExecutor.execute {
+            localURL.resolvingSymlinksInPath()
+        }
+    }
+
+    func canonicalPath(for url: URL) async throws -> String {
+        let url = url
+        return try await blockingWorkExecutor.execute {
+            url.standardizedFileURL.resolvingSymlinksInPath().path
+        }
+    }
+
+    func fileExists(at url: URL) async throws -> Bool {
+        let url = url
+        return try await blockingWorkExecutor.execute {
+            fileManager.fileExists(atPath: url.path)
+        }
+    }
+
+    func isRegularFile(at url: URL) async throws -> Bool {
+        let url = url
+        return try await blockingWorkExecutor.execute {
+            var isDirectory: ObjCBool = false
+            let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            return exists && !isDirectory.boolValue
+        }
+    }
+
+    func removeItem(at url: URL) async throws {
+        let url = url
+        try await blockingWorkExecutor.execute {
+            try fileManager.removeItem(at: url)
+        }
+    }
+
     func cleanupClaimLostMetadata(for row: PressureArtifactCatalogModel) -> Logger.Metadata {
         [
             "runTime": .string(row.runTime.ISO8601Format()),
             "forecastHour": .stringConvertible(row.forecastHour),
             "path": .string(row.localPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "nil")
         ]
-    }
-
-    func canonicalPath(for url: URL) -> String {
-        url.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     func isProtectedPath(_ path: String, protectedPaths: Set<String>) -> Bool {

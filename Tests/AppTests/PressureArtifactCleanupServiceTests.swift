@@ -8,11 +8,43 @@ import Vapor
 
 @Suite("Pressure artifact cleanup service", .serialized)
 struct PressureArtifactCleanupServiceTests {
+    @Test("cleanup routes filesystem work through the blocking executor")
+    func cleanupRoutesFilesystemWorkThroughTheBlockingExecutor() async throws {
+        try await withApp { app, rootURL, blockingWorkExecutor in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(
+                wrapping: blockingWorkExecutor
+            )
+            let service = makeService(
+                rootURL: rootURL,
+                now: now,
+                blockingWorkExecutor: countingExecutor
+            )
+            let fileURL = makeTempRegularFile(
+                in: rootURL,
+                name: "counted.grib2",
+                contents: Data("counted".utf8)
+            )
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 7
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            try await service.cleanup(on: app, logger: app.logger)
+
+            #expect(await countingExecutor.executionCount() > 0)
+        }
+    }
+
     @Test("old ready rows expire first and are not deleted in the same run")
     func oldReadyRowsExpireFirstAndAreNotDeletedInTheSameRun() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let expiredRow = try await seedRow(
                 on: app.db,
                 status: .ready,
@@ -45,9 +77,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("pre-expired rows older than the grace period are deleted")
     func preExpiredRowsOlderThanTheGracePeriodAreDeleted() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let fileURL = makeTempRegularFile(in: rootURL, name: "expired.grib2", contents: Data("expired".utf8))
             let row = try await seedRow(
                 on: app.db,
@@ -72,9 +104,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("only one cleanup token owns a candidate")
     func onlyOneCleanupTokenOwnsACandidate() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let fileURL = makeTempRegularFile(in: rootURL, name: "concurrent.grib2", contents: Data("delete-me".utf8))
             let row = try await seedRow(
                 on: app.db,
@@ -109,9 +141,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("expired cleanup leases can be reclaimed")
     func expiredCleanupLeasesCanBeReclaimed() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let fileURL = makeTempRegularFile(in: rootURL, name: "reclaim.grib2", contents: Data("reclaim".utf8))
             let row = try await seedRow(
                 on: app.db,
@@ -137,9 +169,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("old cleanup tokens cannot clear metadata after ownership changes")
     func oldCleanupTokensCannotClearMetadataAfterOwnershipChanges() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let fileURL = makeTempRegularFile(in: rootURL, name: "ownership.grib2", contents: Data("ownership".utf8))
             let row = try await seedRow(
                 on: app.db,
@@ -186,9 +218,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("warming rows and boundary ready rows remain untouched")
     func warmingRowsAndBoundaryReadyRowsRemainUntouched() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let warmingURL = makeTempRegularFile(in: rootURL, name: "warming.grib2", contents: Data("warming".utf8))
             let boundaryURL = makeTempRegularFile(in: rootURL, name: "boundary.grib2", contents: Data("boundary".utf8))
             let protectedExpiredRow = try await seedRow(
@@ -238,9 +270,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("shared paths referenced by ready rows are not deleted")
     func sharedPathsReferencedByReadyRowsAreNotDeleted() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let sharedURL = makeTempRegularFile(in: rootURL, name: "shared.grib2", contents: Data("shared".utf8))
             let expiredRow = try await seedRow(
                 on: app.db,
@@ -280,9 +312,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("missing files are handled idempotently")
     func missingFilesAreHandledIdempotently() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let missingURL = rootURL.appendingPathComponent("missing.grib2")
             let row = try await seedRow(
                 on: app.db,
@@ -306,9 +338,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("deletion failures release the cleanup claim and preserve metadata")
     func deletionFailuresReleaseTheCleanupClaimAndPreserveMetadata() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let lockedDirectoryURL = rootURL.appendingPathComponent("locked", isDirectory: true)
             try FileManager.default.createDirectory(at: lockedDirectoryURL, withIntermediateDirectories: true)
             let fileURL = lockedDirectoryURL.appendingPathComponent("locked.grib2")
@@ -347,9 +379,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("directories remain protected")
     func directoriesRemainProtected() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let directoryURL = rootURL.appendingPathComponent("artifact-dir", isDirectory: true)
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
@@ -376,9 +408,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("paths outside the cache root are never deleted")
     func pathsOutsideTheCacheRootAreNeverDeleted() async throws {
-        try await withApp { app, rootURL in
+        try await withApp { app, rootURL, blockingWorkExecutor in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
             let outsideURL = FileManager.default.temporaryDirectory.appendingPathComponent("outside-\(UUID().uuidString).grib2")
             FileManager.default.createFile(atPath: outsideURL.path, contents: Data("outside".utf8))
             let symlinkURL = rootURL.appendingPathComponent("outside-link.grib2")
@@ -407,7 +439,9 @@ struct PressureArtifactCleanupServiceTests {
 }
 
 private extension PressureArtifactCleanupServiceTests {
-    func withApp(test: (Application, URL) async throws -> Void) async throws {
+    func withApp(
+        test: (Application, URL, NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> Void
+    ) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
             let app = try await Application.make(.testing)
             let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("pressure-cleanup-\(UUID().uuidString)", isDirectory: true)
@@ -416,7 +450,8 @@ private extension PressureArtifactCleanupServiceTests {
                 try await configure(app, mode: .api)
                 try await app.autoMigrate()
                 try await clearCatalog(on: app.db)
-                try await test(app, rootURL)
+                let blockingWorkExecutor = makePressureArtifactBlockingWorkExecutor(application: app)
+                try await test(app, rootURL, blockingWorkExecutor)
             } catch {
                 try? await app.asyncShutdown()
                 throw error
@@ -425,17 +460,16 @@ private extension PressureArtifactCleanupServiceTests {
         }
     }
 
-    func makeService(rootURL: URL, now: Date) -> PressureArtifactCleanupService {
-        makeService(rootURL: rootURL, now: now, beforePhysicalRemovalHook: {})
-    }
-
     func makeService(
         rootURL: URL,
         now: Date,
-        beforePhysicalRemovalHook: @escaping @Sendable () async -> Void
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
+        beforePhysicalRemovalHook: @escaping @Sendable () async -> Void = {}
     ) -> PressureArtifactCleanupService {
         PressureArtifactCleanupService(
             dateProvider: FixedCleanupDateProvider(nowDate: now),
+            blockingWorkExecutor: blockingWorkExecutor,
+            fileManager: .default,
             cacheRootURL: rootURL,
             maxStaleAgeSeconds: 2 * 60 * 60,
             deleteGraceSeconds: 60 * 60,
