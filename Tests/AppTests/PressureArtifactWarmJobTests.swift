@@ -375,6 +375,75 @@ struct PressureArtifactWarmJobTests {
         }
     }
 
+    @Test("expired claims only match the payload artifact key")
+    func expiredClaimsOnlyMatchThePayloadArtifactKey() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let unrelatedPayload = makeUnrelatedPayload()
+            try await seedCatalogRow(status: .expired, payload: payload, on: app.db)
+            try await seedCatalogRow(status: .expired, payload: unrelatedPayload, on: app.db)
+
+            let unrelatedRow = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: unrelatedPayload.runTime,
+                forecastHour: unrelatedPayload.forecastHour,
+                product: unrelatedPayload.product,
+                fieldSetVersion: unrelatedPayload.fieldSetVersion,
+                on: app.db
+            ))
+            unrelatedRow.localPath = "/tmp/unrelated-pressure-artifact.grib2"
+            unrelatedRow.byteSize = 42
+            try await unrelatedRow.update(on: app.db)
+
+            let service = PressureArtifactWarmingService(
+                httpClient: PressureArtifactWarmStubHTTPClient(),
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: 0),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount
+            )
+            let claimToken = UUID()
+
+            let claimedRow = try #require(try await service.claimCatalogRow(
+                for: payload,
+                claimToken: claimToken,
+                on: app.db
+            ))
+
+            let payloadRow = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+            let refetchedUnrelatedRow = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: unrelatedPayload.runTime,
+                forecastHour: unrelatedPayload.forecastHour,
+                product: unrelatedPayload.product,
+                fieldSetVersion: unrelatedPayload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(claimedRow.runTime == payload.runTime)
+            #expect(claimedRow.forecastHour == payload.forecastHour)
+            #expect(claimedRow.status == .warming)
+            #expect(claimedRow.claimToken == claimToken)
+            #expect(claimedRow.leaseExpiresAt != nil)
+
+            #expect(payloadRow.status == .warming)
+            #expect(payloadRow.claimToken == claimToken)
+            #expect(payloadRow.leaseExpiresAt != nil)
+
+            #expect(refetchedUnrelatedRow.status == .expired)
+            #expect(refetchedUnrelatedRow.localPath == "/tmp/unrelated-pressure-artifact.grib2")
+            #expect(refetchedUnrelatedRow.byteSize == 42)
+            #expect(refetchedUnrelatedRow.claimToken == nil)
+            #expect(refetchedUnrelatedRow.leaseExpiresAt == nil)
+        }
+    }
+
     @Test("successful owner clears claim metadata and marks ready")
     func successfulOwnerClearsClaimMetadataAndMarksReady() async throws {
         try await withApp { app, blockingWorkExecutor in
@@ -743,6 +812,16 @@ private extension PressureArtifactWarmJobTests {
             runTime: makeDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9,
             validTime: makeDate(year: 2026, month: 6, day: 3, hour: 22),
+            product: .wrfprsf,
+            fieldSetVersion: .tornadoPressureV2
+        )
+    }
+
+    func makeUnrelatedPayload() -> PressureArtifactWarmJobPayload {
+        PressureArtifactWarmJobPayload(
+            runTime: makeDate(year: 2026, month: 6, day: 2, hour: 13),
+            forecastHour: 12,
+            validTime: makeDate(year: 2026, month: 6, day: 2, hour: 22),
             product: .wrfprsf,
             fieldSetVersion: .tornadoPressureV2
         )

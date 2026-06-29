@@ -839,3 +839,47 @@ Validation results:
 Remaining diagnostic limitations:
 - Blocking filesystem and Process work elsewhere in Storm Setup still remains synchronous, so cancellation is enforced at the boundaries rather than interrupting the middle of local I/O.
 - The request-path event is still a diagnostic log only; it does not change response payloads, dashboards, or artifact fallback behavior.
+
+### Warm Claim SQL Scoping Fix
+
+Status: Completed
+
+Scope:
+- Fix `PressureArtifactWarmingService.claimCatalogRow` so the expired-row branch is scoped under the same artifact identity predicates as the pending/failed branches.
+- Add a regression test that seeds one matching expired row and one unrelated expired row, then proves only the payload row is claimed.
+- Record the fix and validation results in this progress log.
+
+Files changed:
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+- `docs/plans/hrrr-pressure-artifact-warmer-progress.md`
+
+Behavior change:
+- The claim SQL now groups the pending/failed and expired eligibility checks inside a single parenthesized branch under `run_time`, `forecast_hour`, `product`, and `field_set_version`.
+- Unrelated expired rows are no longer eligible for claim promotion just because they satisfy the expired lease condition.
+- Ready/failed claim fencing behavior remains unchanged.
+
+Regression coverage:
+- `expiredClaimsOnlyMatchThePayloadArtifactKey` seeds:
+  - a matching expired row
+  - an unrelated expired row with a different artifact identity
+- The test asserts:
+  - the returned row matches the payload key
+  - the matching row becomes `warming` with the new claim token
+  - the unrelated row stays `expired`
+  - the unrelated row keeps `localPath` and `byteSize` unchanged
+  - the unrelated row keeps `claimToken` and `leaseExpiresAt` unchanged/nil
+
+Validation performed:
+- `swift build`
+- `swift test --no-parallel --filter PressureArtifactWarmJobTests`
+- `swift test --parallel --num-workers 8 --filter PressureArtifactWarmJobTests`
+
+Validation results:
+- All three commands passed.
+- The focused suite passed in both serial and parallel execution.
+- The regression test passed and confirmed the claim SQL only affects the payload artifact key.
+
+Remaining work:
+- None for this slice.
+- Later warmer issues can continue to rely on the same claim fencing contract.

@@ -473,14 +473,16 @@ extension PressureArtifactWarmingService {
               AND forecast_hour = \(bind: payload.forecastHour)
               AND product = \(bind: payload.product.rawValue)
               AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
-            AND status IN (\(bind: PressureArtifactCatalogStatus.pending.rawValue),
-                             \(bind: PressureArtifactCatalogStatus.failed.rawValue))
-            OR (
-                status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-                AND claim_token IS NULL
-                AND (
-                    lease_expires_at IS NULL
-                    OR lease_expires_at <= NOW()
+              AND (
+                status IN (\(bind: PressureArtifactCatalogStatus.pending.rawValue),
+                           \(bind: PressureArtifactCatalogStatus.failed.rawValue))
+                OR (
+                    status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+                    AND claim_token IS NULL
+                    AND (
+                        lease_expires_at IS NULL
+                        OR lease_expires_at <= NOW()
+                    )
                 )
               )
             RETURNING id
