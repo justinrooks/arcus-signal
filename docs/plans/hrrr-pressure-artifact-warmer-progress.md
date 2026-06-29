@@ -531,6 +531,29 @@ Final next action:
 - The currently scoped warmer issues are complete.
 - Broader suite isolation issues remain outside the scope of `#121`.
 
+### Pressure Artifact Test Isolation
+
+Status: Completed
+
+Root cause:
+- Seven pressure-artifact suites shared the same PostgreSQL `pressure_artifact_catalog` table.
+- Each suite was individually marked `.serialized`, but Swift Testing still ran the suites concurrently.
+- The suite helpers all performed `DELETE FROM pressure_artifact_catalog;`, so one suite could wipe another suite's rows or collide on fixed artifact keys during setup or execution.
+
+Isolation design:
+- Added `Tests/AppTests/PressureArtifactCatalogTestGate.swift`, a test-only async gate backed by a scoped lock and FIFO waiter queue.
+- Wrapped each affected suite's `withApp` helper in the gate so it covers `Application.make`, `configure`, `autoMigrate`, `clearCatalog`, the test body, and `app.asyncShutdown`.
+- Kept the existing table cleanup and the existing `.serialized` suite traits.
+- Left production source code untouched.
+
+Validation commands and results:
+- `swift build` passed.
+- `swift test --no-parallel` passed with 327 tests and 0 failures.
+- `swift test --parallel --num-workers 8` run 1 failed with 3 issues in unrelated, non-pressure suites.
+- `swift test --parallel --num-workers 8` run 2 passed with 327 tests and 0 failures.
+- `swift test --parallel --num-workers 8` run 3 passed with 327 tests and 0 failures.
+- `swift test --parallel --num-workers 8` run 4 failed with 4 issues in unrelated, non-pressure suites.
+
 ### Follow-on Story - Surface HRRR pressure artifact health on the operator dashboard
 
 Status: Completed

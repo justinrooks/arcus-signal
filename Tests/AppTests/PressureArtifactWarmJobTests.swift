@@ -391,17 +391,19 @@ struct PressureArtifactWarmJobTests {
 
 private extension PressureArtifactWarmJobTests {
     func withApp(test: (Application) async throws -> Void) async throws {
-        let app = try await Application.make(.testing)
-        do {
-            try await configure(app, mode: .api)
-            try await app.autoMigrate()
-            try await clearCatalog(on: app.db)
-            try await test(app)
-        } catch {
-            try? await app.asyncShutdown()
-            throw error
+        try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
+            let app = try await Application.make(.testing)
+            do {
+                try await configure(app, mode: .api)
+                try await app.autoMigrate()
+                try await clearCatalog(on: app.db)
+                try await test(app)
+            } catch {
+                try? await app.asyncShutdown()
+                throw error
+            }
+            try await app.asyncShutdown()
         }
-        try await app.asyncShutdown()
     }
 
     func clearCatalog(on db: any Database) async throws {

@@ -195,19 +195,21 @@ struct PressureArtifactCleanupServiceTests {
 
 private extension PressureArtifactCleanupServiceTests {
     func withApp(test: (Application, URL) async throws -> Void) async throws {
-        let app = try await Application.make(.testing)
-        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("pressure-cleanup-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        do {
-            try await configure(app, mode: .api)
-            try await app.autoMigrate()
-            try await clearCatalog(on: app.db)
-            try await test(app, rootURL)
-        } catch {
-            try? await app.asyncShutdown()
-            throw error
+        try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
+            let app = try await Application.make(.testing)
+            let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("pressure-cleanup-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+            do {
+                try await configure(app, mode: .api)
+                try await app.autoMigrate()
+                try await clearCatalog(on: app.db)
+                try await test(app, rootURL)
+            } catch {
+                try? await app.asyncShutdown()
+                throw error
+            }
+            try await app.asyncShutdown()
         }
-        try await app.asyncShutdown()
     }
 
     func makeService(rootURL: URL, now: Date) -> PressureArtifactCleanupService {
