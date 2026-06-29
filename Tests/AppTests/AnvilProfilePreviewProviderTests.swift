@@ -630,6 +630,105 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.warnings.contains(where: { $0.contains("1000 mb below selected surface height 1200.0m") }))
     }
 
+    @Test("provider warns when the selected surface height is missing")
+    func providerWarnsWhenSelectedSurfaceHeightIsMissing() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let firstCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let resolver = PreviewStaticHrrrRunResolver(
+            resolution: HrrrRunResolution(
+                targetValidTime: now.truncatedToHour,
+                candidates: [firstCandidate]
+            )
+        )
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, resolution in
+            guard let candidate = resolution.candidates.first else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(
+                    reason: "missing pressure candidate"
+                )
+            }
+            return previewMakePressureSourceResolution(
+                candidate: candidate,
+                idxAvailable: true
+            )
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, _, surfaceHeightMslM in
+            #expect(surfaceHeightMslM == nil)
+            return previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                samples: previewMakeEightLevelPressureSamples()
+            )
+        }
+
+        let provider = DefaultAnvilProfilePreviewProvider(
+            h3Resolver: DefaultStormSetupH3Resolver(),
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: resolver,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+
+        #expect(preview.debug.warnings.contains(
+            "Below-ground pressure-level filtering unavailable because selected surface height was missing."
+        ))
+    }
+
+    @Test("provider warns when the selected surface height is invalid")
+    func providerWarnsWhenSelectedSurfaceHeightIsInvalid() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let firstCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let resolver = PreviewStaticHrrrRunResolver(
+            resolution: HrrrRunResolution(
+                targetValidTime: now.truncatedToHour,
+                candidates: [firstCandidate]
+            )
+        )
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, resolution in
+            guard let candidate = resolution.candidates.first else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(
+                    reason: "missing pressure candidate"
+                )
+            }
+            return previewMakePressureSourceResolution(
+                candidate: candidate,
+                idxAvailable: true
+            )
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, _, surfaceHeightMslM in
+            #expect(surfaceHeightMslM == nil)
+            return previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                samples: previewMakeEightLevelPressureSamples()
+            )
+        }
+
+        let provider = DefaultAnvilProfilePreviewProvider(
+            h3Resolver: DefaultStormSetupH3Resolver(),
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: resolver,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader,
+            surfaceHeightMslM: Double.infinity
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+
+        #expect(preview.debug.warnings.contains(
+            "Below-ground pressure-level filtering unavailable because selected surface height was invalid."
+        ))
+    }
+
     @Test("provider surfaces an unusable profile when filtering leaves too few above-ground levels")
     func providerSurfacesUnusableProfileAfterFiltering() async throws {
         let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)

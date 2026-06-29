@@ -6,6 +6,7 @@ struct TornadoIngredientSnapshot: Content, Sendable {
     let centroid: StormSetupCentroid
     let source: StormSetupSourceMetadata
     let raw: TornadoRawParameters
+    let surfaceHeightMslM: Double?
     let assessment: TornadoIngredientAssessment
     let freshness: IngredientFreshness
     let anvilEvidence: AnvilIngredientEvidence?
@@ -15,6 +16,7 @@ struct TornadoIngredientSnapshot: Content, Sendable {
         centroid: StormSetupCentroid,
         source: StormSetupSourceMetadata,
         raw: TornadoRawParameters,
+        surfaceHeightMslM: Double? = nil,
         assessment: TornadoIngredientAssessment,
         freshness: IngredientFreshness,
         anvilEvidence: AnvilIngredientEvidence? = nil
@@ -23,6 +25,7 @@ struct TornadoIngredientSnapshot: Content, Sendable {
         self.centroid = centroid
         self.source = source
         self.raw = raw
+        self.surfaceHeightMslM = surfaceHeightMslM
         self.assessment = assessment
         self.freshness = freshness
         self.anvilEvidence = anvilEvidence

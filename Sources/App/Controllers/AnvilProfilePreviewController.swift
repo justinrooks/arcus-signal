@@ -22,9 +22,16 @@ struct AnvilProfilePreviewController: RouteCollection {
 
         let query = try req.query.decode(ProfilePreviewQuery.self)
         let h3Cell = try normalizedH3Cell(from: query.h3)
+        let surfaceHeightMslM = await selectedSurfaceHeightMslM(
+            for: h3Cell,
+            application: req.application
+        )
 
         do {
-            return try await req.application.anvilProfilePreviewProvider.previewProfile(for: h3Cell)
+            return try await req.application.anvilProfilePreviewProvider.previewProfile(
+                for: h3Cell,
+                surfaceHeightMslM: surfaceHeightMslM
+            )
         } catch let error as AnvilProfilePreviewError {
             throw error.asAbort()
         }
@@ -47,5 +54,20 @@ private extension AnvilProfilePreviewController {
         }
 
         return h3Cell
+    }
+
+    func selectedSurfaceHeightMslM(for h3Cell: Int64, application: Application) async -> Double? {
+        do {
+            return try await application.stormSetupProvider.currentSnapshot(for: h3Cell).surfaceHeightMslM
+        } catch {
+            application.logger.warning(
+                "Unable to resolve selected surface height for Anvil preview; continuing without below-ground filtering.",
+                metadata: [
+                    "h3": .string("\(h3Cell)"),
+                    "error": .string(String(describing: error))
+                ]
+            )
+            return nil
+        }
     }
 }

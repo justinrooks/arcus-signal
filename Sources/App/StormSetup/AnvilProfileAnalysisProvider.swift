@@ -2,7 +2,16 @@ import Foundation
 import Vapor
 
 protocol AnvilProfileAnalysisProviding: Sendable {
-    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse
+}
+
+extension AnvilProfileAnalysisProviding {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        try await analyzeProfile(for: h3Cell, surfaceHeightMslM: nil)
+    }
 }
 
 enum AnvilProfileAnalysisError: Error, Sendable, CustomStringConvertible {
@@ -80,7 +89,10 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
         )
     }
 
-    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         let client: any AnvilProfileClient
         if let directClient {
             client = directClient
@@ -99,7 +111,10 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
 
         let preview: AnvilAnalyzeProfilePreviewResponse
         do {
-            preview = try await previewProvider.previewProfile(for: h3Cell)
+            preview = try await previewProvider.previewProfile(
+                for: h3Cell,
+                surfaceHeightMslM: surfaceHeightMslM
+            )
         } catch let error as AnvilProfilePreviewError {
             throw classify(previewError: error)
         } catch {

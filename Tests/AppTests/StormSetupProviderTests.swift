@@ -130,6 +130,89 @@ struct StormSetupProviderTests {
         #expect(anvilRequestCount == 1)
     }
 
+    @Test("runtime snapshot handoff forwards the selected surface height into Anvil analysis")
+    func runtimeSnapshotHandoffForwardsSelectedSurfaceHeight() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let candidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: candidate, centroid: expected.centroid)
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let subsetLoader = StubStormSetupSubsetLoader { _, _, _ in
+            makeSubsetResult(source: source, fetchedAt: now)
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, centroid in
+            [
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "1:0:d=2026060313:HGT:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1234"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "2:0:d=2026060313:CAPE:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1450"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "3:0:d=2026060313:CIN:90-0 mb above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-35"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "4:0:d=2026060313:HLCY:1000-0 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=80"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "5:0:d=2026060313:VUCSH:0-6000 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=6"
+                    )
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(
+                        from: "6:0:d=2026060313:VVCSH:0-6000 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=8"
+                    )
+                )
+            ]
+        }
+        let anvilProvider = CapturingAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse()
+        )
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: TornadoIngredientNormalizer(),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: anvilProvider
+        )
+
+        let snapshot = try await provider.currentSnapshot(for: fixedH3)
+
+        #expect(snapshot.surfaceHeightMslM == 1234)
+        #expect(snapshot.anvilEvidence?.status == .available)
+        #expect(await anvilProvider.recordedSurfaceHeightMslM == 1234)
+        #expect(await anvilProvider.requestCount == 1)
+    }
+
     @Test("cancellation during Anvil composition stops candidate fallback")
     func cancellationDuringAnvilCompositionStopsCandidateFallback() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -1162,6 +1245,7 @@ struct StormSetupProviderTests {
         source: StormSetupSourceMetadata,
         fetchedAt: Date,
         raw: TornadoRawParameters,
+        surfaceHeightMslM: Double? = nil,
         assessment: TornadoIngredientAssessment,
         freshness: IngredientFreshness,
         anvilEvidence: AnvilIngredientEvidence? = nil
@@ -1171,6 +1255,7 @@ struct StormSetupProviderTests {
             centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
             source: source,
             raw: raw,
+            surfaceHeightMslM: surfaceHeightMslM,
             assessment: assessment,
             freshness: freshness,
             anvilEvidence: anvilEvidence
@@ -1314,8 +1399,12 @@ private struct StubStormSetupAssessor: StormSetupIngredientAssessing, @unchecked
 private struct StubAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let response: AnvilAnalyzeProfileAnalysisResponse
 
-    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
+        _ = surfaceHeightMslM
         return response
     }
 }
@@ -1328,9 +1417,33 @@ private actor CountingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidin
         self.response = response
     }
 
-    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        _ = surfaceHeightMslM
+        requestCount += 1
+        return response
+    }
+}
+
+private actor CapturingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
+    private let response: AnvilAnalyzeProfileAnalysisResponse
+    private(set) var requestCount = 0
+    private(set) var recordedSurfaceHeightMslM: Double?
+
+    init(response: AnvilAnalyzeProfileAnalysisResponse) {
+        self.response = response
+    }
+
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
         requestCount += 1
+        recordedSurfaceHeightMslM = surfaceHeightMslM
         return response
     }
 }
@@ -1338,8 +1451,12 @@ private actor CountingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidin
 private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let error: any Error
 
-    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
+        _ = surfaceHeightMslM
         throw error
     }
 }
@@ -1542,8 +1659,12 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
 private struct StubStormSetupRouteAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let response: AnvilAnalyzeProfileAnalysisResponse
 
-    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
+        _ = surfaceHeightMslM
         return response
     }
 }

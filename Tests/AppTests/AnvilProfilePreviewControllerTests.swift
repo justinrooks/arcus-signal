@@ -149,6 +149,25 @@ struct AnvilProfilePreviewControllerTests {
         }
     }
 
+    @Test("forwards the selected surface height from storm setup to preview generation")
+    func forwardsSelectedSurfaceHeightToPreviewProvider() async throws {
+        try await withApp(debugEndpointsEnabled: true) { app in
+            let snapshot = makeSnapshot(surfaceHeightMslM: 1675.14)
+            app.stormSetupProvider = StaticStormSetupProvider(snapshot: snapshot)
+
+            let previewProvider = CapturingAnvilProfilePreviewProvider(
+                response: makePreviewResponse()
+            )
+            app.anvilProfilePreviewProvider = previewProvider
+
+            try await app.testing().test(.GET, "api/v1/dev/anvil/profile-preview?h3=617700169958293503") { res async in
+                #expect(res.status == .ok)
+            }
+
+            #expect(await previewProvider.recordedSurfaceHeightMslM == 1675.14)
+        }
+    }
+
     @Test("unusable profile returns unprocessable entity")
     func unusableProfileReturnsUnprocessableEntity() async throws {
         try await withApp(debugEndpointsEnabled: true) { app in
@@ -247,6 +266,117 @@ private extension AnvilLocationDTO {
     var centroid: StormSetupCentroid {
         StormSetupCentroid(latitude: lat, longitude: lon)
     }
+}
+
+private actor StaticStormSetupProvider: StormSetupProviding {
+    let snapshot: TornadoIngredientSnapshot
+
+    init(snapshot: TornadoIngredientSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot {
+        _ = h3Cell
+        return snapshot
+    }
+}
+
+private actor CapturingAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
+    private let response: AnvilAnalyzeProfilePreviewResponse
+    private(set) var recordedSurfaceHeightMslM: Double?
+
+    init(response: AnvilAnalyzeProfilePreviewResponse) {
+        self.response = response
+    }
+
+    func previewProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        _ = h3Cell
+        recordedSurfaceHeightMslM = surfaceHeightMslM
+        return response
+    }
+}
+
+private func makeSnapshot(surfaceHeightMslM: Double?) -> TornadoIngredientSnapshot {
+    TornadoIngredientSnapshot(
+        h3Cell: 617_700_169_958_293_503,
+        centroid: StormSetupCentroid(latitude: 39.7392, longitude: -104.9903),
+        source: StormSetupSourceMetadata(
+            model: .hrrr,
+            product: .wrfsfc,
+            domain: .conus,
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+            forecastHour: 3,
+            validTime: previewMakeUTCDate(year: 2026, month: 6, day: 20, hour: 1),
+            fieldSetVersion: .tornadoV1
+        ),
+        raw: TornadoRawParameters(
+            sbcapeJkg: nil,
+            mlcapeJkg: nil,
+            mucapeJkg: nil,
+            mlcinJkg: nil,
+            dcapeJkg: nil,
+            mllclM: nil,
+            tempDewPtDeltaF: nil,
+            threeCapeJkg: nil,
+            lclLfcSeparationM: nil,
+            lapseRate03kmCkm: nil,
+            lapseRate700500mbCkm: nil,
+            shear06kmKt: nil,
+            shear03kmKt: nil,
+            shear01kmKt: nil,
+            effectiveShearKt: nil,
+            srh01kmM2s2: nil,
+            srh03kmM2s2: nil,
+            effectiveSrhM2s2: nil,
+            supercellComposite: nil,
+            significantTornadoFixed: nil,
+            significantTornadoEffective: nil,
+            significantHail: nil,
+            bunkersRightMotion: nil,
+            bunkersLeftMotion: nil,
+            stormRelativeWind46km: nil,
+            meanWind850300mb: nil,
+            diagnostics: nil
+        ),
+        surfaceHeightMslM: surfaceHeightMslM,
+        assessment: makeAssessment(),
+        freshness: IngredientFreshness.make(
+            source: StormSetupSourceMetadata(
+                model: .hrrr,
+                product: .wrfsfc,
+                domain: .conus,
+                runTime: previewMakeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+                forecastHour: 3,
+                validTime: previewMakeUTCDate(year: 2026, month: 6, day: 20, hour: 1),
+                fieldSetVersion: .tornadoV1
+            ),
+            fetchedAt: previewMakeUTCDate(year: 2026, month: 6, day: 20, hour: 1)
+        ),
+        anvilEvidence: nil
+    )
+}
+
+private func makeAssessment() -> TornadoIngredientAssessment {
+    TornadoIngredientAssessment(
+        overall: .conditional,
+        instability: .supportive,
+        moisture: .supportive,
+        cloudBase: .supportive,
+        capInhibition: .conditional,
+        deepShear: .supportive,
+        lowLevelRotation: .conditional,
+        stormMode: .unknown,
+        compositeSignal: .conditional,
+        confidence: .moderate,
+        trend: .unknown,
+        stormModeHint: .unknown,
+        primaryDrivers: [],
+        limitingFactors: [],
+        summary: "test"
+    )
 }
 
 private func makeGroupingResult(

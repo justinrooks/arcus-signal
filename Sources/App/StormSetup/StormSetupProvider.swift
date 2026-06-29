@@ -300,6 +300,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             centroid: centroid,
             source: sourceMetadata,
             raw: normalized.raw,
+            surfaceHeightMslM: normalized.surfaceHeightMslM,
             assessment: interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: nil),
             freshness: freshness
         )
@@ -347,7 +348,8 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
     private func resolveAnvilEvidence(
         for h3Cell: Int64,
-        sourceMetadata: StormSetupSourceMetadata
+        sourceMetadata: StormSetupSourceMetadata,
+        surfaceHeightMslM: Double?
     ) async throws -> AnvilEvidenceResolution {
         guard let anvilProfileAnalysisProvider else {
             return .unavailable(reason: "Anvil analysis provider is not configured.")
@@ -359,7 +361,10 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
         do {
             try Task.checkCancellation()
-            let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(for: h3Cell)
+            let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(
+                for: h3Cell,
+                surfaceHeightMslM: surfaceHeightMslM
+            )
             try Task.checkCancellation()
 
             guard analysis.request.validTime == analysis.debug.validTime else {
@@ -416,7 +421,8 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     ) async throws -> TornadoIngredientSnapshot {
         let resolution = try await resolveAnvilEvidence(
             for: snapshot.h3Cell,
-            sourceMetadata: snapshot.source
+            sourceMetadata: snapshot.source,
+            surfaceHeightMslM: snapshot.surfaceHeightMslM
         )
         try Task.checkCancellation()
 
@@ -442,6 +448,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             centroid: snapshot.centroid,
             source: snapshot.source,
             raw: snapshot.raw,
+            surfaceHeightMslM: snapshot.surfaceHeightMslM,
             assessment: assessment,
             freshness: snapshot.freshness,
             anvilEvidence: resolution.evidence

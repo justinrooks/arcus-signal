@@ -24,6 +24,25 @@ struct AnvilProfileAnalysisProviderTests {
         #expect(client.recordedRequests.first == previewResponse.request)
     }
 
+    @Test("analysis provider forwards the selected surface height to preview generation")
+    func analysisProviderForwardsSelectedSurfaceHeightToPreviewGeneration() async throws {
+        let previewResponse = makePreviewResponse()
+        let previewProvider = RecordingAnvilProfilePreviewProvider(result: .success(previewResponse))
+        let client = AnalysisStubAnvilProfileClient(response: makeAnvilResponse())
+        let provider = DefaultAnvilProfileAnalysisProvider(
+            previewProvider: previewProvider,
+            anvilClient: client
+        )
+
+        _ = try await provider.analyzeProfile(
+            for: 617_700_169_958_293_503,
+            surfaceHeightMslM: 1234
+        )
+
+        #expect(previewProvider.requestCount == 1)
+        #expect(previewProvider.recordedSurfaceHeightMslM == 1234)
+    }
+
     @Test("analysis provider propagates cancellation from preview generation")
     func analysisProviderPropagatesCancellationFromPreviewGeneration() async throws {
         let previewProvider = CancellationThrowingAnvilProfilePreviewProvider()
@@ -190,8 +209,12 @@ struct AnvilProfileAnalysisProviderTests {
 }
 
 private struct CancellationThrowingAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
-    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+    func previewProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
         _ = h3Cell
+        _ = surfaceHeightMslM
         throw CancellationError()
     }
 }
@@ -225,14 +248,19 @@ private final class AnalysisStubAnvilProfileClient: AnvilProfileClient, @uncheck
 private final class RecordingAnvilProfilePreviewProvider: AnvilProfilePreviewProviding, @unchecked Sendable {
     let result: Result<AnvilAnalyzeProfilePreviewResponse, AnvilProfilePreviewError>
     private(set) var requestCount = 0
+    private(set) var recordedSurfaceHeightMslM: Double?
 
     init(result: Result<AnvilAnalyzeProfilePreviewResponse, AnvilProfilePreviewError>) {
         self.result = result
     }
 
-    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+    func previewProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
         _ = h3Cell
         requestCount += 1
+        recordedSurfaceHeightMslM = surfaceHeightMslM
         switch result {
         case .success(let response):
             return response

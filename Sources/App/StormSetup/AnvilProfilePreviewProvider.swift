@@ -2,7 +2,16 @@ import Foundation
 import Vapor
 
 protocol AnvilProfilePreviewProviding: Sendable {
-    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse
+    func previewProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilAnalyzeProfilePreviewResponse
+}
+
+extension AnvilProfilePreviewProviding {
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        try await previewProfile(for: h3Cell, surfaceHeightMslM: nil)
+    }
 }
 
 enum AnvilProfilePreviewError: Error, Sendable, CustomStringConvertible {
@@ -97,9 +106,15 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         )
     }
 
-    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+    func previewProfile(
+        for h3Cell: Int64,
+        surfaceHeightMslM: Double? = nil
+    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
         let resolved = try h3Resolver.resolve(h3Cell: h3Cell)
         let runResolution = hrrrRunResolver.resolveRunCandidates()
+        let selectedSurfaceHeightMslM = surfaceHeightMslM ?? self.surfaceHeightMslM
+        let validatedSurfaceHeightMslM = validateSurfaceHeightMslM(selectedSurfaceHeightMslM)
+        let surfaceHeightWarning = surfaceHeightWarning(for: selectedSurfaceHeightMslM, validated: validatedSurfaceHeightMslM)
 
         guard !runResolution.candidates.isEmpty else {
             throw AnvilProfilePreviewError.upstreamUnavailable(
@@ -128,7 +143,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                         return try await previewReadyArtifact(
                             readyArtifact,
                             h3Cell: resolved.h3Cell,
-                            centroid: resolved.centroid
+                            centroid: resolved.centroid,
+                            surfaceHeightMslM: validatedSurfaceHeightMslM,
+                            surfaceHeightWarning: surfaceHeightWarning
                         )
                     }
                 } catch let error as AnvilProfilePreviewError {
@@ -155,7 +172,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                         staleArtifact,
                         h3Cell: resolved.h3Cell,
                         centroid: resolved.centroid,
-                        staleWarning: makeStaleWarning(for: staleArtifact, targetValidTime: pressureResolution.targetValidTime)
+                        staleWarning: makeStaleWarning(for: staleArtifact, targetValidTime: pressureResolution.targetValidTime),
+                        surfaceHeightMslM: validatedSurfaceHeightMslM,
+                        surfaceHeightWarning: surfaceHeightWarning
                     )
                 }
             } catch let error as AnvilProfilePreviewError {
@@ -203,7 +222,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                     pressureCandidate,
                     h3Cell: resolved.h3Cell,
                     centroid: resolved.centroid,
-                    targetValidTime: runResolution.targetValidTime
+                    targetValidTime: runResolution.targetValidTime,
+                    surfaceHeightMslM: validatedSurfaceHeightMslM,
+                    surfaceHeightWarning: surfaceHeightWarning
                 )
                 try Task.checkCancellation()
                 return preview
@@ -243,7 +264,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         _ candidate: HrrrRunCandidate,
         h3Cell: Int64,
         centroid: StormSetupCentroid,
-        targetValidTime: Date
+        targetValidTime: Date,
+        surfaceHeightMslM: Double?,
+        surfaceHeightWarning: String?
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
         let sourceResolution = try await resolvePressureSource(
             for: candidate,
@@ -251,7 +274,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         )
         let loadResult = try await loadPressureProfile(
             sourceResolution: sourceResolution,
-            centroid: centroid
+            centroid: centroid,
+            surfaceHeightMslM: surfaceHeightMslM
         )
         try Task.checkCancellation()
 
@@ -296,7 +320,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             },
             warnings: makeWarnings(
                 for: buildResult.warnings,
-                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count
+                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count,
+                additionalWarnings: surfaceHeightWarning.map { [$0] } ?? []
             ),
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
             primaryDownloadURL: sourceResolution.source.primaryDownloadURL,
@@ -312,11 +337,14 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         _ readyArtifact: PressureArtifactCatalogReadyArtifact,
         h3Cell: Int64,
         centroid: StormSetupCentroid,
-        staleWarning: String? = nil
+        staleWarning: String? = nil,
+        surfaceHeightMslM: Double?,
+        surfaceHeightWarning: String?
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
         let loadResult = try await loadPressureProfile(
             readyArtifact: readyArtifact,
-            centroid: centroid
+            centroid: centroid,
+            surfaceHeightMslM: surfaceHeightMslM
         )
 
         let buildResult: AnvilProfileRequestBuildResult
@@ -361,7 +389,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             warnings: makeWarnings(
                 for: buildResult.warnings,
                 ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count,
-                additionalWarnings: staleWarning.map { [$0] } ?? []
+                additionalWarnings: [staleWarning, surfaceHeightWarning].compactMap { $0 }
             ),
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
             primaryDownloadURL: readyArtifact.localFileURL,
@@ -394,7 +422,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
     private func loadPressureProfile(
         sourceResolution: HrrrPressureDirectObjectResolution,
-        centroid: StormSetupCentroid
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
     ) async throws -> HrrrPressureProfileLoadResult {
         do {
             return try await pressureProfileLoader.loadPressureProfile(
@@ -412,7 +441,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
     private func loadPressureProfile(
         readyArtifact: PressureArtifactCatalogReadyArtifact,
-        centroid: StormSetupCentroid
+        centroid: StormSetupCentroid,
+        surfaceHeightMslM: Double?
     ) async throws -> HrrrPressureProfileLoadResult {
         do {
             return try await pressureProfileLoader.loadPressureProfile(
@@ -569,6 +599,26 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
         let targetLabel = ISO8601DateFormatter().string(from: targetValidTime)
         return "Pressure artifact stale fallback selected: \(ageSeconds)s older than target valid time \(targetLabel)."
+    }
+
+    private func validateSurfaceHeightMslM(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, (-500...9_000).contains(value) else {
+            return nil
+        }
+
+        return value
+    }
+
+    private func surfaceHeightWarning(for selectedSurfaceHeightMslM: Double?, validated: Double?) -> String? {
+        guard selectedSurfaceHeightMslM != nil else {
+            return "Below-ground pressure-level filtering unavailable because selected surface height was missing."
+        }
+
+        guard validated == nil else {
+            return nil
+        }
+
+        return "Below-ground pressure-level filtering unavailable because selected surface height was invalid."
     }
 }
 

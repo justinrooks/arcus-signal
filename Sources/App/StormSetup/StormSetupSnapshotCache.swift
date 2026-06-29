@@ -176,6 +176,7 @@ private extension TornadoIngredientSnapshot {
             centroid: centroid,
             source: source,
             raw: raw,
+            surfaceHeightMslM: surfaceHeightMslM,
             assessment: baselineAssessment,
             freshness: freshness
         )

@@ -70,6 +70,16 @@ struct StormSetupIngredientNormalizationTests {
         #expect(result.raw.srh01kmM2s2 == nil)
     }
 
+    @Test("surface HGT inventory is captured as the selected surface height")
+    func surfaceHeightInventoryMapsToSelectedSurfaceHeight() {
+        let result = normalize(
+            "1:0:d=2026060313:HGT:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1234"
+        )
+
+        #expect(result.surfaceHeightMslM == 1234)
+        #expect(result.raw.mllclM == nil)
+    }
+
     @Test("0-6 km shear components map to kt with explicit conversion")
     func shearComponentsConvertToKnots() {
         let result = normalize(

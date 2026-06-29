@@ -2,7 +2,18 @@ import Foundation
 
 struct TornadoIngredientNormalizationResult: Sendable {
     let raw: TornadoRawParameters
+    let surfaceHeightMslM: Double?
     let diagnostics: [TornadoRawParameterDiagnostic]
+
+    init(
+        raw: TornadoRawParameters,
+        surfaceHeightMslM: Double? = nil,
+        diagnostics: [TornadoRawParameterDiagnostic]
+    ) {
+        self.raw = raw
+        self.surfaceHeightMslM = surfaceHeightMslM
+        self.diagnostics = diagnostics
+    }
 }
 
 struct TornadoIngredientNormalizer: Sendable {
@@ -14,9 +25,14 @@ struct TornadoIngredientNormalizer: Sendable {
 
     func normalize(samples: [HrrrFieldSample]) -> TornadoIngredientNormalizationResult {
         var builder = TornadoRawParametersBuilder()
+        let surfaceHeightMslM = surfaceHeightMslM(from: samples)
 
         for sample in samples {
             let point = sample.point
+            if isSurfaceHeightSample(point) {
+                continue
+            }
+
             let match = fieldMap.match(for: point)
             let diagnostic = TornadoRawParameterDiagnostic(
                 inventory: point.inventory,
@@ -36,7 +52,39 @@ struct TornadoIngredientNormalizer: Sendable {
             builder.record(match: match, value: value)
         }
 
-        return builder.makeResult()
+        return builder.makeResult(surfaceHeightMslM: surfaceHeightMslM)
+    }
+
+    private func surfaceHeightMslM(from samples: [HrrrFieldSample]) -> Double? {
+        for sample in samples {
+            guard isSurfaceHeightSample(sample.point) else { continue }
+
+            return sample.point.value
+        }
+
+        return nil
+    }
+
+    private func isSurfaceHeightSample(_ point: Wgrib2PointSample) -> Bool {
+        guard let descriptor = point.inventoryDescriptor else {
+            return false
+        }
+
+        return normalizedToken(descriptor.variable) == "HGT"
+            && normalizedLevel(descriptor.level) == "surface"
+    }
+
+    private func normalizedToken(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+    }
+
+    private func normalizedLevel(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "  ", with: " ")
     }
 }
 
@@ -113,7 +161,7 @@ private struct TornadoRawParametersBuilder {
         }
     }
 
-    func makeResult() -> TornadoIngredientNormalizationResult {
+    func makeResult(surfaceHeightMslM: Double?) -> TornadoIngredientNormalizationResult {
         let shear06kmKt: Double?
         if let shear06kmU, let shear06kmV {
             shear06kmKt = hypot(shear06kmU.value, shear06kmV.value) * Self.metresPerSecondToKnots
@@ -160,6 +208,7 @@ private struct TornadoRawParametersBuilder {
                 meanWind850300mb: nil,
                 diagnostics: diagnostics.isEmpty ? nil : diagnostics
             ),
+            surfaceHeightMslM: surfaceHeightMslM,
             diagnostics: diagnostics
         )
     }
