@@ -19,6 +19,7 @@ enum HrrrPressureByteRangeDownloaderError: Error, Sendable, CustomStringConverti
     case serverIgnoredRange(source: StormSetupSourceMetadata, status: Int)
     case unexpectedHTTPStatus(source: StormSetupSourceMetadata, status: Int)
     case emptyResponseBody(source: StormSetupSourceMetadata, range: String)
+    case missingContentRange(source: StormSetupSourceMetadata, range: String)
     case rejectedTextResponse(source: StormSetupSourceMetadata, range: String, preview: String)
     case malformedContentRange(source: StormSetupSourceMetadata, range: String, contentRange: String)
     case mismatchedContentRange(source: StormSetupSourceMetadata, range: String, expected: String, actual: String)
@@ -35,6 +36,8 @@ enum HrrrPressureByteRangeDownloaderError: Error, Sendable, CustomStringConverti
             return "HRRR pressure range request returned HTTP \(status) for source metadata: \(source)."
         case .emptyResponseBody(let source, let range):
             return "HRRR pressure range request returned an empty body for source metadata: \(source). Range: \(range)"
+        case .missingContentRange(let source, let range):
+            return "HRRR pressure range request was missing Content-Range for source metadata: \(source). Range: \(range)"
         case .rejectedTextResponse(let source, let range, let preview):
             return "HRRR pressure range request returned text or HTML for source metadata: \(source). Range: \(range). Preview: \(preview)"
         case .malformedContentRange(let source, let range, let contentRange):
@@ -97,23 +100,25 @@ struct HrrrPressureByteRangeDownloader: Sendable {
                 range: range.httpRangeHeaderValue
             )
 
-            if let contentRange = response.header("Content-Range") {
-                let parsed = try parseContentRange(
-                    contentRange,
-                    sourceMetadata: sourceMetadata,
+            guard let contentRange = response.header("Content-Range") else {
+                throw HrrrPressureByteRangeDownloaderError.missingContentRange(
+                    source: sourceMetadata,
                     range: range.httpRangeHeaderValue
                 )
-
-                try validate(parsedContentRange: parsed, requestedRange: range, sourceMetadata: sourceMetadata)
-
-                guard Int64(body.count) == parsed.end - parsed.start + 1 else {
-                    throw HrrrPressureByteRangeDownloaderError.malformedContentRange(
-                        source: sourceMetadata,
-                        range: range.httpRangeHeaderValue,
-                        contentRange: contentRange
-                    )
-                }
             }
+
+            let parsed = try parseContentRange(
+                contentRange,
+                sourceMetadata: sourceMetadata,
+                range: range.httpRangeHeaderValue
+            )
+
+            try validate(
+                parsedContentRange: parsed,
+                requestedRange: range,
+                bodyCount: body.count,
+                sourceMetadata: sourceMetadata
+            )
 
             assembled.append(body)
         }
@@ -141,6 +146,7 @@ struct HrrrPressureByteRangeDownloader: Sendable {
     private func validate(
         parsedContentRange: ParsedContentRange,
         requestedRange: HrrrGribByteRange,
+        bodyCount: Int,
         sourceMetadata: StormSetupSourceMetadata
     ) throws {
         let expectedStart = requestedRange.startOffset
@@ -153,16 +159,35 @@ struct HrrrPressureByteRangeDownloader: Sendable {
             )
         }
 
-        if let requestedEnd = requestedRange.endOffset, parsedContentRange.end != requestedEnd {
-            throw HrrrPressureByteRangeDownloaderError.mismatchedContentRange(
-                source: sourceMetadata,
-                range: requestedRange.httpRangeHeaderValue,
-                expected: requestedRange.httpRangeHeaderValue,
-                actual: parsedContentRange.rawValue
-            )
+        if let requestedEnd = requestedRange.endOffset {
+            guard parsedContentRange.end == requestedEnd else {
+                throw HrrrPressureByteRangeDownloaderError.mismatchedContentRange(
+                    source: sourceMetadata,
+                    range: requestedRange.httpRangeHeaderValue,
+                    expected: requestedRange.httpRangeHeaderValue,
+                    actual: parsedContentRange.rawValue
+                )
+            }
+
+            guard Int64(bodyCount) == parsedContentRange.end - parsedContentRange.start + 1 else {
+                throw HrrrPressureByteRangeDownloaderError.malformedContentRange(
+                    source: sourceMetadata,
+                    range: requestedRange.httpRangeHeaderValue,
+                    contentRange: parsedContentRange.rawValue
+                )
+            }
+            return
         }
 
         guard parsedContentRange.end >= parsedContentRange.start else {
+            throw HrrrPressureByteRangeDownloaderError.malformedContentRange(
+                source: sourceMetadata,
+                range: requestedRange.httpRangeHeaderValue,
+                contentRange: parsedContentRange.rawValue
+            )
+        }
+
+        guard Int64(bodyCount) == parsedContentRange.end - parsedContentRange.start + 1 else {
             throw HrrrPressureByteRangeDownloaderError.malformedContentRange(
                 source: sourceMetadata,
                 range: requestedRange.httpRangeHeaderValue,

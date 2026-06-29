@@ -331,6 +331,20 @@ actor HrrrPressureSubsetGribCache {
         )
     }
 
+    func invalidate(
+        sourceMetadata: StormSetupSourceMetadata,
+        byteRangePlan: HrrrGribByteRangePlan
+    ) async {
+        guard let key = try? HrrrPressureSubsetGribCacheKey(sourceMetadata: sourceMetadata, byteRangePlan: byteRangePlan) else {
+            return
+        }
+
+        invalidate(
+            fileURL: key.subsetFileURL(rootURL: rootURL),
+            metadataURL: key.metadataFileURL(rootURL: rootURL)
+        )
+    }
+
     private func loadValidRecord(
         key: HrrrPressureSubsetGribCacheKey,
         fileURL: URL,

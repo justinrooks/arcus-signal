@@ -179,6 +179,41 @@ struct HrrrPressureSubsetGribCacheTests {
         #expect(try Data(contentsOf: second.localFileURL) == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
     }
 
+    @Test("invalidate removes both cached subset and metadata")
+    func invalidateRemovesBothCachedSubsetAndMetadata() async throws {
+        let rootURL = testRootURL()
+        let source = makeSourceMetadata(
+            primaryDownloadURL: URL(string: "https://example.com/a.grib2")!,
+            idxURL: URL(string: "https://example.com/a.idx")!
+        )
+        let plan = makePlan()
+        let client = PressureSubsetStubHTTPClient(
+            plannedResponses: makePlannedResponses(for: source, plan: plan, payloads: [
+                Data("hgt-".utf8),
+                Data("tmp-".utf8),
+                Data("dpt-".utf8),
+                Data("ugrd".utf8),
+                Data("vgrd".utf8)
+            ])
+        )
+        let cache = HrrrPressureSubsetGribCache(
+            httpClient: client,
+            rootURL: rootURL,
+            dateProvider: FixedSubsetStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+            retentionDuration: 12 * 60 * 60,
+            maximumByteCount: 1024
+        )
+
+        let loaded = try await cache.loadOrFetch(sourceMetadata: source, byteRangePlan: plan)
+        let key = try HrrrPressureSubsetGribCacheKey(sourceMetadata: source, byteRangePlan: plan)
+
+        await cache.invalidate(sourceMetadata: source, byteRangePlan: plan)
+
+        #expect(FileManager.default.fileExists(atPath: key.subsetFileURL(rootURL: rootURL).path) == false)
+        #expect(FileManager.default.fileExists(atPath: key.metadataFileURL(rootURL: rootURL).path) == false)
+        #expect(FileManager.default.fileExists(atPath: loaded.localFileURL.path) == false)
+    }
+
     private func makePlan(reversedInventory: Bool = false) -> HrrrGribByteRangePlan {
         let inventoryText = reversedInventory
             ? """
@@ -226,14 +261,12 @@ struct HrrrPressureSubsetGribCacheTests {
         payloads: [Data]
     ) -> [String: HTTPResponse] {
         Dictionary(uniqueKeysWithValues: zip(plan.ranges, payloads).map { range, payload in
-            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/20" }
+            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/20" } ?? "bytes \(range.startOffset)-\(range.startOffset + Int64(payload.count) - 1)/20"
             let response = HTTPResponse(
                 status: 206,
                 headers: {
                     var headers = ["Content-Type": "application/octet-stream"]
-                    if let contentRange {
-                        headers["Content-Range"] = contentRange
-                    }
+                    headers["Content-Range"] = contentRange
                     return headers
                 }(),
                 data: payload

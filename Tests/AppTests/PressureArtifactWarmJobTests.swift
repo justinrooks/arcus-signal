@@ -15,12 +15,12 @@ struct PressureArtifactWarmJobTests {
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
 
             let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
             let service = PressureArtifactWarmingService(
                 httpClient: client,
-                validator: PressureArtifactWarmValidatorStub(),
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
                 cacheRootURL: testRootURL(),
                 dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
                 retentionDuration: serviceRetentionSeconds,
@@ -42,10 +42,11 @@ struct PressureArtifactWarmJobTests {
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
 
             let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub()
+            let expectedLineCount = makeExpectedValidationLineCount()
+            let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount)
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 validator: validator,
@@ -76,22 +77,23 @@ struct PressureArtifactWarmJobTests {
             #expect(rows.count == 1)
             #expect(validationCount == 1)
             #expect(idxRequestCount == 1)
-            #expect(rangeRequestCount == 5)
+            #expect(rangeRequestCount == expectedLineCount)
         }
     }
 
-    @Test("successful warm marks the catalog row ready and stores path and byte size")
-    func successfulWarmMarksCatalogRowReadyAndStoresArtifactPathAndByteSize() async throws {
+    @Test("full expanded pressure contract succeeds")
+    func fullExpandedPressureContractSucceeds() async throws {
         try await withApp { app in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let expectedLineCount = makeExpectedValidationLineCount()
 
             let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub()
+            let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount)
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 validator: validator,
@@ -116,7 +118,7 @@ struct PressureArtifactWarmJobTests {
 
             #expect(row.status == .ready)
             #expect(row.localPath?.contains("subset.grib2") == true)
-            #expect(row.byteSize == 20)
+            #expect(row.byteSize == Int64(expectedLineCount * 4))
             #expect(row.source == .aws)
             #expect(row.errorSummary == nil)
             #expect(validationCount == 1)
@@ -129,12 +131,16 @@ struct PressureArtifactWarmJobTests {
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let expectedLineCount = makeExpectedValidationLineCount()
 
             let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub(error: PressureArtifactWarmValidatorStubError.failedValidation)
+            let validator = PressureArtifactWarmValidatorStub(
+                error: PressureArtifactWarmValidatorStubError.failedValidation,
+                lineCount: expectedLineCount
+            )
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 validator: validator,
@@ -171,7 +177,7 @@ struct PressureArtifactWarmJobTests {
             try await seedCatalogRow(status: .ready, payload: payload, on: app.db)
 
             let client = PressureArtifactWarmStubHTTPClient()
-            let validator = PressureArtifactWarmValidatorStub()
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 validator: validator,
@@ -201,7 +207,7 @@ struct PressureArtifactWarmJobTests {
             try await seedCatalogRow(status: .warming, payload: payload, on: app.db)
 
             let client = PressureArtifactWarmStubHTTPClient()
-            let validator = PressureArtifactWarmValidatorStub()
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 validator: validator,
@@ -250,18 +256,19 @@ struct PressureArtifactWarmJobTests {
         #expect(requested.contains(50) == false)
     }
 
-    @Test("validation failure does not mark the artifact ready")
-    func validationFailureDoesNotMarkTheArtifactReady() async throws {
+    @Test("validation line-count mismatch marks the catalog row failed")
+    func validationLineCountMismatchMarksTheCatalogRowFailed() async throws {
         try await withApp { app in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let expectedLineCount = makeExpectedValidationLineCount()
 
             let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub(error: PressureArtifactWarmValidatorStubError.failedValidation)
+            let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount - 1)
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 validator: validator,
@@ -272,7 +279,7 @@ struct PressureArtifactWarmJobTests {
             )
             let job = PressureArtifactWarmJob(warmingService: service)
 
-            await #expect(throws: PressureArtifactWarmValidatorStubError.self) {
+            await #expect(throws: PressureArtifactWarmingError.self) {
                 try await job.dequeue(makeQueueContext(app: app), payload)
             }
 
@@ -285,8 +292,99 @@ struct PressureArtifactWarmJobTests {
             ))
 
             #expect(row.status == .failed)
-            #expect(row.errorSummary?.contains("failedValidation") == true)
+            #expect(row.errorSummary?.contains("expected \(expectedLineCount)") == true)
+            #expect(row.errorSummary?.contains("returned \(expectedLineCount - 1) messages") == true)
             #expect(row.status != .ready)
+        }
+    }
+
+    @Test("incomplete pressure inventory fails before any range download")
+    func incompletePressureInventoryFailsBeforeAnyRangeDownload() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeIncompleteInventoryText().utf8)]
+            )
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount
+            )
+            let job = PressureArtifactWarmJob(warmingService: service)
+
+            await #expect(throws: PressureArtifactWarmingError.self) {
+                try await job.dequeue(makeQueueContext(app: app), payload)
+            }
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(client.idxRequestCount == 1)
+            #expect(client.rangeRequestCount == 0)
+            #expect(row.status == .failed)
+            #expect(row.status != .ready)
+            #expect(row.errorSummary?.contains("selection is incomplete") == true)
+        }
+    }
+
+    @Test("validation failure removes the failed cache and the next warm redownloads")
+    func validationFailureRemovesFailedCacheAndNextWarmRedownloads() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let expectedLineCount = makeExpectedValidationLineCount()
+            let cacheRoot = testRootURL()
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+
+            let failedService = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: PressureArtifactWarmValidatorStub(lineCount: expectedLineCount - 1),
+                cacheRootURL: cacheRoot,
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount
+            )
+
+            await #expect(throws: PressureArtifactWarmingError.self) {
+                try await failedService.warm(payload: payload, on: app, logger: app.logger)
+            }
+
+            let cachedKey = try HrrrPressureSubsetGribCacheKey(
+                sourceMetadata: makeSourceMetadata(for: payload),
+                byteRangePlan: makeByteRangePlan()
+            )
+            #expect(FileManager.default.fileExists(atPath: cachedKey.subsetFileURL(rootURL: cacheRoot).path) == false)
+            #expect(FileManager.default.fileExists(atPath: cachedKey.metadataFileURL(rootURL: cacheRoot).path) == false)
+
+            let retryService = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: PressureArtifactWarmValidatorStub(lineCount: expectedLineCount),
+                cacheRootURL: cacheRoot,
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate(hour: 14)),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount
+            )
+
+            try await retryService.warm(payload: payload, on: app, logger: app.logger)
+
+            #expect(client.rangeRequestCount == expectedLineCount * 2)
         }
     }
 }
@@ -389,30 +487,70 @@ private extension PressureArtifactWarmJobTests {
             .appendingPathComponent("pressure-artifact-warm-tests-\(UUID().uuidString)", isDirectory: true)
     }
 
-    func makeInventoryText() -> String {
+    func makeCompleteInventoryText() -> String {
+        var lines: [String] = []
+        lines.reserveCapacity(StormSetupPressureLevel.preferredDescending.count * StormSetupPressureProfileVariable.allCases.count)
+
+        var messageNumber = 1
+        var byteOffset: Int64 = 0
+        for level in StormSetupPressureLevel.preferredDescending {
+            for variable in StormSetupPressureProfileVariable.allCases {
+                lines.append("\(messageNumber):\(byteOffset):d=2026060313:\(variable.rawValue):\(level.pressureMb) mb:9 hour fcst:")
+                messageNumber += 1
+                byteOffset += 4
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    func makeIncompleteInventoryText() -> String {
         """
         1:0:d=2026060313:HGT:1000 mb:9 hour fcst:
         2:4:d=2026060313:TMP:1000 mb:9 hour fcst:
         3:8:d=2026060313:DPT:1000 mb:9 hour fcst:
         4:12:d=2026060313:UGRD:1000 mb:9 hour fcst:
-        5:16:d=2026060313:VGRD:1000 mb:9 hour fcst:
         """
+    }
+
+    func makeExpectedValidationLineCount() -> Int {
+        HrrrPressureProfileMessageSelector()
+            .select(inventory: HrrrPressureIdxInventory.parse(makeCompleteInventoryText()))
+            .selectedMessages
+            .count
+    }
+
+    func makeByteRangePlan() throws -> HrrrGribByteRangePlan {
+        let inventory = HrrrPressureIdxInventory.parse(makeCompleteInventoryText())
+        let selection = HrrrPressureProfileMessageSelector().select(inventory: inventory)
+        return HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
+    }
+
+    func makeSourceMetadata(for payload: PressureArtifactWarmJobPayload) -> StormSetupSourceMetadata {
+        let sourceURLs = makeSourceURLs(for: payload)
+        return StormSetupSourceMetadata(
+            sourceKind: .directObject,
+            model: .hrrr,
+            product: payload.product,
+            domain: .conus,
+            runTime: payload.runTime,
+            forecastHour: payload.forecastHour,
+            validTime: payload.validTime,
+            fieldSetVersion: payload.fieldSetVersion,
+            primaryDownloadURL: sourceURLs.grib,
+            idxURL: sourceURLs.idx
+        )
     }
 
     func makeRangeResponses(for payload: PressureArtifactWarmJobPayload) -> [String: HTTPResponse] {
         let sourceURLs = makeSourceURLs(for: payload)
-        let inventory = HrrrPressureIdxInventory.parse(makeInventoryText())
-        let selection = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
+        let inventory = HrrrPressureIdxInventory.parse(makeCompleteInventoryText())
+        let selection = HrrrPressureProfileMessageSelector().select(inventory: inventory)
         let plan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
 
-        return Dictionary(uniqueKeysWithValues: zip(plan.ranges, [
-            Data("hgt-".utf8),
-            Data("tmp-".utf8),
-            Data("dpt-".utf8),
-            Data("ugrd".utf8),
-            Data("vgrd".utf8)
-        ]).map { range, payload in
-            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/20" } ?? "bytes 16-19/20"
+        return Dictionary(uniqueKeysWithValues: plan.ranges.enumerated().map { index, range in
+            let body = Data(repeating: UInt8(65 + (index % 26)), count: 4)
+            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/\(range.startOffset + 4)" } ?? "bytes \(range.startOffset)-\(range.startOffset + 3)/\(range.startOffset + 4)"
             return (
                 sourceURLs.grib.absoluteString + "|" + range.httpRangeHeaderValue,
                 HTTPResponse(
@@ -421,7 +559,7 @@ private extension PressureArtifactWarmJobTests {
                         "Content-Type": "application/octet-stream",
                         "Content-Range": contentRange
                     ],
-                    data: payload
+                    data: body
                 )
             )
         })
@@ -522,11 +660,13 @@ private enum PressureArtifactWarmValidatorStubError: Error, CustomStringConverti
 
 private final class PressureArtifactWarmValidatorStub: PressureArtifactValidating, @unchecked Sendable {
     private let error: (any Error)?
+    private let lineCount: Int
     private let lock = NSLock()
     private var _validationCount = 0
 
-    init(error: (any Error)? = nil) {
+    init(error: (any Error)? = nil, lineCount: Int) {
         self.error = error
+        self.lineCount = lineCount
     }
 
     var validationCount: Int {
@@ -540,7 +680,7 @@ private final class PressureArtifactWarmValidatorStub: PressureArtifactValidatin
             throw error
         }
 
-        return PressureArtifactValidationResult(stdoutLineCount: 1)
+        return PressureArtifactValidationResult(stdoutLineCount: lineCount)
     }
 }
 

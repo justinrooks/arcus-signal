@@ -16,6 +16,8 @@ enum PressureArtifactWarmingError: Error, Sendable, CustomStringConvertible {
     case missingIdxURL
     case missingCatalogRow
     case noSelectableMessages
+    case incompletePressureSelection([StormSetupPressureProfileMissingLevel])
+    case validatedMessageCountMismatch(expected: Int, actual: Int)
 
     var description: String {
         switch self {
@@ -27,6 +29,14 @@ enum PressureArtifactWarmingError: Error, Sendable, CustomStringConvertible {
             return "Pressure artifact catalog row was missing."
         case .noSelectableMessages:
             return "Pressure artifact inventory did not contain any selectable messages."
+        case .incompletePressureSelection(let missingLevels):
+            let details = missingLevels.map { level in
+                "\(level.pressureMb) mb missing \(level.missingVariables.map(\.rawValue).joined(separator: ", "))"
+            }
+            .joined(separator: "; ")
+            return "Pressure artifact selection is incomplete. Missing levels: \(details)."
+        case .validatedMessageCountMismatch(let expected, let actual):
+            return "Pressure artifact validation returned \(actual) messages, expected \(expected)."
         }
     }
 }
@@ -133,6 +143,10 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 preferredLevels: StormSetupPressureLevel.preferredDescending
             ).select(inventory: inventory)
 
+            guard selection.missingLevels.isEmpty else {
+                throw PressureArtifactWarmingError.incompletePressureSelection(selection.missingLevels)
+            }
+
             guard !selection.selectedMessages.isEmpty else {
                 throw PressureArtifactWarmingError.noSelectableMessages
             }
@@ -199,6 +213,10 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             do {
                 validation = try await validator.validate(localFileURL: subset.localFileURL)
             } catch {
+                await subsetCache.invalidate(
+                    sourceMetadata: source,
+                    byteRangePlan: byteRangePlan
+                )
                 logger.error(
                     "Pressure artifact validation failed.",
                     metadata: [
@@ -212,6 +230,17 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                     ]
                 )
                 throw error
+            }
+
+            guard validation.stdoutLineCount == selection.selectedMessages.count else {
+                await subsetCache.invalidate(
+                    sourceMetadata: source,
+                    byteRangePlan: byteRangePlan
+                )
+                throw PressureArtifactWarmingError.validatedMessageCountMismatch(
+                    expected: selection.selectedMessages.count,
+                    actual: validation.stdoutLineCount
+                )
             }
 
             logger.info(

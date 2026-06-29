@@ -97,6 +97,33 @@ struct HrrrPressureByteRangeDownloaderTests {
         }
     }
 
+    @Test("downloader rejects partial content responses missing Content-Range")
+    func downloaderRejectsPartialContentResponsesMissingContentRange() async throws {
+        let source = makeSourceMetadata()
+        let plan = makeSingleRangePlan()
+        let client = PressureRangeStubHTTPClient(
+            plannedResponses: [
+                plan.ranges[0].httpRangeHeaderValue: makeResponse(
+                    status: 206,
+                    contentRange: nil,
+                    body: Data("partial-body".utf8)
+                )
+            ]
+        )
+        let downloader = HrrrPressureByteRangeDownloader(httpClient: client)
+
+        await assertThrowsDownloaderError {
+            try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
+        } verify: { error in
+            guard case .missingContentRange(let returnedSource, _) = error else {
+                Issue.record("Expected missingContentRange, got \(error).")
+                return
+            }
+
+            #expect(returnedSource == source)
+        }
+    }
+
     @Test("downloader rejects 416 responses")
     func downloaderRejects416Responses() async throws {
         let source = makeSourceMetadata()

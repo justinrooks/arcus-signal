@@ -128,10 +128,10 @@ struct PressureArtifactDiagnosticsTests {
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
 
             let client = PressureArtifactWarmHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub()
+            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
             let loggerContext = makeCapturingLogger(label: "warm-success")
             let service = PressureArtifactWarmingService(
                 httpClient: client,
@@ -152,19 +152,19 @@ struct PressureArtifactDiagnosticsTests {
             let ready = try #require(try loggerContext.event(matching: "Pressure artifact catalog row transitioned to ready."))
 
             #expect(metadataString(claimed.metadata, "status") == PressureArtifactCatalogStatus.warming.rawValue)
-            #expect(metadataString(selection.metadata, "requestedLevelCount") == "37")
-            #expect(metadataString(selection.metadata, "selectedPressureLevelCount") == "1")
-            #expect(metadataString(selection.metadata, "selectedMessageCount") == "5")
-            #expect(metadataString(selection.metadata, "missingLevelCount") == "36")
-            #expect(metadataString(rangeSelection.metadata, "selectedRangeCount") == "5")
+            #expect(metadataString(selection.metadata, "requestedLevelCount") == String(StormSetupPressureLevel.preferredDescending.count))
+            #expect(metadataString(selection.metadata, "selectedPressureLevelCount") == String(StormSetupPressureLevel.preferredDescending.count))
+            #expect(metadataString(selection.metadata, "selectedMessageCount") == String(makeExpectedValidationLineCount()))
+            #expect(metadataString(selection.metadata, "missingLevelCount") == "0")
+            #expect(metadataString(rangeSelection.metadata, "selectedRangeCount") == String(makeExpectedValidationLineCount()))
             #expect(metadataString(prepared.metadata, "sourceURL")?.contains(".wrfprsf") == true)
             #expect(metadataString(prepared.metadata, "idxURL")?.contains(".wrfprsf") == true)
             #expect(metadataString(prepared.metadata, "cacheHit") == "false")
-            #expect(metadataString(prepared.metadata, "artifactByteSize") == "20")
+            #expect(metadataString(prepared.metadata, "artifactByteSize") == String(makeExpectedValidationLineCount() * 4))
             #expect(metadataString(prepared.metadata, "maximumByteCount") == "1024")
             #expect((metadataString(prepared.metadata, "downloadDurationMs").flatMap(Int.init) ?? -1) >= 0)
             #expect(metadataString(validation.metadata, "status") == PressureArtifactCatalogStatus.ready.rawValue)
-            #expect(metadataString(validation.metadata, "validatedLines") == "5")
+            #expect(metadataString(validation.metadata, "validatedLines") == String(makeExpectedValidationLineCount()))
             #expect(metadataString(ready.metadata, "status") == PressureArtifactCatalogStatus.ready.rawValue)
             #expect(metadataString(ready.metadata, "product") == HrrrProduct.wrfprsf.rawValue)
             assertNoSensitiveMetadata(in: loggerContext.events)
@@ -179,10 +179,13 @@ struct PressureArtifactDiagnosticsTests {
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
 
             let client = PressureArtifactWarmHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeInventoryText().utf8)],
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub(error: PressureArtifactWarmValidatorStubError.failedValidation)
+            let validator = PressureArtifactWarmValidatorStub(
+                error: PressureArtifactWarmValidatorStubError.failedValidation,
+                lineCount: makeExpectedValidationLineCount()
+            )
             let loggerContext = makeCapturingLogger(label: "warm-failure")
             let service = PressureArtifactWarmingService(
                 httpClient: client,
@@ -544,29 +547,18 @@ private extension PressureArtifactDiagnosticsTests {
     }
 
     func makeInventoryText() -> String {
-        """
-        1:0:d=2026060313:HGT:1000 mb:9 hour fcst:
-        2:4:d=2026060313:TMP:1000 mb:9 hour fcst:
-        3:8:d=2026060313:DPT:1000 mb:9 hour fcst:
-        4:12:d=2026060313:UGRD:1000 mb:9 hour fcst:
-        5:16:d=2026060313:VGRD:1000 mb:9 hour fcst:
-        """
+        makeCompleteInventoryText()
     }
 
     func makeRangeResponses(for payload: PressureArtifactWarmJobPayload) -> [String: HTTPResponse] {
         let sourceURLs = makeSourceURLs(for: payload)
-        let inventory = HrrrPressureIdxInventory.parse(makeInventoryText())
-        let selection = HrrrPressureProfileMessageSelector(preferredLevels: [.mb1000]).select(inventory: inventory)
+        let inventory = HrrrPressureIdxInventory.parse(makeCompleteInventoryText())
+        let selection = HrrrPressureProfileMessageSelector().select(inventory: inventory)
         let plan = HrrrGribByteRangePlanner().plan(inventory: inventory, selectedMessages: selection.selectedMessages)
 
-        return Dictionary(uniqueKeysWithValues: zip(plan.ranges, [
-            Data("hgt-".utf8),
-            Data("tmp-".utf8),
-            Data("dpt-".utf8),
-            Data("ugrd".utf8),
-            Data("vgrd".utf8)
-        ]).map { range, body in
-            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/20" } ?? "bytes 16-19/20"
+        return Dictionary(uniqueKeysWithValues: plan.ranges.enumerated().map { index, range in
+            let body = Data(repeating: UInt8(65 + (index % 26)), count: 4)
+            let contentRange = range.closedRange.map { "bytes \($0.lowerBound)-\($0.upperBound)/\(range.startOffset + 4)" } ?? "bytes \(range.startOffset)-\(range.startOffset + 3)/\(range.startOffset + 4)"
             return (
                 sourceURLs.grib.absoluteString + "|" + range.httpRangeHeaderValue,
                 HTTPResponse(
@@ -579,6 +571,30 @@ private extension PressureArtifactDiagnosticsTests {
                 )
             )
         })
+    }
+
+    func makeCompleteInventoryText() -> String {
+        var lines: [String] = []
+        lines.reserveCapacity(StormSetupPressureLevel.preferredDescending.count * StormSetupPressureProfileVariable.allCases.count)
+
+        var messageNumber = 1
+        var byteOffset: Int64 = 0
+        for level in StormSetupPressureLevel.preferredDescending {
+            for variable in StormSetupPressureProfileVariable.allCases {
+                lines.append("\(messageNumber):\(byteOffset):d=2026060313:\(variable.rawValue):\(level.pressureMb) mb:9 hour fcst:")
+                messageNumber += 1
+                byteOffset += 4
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    func makeExpectedValidationLineCount() -> Int {
+        HrrrPressureProfileMessageSelector()
+            .select(inventory: HrrrPressureIdxInventory.parse(makeCompleteInventoryText()))
+            .selectedMessages
+            .count
     }
 
     func makeTempRegularFile(contents: Data) -> URL {
@@ -1045,9 +1061,11 @@ private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked S
 
 private final class PressureArtifactWarmValidatorStub: PressureArtifactValidating, @unchecked Sendable {
     private let error: (any Error)?
+    private let lineCount: Int
 
-    init(error: (any Error)? = nil) {
+    init(error: (any Error)? = nil, lineCount: Int) {
         self.error = error
+        self.lineCount = lineCount
     }
 
     func validate(localFileURL: URL) async throws -> PressureArtifactValidationResult {
@@ -1055,7 +1073,7 @@ private final class PressureArtifactWarmValidatorStub: PressureArtifactValidatin
         if let error {
             throw error
         }
-        return PressureArtifactValidationResult(stdoutLineCount: 5)
+        return PressureArtifactValidationResult(stdoutLineCount: lineCount)
     }
 }
 

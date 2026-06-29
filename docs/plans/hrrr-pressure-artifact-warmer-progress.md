@@ -51,6 +51,15 @@ Related local docs:
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 
+## Warm Invariant
+
+Pressure artifact promotion now requires all of the following before a row may become `ready`:
+
+- The current field-set contract selected every pressure level and every required variable.
+- Every HTTP 206 range response included a parseable `Content-Range` header and matched the requested range shape.
+- `wgrib2 -s` returned exactly the selected message count.
+- Any validation failure invalidates the subset cache entry before another warm attempt can reuse it.
+
 Do not touch:
 - The existing surface GRIB path.
 - The NWS alert polling loop.
@@ -218,6 +227,25 @@ Files changed:
 Claim behavior:
 - `pending`, `failed`, and `expired` rows are promoted to `warming` with a conditional SQL update.
 - `ready` and `warming` rows are skipped without rebuilding.
+
+Validation and promotion behavior:
+- Warm selection now fails before download when the pressure inventory is incomplete for the expanded contract.
+- `wgrib2` line-count validation must match the selected message count before a row can transition to `ready`.
+- Validation failures evict both `subset.grib2` and `subset.json` from the pressure subset cache before the next warm attempt.
+
+Validation run for this slice:
+- `swift build`
+- `swift test --filter HrrrPressureByteRangeDownloaderTests`
+- `swift test --filter HrrrPressureSubsetGribCacheTests`
+- `swift test --filter HrrrPressureProfileMessageSelectorTests`
+- `swift test --filter PressureArtifactDiagnosticsTests`
+- `swift test --filter PressureArtifactWarmJobTests`
+- `swift test --no-parallel`
+
+Remaining lifecycle and deployment findings:
+- No Docker, lease, or cleanup lifecycle behavior changed in this slice.
+- The worker-owned cleanup and probe schedules remain the only lifecycle hooks for this warmer path.
+- The repository’s broader parallel database-test isolation issue remains out of scope, but `swift test --no-parallel` passed.
 - Duplicate jobs for the same artifact key collapse to one build path in the tests and the losing job sees the existing `warming` state.
 
 Validation approach:
