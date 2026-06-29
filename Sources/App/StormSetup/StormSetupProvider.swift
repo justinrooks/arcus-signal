@@ -168,6 +168,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         var failures: [StormSetupCurrentSnapshotFailure] = []
 
         for (index, candidate) in runResolution.candidates.enumerated() {
+            try Task.checkCancellation()
             let sourceMetadata = hrrrNomadsURLBuilder.makeSourceMetadata(
                 for: candidate,
                 around: resolved.centroid
@@ -217,6 +218,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     )
                 }
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 let failure = classify(error: error, sourceMetadata: sourceMetadata)
                 failures.append(failure)
                 logFailure(
@@ -243,6 +245,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             rulesVersion: .current
         )
         if let cached = await snapshotCache.loadSnapshot(for: cacheKey) {
+            try Task.checkCancellation()
             logger.info(
                 "Storm Setup sampled snapshot cache hit.",
                 metadata: candidateMetadata(sourceMetadata, extra: [
@@ -251,9 +254,10 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     "expiresAt": .string("\(cached.expiresAt)")
                 ])
             )
-            return await composeSnapshotWithCurrentAnvilEvidence(from: cached.snapshot)
+            return try await composeSnapshotWithCurrentAnvilEvidence(from: cached.snapshot)
         }
 
+        try Task.checkCancellation()
         logger.info(
             "Storm Setup sampled snapshot cache miss.",
             metadata: candidateMetadata(sourceMetadata)
@@ -263,6 +267,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [makeCandidate(from: sourceMetadata)]),
             around: centroid
         )
+        try Task.checkCancellation()
 
         logger.info(
             "Storm Setup GRIB subset ready.",
@@ -279,6 +284,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         )
 
         let samples = try await fieldSampler.sample(from: subset, around: centroid)
+        try Task.checkCancellation()
         let normalized = normalizer.normalize(samples: samples)
 
         guard normalized.raw.nonNilFieldCount > 0 else {
@@ -300,6 +306,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
         do {
             _ = try await snapshotCache.store(snapshot: surfaceSnapshot, for: cacheKey)
+            try Task.checkCancellation()
             logger.info(
                 "Storm Setup sampled snapshot cached.",
                 metadata: candidateMetadata(
@@ -311,6 +318,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 )
             )
         } catch {
+            try rethrowCancellationIfNeeded(error)
             logger.warning(
                 "Storm Setup sampled snapshot cache write failed.",
                 metadata: candidateMetadata(
@@ -322,7 +330,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
         }
 
-        return await composeSnapshotWithCurrentAnvilEvidence(from: surfaceSnapshot)
+        return try await composeSnapshotWithCurrentAnvilEvidence(from: surfaceSnapshot)
     }
 
     private func makeCandidate(from sourceMetadata: StormSetupSourceMetadata) -> HrrrRunCandidate {
@@ -340,7 +348,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     private func resolveAnvilEvidence(
         for h3Cell: Int64,
         sourceMetadata: StormSetupSourceMetadata
-    ) async -> AnvilIngredientEvidence {
+    ) async throws -> AnvilIngredientEvidence {
         guard let anvilProfileAnalysisProvider else {
             return .unavailable(reason: "Anvil analysis provider is not configured.")
         }
@@ -350,7 +358,9 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         do {
+            try Task.checkCancellation()
             let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(for: h3Cell)
+            try Task.checkCancellation()
 
             guard analysis.request.validTime == analysis.debug.validTime else {
                 return .unavailable(
@@ -376,13 +386,14 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 additionalWarnings: staleWarnings
             )
         } catch {
+            try rethrowCancellationIfNeeded(error)
             return .unavailable(reason: String(describing: error))
         }
     }
 
     private func composeSnapshotWithCurrentAnvilEvidence(
         from snapshot: TornadoIngredientSnapshot
-    ) async -> TornadoIngredientSnapshot {
+    ) async throws -> TornadoIngredientSnapshot {
         guard anvilProfileAnalysisProvider != nil else {
             logger.info(
                 "Storm Setup Anvil evidence resolved.",
@@ -395,10 +406,11 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             return snapshot
         }
 
-        let anvilEvidence = await resolveAnvilEvidence(
+        let anvilEvidence = try await resolveAnvilEvidence(
             for: snapshot.h3Cell,
             sourceMetadata: snapshot.source
         )
+        try Task.checkCancellation()
         let assessment = interpreter.assess(
             raw: snapshot.raw,
             freshness: snapshot.freshness,

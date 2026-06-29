@@ -78,7 +78,7 @@ struct PreviewStaticHrrrRunResolver: HrrrRunResolving {
 
 actor PreviewStubStormSetupSubsetLoader: StormSetupSubsetLoading {
     private let handler: @Sendable (Int, HrrrRunResolution, StormSetupCentroid) async throws -> GribSubsetCacheResult
-    private var callCount = 0
+    private(set) var callCount = 0
 
     init(
         handler: @escaping @Sendable (Int, HrrrRunResolution, StormSetupCentroid) async throws -> GribSubsetCacheResult
@@ -98,7 +98,7 @@ actor PreviewStubStormSetupSubsetLoader: StormSetupSubsetLoading {
 
 actor PreviewStubPressureSourceResolver: HrrrPressureDirectObjectResolving {
     private let handler: @Sendable (Int, HrrrRunResolution) async throws -> HrrrPressureDirectObjectResolution
-    private var callCount = 0
+    private(set) var callCount = 0
 
     init(
         handler: @escaping @Sendable (Int, HrrrRunResolution) async throws -> HrrrPressureDirectObjectResolution
@@ -145,7 +145,7 @@ actor PreviewStubPressureArtifactCatalogLookupService: PressureArtifactCatalogLo
 actor PreviewStubPressureProfileLoader: HrrrPressureProfileLoading {
     private let handler: @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
     private let readyHandler: @Sendable (PressureArtifactCatalogReadyArtifact, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult
-    private var callCount = 0
+    private(set) var callCount = 0
 
     init(
         handler: @escaping @Sendable (Int, HrrrPressureDirectObjectResolution, StormSetupCentroid, Double?) async throws -> HrrrPressureProfileLoadResult

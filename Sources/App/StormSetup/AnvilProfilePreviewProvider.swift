@@ -113,11 +113,13 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             )
 
             for candidate in runResolution.candidates {
+                try Task.checkCancellation()
                 let pressureCandidate = makePressureCandidate(from: candidate)
                 do {
                     if let readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(
                         for: pressureCandidate
                     ) {
+                        try Task.checkCancellation()
                         return try await previewReadyArtifact(
                             readyArtifact,
                             h3Cell: resolved.h3Cell,
@@ -134,6 +136,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                         internalFailures.append(error.description)
                     }
                 } catch {
+                    try rethrowCancellationIfNeeded(error)
                     internalFailures.append(String(describing: error))
                 }
             }
@@ -142,6 +145,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 if let staleArtifact = try await pressureArtifactCatalogLookupService.staleArtifact(
                     for: pressureResolution
                 ) {
+                    try Task.checkCancellation()
                     return try await previewReadyArtifact(
                         staleArtifact,
                         h3Cell: resolved.h3Cell,
@@ -159,6 +163,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                     internalFailures.append(error.description)
                 }
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 internalFailures.append(String(describing: error))
             }
 
@@ -186,6 +191,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         }
 
         for candidate in runResolution.candidates {
+            try Task.checkCancellation()
             let pressureCandidate = makePressureCandidate(from: candidate)
             do {
                 let preview = try await previewPressureCandidate(
@@ -194,6 +200,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                     centroid: resolved.centroid,
                     targetValidTime: runResolution.targetValidTime
                 )
+                try Task.checkCancellation()
                 return preview
             } catch let error as AnvilProfilePreviewError {
                 switch error {
@@ -205,6 +212,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                     internalFailures.append(error.description)
                 }
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 internalFailures.append(String(describing: error))
             }
         }
@@ -240,6 +248,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             sourceResolution: sourceResolution,
             centroid: centroid
         )
+        try Task.checkCancellation()
 
         let buildResult: AnvilProfileRequestBuildResult
         do {
@@ -252,6 +261,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         } catch let error as AnvilProfileRequestBuilderError {
             throw classifyBuilderError(error, groupedProfile: loadResult.groupedProfile)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
 
@@ -315,6 +325,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         } catch let error as AnvilProfileRequestBuilderError {
             throw classifyBuilderError(error, groupedProfile: loadResult.groupedProfile)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
 
@@ -371,6 +382,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         } catch let error as HrrrPressureDirectObjectResolverError {
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
         }
     }
@@ -388,6 +400,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         } catch let error as AnvilProfilePreviewError {
             throw error
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
         }
     }
@@ -405,6 +418,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         } catch let error as AnvilProfilePreviewError {
             throw error
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
         }
     }

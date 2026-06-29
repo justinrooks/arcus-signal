@@ -701,3 +701,77 @@ Validation performed:
 Known failures or follow-up work:
 - `swift test` still reports unrelated broad-suite failures that predate this change, including shared-state pressure-artifact catalog and cleanup tests, warm-job tests, and some pressure diagnostics lookups when the full suite runs together.
 - The dashboard change itself passed in the focused dashboard test slices.
+
+### Cancellation Hardening - Probe, Warm, Anvil, and Storm Setup
+
+Status: Completed
+
+Scope:
+- Preserve `CancellationError` through the HRRR pressure probing, warm-job, Anvil, and Storm Setup request pipelines.
+- Stop candidate fallback immediately when task cancellation is observed.
+- Keep cancellation out of catalog failure/unavailability bookkeeping.
+- Keep cancellation out of Anvil transport classification and Storm Setup degraded-evidence classification.
+
+Cancellation boundaries:
+- `HTTPHrrrRemoteObjectChecker` now rethrows cancellation instead of converting it to an unavailable probe result.
+- `HrrrPressureArtifactProbeService` stops after a cancelled `.idx` check and does not mark the candidate unavailable or failed.
+- `DefaultHrrrPressureDirectObjectResolver` stops iterating candidates as soon as cancellation is observed.
+- `PressureArtifactWarmingService` rethrows cancellation before `markFailed`, `markReady`, validation classification, or cache invalidation.
+- `DefaultAnvilProfileClient` preserves cancellation instead of mapping it to transport or timeout failures.
+- `DefaultAnvilProfilePreviewProvider` and `DefaultAnvilProfileAnalysisProvider` stop fallback and let cancellation escape.
+- `StormSetupProvider` now throws through `resolveAnvilEvidence`, `currentSnapshot`, and `loadSnapshot` instead of degrading after cancellation.
+
+Catalog behavior when warming is cancelled:
+- The warm claim remains fenced for lease-based recovery.
+- The row is not marked `failed` or `ready`.
+- Cancellation does not invalidate a completed cache entry by itself.
+- Cleanup code that was waiting on filesystem removal also rethrows cancellation instead of recording a path failure.
+
+Files changed:
+- `Package.swift`
+- `Sources/App/Infrastructure/Cancellation.swift`
+- `Sources/App/StormSetup/HrrrPressureDirectObjectResolver.swift`
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Sources/App/StormSetup/AnvilProfileClient.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Sources/App/StormSetup/AnvilProfileAnalysisProvider.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/PressureArtifactCleanupService.swift`
+- `Sources/App/StormSetup/NomadsGribDownloader.swift`
+- `Sources/App/StormSetup/GribSubsetCache.swift`
+- `Sources/App/StormSetup/HrrrPressureSubsetGribCache.swift`
+- `Sources/App/StormSetup/HrrrPressureByteRangeDownloader.swift`
+- `Sources/App/StormSetup/HrrrPressureProfileLoading.swift`
+- `Tests/AppTests/StormSetupHrrrSourceTests.swift`
+- `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+- `Tests/AppTests/AnvilProfileClientTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewTestSupport.swift`
+- `Tests/AppTests/PressureArtifactDiagnosticsTests.swift`
+
+Validation performed:
+- `swift build`
+- `swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warn-concurrency`
+- `swift test --filter AnvilProfileAnalysisProviderTests`
+- `swift test --filter StormSetupHrrrSourceTests`
+- `swift test --filter HRRRPressureArtifactProbeServiceTests`
+- `swift test --filter PressureArtifactWarmJobTests`
+- `swift test --filter AnvilProfilePreviewProviderTests`
+- `swift test --filter AnvilProfileClientTests`
+- `swift test --filter StormSetupProviderTests`
+- `swift test --no-parallel`
+- `swift test --parallel --num-workers 8`
+- `git diff --check`
+
+Validation results:
+- All of the commands above passed.
+- The parallel test run needed a temporary module-cache override in this sandboxed environment so SwiftPM could write its build artifacts.
+- The code change itself did not rely on timing sleeps or retries to prove cancellation behavior.
+
+Remaining blocking-I/O concurrency work:
+- Some filesystem and cache APIs are still synchronous, so cancellation can only be enforced at the boundaries around those calls.
+- There is still no mid-call interruption for local file deletion, directory creation, or synchronous cache access.
+- That is a platform/API limitation, not an excuse to start sprinkling optimism confetti over the code.

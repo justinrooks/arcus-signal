@@ -990,7 +990,7 @@ private final class ProbeStubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking,
         lock.withLock { _requestedURLs }
     }
 
-    func probe(url: URL) async -> HrrrRemoteObjectProbeResult {
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult {
         lock.withLock {
             _requestedURLs.append(url.absoluteString)
         }

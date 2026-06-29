@@ -69,7 +69,9 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
                 sourceMetadata: sourceResolution.source,
                 byteRangePlan: byteRangePlan
             )
+            try Task.checkCancellation()
         } catch let error as HrrrPressureSubsetGribCacheError {
+            try rethrowCancellationIfNeeded(error)
             switch error {
             case .unableToCreateDirectory, .unableToWriteCache:
                 throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
@@ -77,10 +79,12 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
                 throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
             }
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
         }
 
         let samples = try await samplePressureFile(subset: subsetCacheResult, centroid: centroid)
+        try Task.checkCancellation()
         let groupedProfile = pressureGrouper.group(
             samples: samples,
             surfaceHeightMslM: surfaceHeightMslM
@@ -107,6 +111,7 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
             localFileURL: readyArtifact.localFileURL,
             centroid: centroid
         )
+        try Task.checkCancellation()
         let groupedProfile = pressureGrouper.group(
             samples: samples,
             surfaceHeightMslM: surfaceHeightMslM
@@ -158,7 +163,9 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
         let response: HTTPResponse
         do {
             response = try await httpClient.get(idxURL, headers: requestHeaders)
+            try Task.checkCancellation()
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
         }
 
@@ -207,10 +214,13 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
                 around: centroid
             )
         } catch let error as Wgrib2ClientError {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         } catch let error as ProcessRunnerError {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
     }
@@ -225,10 +235,13 @@ struct DefaultHrrrPressureProfileLoader: HrrrPressureProfileLoading {
                 around: centroid
             )
         } catch let error as Wgrib2ClientError {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         } catch let error as ProcessRunnerError {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfilePreviewError.internalExecutionFailure(reason: String(describing: error))
         }
     }

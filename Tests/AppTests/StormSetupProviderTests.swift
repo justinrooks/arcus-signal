@@ -130,6 +130,61 @@ struct StormSetupProviderTests {
         #expect(anvilRequestCount == 1)
     }
 
+    @Test("cancellation during Anvil composition stops candidate fallback")
+    func cancellationDuringAnvilCompositionStopsCandidateFallback() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let firstCandidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: firstCandidate, centroid: expected.centroid)
+        let freshness = makeFreshness(now: now)
+        let raw = makeRaw(sbcapeJkg: 1450)
+        let cachedSnapshot = makeSnapshot(
+            h3Cell: fixedH3,
+            source: source,
+            fetchedAt: now,
+            raw: raw,
+            assessment: makeAssessment(),
+            freshness: freshness
+        )
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: cachedSnapshot)
+        let subsetLoader = StubStormSetupSubsetLoader { _, _, _ in
+            throw TestFailure.unexpectedDownstreamCall("subset loader should not run on a cache hit")
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, _ in
+            throw TestFailure.unexpectedDownstreamCall("field sampler should not run on a cache hit")
+        }
+
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: .empty)),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: ThrowingAnvilProfileAnalysisProvider(error: CancellationError())
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await provider.currentSnapshot(for: fixedH3)
+        }
+
+        let loadCount = await snapshotCache.loadCount
+        let storeCount = await snapshotCache.storeCount
+        let subsetRequestCount = await subsetLoader.requestCount
+        let fieldSampleRequestCount = await fieldSampler.requestCount
+
+        #expect(loadCount == 1)
+        #expect(storeCount == 0)
+        #expect(subsetRequestCount == 0)
+        #expect(fieldSampleRequestCount == 0)
+    }
+
     @Test("stale Anvil evidence is marked degraded while retaining metric support")
     func snapshotCacheHitMarksStaleAnvilEvidenceDegraded() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)

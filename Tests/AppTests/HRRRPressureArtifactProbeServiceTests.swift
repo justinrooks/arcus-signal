@@ -42,6 +42,42 @@ struct HRRRPressureArtifactProbeServiceTests {
         }
     }
 
+    @Test("probe cancellation leaves catalog state untouched and does not enqueue work")
+    func probeCancellationLeavesCatalogStateUntouchedAndDoesNotEnqueueWork() async throws {
+        try await withApp { app in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let remoteChecker = CancellingProbeHrrrRemoteObjectChecking()
+            let dispatcher = WarmJobDispatcherRecorder()
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            )
+
+            try await seedCatalogRow(status: .failed, payload: payload, lastCheckedAt: nil, on: app.db)
+
+            await #expect(throws: CancellationError.self) {
+                try await service.probe(on: app, logger: app.logger)
+            }
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(dispatcher.dispatches.isEmpty)
+            #expect(row.status == .failed)
+            #expect(row.lastCheckedAt == nil)
+            #expect(remoteChecker.requestedURLs == [makeIdxURL(for: pressureCandidate).absoluteString])
+        }
+    }
+
     @Test("probe enqueues PressureArtifactWarmJob when idx is available and the artifact is missing, failed, or expired")
     func probeEnqueuesWarmJobWhenArtifactIsMissingFailedOrExpired() async throws {
         try await withApp { app in
@@ -537,7 +573,7 @@ private final class ProbeStubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking,
         lock.withLock { _requestedURLs }
     }
 
-    func probe(url: URL) async -> HrrrRemoteObjectProbeResult {
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult {
         lock.withLock {
             _requestedURLs.append(url.absoluteString)
         }
@@ -548,6 +584,23 @@ private final class ProbeStubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking,
             available: available,
             status: available ? 200 : 404
         )
+    }
+}
+
+private final class CancellingProbeHrrrRemoteObjectChecking: HrrrRemoteObjectChecking, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _requestedURLs: [String] = []
+
+    var requestedURLs: [String] {
+        lock.withLock { _requestedURLs }
+    }
+
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult {
+        lock.withLock {
+            _requestedURLs.append(url.absoluteString)
+        }
+
+        throw CancellationError()
     }
 }
 

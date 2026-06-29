@@ -268,6 +268,7 @@ extension PressureArtifactCleanupService {
                     )
                 }
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 if try await completeFailedCleanup(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,

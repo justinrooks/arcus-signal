@@ -282,16 +282,19 @@ actor HrrrPressureSubsetGribCache {
         do {
             try fileManager.createDirectory(at: key.directoryURL(rootURL: rootURL), withIntermediateDirectories: true)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw HrrrPressureSubsetGribCacheError.unableToCreateDirectory(
                 path: key.directoryURL(rootURL: rootURL),
                 reason: String(describing: error)
             )
         }
 
+        try Task.checkCancellation()
         let downloadResult = try await downloader.download(
             sourceMetadata: sourceMetadata,
             byteRangePlan: byteRangePlan
         )
+        try Task.checkCancellation()
 
         guard downloadResult.byteSize <= maximumByteCount else {
             throw HrrrPressureSubsetGribCacheError.responseTooLarge(
@@ -315,6 +318,7 @@ actor HrrrPressureSubsetGribCache {
             try downloadResult.data.write(to: fileURL, options: [.atomic])
             try write(record: record, to: metadataURL)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             try? fileManager.removeItem(at: fileURL)
             try? fileManager.removeItem(at: metadataURL)
             throw HrrrPressureSubsetGribCacheError.unableToWriteCache(path: fileURL, reason: String(describing: error))

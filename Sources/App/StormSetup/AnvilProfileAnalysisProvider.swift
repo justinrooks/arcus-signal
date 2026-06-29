@@ -87,6 +87,7 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
         } catch let error as AnvilProfilePreviewError {
             throw classify(previewError: error)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
         }
 
@@ -99,6 +100,7 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
             } catch let error as AnvilProfileClientError {
                 throw classify(clientError: error)
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
             }
         } else {
@@ -111,6 +113,7 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
         } catch let error as AnvilProfileClientError {
             throw classify(clientError: error)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfileAnalysisError.internalExecutionFailure(reason: String(describing: error))
         }
 

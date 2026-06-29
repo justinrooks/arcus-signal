@@ -24,6 +24,38 @@ struct AnvilProfileAnalysisProviderTests {
         #expect(client.recordedRequests.first == previewResponse.request)
     }
 
+    @Test("analysis provider propagates cancellation from preview generation")
+    func analysisProviderPropagatesCancellationFromPreviewGeneration() async throws {
+        let previewProvider = CancellationThrowingAnvilProfilePreviewProvider()
+        let client = AnalysisStubAnvilProfileClient(response: makeAnvilResponse())
+        let provider = DefaultAnvilProfileAnalysisProvider(
+            previewProvider: previewProvider,
+            anvilClient: client
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await provider.analyzeProfile(for: 617_700_169_958_293_503)
+        }
+
+        #expect(client.requestCount == 0)
+    }
+
+    @Test("analysis provider propagates cancellation from the Anvil client")
+    func analysisProviderPropagatesCancellationFromTheAnvilClient() async throws {
+        let previewProvider = PreviewStubAnvilProfilePreviewProvider(result: .success(makePreviewResponse()))
+        let client = AnalysisStubAnvilProfileClient(error: CancellationError())
+        let provider = DefaultAnvilProfileAnalysisProvider(
+            previewProvider: previewProvider,
+            anvilClient: client
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await provider.analyzeProfile(for: 617_700_169_958_293_503)
+        }
+
+        #expect(client.requestCount == 1)
+    }
+
     private func makePreviewResponse() -> AnvilAnalyzeProfilePreviewResponse {
         let request = AnvilAnalyzeProfileRequest(
             runTime: isoDate("2026-06-19T22:00:00Z"),
@@ -118,18 +150,35 @@ struct AnvilProfileAnalysisProviderTests {
     }
 }
 
+private struct CancellationThrowingAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        _ = h3Cell
+        throw CancellationError()
+    }
+}
+
 private final class AnalysisStubAnvilProfileClient: AnvilProfileClient, @unchecked Sendable {
-    let response: AnvilAnalyzeProfileResponse
+    let response: AnvilAnalyzeProfileResponse?
+    let error: (any Error)?
     private(set) var recordedRequests: [AnvilAnalyzeProfileRequest] = []
 
     var requestCount: Int { recordedRequests.count }
 
-    init(response: AnvilAnalyzeProfileResponse) {
+    init(response: AnvilAnalyzeProfileResponse? = nil, error: (any Error)? = nil) {
         self.response = response
+        self.error = error
     }
 
     func analyzeProfile(_ request: AnvilAnalyzeProfileRequest) async throws -> AnvilAnalyzeProfileResponse {
         recordedRequests.append(request)
+        if let error {
+            throw error
+        }
+
+        guard let response else {
+            fatalError("Expected a planned response or error.")
+        }
+
         return response
     }
 }

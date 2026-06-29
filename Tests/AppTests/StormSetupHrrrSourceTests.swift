@@ -247,6 +247,18 @@ struct StormSetupHrrrSourceTests {
         #expect(metadata.idxURL?.absoluteString == "https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260619/conus/hrrr.t20z.wrfprsf01.grib2.idx")
     }
 
+    @Test("HTTP remote-object checker propagates cancellation")
+    func httpRemoteObjectCheckerPropagatesCancellation() async throws {
+        let client = CancellingHTTPClient()
+        let checker = HTTPHrrrRemoteObjectChecker(httpClient: client)
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await checker.probe(url: URL(string: "https://example.com/hrrr.idx")!)
+        }
+
+        #expect(client.headRequestCount == 1)
+    }
+
     @Test("pressure direct-object resolver prefers the newest available candidate")
     func pressureDirectObjectResolverPrefersNewestAvailableCandidate() async throws {
         let newer = HrrrRunCandidate(
@@ -294,6 +306,64 @@ struct StormSetupHrrrSourceTests {
                 product: .wrfprsf,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
                 forecastHour: 1,
+                fieldSetVersion: .tornadoPressureV2
+            )).absoluteString
+        ])
+    }
+
+    @Test("pressure direct-object resolver stops after a cancelled candidate and does not probe later ones")
+    func pressureDirectObjectResolverStopsAfterCancelledCandidate() async throws {
+        let first = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            forecastHour: 0,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let second = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+            forecastHour: 1,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let third = HrrrRunCandidate(
+            product: .wrfprsf,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 19),
+            forecastHour: 2,
+            fieldSetVersion: .tornadoPressureV2
+        )
+        let builder = HrrrPressureDirectObjectURLBuilder()
+        let checker = SequencedHrrrRemoteObjectChecking(plannedResponses: [
+            .available(status: 404),
+            .available(status: 404),
+            .cancelled
+        ])
+        let resolver = DefaultHrrrPressureDirectObjectResolver(checker: checker, urlBuilder: builder)
+        let resolution = HrrrRunResolution(
+            targetValidTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+            candidates: [first, second, third]
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await resolver.resolveSource(for: resolution)
+        }
+
+        #expect(checker.requestedURLs == [
+            builder.makeIdxURL(for: HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+                forecastHour: 1,
+                fieldSetVersion: .tornadoPressureV2
+            )).absoluteString,
+            builder.makeGribURL(for: HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+                forecastHour: 1,
+                fieldSetVersion: .tornadoPressureV2
+            )).absoluteString,
+            builder.makeIdxURL(for: HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 19),
+                forecastHour: 2,
                 fieldSetVersion: .tornadoPressureV2
             )).absoluteString
         ])
@@ -468,7 +538,7 @@ final class StubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking, @unchecked S
         self.availableURLs = availableURLs
     }
 
-    func probe(url: URL) async -> HrrrRemoteObjectProbeResult {
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult {
         requestedURLs.append(url.absoluteString)
         let available = availableURLs[url.absoluteString] ?? false
         return HrrrRemoteObjectProbeResult(
@@ -476,5 +546,83 @@ final class StubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking, @unchecked S
             available: available,
             status: available ? 200 : 404
         )
+    }
+}
+
+private enum PlannedHrrrRemoteObjectOutcome: Sendable {
+    case available(status: Int)
+    case cancelled
+}
+
+private final class CancellingHTTPClient: HTTPClient, @unchecked Sendable {
+    private(set) var headRequestCount = 0
+
+    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        try await head(url, headers: headers)
+    }
+
+    func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        _ = url
+        _ = headers
+        headRequestCount += 1
+        throw CancellationError()
+    }
+
+    func post(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        _ = url
+        _ = headers
+        _ = body
+        _ = timeoutSeconds
+        throw CancellationError()
+    }
+
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
+    }
+
+    func clearCache() {}
+}
+
+private final class SequencedHrrrRemoteObjectChecking: HrrrRemoteObjectChecking, @unchecked Sendable {
+    private let plannedResponses: [PlannedHrrrRemoteObjectOutcome]
+    private let lock = NSLock()
+    private var _requestedURLs: [String] = []
+    private var nextIndex = 0
+
+    init(plannedResponses: [PlannedHrrrRemoteObjectOutcome]) {
+        self.plannedResponses = plannedResponses
+    }
+
+    var requestedURLs: [String] {
+        lock.withLock { _requestedURLs }
+    }
+
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult {
+        let index = lock.withLock { () -> Int in
+            defer { nextIndex += 1 }
+            _requestedURLs.append(url.absoluteString)
+            return nextIndex
+        }
+
+        guard plannedResponses.indices.contains(index) else {
+            preconditionFailure("Unexpected extra probe call at index \(index).")
+        }
+
+        switch plannedResponses[index] {
+        case .available(let status):
+            return HrrrRemoteObjectProbeResult(url: url, available: false, status: status)
+        case .cancelled:
+            throw CancellationError()
+        }
     }
 }

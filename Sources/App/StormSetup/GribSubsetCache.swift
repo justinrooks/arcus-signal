@@ -123,7 +123,9 @@ actor GribSubsetCache {
             throw GribSubsetCacheError.missingNomadsURL(source: sourceMetadata)
         }
 
+        try Task.checkCancellation()
         let response = try await httpClient.get(sourceURL, headers: nomadsRequestHeaders)
+        try Task.checkCancellation()
 
         guard (200...299).contains(response.status) else {
             throw GribSubsetCacheError.unexpectedHTTPStatus(source: sourceMetadata, status: response.status)
@@ -157,6 +159,7 @@ actor GribSubsetCache {
             try body.write(to: fileURL, options: [.atomic])
             try write(record: record, to: metadataURL)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             try? fileManager.removeItem(at: fileURL)
             try? fileManager.removeItem(at: metadataURL)
             throw GribSubsetCacheError.unableToWriteCache(path: fileURL, reason: String(describing: error))

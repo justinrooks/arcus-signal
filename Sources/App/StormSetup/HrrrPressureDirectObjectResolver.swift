@@ -47,7 +47,7 @@ struct HrrrRemoteObjectProbeResult: Sendable, Equatable {
 }
 
 protocol HrrrRemoteObjectChecking: Sendable {
-    func probe(url: URL) async -> HrrrRemoteObjectProbeResult
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult
 }
 
 struct HTTPHrrrRemoteObjectChecker: HrrrRemoteObjectChecking {
@@ -57,12 +57,15 @@ struct HTTPHrrrRemoteObjectChecker: HrrrRemoteObjectChecking {
         self.httpClient = httpClient
     }
 
-    func probe(url: URL) async -> HrrrRemoteObjectProbeResult {
+    func probe(url: URL) async throws -> HrrrRemoteObjectProbeResult {
+        try Task.checkCancellation()
         do {
             let response = try await httpClient.head(url, headers: [:])
+            try Task.checkCancellation()
             let available = (200...399).contains(response.status)
             return HrrrRemoteObjectProbeResult(url: url, available: available, status: response.status)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             return HrrrRemoteObjectProbeResult(url: url, available: false, status: nil)
         }
     }
@@ -139,10 +142,11 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
         var failures: [HrrrPressureDirectObjectFailure] = []
 
         for candidate in resolution.candidates {
+            try Task.checkCancellation()
             let pressureCandidate = makePressureCandidate(from: candidate)
             let source = urlBuilder.makeSourceMetadata(for: pressureCandidate)
 
-            let idxProbe = await remoteObjectChecker.probe(url: source.idxURL ?? urlBuilder.makeIdxURL(for: pressureCandidate))
+            let idxProbe = try await remoteObjectChecker.probe(url: source.idxURL ?? urlBuilder.makeIdxURL(for: pressureCandidate))
             if idxProbe.available {
                 return HrrrPressureDirectObjectResolution(
                     candidate: pressureCandidate,
@@ -152,7 +156,8 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
                 )
             }
 
-            let gribProbe = await remoteObjectChecker.probe(url: source.primaryDownloadURL ?? urlBuilder.makeGribURL(for: pressureCandidate))
+            try Task.checkCancellation()
+            let gribProbe = try await remoteObjectChecker.probe(url: source.primaryDownloadURL ?? urlBuilder.makeGribURL(for: pressureCandidate))
             let idxSummary = probeSummary(for: idxProbe)
             let gribSummary = probeSummary(for: gribProbe)
             failures.append(

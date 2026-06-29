@@ -156,6 +156,22 @@ struct AnvilProfileClientTests {
         }
     }
 
+    @Test("client propagates cancellation instead of classifying it as a transport failure")
+    func clientPropagatesCancellationInsteadOfClassifyingItAsATransportFailure() async throws {
+        let request = makeRequest()
+        let httpClient = AnvilProfileStubHTTPClient(
+            plannedError: CancellationError()
+        )
+        let configuration = makeConfiguration()
+        let client = try configuration.makeAnvilProfileClient(httpClient: httpClient)
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await client.analyzeProfile(request)
+        }
+
+        #expect(httpClient.requestCount == 1)
+    }
+
     @Test("client maps timeouts when the transport exposes them")
     func clientMapsTimeoutsWhenTheTransportExposesThem() async throws {
         let request = makeRequest()

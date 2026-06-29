@@ -170,6 +170,61 @@ struct PressureArtifactWarmJobTests {
         }
     }
 
+    @Test("warm cancellation leaves the catalog claim available for recovery")
+    func warmCancellationLeavesTheCatalogClaimAvailableForRecovery() async throws {
+        try await withApp { app in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = PressureArtifactWarmValidatorStub(error: CancellationError(), lineCount: makeExpectedValidationLineCount())
+            let cacheRoot = testRootURL()
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                validator: validator,
+                cacheRootURL: cacheRoot,
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 1_800
+            )
+            let job = PressureArtifactWarmJob(warmingService: service)
+
+            await #expect(throws: CancellationError.self) {
+                try await job.dequeue(makeQueueContext(app: app), payload)
+            }
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            let cachedKey = try HrrrPressureSubsetGribCacheKey(
+                sourceMetadata: makeSourceMetadata(for: payload),
+                byteRangePlan: try makeByteRangePlan()
+            )
+
+            #expect(row.status == .warming)
+            #expect(row.claimToken != nil)
+            #expect(row.leaseExpiresAt != nil)
+            #expect(row.localPath == nil)
+            #expect(row.byteSize == nil)
+            #expect(row.errorSummary == nil)
+            #expect(client.idxRequestCount == 1)
+            #expect(client.rangeRequestCount == makeExpectedValidationLineCount())
+            #expect(validator.validationCount == 1)
+            #expect(FileManager.default.fileExists(atPath: cachedKey.subsetFileURL(rootURL: cacheRoot).path))
+            #expect(FileManager.default.fileExists(atPath: cachedKey.metadataFileURL(rootURL: cacheRoot).path))
+        }
+    }
+
     @Test("ready artifact is skipped without rebuilding")
     func readyArtifactIsSkippedWithoutRebuilding() async throws {
         try await withApp { app in

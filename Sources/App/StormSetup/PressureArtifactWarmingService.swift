@@ -104,6 +104,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             claimToken: claimToken,
             on: application.db
         ) else {
+            try Task.checkCancellation()
             let currentRow = try await PressureArtifactCatalogModel.find(
                 runTime: payload.runTime,
                 forecastHour: payload.forecastHour,
@@ -149,6 +150,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         do {
             let source = makeSourceMetadata(for: payload)
             let idxText = try await fetchIdxText(from: source, logger: logger)
+            try Task.checkCancellation()
             let inventory = HrrrPressureIdxInventory.parse(idxText)
             let selection = HrrrPressureProfileMessageSelector(
                 preferredLevels: StormSetupPressureLevel.preferredDescending
@@ -200,6 +202,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 sourceMetadata: source,
                 byteRangePlan: byteRangePlan
             )
+            try Task.checkCancellation()
             let downloadDuration = downloadStart.duration(to: clock.now)
             let downloadDurationMs = durationMilliseconds(downloadDuration)
 
@@ -223,7 +226,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             let validation: PressureArtifactValidationResult
             do {
                 validation = try await validator.validate(localFileURL: subset.localFileURL)
+                try Task.checkCancellation()
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 await subsetCache.invalidate(
                     sourceMetadata: source,
                     byteRangePlan: byteRangePlan
@@ -243,6 +248,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 throw error
             }
 
+            try Task.checkCancellation()
             guard validation.stdoutLineCount == selection.selectedMessages.count else {
                 await subsetCache.invalidate(
                     sourceMetadata: source,
@@ -267,6 +273,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 ]
             )
 
+            try Task.checkCancellation()
             guard try await markReady(
                 payload: payload,
                 claimToken: claimToken,
@@ -297,6 +304,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 ]
             )
         } catch {
+            try rethrowCancellationIfNeeded(error)
             guard try await markFailed(
                 payload: payload,
                 claimToken: claimToken,
@@ -370,6 +378,7 @@ extension PressureArtifactWarmingService {
                 "Accept": "text/plain, application/octet-stream, */*"
             ]
         )
+        try Task.checkCancellation()
 
         guard (200...299).contains(response.status) else {
             throw Abort(.badGateway, reason: "Pressure idx request returned HTTP \(response.status).")

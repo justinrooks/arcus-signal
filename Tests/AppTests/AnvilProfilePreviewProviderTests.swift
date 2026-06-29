@@ -465,6 +465,55 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.warnings.contains(where: { $0.contains("Dropped incomplete pressure levels") }))
     }
 
+    @Test("provider propagates cancellation instead of trying another candidate")
+    func providerPropagatesCancellationInsteadOfTryingAnotherCandidate() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let firstCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let secondCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
+            forecastHour: 1
+        )
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { callIndex, resolution in
+            guard let candidate = resolution.candidates.first else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(reason: "missing pressure candidate")
+            }
+
+            if callIndex == 0 {
+                throw CancellationError()
+            }
+
+            return previewMakePressureSourceResolution(
+                candidate: candidate,
+                idxAvailable: true
+            )
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader(
+            handler: { _, _, _, _ in
+                Issue.record("Pressure profile loading should not have been reached after cancellation.")
+                throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected call")
+            }
+        )
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [firstCandidate, secondCandidate])
+            ),
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await provider.previewProfile(for: h3Cell)
+        }
+
+        #expect(await pressureSourceResolver.callCount == 1)
+        #expect(await pressureProfileLoader.callCount == 0)
+    }
+
     @Test("provider filters below-ground pressure levels before assembling the Anvil request")
     func providerFiltersBelowGroundPressureLevels() async throws {
         let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)

@@ -93,6 +93,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
         )
 
         for candidate in resolution.candidates {
+            try Task.checkCancellation()
             let pressureCandidate = makePressureCandidate(from: candidate)
             let source = urlBuilder.makeSourceMetadata(for: pressureCandidate)
             guard let idxURL = source.idxURL else {
@@ -106,10 +107,11 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                         ]
                     )
                 )
+                try Task.checkCancellation()
                 continue
             }
 
-            let idxProbe = await remoteObjectChecker.probe(url: idxURL)
+            let idxProbe = try await remoteObjectChecker.probe(url: idxURL)
             let payload = makePayload(from: pressureCandidate)
 
             logger.info(
@@ -124,6 +126,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
 
             if idxProbe.available {
                 do {
+                    try Task.checkCancellation()
                     let currentRow = try await PressureArtifactCatalogModel.find(
                         runTime: payload.runTime,
                         forecastHour: payload.forecastHour,
@@ -167,6 +170,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                             return
                         }
 
+                        try Task.checkCancellation()
                         try await warmJobDispatcher.dispatch(
                             payload,
                             to: ArcusQueueLane.modelArtifacts.queueName,
@@ -187,6 +191,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                         return
                     }
 
+                    try Task.checkCancellation()
                     guard try await claimWarmableCatalogRow(
                         for: payload,
                         recoveryCutoff: recoveryCutoff,
@@ -206,6 +211,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                         return
                     }
 
+                    try Task.checkCancellation()
                     try await warmJobDispatcher.dispatch(
                         payload,
                         to: ArcusQueueLane.modelArtifacts.queueName,
@@ -225,6 +231,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                     )
                     return
                 } catch {
+                    try rethrowCancellationIfNeeded(error)
                     try await markProbeFailure(
                         payload: payload,
                         error: error,
@@ -245,6 +252,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                 }
             }
 
+            try Task.checkCancellation()
             try await markUnavailability(
                 payload: payload,
                 idxURL: idxURL,

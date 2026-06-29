@@ -65,6 +65,7 @@ struct DefaultAnvilProfileClient: AnvilProfileClient, Sendable {
         let response: HTTPResponse
 
         do {
+            try Task.checkCancellation()
             // Anvil profile analysis is treated as a single-attempt POST so Arcus Signal does not
             // replay an expensive upstream analysis on transient transport failures.
             response = try await httpClient.postWithoutRetry(
@@ -73,6 +74,7 @@ struct DefaultAnvilProfileClient: AnvilProfileClient, Sendable {
                 body: body,
                 timeoutSeconds: timeoutSeconds
             )
+            try Task.checkCancellation()
         } catch let error as URLError where error.code == .timedOut {
             throw AnvilProfileClientError.requestTimedOut(
                 endpoint: endpointURL,
@@ -80,6 +82,7 @@ struct DefaultAnvilProfileClient: AnvilProfileClient, Sendable {
                 reason: String(describing: error)
             )
         } catch {
+            try rethrowCancellationIfNeeded(error)
             if isTimeout(error) {
                 throw AnvilProfileClientError.requestTimedOut(
                     endpoint: endpointURL,
@@ -111,8 +114,10 @@ struct DefaultAnvilProfileClient: AnvilProfileClient, Sendable {
         }
 
         do {
+            try Task.checkCancellation()
             return try jsonDecoder.decode(AnvilAnalyzeProfileResponse.self, from: data)
         } catch {
+            try rethrowCancellationIfNeeded(error)
             throw AnvilProfileClientError.malformedResponseJSON(
                 endpoint: endpointURL,
                 reason: String(describing: error),
