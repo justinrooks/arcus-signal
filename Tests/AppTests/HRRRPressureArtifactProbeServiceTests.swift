@@ -10,7 +10,7 @@ import Vapor
 struct HRRRPressureArtifactProbeServiceTests {
     @Test("probe does not enqueue when idx is unavailable and updates lastCheckedAt")
     func probeDoesNotEnqueueWhenIdxIsUnavailableAndUpdatesLastCheckedAt() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -19,6 +19,7 @@ struct HRRRPressureArtifactProbeServiceTests {
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                 runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             )
@@ -44,7 +45,7 @@ struct HRRRPressureArtifactProbeServiceTests {
 
     @Test("probe cancellation leaves catalog state untouched and does not enqueue work")
     func probeCancellationLeavesCatalogStateUntouchedAndDoesNotEnqueueWork() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -53,6 +54,7 @@ struct HRRRPressureArtifactProbeServiceTests {
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                 runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             )
@@ -80,7 +82,7 @@ struct HRRRPressureArtifactProbeServiceTests {
 
     @Test("probe enqueues PressureArtifactWarmJob when idx is available and the artifact is missing, failed, or expired")
     func probeEnqueuesWarmJobWhenArtifactIsMissingFailedOrExpired() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let statuses: [PressureArtifactCatalogStatus?] = [nil, .failed, .expired]
             for status in statuses {
                 let surfaceCandidate = makeSurfaceCandidate()
@@ -92,6 +94,7 @@ struct HRRRPressureArtifactProbeServiceTests {
                 let service = makeService(
                     remoteChecker: remoteChecker,
                     dispatcher: dispatcher,
+                    blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                     runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                     now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
                 )
@@ -125,7 +128,7 @@ struct HRRRPressureArtifactProbeServiceTests {
 
     @Test("recent pending rows remain skipped while stale pending rows are redispatched once")
     func recentPendingRowsRemainSkippedWhileStalePendingRowsAreRedispatchedOnce() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -135,6 +138,7 @@ struct HRRRPressureArtifactProbeServiceTests {
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                 runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
                 recoveryTimeoutSeconds: 1_800
@@ -165,7 +169,7 @@ struct HRRRPressureArtifactProbeServiceTests {
 
     @Test("expired warming leases are reclaimed and redispatched once while active leases stay skipped")
     func expiredWarmingLeasesAreReclaimedAndRedispatchedOnceWhileActiveLeasesStaySkipped() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let statuses: [(status: PressureArtifactCatalogStatus, leaseExpiresAt: Date?, expectedDispatches: Int)] = [
                 (.warming, makeUTCDate(year: 2026, month: 6, day: 30, hour: 13, minute: 15), 0),
                 (.warming, makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 30), 1)
@@ -181,6 +185,7 @@ struct HRRRPressureArtifactProbeServiceTests {
                 let service = makeService(
                     remoteChecker: remoteChecker,
                     dispatcher: dispatcher,
+                    blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                     runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                     now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
                     recoveryTimeoutSeconds: 1_800
@@ -217,18 +222,66 @@ struct HRRRPressureArtifactProbeServiceTests {
         }
     }
 
-    @Test("ready rows with unusable local files are reset to pending and redispatched")
-    func readyRowsWithUnusableLocalFilesAreResetToPendingAndRedispatched() async throws {
-        try await withApp { app in
+    @Test("ready rows with usable local files are skipped without warm dispatch")
+    func readyRowsWithUsableLocalFilesAreSkippedWithoutWarmDispatch() async throws {
+        try await withApp { app, blockingWorkExecutor in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
             let idxURL = makeIdxURL(for: pressureCandidate)
             let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
             let dispatcher = WarmJobDispatcherRecorder()
+            let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWorkExecutor)
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
+                blockingWorkExecutor: countingExecutor,
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                recoveryTimeoutSeconds: 1_800
+            )
+            let readyPath = FileManager.default.temporaryDirectory.appendingPathComponent("ready-\(UUID().uuidString).grib2")
+            FileManager.default.createFile(atPath: readyPath.path, contents: Data("ready".utf8))
+            try await seedCatalogRow(
+                status: .ready,
+                payload: payload,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 0),
+                localPath: readyPath.path,
+                byteSize: 5,
+                on: app.db
+            )
+
+            try await service.probe(on: app, logger: app.logger)
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(dispatcher.dispatches.isEmpty)
+            #expect(row.status == .ready)
+            #expect(await countingExecutor.executionCount() == 1)
+            #expect(remoteChecker.requestedURLs == [idxURL.absoluteString])
+        }
+    }
+
+    @Test("ready rows with unusable local files are reset to pending and redispatched")
+    func readyRowsWithUnusableLocalFilesAreResetToPendingAndRedispatched() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = makeIdxURL(for: pressureCandidate)
+            let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
+            let dispatcher = WarmJobDispatcherRecorder()
+            let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWorkExecutor)
+            let service = makeService(
+                remoteChecker: remoteChecker,
+                dispatcher: dispatcher,
+                blockingWorkExecutor: countingExecutor,
                 runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
                 recoveryTimeoutSeconds: 1_800
@@ -258,12 +311,13 @@ struct HRRRPressureArtifactProbeServiceTests {
             #expect(row.byteSize == nil)
             #expect(row.claimToken == nil)
             #expect(row.leaseExpiresAt == nil)
+            #expect(await countingExecutor.executionCount() == 1)
         }
     }
 
     @Test("concurrent probes reclaim or repair at most once")
     func concurrentProbesReclaimOrRepairAtMostOnce() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -273,6 +327,7 @@ struct HRRRPressureArtifactProbeServiceTests {
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                 runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
                 recoveryTimeoutSeconds: 1_800
@@ -306,7 +361,7 @@ struct HRRRPressureArtifactProbeServiceTests {
 
     @Test("probe skips duplicate warm jobs for pending, warming, and ready states")
     func probeSkipsDuplicateWarmJobsForPendingWarmingAndReady() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let statuses: [PressureArtifactCatalogStatus] = [.pending, .warming, .ready]
             for status in statuses {
                 let surfaceCandidate = makeSurfaceCandidate()
@@ -315,12 +370,13 @@ struct HRRRPressureArtifactProbeServiceTests {
                 let idxURL = makeIdxURL(for: pressureCandidate)
                 let remoteChecker = ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true])
                 let dispatcher = WarmJobDispatcherRecorder()
-            let service = makeService(
-                remoteChecker: remoteChecker,
-                dispatcher: dispatcher,
-                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
-                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
-            )
+                let service = makeService(
+                    remoteChecker: remoteChecker,
+                    dispatcher: dispatcher,
+                    blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
+                    runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                    now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+                )
 
                 switch status {
                 case .pending:
@@ -374,7 +430,7 @@ struct HRRRPressureArtifactProbeServiceTests {
 
     @Test("expired rows with active cleanup claims are not claimed for warming")
     func expiredRowsWithActiveCleanupClaimsAreNotClaimedForWarming() async throws {
-        try await withApp { app in
+        try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -384,6 +440,7 @@ struct HRRRPressureArtifactProbeServiceTests {
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
                 runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             )
@@ -418,14 +475,15 @@ struct HRRRPressureArtifactProbeServiceTests {
 }
 
 private extension HRRRPressureArtifactProbeServiceTests {
-    func withApp(test: (Application) async throws -> Void) async throws {
+    func withApp(test: (Application, any PressureArtifactBlockingWorkExecuting) async throws -> Void) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
             let app = try await Application.make(.testing)
             do {
                 try await configure(app, mode: .api)
                 try await app.autoMigrate()
                 try await clearCatalog(on: app.db)
-                try await test(app)
+                let blockingWorkExecutor = makePressureArtifactBlockingWorkExecutor(application: app)
+                try await test(app, blockingWorkExecutor)
             } catch {
                 try? await app.asyncShutdown()
                 throw error
@@ -437,6 +495,7 @@ private extension HRRRPressureArtifactProbeServiceTests {
     func makeService<RemoteChecker: HrrrRemoteObjectChecking, Dispatcher: PressureArtifactWarmJobDispatching>(
         remoteChecker: RemoteChecker,
         dispatcher: Dispatcher,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         runResolution: HrrrRunResolution,
         now: Date,
         recoveryTimeoutSeconds: TimeInterval = 1_800
@@ -445,6 +504,7 @@ private extension HRRRPressureArtifactProbeServiceTests {
             runResolver: FixedHrrrRunResolving(resolution: runResolution),
             remoteObjectChecker: remoteChecker,
             warmJobDispatcher: dispatcher,
+            blockingWorkExecutor: blockingWorkExecutor,
             dateProvider: FixedStormSetupDateProvider(nowDate: now),
             recoveryTimeoutSeconds: recoveryTimeoutSeconds
         )

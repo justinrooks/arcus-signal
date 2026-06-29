@@ -61,11 +61,13 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 - Issue `#120` added bounded stale pressure-artifact fallback plus worker-owned expiration and deletion.
 - Issue `#121` added structured diagnostics across probe, warm, lookup, and request-path evidence resolution, plus the regression guard for exact-artifact unusable-profile failures.
 - Issue `#122` added claim fencing, stale `pending` recovery, expired `warming` reclamation, and unusable-ready repair.
+- This slice moved HRRR pressure artifact probe ready-file usability inspection onto the blocking-work executor.
 - The currently scoped warmer issue set is complete, including cleanup claim fencing and active-deletion exclusion.
 - The normal Storm Setup request path remains unchanged.
 - No cold pressure artifact acquisition has been introduced into the request path.
 - Pressure-artifact cache reads, atomic writes, directory management, request-path file inspection, and SHA-256 checksums now run on the shared bounded blocking pool instead of actor or request executors.
 - Pressure-artifact cleanup filesystem work now also runs on the shared bounded blocking pool instead of the cooperative executor.
+- HRRR pressure artifact probe ready-row inspection now also uses the shared bounded blocking pool instead of a direct synchronous `FileManager` call.
 - Cancellation remains cooperative around scheduling and completion only; Foundation disk operations are still non-preemptive.
 - Cleanup still preserves lifecycle semantics, claim fencing, and protected-path behavior.
 
@@ -74,26 +76,21 @@ Pressure-artifact disk I/O and checksum work run through the shared application 
 Status: Completed
 
 Changed:
-- `PressureArtifactCleanupService` now depends on `PressureArtifactBlockingWorkExecuting`.
-- `PressureArtifactCleanupService.makeDefault(application:)` now uses `NIOThreadPoolPressureArtifactBlockingWorkExecutor(threadPool: application.threadPool)`.
-- Cleanup filesystem operations now route through the blocking executor:
-  - file existence checks
-  - standardized path resolution
-  - symlink/canonical path resolution
-  - regular-file checks
-  - physical file deletion
-- `PressureArtifactCleanupServiceTests` now injects the existing test blocking executor and adds a narrow count-based seam proving the cleanup path uses it.
+- `HRRRPressureArtifactProbeService` now depends on `PressureArtifactBlockingWorkExecuting`.
+- `HRRRPressureArtifactProbeService.makeDefault(application:)` now uses `NIOThreadPoolPressureArtifactBlockingWorkExecutor(threadPool: application.threadPool)`.
+- Ready-row usability inspection now runs through the blocking executor and preserves the existing false-for-unusable, throw-on-cancellation behavior.
+- `HRRRPressureArtifactProbeServiceTests` now inject the existing test blocking executor and adds a narrow count-based seam proving the probe path uses it.
+- `PressureArtifactDiagnosticsTests` now passes the blocking executor into the probe service constructors it owns directly.
 
 Validated:
 - `swift build`
-- `swift test --no-parallel --filter PressureArtifactCleanupServiceTests`
-- `swift test --parallel --num-workers 8 --filter PressureArtifactCleanupServiceTests`
+- `swift test --no-parallel --filter HRRRPressureArtifactProbeServiceTests`
+- `swift test --parallel --num-workers 8 --filter HRRRPressureArtifactProbeServiceTests`
 - `swift build -Xswiftc -strict-concurrency=complete`
-- `git diff --check`
 
 Remaining:
-- No additional cleanup lifecycle changes are scoped in this slice.
-- The next warmer issue should stay issue-scoped and avoid broader cleanup behavior changes.
+- No additional probe behavior changes are scoped in this slice.
+- The remaining warmer work should stay issue-scoped and avoid broader probe or scheduling changes.
 
 ## Warm Invariant
 

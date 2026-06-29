@@ -49,6 +49,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
     private let runResolver: any HrrrRunResolving
     private let remoteObjectChecker: any HrrrRemoteObjectChecking
     private let warmJobDispatcher: any PressureArtifactWarmJobDispatching
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
     private let dateProvider: any StormSetupDateProviding
     private let recoveryTimeoutSeconds: TimeInterval
     private let urlBuilder: HrrrPressureDirectObjectURLBuilder
@@ -57,6 +58,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
         runResolver: any HrrrRunResolving = DefaultHrrrRunResolver(),
         remoteObjectChecker: any HrrrRemoteObjectChecking,
         warmJobDispatcher: any PressureArtifactWarmJobDispatching = DefaultPressureArtifactWarmJobDispatcher(),
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         recoveryTimeoutSeconds: TimeInterval = 30 * 60,
         urlBuilder: HrrrPressureDirectObjectURLBuilder = HrrrPressureDirectObjectURLBuilder()
@@ -64,6 +66,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
         self.runResolver = runResolver
         self.remoteObjectChecker = remoteObjectChecker
         self.warmJobDispatcher = warmJobDispatcher
+        self.blockingWorkExecutor = blockingWorkExecutor
         self.dateProvider = dateProvider
         self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
         self.urlBuilder = urlBuilder
@@ -73,6 +76,9 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
         HRRRPressureArtifactProbeService(
             remoteObjectChecker: HTTPHrrrRemoteObjectChecker(
                 httpClient: VaporApplicationHTTPClient(application: application)
+            ),
+            blockingWorkExecutor: NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+                threadPool: application.threadPool
             ),
             dateProvider: SystemStormSetupDateProvider(),
             recoveryTimeoutSeconds: application.stormSetupConfiguration.pressureArtifactRecoveryTimeoutSeconds
@@ -136,7 +142,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                     )
 
                     if let currentRow, currentRow.status == .ready {
-                        if isUsableReadyCatalogRow(currentRow) {
+                        if try await isUsableReadyCatalogRow(currentRow) {
                             logger.info(
                                 "HRRR pressure artifact warm skipped for existing catalog state.",
                                 metadata: skipMetadata(
@@ -481,22 +487,33 @@ private extension HRRRPressureArtifactProbeService {
             .first()
     }
 
-    func isUsableReadyCatalogRow(_ row: PressureArtifactCatalogModel) -> Bool {
+    func isUsableReadyCatalogRow(_ row: PressureArtifactCatalogModel) async throws -> Bool {
         guard let localPath = row.localPath?.trimmingCharacters(in: .whitespacesAndNewlines),
               !localPath.isEmpty else {
             return false
         }
 
         let localURL = URL(fileURLWithPath: localPath)
-        guard let fileAttributes = try? FileManager.default.attributesOfItem(atPath: localURL.path),
-              let fileType = fileAttributes[.type] as? FileAttributeType,
-              fileType == .typeRegular,
-              let fileSize = fileAttributes[.size] as? NSNumber,
-              fileSize.int64Value > 0 else {
+        let fileIsUsable: Bool
+        do {
+            fileIsUsable = try await blockingWorkExecutor.execute {
+                let fileAttributes = try FileManager.default.attributesOfItem(atPath: localURL.path)
+                guard let fileType = fileAttributes[.type] as? FileAttributeType,
+                      fileType == .typeRegular,
+                      let fileSize = fileAttributes[.size] as? NSNumber,
+                      fileSize.int64Value > 0 else {
+                    return false
+                }
+
+                return true
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
             return false
         }
 
-        return true
+        return fileIsUsable
     }
 
     func recoveryReason(

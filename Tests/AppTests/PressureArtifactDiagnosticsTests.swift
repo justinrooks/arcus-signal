@@ -11,7 +11,7 @@ import Vapor
 struct PressureArtifactDiagnosticsTests {
     @Test("probe logs idx availability, queue metadata, and enqueue details")
     func probeLogsIdxAvailabilityQueueMetadataAndEnqueueDetails() async throws {
-        try await withApp { app, _ in
+        try await withApp { app, blockingWorkExecutor in
             let surfaceCandidate = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14), forecastHour: 8)
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -27,7 +27,8 @@ struct PressureArtifactDiagnosticsTests {
                     )
                 ),
                 remoteObjectChecker: remoteChecker,
-                warmJobDispatcher: dispatcher
+                warmJobDispatcher: dispatcher,
+                blockingWorkExecutor: blockingWorkExecutor
             )
 
             try await seedCatalogRow(status: .failed, payload: payload, on: app.db)
@@ -53,7 +54,7 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("probe logs the existing catalog state when warm enqueue is skipped")
     func probeLogsExistingCatalogStateWhenWarmEnqueueIsSkipped() async throws {
-        try await withApp { app, _ in
+        try await withApp { app, blockingWorkExecutor in
             let surfaceCandidate = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15), forecastHour: 7)
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
@@ -69,7 +70,8 @@ struct PressureArtifactDiagnosticsTests {
                     )
                 ),
                 remoteObjectChecker: remoteChecker,
-                warmJobDispatcher: dispatcher
+                warmJobDispatcher: dispatcher,
+                blockingWorkExecutor: blockingWorkExecutor
             )
 
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
@@ -87,7 +89,7 @@ struct PressureArtifactDiagnosticsTests {
 
     @Test("probe logs exhaustion when every candidate is unavailable")
     func probeLogsExhaustionWhenEveryCandidateIsUnavailable() async throws {
-        try await withApp { app, _ in
+        try await withApp { app, blockingWorkExecutor in
             let firstSurface = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 15), forecastHour: 7)
             let secondSurface = makeSurfaceCandidate(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14), forecastHour: 8)
             let firstPressure = makePressureCandidate(from: firstSurface)
@@ -109,7 +111,8 @@ struct PressureArtifactDiagnosticsTests {
                     )
                 ),
                 remoteObjectChecker: remoteChecker,
-                warmJobDispatcher: ProbeWarmJobDispatcherRecorder()
+                warmJobDispatcher: ProbeWarmJobDispatcherRecorder(),
+                blockingWorkExecutor: blockingWorkExecutor
             )
 
             try await service.probe(on: app, logger: loggerContext.logger)
