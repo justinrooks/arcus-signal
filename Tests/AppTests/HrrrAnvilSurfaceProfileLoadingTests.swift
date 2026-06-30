@@ -26,7 +26,8 @@ struct HrrrAnvilSurfaceProfileLoadingTests {
         )
         let expectedSurfaceCandidate = HrrrRunCandidate(
             runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
-            forecastHour: 0
+            forecastHour: 0,
+            fieldSetVersion: .anvilSurfaceV1
         )
         let subsetLoader = SurfaceProfileStubSubsetLoading { resolution, requestCentroid in
             #expect(resolution.targetValidTime == sourceResolution.targetValidTime)
@@ -48,6 +49,7 @@ struct HrrrAnvilSurfaceProfileLoadingTests {
         }
         let sampler = SurfaceProfileStubFieldSampling { subset, requestCentroid in
             #expect(subset.source.product == .wrfsfc)
+            #expect(subset.source.fieldSetVersion == .anvilSurfaceV1)
             #expect(subset.byteSize == 1_024)
             #expect(requestCentroid == centroid)
             return [

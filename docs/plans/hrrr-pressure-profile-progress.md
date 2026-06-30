@@ -666,6 +666,36 @@ Local verification notes:
 - The old `surfaceHeightMslM` surface preview seam remains in place but is ignored by the provider.
 - Pressure artifact lookup, stale selection, and Anvil transport wiring were left untouched.
 
+### Issue #130 - Build the exact Anvil surface profile before shipping to Anvil
+
+Status: Completed
+
+Scope:
+- Add a dedicated HRRR surface field set for Anvil surface sampling.
+- Wire the surface loader and preview provider to that field set instead of the tornado surface set.
+- Preserve the existing pressure lookup and Anvil transport behavior.
+
+Files changed:
+- `Sources/App/StormSetup/HrrrSourceModels.swift`
+- `Sources/App/StormSetup/HrrrAnvilSurfaceProfileLoading.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Tests/AppTests/HrrrAnvilSurfaceProfileLoadingTests.swift`
+- `Tests/AppTests/StormSetupHrrrSourceTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `docs/plans/hrrr-pressure-profile-progress.md`
+
+Tests and commands run:
+- `swift test --filter HrrrAnvilSurfaceProfileLoadingTests`
+- `swift test --filter AnvilProfilePreviewProviderTests`
+- `swift test --filter StormSetupHrrrSourceTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
+
+Local verification notes:
+- The Anvil surface loader now requests a dedicated surface row with `PRES`, `HGT`, `TMP`, `DPT`, `UGRD`, and `VGRD` at the surface and low-level rows the preview logic expects.
+- Preview paths now fail fast if matching exact-cycle surface data is missing or incomplete, before pressure sampling starts.
+- Pressure artifact lookup and Anvil transport remain unchanged.
+
 ---
 
 ## Final Completion Summary
@@ -675,6 +705,7 @@ Local verification notes:
 - Follow-on Anvil request-builder seam `#126` is complete.
 - Sub-issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, `#102`, and `#100` are all complete.
 - The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, ingredient-evidence mapping, and the explicit Anvil surface-row builder seam.
+- Issue `#130` completes the dedicated Anvil surface-row path so previews no longer rely on the tornado surface field set.
 - The #126 verification record is `swift test --filter AnvilProfileRequestBuilderTests`, `swift build -Xswiftc -strict-concurrency=complete`, and `git diff --check` all passing.
 - Known remaining risks are environmental only:
   - the filtered test suites still have outstanding failures in the current working tree or fixtures

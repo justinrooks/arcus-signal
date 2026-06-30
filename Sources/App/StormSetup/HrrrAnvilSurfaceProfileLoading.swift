@@ -73,7 +73,8 @@ struct DefaultHrrrAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
             product: .wrfsfc,
             domain: primaryCandidate.domain,
             runTime: primaryCandidate.runTime,
-            forecastHour: primaryCandidate.forecastHour
+            forecastHour: primaryCandidate.forecastHour,
+            fieldSetVersion: .anvilSurfaceV1
         )
 
         return HrrrRunResolution(

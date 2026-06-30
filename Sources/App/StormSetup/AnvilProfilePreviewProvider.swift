@@ -517,7 +517,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             domain: sourceCandidate.domain,
             runTime: cycleRunTime,
             forecastHour: cycleForecastHour,
-            fieldSetVersion: HrrrProduct.wrfsfc.defaultFieldSetVersion
+            fieldSetVersion: .anvilSurfaceV1
         )
         let expectedResolution = HrrrRunResolution(
             targetValidTime: targetValidTime,
@@ -634,7 +634,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             domain: sourceCandidate.domain,
             runTime: readyArtifact.runTime,
             forecastHour: readyArtifact.forecastHour,
-            fieldSetVersion: HrrrProduct.wrfsfc.defaultFieldSetVersion
+            fieldSetVersion: .anvilSurfaceV1
         )
     }
 
@@ -804,14 +804,14 @@ private struct DefaultSyntheticAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfil
             domain: primaryCandidate.domain,
             runTime: primaryCandidate.runTime,
             forecastHour: primaryCandidate.forecastHour,
-            fieldSetVersion: HrrrProduct.wrfsfc.defaultFieldSetVersion
+            fieldSetVersion: .anvilSurfaceV1
         )
         let sourceResolution = HrrrRunResolution(
             targetValidTime: resolution.targetValidTime,
             candidates: [surfaceCandidate]
         )
         let source = HrrrNomadsURLBuilder().makeSourceMetadata(
-            for: primaryCandidate,
+            for: surfaceCandidate,
             around: centroid
         )
 

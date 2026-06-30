@@ -39,6 +39,7 @@ enum HrrrDomain: String, Content, Sendable, Equatable {
 
 enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
     case tornadoV1 = "tornado-v1"
+    case anvilSurfaceV1 = "anvil-surface-v1"
     case tornadoPressureV1 = "tornado-pressure-v1"
     case tornadoPressureV2 = "tornado-pressure-v2"
 
@@ -56,6 +57,15 @@ enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
                 "var_HGT",
                 "var_DPT",
                 "var_TMP"
+            ]
+        case .anvilSurfaceV1:
+            return [
+                "var_PRES",
+                "var_HGT",
+                "var_TMP",
+                "var_DPT",
+                "var_UGRD",
+                "var_VGRD"
             ]
         case .tornadoPressureV1, .tornadoPressureV2:
             return [
@@ -81,6 +91,12 @@ enum HrrrFieldSetVersion: String, Content, Sendable, Equatable {
                 "lev_3000-0_m_above_ground",
                 "lev_0-6000_m_above_ground",
                 "lev_level_of_adiabatic_condensation_from_sfc"
+            ]
+        case .anvilSurfaceV1:
+            return [
+                "lev_surface",
+                "lev_2_m_above_ground",
+                "lev_10_m_above_ground"
             ]
         case .tornadoPressureV1:
             return [

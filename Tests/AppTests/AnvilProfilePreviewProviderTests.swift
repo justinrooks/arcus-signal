@@ -799,7 +799,8 @@ struct AnvilProfilePreviewProviderTests {
                         product: .wrfsfc,
                         domain: surfaceCandidate.domain,
                         runTime: surfaceCandidate.runTime,
-                        forecastHour: surfaceCandidate.forecastHour
+                        forecastHour: surfaceCandidate.forecastHour,
+                        fieldSetVersion: .anvilSurfaceV1
                     )]
                 ),
                 fetchedAt: now,
