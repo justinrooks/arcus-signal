@@ -134,6 +134,80 @@ struct AnvilProfileRequestBuilderTests {
         }
     }
 
+    @Test("surface row is prepended without interpolation")
+    func surfaceRowIsPrependedWithoutInterpolation() throws {
+        let builder = makeBuilder()
+        let surfaceLevel = makeLevel(
+            pressureMb: 1012,
+            heightMslM: 320,
+            temperatureC: 29.6,
+            dewpointC: 16.4,
+            uWindMs: -1.4,
+            vWindMs: 3.8
+        )
+
+        let result = try builder.build(
+            h3Cell: 617_700_169_958_293_503,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+            forecastHour: 3,
+            surfaceLevel: surfaceLevel,
+            groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
+        )
+
+        #expect(result.request.profile.pressureMb == [1012, 1000, 925, 850, 700, 500])
+        #expect(result.request.profile.heightMslM == [320, 1200, 1500, 1800, 2450, 5600])
+        #expect(result.request.profile.temperatureC == [29.6, 28.4, 22.8, 17.5, 10.0, -4.2])
+        #expect(result.request.profile.dewpointC == [16.4, 12.3, 10.1, 11.2, 1.0, -12.0])
+        #expect(result.request.profile.uWindMs == [-1.4, -2.1, -5.4, -6.25, -12.5, -18.75])
+        #expect(result.request.profile.vWindMs == [3.8, 4.6, 7.9, 8.75, 14.2, 22.0])
+    }
+
+    @Test("surface row still requires five retained pressure levels")
+    func surfaceRowStillRequiresFiveRetainedPressureLevels() {
+        let builder = makeBuilder()
+        let surfaceLevel = makeLevel(
+            pressureMb: 1012,
+            heightMslM: 320,
+            temperatureC: 29.6,
+            dewpointC: 16.4,
+            uWindMs: -1.4,
+            vWindMs: 3.8
+        )
+
+        #expect(throws: AnvilProfileRequestBuilderError.self) {
+            _ = try builder.build(
+                h3Cell: 617_700_169_958_293_503,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+                forecastHour: 3,
+                surfaceLevel: surfaceLevel,
+                groupedProfile: makeGroupingResult(levels: Array(makeFiveLevelProfile().prefix(4)))
+            )
+        }
+    }
+
+    @Test("invalid surface ordering is rejected instead of being sorted away")
+    func invalidSurfaceOrderingIsRejectedInsteadOfBeingSortedAway() {
+        let builder = makeBuilder()
+        let surfaceLevel = makeLevel(
+            pressureMb: 990,
+            heightMslM: 320,
+            temperatureC: 29.6,
+            dewpointC: 16.4,
+            uWindMs: -1.4,
+            vWindMs: 3.8
+        )
+
+        #expect(throws: AnvilProfileRequestBuilderError.self) {
+            _ = try builder.build(
+                h3Cell: 617_700_169_958_293_503,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+                forecastHour: 3,
+                surfaceLevel: surfaceLevel,
+                groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
+            )
+        }
+    }
+
     @Test("invalid H3 cells fail through the existing resolver")
     func invalidH3CellsFailThroughExistingResolver() {
         let builder = makeBuilder()

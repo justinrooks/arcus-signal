@@ -598,15 +598,50 @@ Handoff notes for `#126`:
 - Reuse the new surface loader instead of rebuilding the `wrfsfc` candidate logic again.
 - Keep any provider wiring pointed at the injected subset/cache/sampler seams so the offline tests remain deterministic.
 
+### Issue #126 - 11: Prepend the explicit Anvil surface row without changing the DTO
+
+Status: Completed
+
+Scope:
+- Extend the frozen Anvil profile-request builder with an optional explicit surface row.
+- Prepend the surface row without interpolation while preserving the existing request DTO shape.
+- Keep the five retained pressure-level minimum independent of the surface row.
+- Reject invalid pressure ordering instead of sorting the profile rows into a valid-looking sequence.
+
+Files changed:
+- `Sources/App/StormSetup/AnvilProfileRequestBuilder.swift`
+- `Tests/AppTests/AnvilProfileRequestBuilderTests.swift`
+- `docs/plans/hrrr-pressure-profile-progress.md`
+
+Tests and commands run:
+- `swift test --filter AnvilProfileRequestBuilderTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
+
+Local verification notes:
+- The builder now accepts an optional `surfaceLevel` seam and prepends it directly to the frozen profile arrays.
+- The request DTO remains unchanged, so downstream consumers still see the same nested `profile` shape.
+- The retained pressure-level minimum is still enforced before the surface row is attached.
+- Invalid pressure ordering now fails fast instead of being normalized by sorting.
+
+Deferred scope:
+- Provider/controller wiring for the new surface-row seam.
+- Any follow-on issue that consumes the seam from the preview or analysis paths.
+
+Handoff notes for `#127`:
+- Thread the new surface row through the provider layer instead of reconstructing the request assembly rules again.
+- Preserve the builder’s explicit ordering rules so downstream wiring does not reintroduce silent sorting.
+
 ---
 
 ## Final Completion Summary
 
 - Epic `#85` is complete.
 - Follow-on surface-profile seams `#124` and `#125` are complete.
+- Follow-on Anvil request-builder seam `#126` is complete.
 - Sub-issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, `#102`, and `#100` are all complete.
-- The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, and ingredient-evidence mapping.
-- The final verification record is `swift build --target App` passing and the two filtered test commands above surfacing concrete failures that should be tracked separately from this documentation pass.
+- The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, ingredient-evidence mapping, and the explicit Anvil surface-row builder seam.
+- The #126 verification record is `swift test --filter AnvilProfileRequestBuilderTests`, `swift build -Xswiftc -strict-concurrency=complete`, and `git diff --check` all passing.
 - Known remaining risks are environmental only:
   - the filtered test suites still have outstanding failures in the current working tree or fixtures
   - live HRRR, NOMADS, and Anvil verification was not part of this docs-only finalization pass
