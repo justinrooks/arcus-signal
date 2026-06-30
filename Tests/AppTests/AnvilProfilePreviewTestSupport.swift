@@ -250,12 +250,8 @@ actor PreviewStubStormSetupFieldSampler: StormSetupFieldSampling {
 struct PreviewStubAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     let result: Result<AnvilAnalyzeProfilePreviewResponse, AnvilProfilePreviewError>
 
-    func previewProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         switch result {
         case .success(let response):
             return response

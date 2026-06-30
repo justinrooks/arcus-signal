@@ -561,8 +561,7 @@ struct AnvilProfilePreviewProviderTests {
             dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
             hrrrRunResolver: resolver,
             pressureSourceResolver: pressureSourceResolver,
-            pressureProfileLoader: pressureProfileLoader,
-            surfaceHeightMslM: 1200
+            pressureProfileLoader: pressureProfileLoader
         )
 
         let preview = try await provider.previewProfile(for: h3Cell)
@@ -671,8 +670,7 @@ struct AnvilProfilePreviewProviderTests {
             hrrrRunResolver: resolver,
             surfaceProfileLoader: surfaceProfileLoader,
             pressureSourceResolver: pressureSourceResolver,
-            pressureProfileLoader: pressureProfileLoader,
-            surfaceHeightMslM: Double.infinity
+            pressureProfileLoader: pressureProfileLoader
         )
 
         do {
@@ -816,8 +814,7 @@ struct AnvilProfilePreviewProviderTests {
             hrrrRunResolver: resolver,
             surfaceProfileLoader: surfaceProfileLoader,
             pressureSourceResolver: pressureSourceResolver,
-            pressureProfileLoader: pressureProfileLoader,
-            surfaceHeightMslM: 2450
+            pressureProfileLoader: pressureProfileLoader
         )
 
         do {

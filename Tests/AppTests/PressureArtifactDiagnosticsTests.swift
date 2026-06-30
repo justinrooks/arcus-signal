@@ -1312,12 +1312,8 @@ private struct StubStormSetupNormalizer: StormSetupIngredientNormalizing {
 private struct StaticAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let response: AnvilAnalyzeProfileAnalysisResponse
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         return response
     }
 }
@@ -1333,12 +1329,8 @@ private struct FixedStormSetupDateProvider: StormSetupDateProviding {
 private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let error: any Error
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         throw error
     }
 }
@@ -1346,12 +1338,8 @@ private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidi
 private struct SuspendedAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let response: AnvilAnalyzeProfileAnalysisResponse
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         try await Task.sleep(for: .seconds(10))
         return response
     }

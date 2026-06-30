@@ -666,6 +666,42 @@ Local verification notes:
 - The old `surfaceHeightMslM` surface preview seam remains in place but is ignored by the provider.
 - Pressure artifact lookup, stale selection, and Anvil transport wiring were left untouched.
 
+### Issue #128 - 13: Remove obsolete surface-height handoff from Anvil preview and analysis wiring
+
+Status: Completed
+
+Scope:
+- Remove controller-side snapshot lookups for selected surface height.
+- Remove the temporary surface-height argument from the preview and analysis provider contracts.
+- Preserve the existing routes, response DTOs, HTTP mappings, degradation behavior, ingredient interpretation, and exact-cycle surface ownership inside the preview provider.
+
+Files changed:
+- `Sources/App/Controllers/AnvilProfilePreviewController.swift`
+- `Sources/App/Controllers/AnvilProfileAnalysisController.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Sources/App/StormSetup/AnvilProfileAnalysisProvider.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Tests/AppTests/AnvilProfilePreviewControllerTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisControllerTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewTestSupport.swift`
+- `Tests/AppTests/PressureArtifactDiagnosticsTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+
+Tests and commands run:
+- `swift test --filter AnvilProfilePreviewControllerTests`
+- `swift test --filter AnvilProfileAnalysisControllerTests`
+- `swift test --filter AnvilProfilePreviewProviderTests`
+- `swift test --filter AnvilProfileAnalysisProviderTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+
+Local verification notes:
+- The controllers now route directly to the providers without resolving selected surface height from Storm Setup snapshots.
+- The preview provider still resolves exact-cycle surface data internally and keeps below-ground filtering and degradation behavior intact.
+- The analysis provider now consumes the simplified preview contract without a temporary height seam.
+- Remaining risk is limited to unrelated warning debt already present in the tree.
+
 ### Issue #130 - Build the exact Anvil surface profile before shipping to Anvil
 
 Status: Completed

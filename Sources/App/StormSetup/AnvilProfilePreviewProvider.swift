@@ -2,16 +2,10 @@ import Foundation
 import Vapor
 
 protocol AnvilProfilePreviewProviding: Sendable {
-    func previewProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfilePreviewResponse
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse
 }
 
 extension AnvilProfilePreviewProviding {
-    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
-        try await previewProfile(for: h3Cell, surfaceHeightMslM: nil)
-    }
 }
 
 enum AnvilProfilePreviewError: Error, Sendable, CustomStringConvertible {
@@ -51,7 +45,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let surfaceProfileLoader: any HrrrAnvilSurfaceProfileLoading
     private let pressureSourceResolver: any HrrrPressureDirectObjectResolving
     private let pressureProfileLoader: any HrrrPressureProfileLoading
-    private let surfaceHeightMslM: Double?
     private let requestBuilder: AnvilProfileRequestBuilder
 
     init(
@@ -61,8 +54,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         pressureArtifactCatalogLookupService: (any PressureArtifactCatalogLookupProviding)? = nil,
         surfaceProfileLoader: (any HrrrAnvilSurfaceProfileLoading)? = nil,
         pressureSourceResolver: any HrrrPressureDirectObjectResolving,
-        pressureProfileLoader: any HrrrPressureProfileLoading,
-        surfaceHeightMslM: Double? = nil
+        pressureProfileLoader: any HrrrPressureProfileLoading
     ) {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
@@ -70,7 +62,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         self.surfaceProfileLoader = surfaceProfileLoader ?? DefaultSyntheticAnvilSurfaceProfileLoader()
         self.pressureSourceResolver = pressureSourceResolver
         self.pressureProfileLoader = pressureProfileLoader
-        self.surfaceHeightMslM = surfaceHeightMslM
         self.requestBuilder = AnvilProfileRequestBuilder(h3Resolver: h3Resolver)
     }
 
@@ -125,10 +116,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     }
 
     func previewProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double? = nil
+        for h3Cell: Int64
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
-        _ = surfaceHeightMslM
         let resolved = try h3Resolver.resolve(h3Cell: h3Cell)
         let runResolution = hrrrRunResolver.resolveRunCandidates()
 

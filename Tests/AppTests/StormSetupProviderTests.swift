@@ -209,7 +209,6 @@ struct StormSetupProviderTests {
 
         #expect(snapshot.surfaceHeightMslM == 1234)
         #expect(snapshot.anvilEvidence?.status == .available)
-        #expect(await anvilProvider.recordedSurfaceHeightMslM == 1234)
         #expect(await anvilProvider.requestCount == 1)
     }
 
@@ -1399,12 +1398,8 @@ private struct StubStormSetupAssessor: StormSetupIngredientAssessing, @unchecked
 private struct StubAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let response: AnvilAnalyzeProfileAnalysisResponse
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         return response
     }
 }
@@ -1417,12 +1412,8 @@ private actor CountingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidin
         self.response = response
     }
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         requestCount += 1
         return response
     }
@@ -1431,19 +1422,14 @@ private actor CountingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidin
 private actor CapturingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
     private let response: AnvilAnalyzeProfileAnalysisResponse
     private(set) var requestCount = 0
-    private(set) var recordedSurfaceHeightMslM: Double?
 
     init(response: AnvilAnalyzeProfileAnalysisResponse) {
         self.response = response
     }
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
         requestCount += 1
-        recordedSurfaceHeightMslM = surfaceHeightMslM
         return response
     }
 }
@@ -1451,12 +1437,8 @@ private actor CapturingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProvidi
 private struct ThrowingAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let error: any Error
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         throw error
     }
 }
@@ -1659,12 +1641,8 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
 private struct StubStormSetupRouteAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding, @unchecked Sendable {
     let response: AnvilAnalyzeProfileAnalysisResponse
 
-    func analyzeProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
         _ = h3Cell
-        _ = surfaceHeightMslM
         return response
     }
 }

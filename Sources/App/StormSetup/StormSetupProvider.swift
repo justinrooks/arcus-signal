@@ -348,8 +348,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
     private func resolveAnvilEvidence(
         for h3Cell: Int64,
-        sourceMetadata: StormSetupSourceMetadata,
-        surfaceHeightMslM: Double?
+        sourceMetadata: StormSetupSourceMetadata
     ) async throws -> AnvilEvidenceResolution {
         guard let anvilProfileAnalysisProvider else {
             return .unavailable(reason: "Anvil analysis provider is not configured.")
@@ -361,10 +360,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
         do {
             try Task.checkCancellation()
-            let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(
-                for: h3Cell,
-                surfaceHeightMslM: surfaceHeightMslM
-            )
+            let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(for: h3Cell)
             try Task.checkCancellation()
 
             guard analysis.request.validTime == analysis.debug.validTime else {
@@ -421,8 +417,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     ) async throws -> TornadoIngredientSnapshot {
         let resolution = try await resolveAnvilEvidence(
             for: snapshot.h3Cell,
-            sourceMetadata: snapshot.source,
-            surfaceHeightMslM: snapshot.surfaceHeightMslM
+            sourceMetadata: snapshot.source
         )
         try Task.checkCancellation()
 
