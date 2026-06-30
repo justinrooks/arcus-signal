@@ -28,6 +28,44 @@ struct StormSetupSnapshotCacheTests {
         #expect(keyA.snapshotFileURL(rootURL: rootURL).path == keyB.snapshotFileURL(rootURL: rootURL).path)
     }
 
+    @Test("snapshot cache keys separate surface and pressure-level sources")
+    func snapshotCacheKeysSeparateSurfaceAndPressureSources() throws {
+        let rootURL = testRootURL()
+        let centroid = StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+        let builder = HrrrNomadsURLBuilder()
+        let surfaceSource = builder.makeSourceMetadata(
+            for: HrrrRunCandidate(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                forecastHour: 9
+            ),
+            around: centroid
+        )
+        let pressureSource = builder.makeSourceMetadata(
+            for: HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                forecastHour: 9,
+                fieldSetVersion: .tornadoPressureV1
+            ),
+            around: centroid
+        )
+
+        let surfaceKey = try StormSetupSnapshotCacheKey(
+            h3Cell: 882_681_611_511_963_647,
+            sourceMetadata: surfaceSource,
+            rulesVersion: .current
+        )
+        let pressureKey = try StormSetupSnapshotCacheKey(
+            h3Cell: 882_681_611_511_963_647,
+            sourceMetadata: pressureSource,
+            rulesVersion: .current
+        )
+
+        #expect(surfaceKey != pressureKey)
+        #expect(surfaceKey.cacheIdentifier != pressureKey.cacheIdentifier)
+        #expect(surfaceKey.snapshotFileURL(rootURL: rootURL).path != pressureKey.snapshotFileURL(rootURL: rootURL).path)
+    }
+
     @Test("different H3 cells map to different cache paths")
     func differentH3CellsMapToDifferentPaths() throws {
         let rootURL = testRootURL()
@@ -235,6 +273,92 @@ struct StormSetupSnapshotCacheTests {
         #expect(loaded?.snapshot.assessment.overall == snapshot.assessment.overall)
     }
 
+    @Test("stored snapshots round-trip as surface-only records")
+    func storedSnapshotsRoundTripAsSurfaceOnlyRecords() async throws {
+        let rootURL = testRootURL()
+        let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+        let cache = makeCache(rootURL: rootURL, now: now)
+        let source = makeSourceMetadata(
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9
+        )
+        let h3Cell: Int64 = 882_681_611_511_963_647
+        let key = try StormSetupSnapshotCacheKey(
+            h3Cell: h3Cell,
+            sourceMetadata: source,
+            rulesVersion: .current
+        )
+        let snapshot = makeSnapshot(
+            h3Cell: h3Cell,
+            source: source,
+            fetchedAt: now,
+            expiresAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 23),
+            anvilEvidence: AnvilIngredientEvidence.unavailable(reason: "Cached Anvil evidence should not be authoritative.")
+        )
+
+        _ = try await cache.store(snapshot: snapshot, for: key)
+        let loaded = await cache.loadSnapshot(for: key)
+
+        #expect(loaded?.snapshot.anvilEvidence == nil)
+    }
+
+    @Test("cached snapshots with stripped Anvil evidence recompute the baseline assessment")
+    func cachedSnapshotsWithStrippedAnvilEvidenceRecomputeBaselineAssessment() async throws {
+        let rootURL = testRootURL()
+        let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+        let cache = makeCache(rootURL: rootURL, now: now)
+        let source = makeSourceMetadata(
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9
+        )
+        let h3Cell: Int64 = 882_681_611_511_963_647
+        let key = try StormSetupSnapshotCacheKey(
+            h3Cell: h3Cell,
+            sourceMetadata: source,
+            rulesVersion: .current
+        )
+        let freshness = IngredientFreshness(
+            sourceValidTime: source.validTime,
+            modelRunTime: source.runTime,
+            forecastHour: source.forecastHour,
+            fetchedAt: now,
+            expiresAt: now.addingTimeInterval(90 * 60),
+            isStale: false,
+            isDegraded: false
+        )
+        let raw = makeRaw(
+            sbcapeJkg: 1450,
+            mlcapeJkg: 1200,
+            mucapeJkg: 1600,
+            mlcinJkg: -35,
+            mllclM: 950,
+            shear06kmKt: 42,
+            srh01kmM2s2: 80,
+            srh03kmM2s2: 160
+        )
+        let staleEvidence = AnvilIngredientEvidence.unavailable(reason: "Legacy cache record carried evidence that should be stripped.")
+        let cachedSnapshot = TornadoIngredientSnapshot(
+            h3Cell: h3Cell,
+            centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
+            source: source,
+            raw: raw,
+            assessment: TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness, evidence: staleEvidence),
+            freshness: freshness,
+            anvilEvidence: staleEvidence
+        )
+        let expectedAssessment = TornadoIngredientInterpreter().assess(raw: raw, freshness: freshness)
+
+        _ = try await cache.store(snapshot: cachedSnapshot, for: key)
+        let loaded = await cache.loadSnapshot(for: key)
+
+        #expect(loaded?.snapshot.anvilEvidence == nil)
+        #expect(loaded?.snapshot.assessment.overall == expectedAssessment.overall)
+        #expect(loaded?.snapshot.assessment.confidence == expectedAssessment.confidence)
+        #expect(loaded?.snapshot.assessment.summary == expectedAssessment.summary)
+        #expect(loaded?.snapshot.assessment.primaryDrivers == expectedAssessment.primaryDrivers)
+        #expect(loaded?.snapshot.assessment.limitingFactors == expectedAssessment.limitingFactors)
+    }
+
     @Test("expired cache entries are ignored")
     func expiredCacheEntriesAreIgnored() async throws {
         let rootURL = testRootURL()
@@ -330,11 +454,51 @@ struct StormSetupSnapshotCacheTests {
         return HrrrNomadsURLBuilder().makeSourceMetadata(for: candidate, around: centroid)
     }
 
+    private func makeRaw(
+        sbcapeJkg: Double? = nil,
+        mlcapeJkg: Double? = nil,
+        mucapeJkg: Double? = nil,
+        mlcinJkg: Double? = nil,
+        mllclM: Double? = nil,
+        shear06kmKt: Double? = nil,
+        srh01kmM2s2: Double? = nil,
+        srh03kmM2s2: Double? = nil
+    ) -> TornadoRawParameters {
+        TornadoRawParameters(
+            sbcapeJkg: sbcapeJkg,
+            mlcapeJkg: mlcapeJkg,
+            mucapeJkg: mucapeJkg,
+            mlcinJkg: mlcinJkg,
+            dcapeJkg: nil,
+            mllclM: mllclM,
+            tempDewPtDeltaF: nil,
+            lclLfcSeparationM: nil,
+            lapseRate03kmCkm: nil,
+            lapseRate700500mbCkm: nil,
+            shear06kmKt: shear06kmKt,
+            shear03kmKt: nil,
+            shear01kmKt: nil,
+            effectiveShearKt: nil,
+            srh01kmM2s2: srh01kmM2s2,
+            srh03kmM2s2: srh03kmM2s2,
+            effectiveSrhM2s2: nil,
+            supercellComposite: nil,
+            significantTornadoFixed: nil,
+            significantTornadoEffective: nil,
+            significantHail: nil,
+            bunkersRightMotion: nil,
+            bunkersLeftMotion: nil,
+            stormRelativeWind46km: nil,
+            meanWind850300mb: nil
+        )
+    }
+
     private func makeSnapshot(
         h3Cell: Int64,
         source: StormSetupSourceMetadata,
         fetchedAt: Date,
-        expiresAt: Date? = nil
+        expiresAt: Date? = nil,
+        anvilEvidence: AnvilIngredientEvidence? = nil
     ) -> TornadoIngredientSnapshot {
         let freshness = IngredientFreshness(
             sourceValidTime: source.validTime,
@@ -352,7 +516,8 @@ struct StormSetupSnapshotCacheTests {
             source: source,
             raw: .empty,
             assessment: TornadoIngredientInterpreter().assess(raw: .empty, freshness: freshness),
-            freshness: freshness
+            freshness: freshness,
+            anvilEvidence: anvilEvidence
         )
     }
 

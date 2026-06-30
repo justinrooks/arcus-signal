@@ -24,6 +24,9 @@ services:
       <<: *shared_environment
       STORM_SETUP_WGRIB2_PATH: ${STORM_SETUP_WGRIB2_PATH:-/usr/local/bin/wgrib2}
       STORM_SETUP_CACHE_ROOT: ${STORM_SETUP_CACHE_ROOT:-/app/storage/storm-setup}
+      ARCUS_DEBUG_ENDPOINTS_ENABLED: "true"
+      ANVIL_PROFILE_ANALYSIS_BASE_URL: ${ANVIL_PROFILE_ANALYSIS_BASE_URL:-http://host.docker.internal:8089/api}
+      ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS: "10"
     restart: unless-stopped
     depends_on:
       postgres:
@@ -34,7 +37,8 @@ services:
       - '8080:8080'
     volumes:
       - ./Fixtures:/app/Fixtures:ro
-    command: ["./Run", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8080"]
+      - storm_setup_cache:/app/storage/storm-setup
+    command: [ "./Run", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8080" ]
 
   worker:
     image: ghcr.io/justinrooks/arcus-signal:latest
@@ -44,6 +48,7 @@ services:
         SWIFT_VERSION: ${SWIFT_VERSION:-6.3.0}
     environment:
       <<: *shared_environment
+      STORM_SETUP_CACHE_ROOT: ${STORM_SETUP_CACHE_ROOT:-/app/storage/storm-setup}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-com.skyaware.app}
       APNS_SANDBOX_KEY_ID: ${APNS_SANDBOX_KEY_ID:-}
@@ -60,9 +65,10 @@ services:
       - '8081:8081'
     volumes:
       - ./Fixtures:/app/Fixtures:ro
+      - storm_setup_cache:/app/storage/storm-setup
       - ${APNS_SANDBOX_P8_HOST_PATH:-./.secrets/apns/AuthKey-sandbox.p8}:${APNS_SANDBOX_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey-sandbox.p8}:ro
       - ${APNS_PROD_P8_HOST_PATH:-./.secrets/apns/AuthKey-prod.p8}:${APNS_PROD_PRIVATE_KEY_PATH:-/run/secrets/apns/AuthKey-prod.p8}:ro
-    command: ["./RunWorker", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8081"]
+    command: [ "./RunWorker", "serve", "--env", "${VAPOR_ENV:-production}", "--hostname", "0.0.0.0", "--port", "8081" ]
 
   redis:
     image: redis:7-alpine
@@ -70,7 +76,7 @@ services:
       - '6379:6379'
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -87,10 +93,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-arcus} -d ${DATABASE_NAME:-arcus_signal}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-arcus} -d ${DATABASE_NAME:-arcus_signal}" ]
       interval: 5s
       timeout: 3s
       retries: 20
 
 volumes:
   postgres_data:
+  storm_setup_cache:

@@ -84,6 +84,7 @@ actor StormSetupSnapshotCache {
                 return nil
             }
 
+            let snapshot = record.snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
             let freshness = record.snapshot.freshness
             guard freshness.sourceValidTime == key.validTime else {
                 invalidate(fileURL: fileURL)
@@ -95,7 +96,7 @@ actor StormSetupSnapshotCache {
             }
 
             return StormSetupSnapshotCacheResult(
-                snapshot: record.snapshot,
+                snapshot: snapshot,
                 cacheHit: true,
                 fetchedAt: freshness.fetchedAt,
                 expiresAt: freshness.expiresAt,
@@ -137,7 +138,8 @@ actor StormSetupSnapshotCache {
             )
         }
 
-        let record = StormSetupSnapshotCacheRecord(key: key, snapshot: snapshot)
+        let surfaceSnapshot = snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
+        let record = StormSetupSnapshotCacheRecord(key: key, snapshot: surfaceSnapshot)
         let data = try jsonEncoder.encode(record)
 
         do {
@@ -148,7 +150,7 @@ actor StormSetupSnapshotCache {
 
         let freshness = snapshot.freshness
         return StormSetupSnapshotCacheResult(
-            snapshot: snapshot,
+            snapshot: surfaceSnapshot,
             cacheHit: false,
             fetchedAt: freshness.fetchedAt,
             expiresAt: freshness.expiresAt,
@@ -159,5 +161,24 @@ actor StormSetupSnapshotCache {
 
     private func invalidate(fileURL: URL) {
         try? fileManager.removeItem(at: fileURL)
+    }
+}
+
+private extension TornadoIngredientSnapshot {
+    func surfaceSnapshot(rulesVersion: StormSetupRulesVersion) -> TornadoIngredientSnapshot {
+        let baselineAssessment = TornadoIngredientInterpreter(rulesVersion: rulesVersion).assess(
+            raw: raw,
+            freshness: freshness
+        )
+
+        return TornadoIngredientSnapshot(
+            h3Cell: h3Cell,
+            centroid: centroid,
+            source: source,
+            raw: raw,
+            surfaceHeightMslM: surfaceHeightMslM,
+            assessment: baselineAssessment,
+            freshness: freshness
+        )
     }
 }

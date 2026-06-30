@@ -19,6 +19,36 @@ struct StormSetupGribSubsetCacheTests {
         #expect(keyA.subsetFileURL(rootURL: rootURL).path == keyB.subsetFileURL(rootURL: rootURL).path)
     }
 
+    @Test("cache keys separate surface and pressure-level sources")
+    func cacheKeysSeparateSurfaceAndPressureSources() throws {
+        let rootURL = testRootURL()
+        let centroid = StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+        let builder = HrrrNomadsURLBuilder()
+        let surfaceSource = builder.makeSourceMetadata(
+            for: HrrrRunCandidate(
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                forecastHour: 9
+            ),
+            around: centroid
+        )
+        let pressureSource = builder.makeSourceMetadata(
+            for: HrrrRunCandidate(
+                product: .wrfprsf,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+                forecastHour: 9,
+                fieldSetVersion: .tornadoPressureV1
+            ),
+            around: centroid
+        )
+
+        let surfaceKey = try StormSetupCacheKey(sourceMetadata: surfaceSource)
+        let pressureKey = try StormSetupCacheKey(sourceMetadata: pressureSource)
+
+        #expect(surfaceKey != pressureKey)
+        #expect(surfaceKey.cacheIdentifier != pressureKey.cacheIdentifier)
+        #expect(surfaceKey.subsetFileURL(rootURL: rootURL).path != pressureKey.subsetFileURL(rootURL: rootURL).path)
+    }
+
     @Test("cache key changes when run time or forecast hour changes")
     func cacheKeyChangesForDifferentRunOrForecastHour() throws {
         let sourceA = makeSourceMetadata(
@@ -382,6 +412,28 @@ final class StubHTTPClient: HTTPClient, @unchecked Sendable {
         case .success(let response):
             return response
         }
+    }
+
+    func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func post(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String : String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
     }
 
     func clearCache() {}

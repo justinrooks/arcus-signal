@@ -1,0 +1,18 @@
+{
+  "runTime": "2026-06-19T22:00:00Z",
+  "forecastHour": 3,
+  "validTime": "2026-06-20T01:00:00Z",
+  "location": {
+    "lat": 39.7392,
+    "lon": -104.9903,
+    "h3": "882681b59fffffff"
+  },
+  "profile": {
+    "pressureMb": [1000, 925, 850],
+    "heightMslM": [1560, 780, 1450],
+    "temperatureC": [28.4, 22.8, 17.5],
+    "dewpointC": [12.3, 10.1, 11.2],
+    "uWindMs": [-2.1, -5.4, -6.25],
+    "vWindMs": [4.6, 7.9, 8.75]
+  }
+}

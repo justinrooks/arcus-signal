@@ -157,6 +157,9 @@ enum OperatorDashboardPageRenderer {
             .stream-table {
               min-width: 720px;
             }
+            .pressure-artifact-table {
+              min-width: 920px;
+            }
             table {
               width: 100%;
               border-collapse: collapse;
@@ -409,6 +412,17 @@ enum OperatorDashboardPageRenderer {
             </section>
 
             <section class="section">
+              <h2>Model Artifacts</h2>
+              <div class="grid">
+                \(slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(snapshot.modelArtifacts.pressureArtifactReadiness)))
+                \(slot("pressure-artifact-catalog-card", content: pressureArtifactCatalogCard(snapshot.modelArtifacts.pressureArtifactCatalog)))
+              </div>
+              <div class="stack" style="margin-top: 16px;">
+                \(slot("recent-pressure-artifacts-table", content: recentPressureArtifactsTable(snapshot.modelArtifacts.recentPressureArtifacts)))
+              </div>
+            </section>
+
+            <section class="section">
               <h2>Delivery KPIs</h2>
               <div class="grid">
                 \(slot("latency-card", content: latencyCard(snapshot.deliveryKPIs.endToEndAlertLatency)))
@@ -606,6 +620,27 @@ enum OperatorDashboardPageRenderer {
             return `${days}d ${hours}h`;
           }
 
+          function formatByteSize(value) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) {
+              return 'n/a';
+            }
+
+            const size = Number(value);
+            if (size < 1024) {
+              return `${size} B`;
+            }
+
+            const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+            let scaled = size / 1024;
+            let unitIndex = 0;
+            while (scaled >= 1024 && unitIndex < units.length - 1) {
+              scaled /= 1024;
+              unitIndex += 1;
+            }
+
+            return `${scaled >= 10 || unitIndex === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unitIndex]}`;
+          }
+
           function formatPercent(value) {
             if (value === null || value === undefined || Number.isNaN(Number(value))) {
               return 'n/a';
@@ -630,11 +665,12 @@ enum OperatorDashboardPageRenderer {
             return codes.join(', ');
           }
 
-          function renderCard(title, primary, refreshedAt, lines) {
+          function renderCard(title, primary, refreshedAt, lines, primaryClass = '') {
+            const primaryClassSuffix = primaryClass ? ` ${primaryClass}` : '';
             return `
               <div class="card">
                 <h3>${escapeHtml(title)}</h3>
-                <div class="primary">${escapeHtml(primary)}</div>
+                <div class="primary${primaryClassSuffix}">${escapeHtml(primary)}</div>
                 <div class="subtle">Refreshed ${escapeHtml(formatDate(refreshedAt))}</div>
                 <ul class="meta-list">
                   ${lines.map((line) => `<li><span>${escapeHtml(line.label)}</span><strong>${escapeHtml(line.value)}</strong></li>`).join('')}
@@ -721,6 +757,147 @@ enum OperatorDashboardPageRenderer {
               { label: 'Successful conversions', value: String(metric.successfulConversionCount) },
               { label: 'p95 conversion', value: formatDuration(metric.p95ConversionSeconds === null ? null : Math.round(metric.p95ConversionSeconds)) }
             ]);
+          }
+
+          function statusClass(status) {
+            switch (String(status ?? '').toLowerCase()) {
+              case 'ready':
+                return 'accent';
+              case 'pending':
+              case 'warming':
+                return 'warn';
+              case 'failed':
+              case 'expired':
+                return 'danger';
+              default:
+                return '';
+            }
+          }
+
+          function renderPressureArtifactOutcome(outcome) {
+            if (!outcome) {
+              return 'NO DATA';
+            }
+
+            return String(outcome).toUpperCase();
+          }
+
+          function renderPressureArtifactOutcomeClass(outcome) {
+            switch (String(outcome ?? '').toLowerCase()) {
+              case 'exact':
+                return 'accent';
+              case 'stale':
+                return 'warn';
+              case 'unavailable':
+                return 'danger';
+              default:
+                return '';
+            }
+          }
+
+          function renderPressureArtifactStatus(status) {
+            if (!status) {
+              return 'NO DATA';
+            }
+
+            return String(status).toUpperCase();
+          }
+
+          function renderPressureArtifactRunAndForecast(runTime, forecastHour) {
+            if (runTime === null || runTime === undefined) {
+              return 'n/a';
+            }
+
+            const runText = formatDate(runTime);
+            if (forecastHour === null || forecastHour === undefined) {
+              return runText;
+            }
+
+            return `${runText} / FH ${forecastHour}`;
+          }
+
+          function renderPressureArtifactReadinessCard(metric) {
+            const lines = [
+              { label: 'Catalog status', value: metric?.status ?? 'n/a' },
+              { label: 'Valid time', value: formatDate(metric?.validTime) },
+              { label: 'Valid-time age', value: formatDuration(metric?.validTimeAgeSeconds) },
+              { label: 'Run / FH', value: renderPressureArtifactRunAndForecast(metric?.runTime, metric?.forecastHour) },
+              { label: 'Field-set version', value: metric?.fieldSetVersion ?? 'n/a' },
+              { label: 'Size', value: formatByteSize(metric?.byteSize) },
+              { label: 'Source', value: metric?.source ?? 'n/a' },
+              { label: 'Last checked / updated', value: formatDate(metric?.lastCheckedAt ?? metric?.updatedAt) },
+              ...(metric?.readinessReason ? [{ label: 'Readiness reason', value: metric.readinessReason }] : []),
+              ...(metric?.errorSummary ? [{ label: 'Error', value: metric.errorSummary }] : [])
+            ];
+
+            return renderCard(
+              'Pressure artifact readiness',
+              renderPressureArtifactOutcome(metric?.selectionOutcome),
+              metric?.refreshedAt,
+              lines,
+              renderPressureArtifactOutcomeClass(metric?.selectionOutcome)
+            );
+          }
+
+          function renderPressureArtifactCatalogCard(metric) {
+            return renderCard('Pressure artifact catalog', `${metric?.readyCount ?? 0} ready`, metric?.refreshedAt, [
+              { label: 'Total', value: String(metric?.totalCount ?? 0) },
+              { label: 'Pending', value: String(metric?.pendingCount ?? 0) },
+              { label: 'Warming', value: String(metric?.warmingCount ?? 0) },
+              { label: 'Failed', value: String(metric?.failedCount ?? 0) },
+              { label: 'Expired', value: String(metric?.expiredCount ?? 0) },
+              { label: 'Most recent failure', value: formatDate(metric?.mostRecentFailureAt) },
+              { label: 'Most recent failure reason', value: metric?.mostRecentFailureSummary ?? 'none' }
+            ]);
+          }
+
+          function renderPressureArtifactRow(entry) {
+            return `
+              <tr>
+                <td data-label="Valid time">${escapeHtml(formatDate(entry.validTime))}</td>
+                <td data-label="Run / FH">${escapeHtml(renderPressureArtifactRunAndForecast(entry.runTime, entry.forecastHour))}</td>
+                <td data-label="Status"><span class="pill ${statusClass(entry.status)}">${escapeHtml(renderPressureArtifactStatus(entry.status))}</span></td>
+                <td data-label="Source">${escapeHtml(entry.source ?? 'n/a')}</td>
+                <td data-label="Size" class="mono">${escapeHtml(formatByteSize(entry.byteSize))}</td>
+                <td data-label="Updated">${escapeHtml(formatDate(entry.updatedAt))}</td>
+                <td data-label="Error">${escapeHtml(entry.errorSummary ?? 'none')}</td>
+              </tr>
+            `;
+          }
+
+          function renderRecentPressureArtifactsTable(metric) {
+            const body = !Array.isArray(metric?.entries) || metric.entries.length === 0
+              ? '<div class="empty">No current-version pressure artifacts.</div>'
+              : `
+                <div class="table-wrap">
+                <table class="stream-table pressure-artifact-table inline-mobile-table">
+                  <thead>
+                    <tr>
+                      <th>Valid time</th>
+                      <th>Run / FH</th>
+                      <th>Status</th>
+                      <th>Source</th>
+                      <th>Size</th>
+                      <th>Updated</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${metric.entries.map(renderPressureArtifactRow).join('')}
+                  </tbody>
+                </table>
+                </div>
+              `;
+
+            return `
+              <div class="card table-card">
+                <div style="padding: 18px 18px 0;">
+                  <h3>Recent pressure artifacts</h3>
+                  <div class="subtle">Refreshed ${escapeHtml(formatDate(metric?.refreshedAt))}</div>
+                </div>
+                ${body}
+              </div>
+            `;
           }
 
           function renderRecentDebugRow(entry) {
@@ -881,6 +1058,22 @@ enum OperatorDashboardPageRenderer {
             updateSlot('pipeline-backlog-card', refreshKey(snapshot.redLights.pipelineBacklogAge.refreshedAt), renderPipelineBacklogCard(snapshot.redLights.pipelineBacklogAge));
             updateSlot('stuck-claimed-card', refreshKey(snapshot.redLights.stuckClaimedRows.refreshedAt), renderStuckClaimedCard(snapshot.redLights.stuckClaimedRows));
             updateSlot('stale-series-card', refreshKey(snapshot.redLights.staleActiveSeriesCount.refreshedAt), renderStaleSeriesCard(snapshot.redLights.staleActiveSeriesCount));
+            updateSlot(
+              'pressure-artifact-readiness-card',
+              refreshKey(snapshot.modelArtifacts?.pressureArtifactReadiness?.refreshedAt),
+              renderPressureArtifactReadinessCard(snapshot.modelArtifacts?.pressureArtifactReadiness)
+            );
+            updateSlot(
+              'pressure-artifact-catalog-card',
+              refreshKey(snapshot.modelArtifacts?.pressureArtifactCatalog?.refreshedAt),
+              renderPressureArtifactCatalogCard(snapshot.modelArtifacts?.pressureArtifactCatalog)
+            );
+            updateSlot(
+              'recent-pressure-artifacts-table',
+              refreshKey(snapshot.modelArtifacts?.recentPressureArtifacts?.refreshedAt),
+              renderRecentPressureArtifactsTable(snapshot.modelArtifacts?.recentPressureArtifacts),
+              { streamRows: true, streamDelayStepMs: 28 }
+            );
             updateSlot('latency-card', refreshKey(snapshot.deliveryKPIs.endToEndAlertLatency.refreshedAt), renderLatencyCard(snapshot.deliveryKPIs.endToEndAlertLatency));
             updateSlot('apns-success-card', refreshKey(snapshot.deliveryKPIs.apnsDeliverySuccessRate.refreshedAt), renderAPNsSuccessCard(snapshot.deliveryKPIs.apnsDeliverySuccessRate));
             updateSlot('noop-card', refreshKey(snapshot.deliveryKPIs.sendNoOpRateByReason.refreshedAt), renderNoOpCard(snapshot.deliveryKPIs.sendNoOpRateByReason));
@@ -1111,6 +1304,105 @@ enum OperatorDashboardPageRenderer {
         )
     }
 
+    private static func pressureArtifactReadinessCard(_ metric: PressureArtifactReadinessMetricResponse?) -> String {
+        let metric = metric ?? .init(refreshedAt: nil, renderedAt: .now, metric: .init())
+        var lines: [(String, String)] = [
+            ("Catalog status", metric.status ?? "n/a"),
+            ("Valid time", maybeDate(metric.validTime)),
+            ("Valid-time age", maybeDuration(metric.validTimeAgeSeconds)),
+            ("Run / FH", pressureArtifactRunAndForecast(metric.runTime, metric.forecastHour)),
+            ("Field-set version", metric.fieldSetVersion ?? "n/a"),
+            ("Size", maybeByteSize(metric.byteSize)),
+            ("Source", metric.source ?? "n/a"),
+            ("Last checked / updated", maybeDate(metric.lastCheckedAt ?? metric.updatedAt))
+        ]
+        if let readinessReason = metric.readinessReason {
+            lines.insert(("Readiness reason", readinessReason), at: 1)
+        }
+        if let errorSummary = metric.errorSummary {
+            lines.append(("Error", errorSummary))
+        }
+
+        return card(
+            title: "Pressure artifact readiness",
+            primary: pressureArtifactOutcome(metric.selectionOutcome),
+            primaryClass: pressureArtifactOutcomeClass(metric.selectionOutcome),
+            refreshedAt: metric.refreshedAt,
+            lines: lines
+        )
+    }
+
+    private static func pressureArtifactCatalogCard(_ metric: PressureArtifactCatalogMetricResponse?) -> String {
+        let metric = metric ?? .init(refreshedAt: nil, metric: .init())
+        return card(
+            title: "Pressure artifact catalog",
+            primary: "\(metric.readyCount) ready",
+            refreshedAt: metric.refreshedAt,
+            lines: [
+                ("Total", "\(metric.totalCount)"),
+                ("Pending", "\(metric.pendingCount)"),
+                ("Warming", "\(metric.warmingCount)"),
+                ("Failed", "\(metric.failedCount)"),
+                ("Expired", "\(metric.expiredCount)"),
+                ("Most recent failure", maybeDate(metric.mostRecentFailureAt)),
+                ("Most recent failure reason", metric.mostRecentFailureSummary ?? "none")
+            ]
+        )
+    }
+
+    private static func recentPressureArtifactsTable(_ metric: RecentPressureArtifactEntriesResponse?) -> String {
+        let metric = metric ?? .init(refreshedAt: nil, entries: [])
+        let body: String
+        if metric.entries.isEmpty {
+            body = #"<div class="empty">No current-version pressure artifacts.</div>"#
+        } else {
+            body = """
+            <div class="table-wrap">
+            <table class="stream-table pressure-artifact-table inline-mobile-table">
+              <thead>
+                <tr>
+                  <th>Valid time</th>
+                  <th>Run / FH</th>
+                  <th>Status</th>
+                  <th>Source</th>
+                  <th>Size</th>
+                  <th>Updated</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                \(metric.entries.map(renderPressureArtifactRow).joined())
+              </tbody>
+            </table>
+            </div>
+            """
+        }
+
+        return """
+        <div class="card table-card">
+          <div style="padding: 18px 18px 0;">
+            <h3>Recent pressure artifacts</h3>
+            <div class="subtle">Refreshed \(escape(maybeDate(metric.refreshedAt)))</div>
+          </div>
+          \(body)
+        </div>
+        """
+    }
+
+    private static func renderPressureArtifactRow(_ entry: PressureArtifactEntryResponse) -> String {
+        """
+        <tr>
+          <td data-label="Valid time">\(escape(maybeDate(entry.validTime)))</td>
+          <td data-label="Run / FH">\(escape(pressureArtifactRunAndForecast(entry.runTime, entry.forecastHour)))</td>
+          <td data-label="Status"><span class="pill \(escape(statusClass(entry.status)))">\(escape(pressureArtifactStatus(entry.status)))</span></td>
+          <td data-label="Source">\(escape(entry.source))</td>
+          <td data-label="Size" class="mono">\(escape(maybeByteSize(entry.byteSize)))</td>
+          <td data-label="Updated">\(escape(maybeDate(entry.updatedAt)))</td>
+          <td data-label="Error">\(escape(entry.errorSummary ?? "none"))</td>
+        </tr>
+        """
+    }
+
     private static func recentDebugTable(_ metric: RecentNotificationDebugEntriesResponse) -> String {
         let body: String
         if metric.entries.isEmpty {
@@ -1229,13 +1521,15 @@ enum OperatorDashboardPageRenderer {
     private static func card(
         title: String,
         primary: String,
+        primaryClass: String? = nil,
         refreshedAt: Date?,
         lines: [(String, String)]
     ) -> String {
-        """
+        let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
+        return """
         <div class="card">
           <h3>\(escape(title))</h3>
-          <div class="primary">\(escape(primary))</div>
+          <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
           <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
           <ul class="meta-list">
             \(lines.map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined())
@@ -1252,6 +1546,39 @@ enum OperatorDashboardPageRenderer {
     private static func joinedCodes(_ codes: [String]) -> String {
         guard codes.isEmpty == false else { return "none" }
         return codes.joined(separator: ", ")
+    }
+
+    private static func pressureArtifactOutcome(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String {
+        guard let outcome else { return "NO DATA" }
+        return outcome.rawValue.uppercased()
+    }
+
+    private static func pressureArtifactOutcomeClass(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String? {
+        guard let outcome else { return nil }
+        switch outcome {
+        case .exact:
+            return "accent"
+        case .stale:
+            return "warn"
+        case .unavailable:
+            return "danger"
+        }
+    }
+
+    private static func pressureArtifactStatus(_ status: String?) -> String {
+        guard let status, status.isEmpty == false else { return "NO DATA" }
+        return status.uppercased()
+    }
+
+    private static func pressureArtifactRunAndForecast(_ runTime: Date?, _ forecastHour: Int?) -> String {
+        guard let runTime else { return "n/a" }
+        guard let forecastHour else { return formatDate(runTime) }
+        return "\(formatDate(runTime)) / FH \(forecastHour)"
+    }
+
+    private static func maybeByteSize(_ byteSize: Int64?) -> String {
+        guard let byteSize else { return "n/a" }
+        return formatByteSize(byteSize)
     }
 
     private static func maybeDate(_ date: Date?) -> String {
@@ -1313,6 +1640,38 @@ enum OperatorDashboardPageRenderer {
         let days = seconds / 86_400
         let hours = (seconds % 86_400) / 3_600
         return "\(days)d \(hours)h"
+    }
+
+    private static func formatByteSize(_ byteSize: Int64) -> String {
+        if byteSize < 1_024 {
+            return "\(byteSize) B"
+        }
+
+        let units = ["KiB", "MiB", "GiB", "TiB"]
+        var scaled = Double(byteSize) / 1_024.0
+        var unitIndex = 0
+        while scaled >= 1_024.0, unitIndex < units.count - 1 {
+            scaled /= 1_024.0
+            unitIndex += 1
+        }
+
+        let formatted = scaled >= 10 || unitIndex == 0
+            ? String(format: "%.0f", scaled)
+            : String(format: "%.1f", scaled)
+        return "\(formatted) \(units[unitIndex])"
+    }
+
+    private static func statusClass(_ status: String?) -> String {
+        switch status?.lowercased() {
+        case "ready":
+            return "accent"
+        case "pending", "warming":
+            return "warn"
+        case "failed", "expired":
+            return "danger"
+        default:
+            return ""
+        }
     }
 
     private static func escape(_ value: String) -> String {

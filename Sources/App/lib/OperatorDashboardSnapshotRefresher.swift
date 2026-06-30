@@ -10,6 +10,14 @@ struct RefreshOperatorDashboardSnapshotScheduledJob: AsyncScheduledJob {
     }
 }
 
+private struct FixedStormSetupDateProvider: StormSetupDateProviding {
+    let nowDate: Date
+
+    func now() -> Date {
+        nowDate
+    }
+}
+
 struct OperatorDashboardSnapshotRefresher {
     func refreshIfDue(
         on app: Application,
@@ -33,6 +41,7 @@ struct OperatorDashboardSnapshotRefresher {
             snapshot.ingestFreshness = try await loadIngestFreshness(on: app.db)
             snapshot.pipelineBacklog = try await loadPipelineBacklog(on: app.db)
             snapshot.stuckClaimedRows = try await loadStuckClaimedRows(on: app.db, now: now)
+            snapshot.modelArtifacts = try await loadPressureArtifactCatalog(on: app, sql: sql, now: now)
             snapshot.recentNotificationDebugEntries = try await loadRecentNotificationDebugEntries(on: sql)
             snapshot.touchedSeries = try await loadTouchedSeries(on: sql)
             snapshot.fastRefreshedAt = now
@@ -341,6 +350,288 @@ struct OperatorDashboardSnapshotRefresher {
         )
     }
 
+    private func loadPressureArtifactCatalog(
+        on app: Application,
+        sql: any SQLDatabase,
+        now: Date
+    ) async throws -> StoredPressureArtifactDashboardMetric {
+        let fieldSetVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion.rawValue
+        let aggregate = try await sql.raw("""
+            SELECT
+                COUNT(*) AS "totalRowCount",
+                COUNT(*) FILTER (WHERE status = 'pending') AS "pendingCount",
+                COUNT(*) FILTER (WHERE status = 'warming') AS "warmingCount",
+                COUNT(*) FILTER (WHERE status = 'ready') AS "readyCount",
+                COUNT(*) FILTER (WHERE status = 'failed') AS "failedCount",
+                COUNT(*) FILTER (WHERE status = 'expired') AS "expiredCount"
+            FROM pressure_artifact_catalog
+            WHERE product = 'wrfprsf'
+              AND field_set_version = \(bind: fieldSetVersion)
+        """).first(decoding: PressureArtifactCatalogAggregateRow.self)
+
+        let recentRows = try await sql.raw("""
+            SELECT
+                run_time AS "runTime",
+                forecast_hour AS "forecastHour",
+                valid_time AS "validTime",
+                product,
+                field_set_version AS "fieldSetVersion",
+                status,
+                byte_size AS "byteSize",
+                source,
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                last_checked_at AS "lastCheckedAt",
+                error_summary AS "errorSummary"
+            FROM pressure_artifact_catalog
+            WHERE product = 'wrfprsf'
+              AND field_set_version = \(bind: fieldSetVersion)
+            ORDER BY valid_time DESC, updated_at DESC
+            LIMIT \(bind: 5)
+        """).all(decoding: PressureArtifactRow.self)
+
+        let readiness = try await loadPressureArtifactReadiness(
+            on: app,
+            sql: sql,
+            recentRows: recentRows,
+            now: now
+        )
+
+        let latestFailedRow = try await sql.raw("""
+            SELECT
+                run_time AS "runTime",
+                forecast_hour AS "forecastHour",
+                valid_time AS "validTime",
+                product,
+                field_set_version AS "fieldSetVersion",
+                status,
+                byte_size AS "byteSize",
+                source,
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                last_checked_at AS "lastCheckedAt",
+                error_summary AS "errorSummary"
+            FROM pressure_artifact_catalog
+            WHERE product = 'wrfprsf'
+              AND field_set_version = \(bind: fieldSetVersion)
+              AND status = 'failed'
+            ORDER BY updated_at DESC, valid_time DESC
+            LIMIT 1
+        """).first(decoding: PressureArtifactRow.self)
+
+        let latestFailure = latestFailedRow ?? recentRows.first(where: { $0.status == PressureArtifactCatalogStatus.failed.rawValue })
+
+        return .init(
+            pressureArtifactReadiness: readiness,
+            pressureArtifactCatalog: .init(
+                refreshedAt: now,
+                totalRowCount: aggregate.map { Int($0.totalRowCount) } ?? 0,
+                pendingCount: aggregate.map { Int($0.pendingCount) } ?? 0,
+                warmingCount: aggregate.map { Int($0.warmingCount) } ?? 0,
+                readyCount: aggregate.map { Int($0.readyCount) } ?? 0,
+                failedCount: aggregate.map { Int($0.failedCount) } ?? 0,
+                expiredCount: aggregate.map { Int($0.expiredCount) } ?? 0,
+                mostRecentFailureAt: latestFailure?.updatedAt,
+                mostRecentFailureSummary: latestFailure?.errorSummary
+            ),
+            recentPressureArtifacts: .init(
+                refreshedAt: now,
+                entries: recentRows.map {
+                    .init(
+                        runTime: $0.runTime,
+                        forecastHour: $0.forecastHour,
+                        validTime: $0.validTime,
+                        product: $0.product,
+                        fieldSetVersion: $0.fieldSetVersion,
+                        status: $0.status,
+                        byteSize: $0.byteSize,
+                        source: $0.source,
+                        createdAt: $0.createdAt,
+                        updatedAt: $0.updatedAt,
+                        lastCheckedAt: $0.lastCheckedAt,
+                        errorSummary: $0.errorSummary
+                    )
+                }
+            )
+        )
+    }
+
+    private func loadPressureArtifactReadiness(
+        on app: Application,
+        sql: any SQLDatabase,
+        recentRows: [PressureArtifactRow],
+        now: Date
+    ) async throws -> StoredPressureArtifactDashboardReadinessMetric {
+        let dateProvider = FixedStormSetupDateProvider(nowDate: now)
+        let hrrrRunResolver = DefaultHrrrRunResolver(dateProvider: dateProvider)
+        let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+            threadPool: app.threadPool
+        )
+        let lookupService = DefaultPressureArtifactCatalogLookupService(
+            database: app.db,
+            blockingWorkExecutor: blockingWorkExecutor,
+            maximumStaleAgeSeconds: app.stormSetupConfiguration.pressureArtifactMaxStaleAgeSeconds,
+            logger: app.logger
+        )
+        let runResolution = hrrrRunResolver.resolveRunCandidates()
+        let pressureResolution = HrrrRunResolution(
+            targetValidTime: runResolution.targetValidTime,
+            candidates: runResolution.candidates.map(makePressureCandidate(from:))
+        )
+        let staleCutoff = pressureResolution.targetValidTime.addingTimeInterval(
+            -app.stormSetupConfiguration.pressureArtifactMaxStaleAgeSeconds
+        )
+
+        for candidate in pressureResolution.candidates {
+            if let readyArtifact = try await lookupService.readyArtifact(for: candidate) {
+                let row = try await loadPressureArtifactRow(
+                    on: sql,
+                    runTime: readyArtifact.runTime,
+                    forecastHour: readyArtifact.forecastHour,
+                    product: readyArtifact.product,
+                    fieldSetVersion: readyArtifact.fieldSetVersion
+                )
+
+                return makePressureArtifactReadinessMetric(
+                    selectionOutcome: .exact,
+                    status: PressureArtifactCatalogStatus.ready.rawValue,
+                    readinessReason: nil,
+                    artifact: readyArtifact,
+                    row: row,
+                    refreshedAt: now
+                )
+            }
+        }
+
+        if let staleArtifact = try await lookupService.staleArtifact(for: pressureResolution) {
+            let row = try await loadPressureArtifactRow(
+                on: sql,
+                runTime: staleArtifact.runTime,
+                forecastHour: staleArtifact.forecastHour,
+                product: staleArtifact.product,
+                fieldSetVersion: staleArtifact.fieldSetVersion
+            )
+
+            return makePressureArtifactReadinessMetric(
+                selectionOutcome: .stale,
+                status: PressureArtifactCatalogStatus.ready.rawValue,
+                readinessReason: "Bounded stale fallback selected after all exact candidates missed.",
+                artifact: staleArtifact,
+                row: row,
+                refreshedAt: now
+            )
+        }
+
+        let newestRow = recentRows.first
+        return makePressureArtifactReadinessMetric(
+            selectionOutcome: .unavailable,
+            status: newestRow?.status,
+            readinessReason: makeUnavailableReadinessReason(for: newestRow, staleCutoff: staleCutoff),
+            artifact: nil,
+            row: newestRow,
+            refreshedAt: now
+        )
+    }
+
+    private func loadPressureArtifactRow(
+        on sql: any SQLDatabase,
+        runTime: Date,
+        forecastHour: Int,
+        product: HrrrProduct,
+        fieldSetVersion: HrrrFieldSetVersion
+    ) async throws -> PressureArtifactRow? {
+        try await sql.raw("""
+            SELECT
+                run_time AS "runTime",
+                forecast_hour AS "forecastHour",
+                valid_time AS "validTime",
+                product,
+                field_set_version AS "fieldSetVersion",
+                status,
+                byte_size AS "byteSize",
+                source,
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                last_checked_at AS "lastCheckedAt",
+                error_summary AS "errorSummary"
+            FROM pressure_artifact_catalog
+            WHERE run_time = \(bind: runTime)
+              AND forecast_hour = \(bind: forecastHour)
+              AND product = \(bind: product.rawValue)
+              AND field_set_version = \(bind: fieldSetVersion.rawValue)
+            LIMIT 1
+        """).first(decoding: PressureArtifactRow.self)
+    }
+
+    private func makePressureArtifactReadinessMetric(
+        selectionOutcome: PressureArtifactReadinessSelectionOutcome,
+        status: String?,
+        readinessReason: String?,
+        artifact: PressureArtifactCatalogReadyArtifact?,
+        row: PressureArtifactRow?,
+        refreshedAt: Date
+    ) -> StoredPressureArtifactDashboardReadinessMetric {
+        let usableStatus = selectionOutcome == .unavailable ? status : PressureArtifactCatalogStatus.ready.rawValue
+
+        return .init(
+            refreshedAt: refreshedAt,
+            selectionOutcome: selectionOutcome,
+            status: usableStatus,
+            runTime: artifact?.runTime ?? row?.runTime,
+            forecastHour: artifact?.forecastHour ?? row?.forecastHour,
+            validTime: artifact?.validTime ?? row?.validTime,
+            fieldSetVersion: artifact?.fieldSetVersion.rawValue ?? row?.fieldSetVersion,
+            byteSize: artifact?.byteSize ?? row?.byteSize,
+            source: row?.source ?? PressureArtifactCatalogSource.unknown.rawValue,
+            updatedAt: row?.updatedAt,
+            lastCheckedAt: row?.lastCheckedAt,
+            errorSummary: row?.errorSummary,
+            readinessReason: readinessReason
+        )
+    }
+
+    private func makeUnavailableReadinessReason(
+        for row: PressureArtifactRow?,
+        staleCutoff: Date
+    ) -> String? {
+        guard let row else {
+            return "No current-version catalog artifact exists."
+        }
+
+        switch row.status {
+        case PressureArtifactCatalogStatus.ready.rawValue:
+            if row.validTime < staleCutoff {
+                return "Newest catalog row is ready, but it is outside the bounded stale window."
+            }
+            return "Newest catalog row is ready, but no usable local artifact file was found."
+        case PressureArtifactCatalogStatus.pending.rawValue:
+            return "Newest catalog row is pending."
+        case PressureArtifactCatalogStatus.warming.rawValue:
+            return "Newest catalog row is warming."
+        case PressureArtifactCatalogStatus.failed.rawValue:
+            if let errorSummary = row.errorSummary, errorSummary.isEmpty == false {
+                return "Newest catalog row is failed: \(errorSummary)."
+            }
+            return "Newest catalog row is failed."
+        case PressureArtifactCatalogStatus.expired.rawValue:
+            return "Newest catalog row is expired."
+        default:
+            return "Newest catalog row is \(row.status)."
+        }
+    }
+
+    private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
+        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
+        return HrrrRunCandidate(
+            model: candidate.model,
+            product: .wrfprsf,
+            domain: candidate.domain,
+            runTime: runTime,
+            forecastHour: candidate.forecastHour + 1,
+            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
+        )
+    }
+
     private func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
         let rows = try await sql.raw("""
             SELECT
@@ -451,6 +742,30 @@ private struct ZeroCandidateAggregateRow: Decodable {
 private struct ReasonAggregateRow: Decodable {
     let reason: String
     let count: Int64
+}
+
+private struct PressureArtifactCatalogAggregateRow: Decodable {
+    let totalRowCount: Int64
+    let pendingCount: Int64
+    let warmingCount: Int64
+    let readyCount: Int64
+    let failedCount: Int64
+    let expiredCount: Int64
+}
+
+private struct PressureArtifactRow: Decodable {
+    let runTime: Date
+    let forecastHour: Int
+    let validTime: Date
+    let product: String
+    let fieldSetVersion: String
+    let status: String
+    let byteSize: Int64?
+    let source: String
+    let createdAt: Date?
+    let updatedAt: Date?
+    let lastCheckedAt: Date?
+    let errorSummary: String?
 }
 
 private struct TargetableCoverageRow: Decodable {

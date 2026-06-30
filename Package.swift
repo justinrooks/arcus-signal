@@ -52,6 +52,8 @@ let package = Package(
                 "Infrastructure/Hashing",
                 "Infrastructure/Networking",
                 "Infrastructure/Notifications",
+                "Infrastructure/PressureArtifactBlockingWorkExecutor.swift",
+                "Infrastructure/Cancellation.swift",
                 "Services",
                 "StormSetup",
                 "Worker",
@@ -83,7 +85,13 @@ let package = Package(
                 .product(name: "XCTQueues", package: "queues"),
             ],
             path: "Tests/AppTests",
+            exclude: [
+                "Fixtures"
+            ],
             sources: ["."],
+            resources: [
+                .process("Fixtures")
+            ],
             swiftSettings: swiftSettings
         )
     ]

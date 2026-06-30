@@ -6,16 +6,39 @@ struct TornadoIngredientSnapshot: Content, Sendable {
     let centroid: StormSetupCentroid
     let source: StormSetupSourceMetadata
     let raw: TornadoRawParameters
+    let surfaceHeightMslM: Double?
     let assessment: TornadoIngredientAssessment
     let freshness: IngredientFreshness
+    let anvilEvidence: AnvilIngredientEvidence?
+
+    init(
+        h3Cell: Int64,
+        centroid: StormSetupCentroid,
+        source: StormSetupSourceMetadata,
+        raw: TornadoRawParameters,
+        surfaceHeightMslM: Double? = nil,
+        assessment: TornadoIngredientAssessment,
+        freshness: IngredientFreshness,
+        anvilEvidence: AnvilIngredientEvidence? = nil
+    ) {
+        self.h3Cell = h3Cell
+        self.centroid = centroid
+        self.source = source
+        self.raw = raw
+        self.surfaceHeightMslM = surfaceHeightMslM
+        self.assessment = assessment
+        self.freshness = freshness
+        self.anvilEvidence = anvilEvidence
+    }
 }
 
-struct StormSetupCentroid: Content, Sendable {
+struct StormSetupCentroid: Content, Sendable, Equatable {
     let latitude: Double
     let longitude: Double
 }
 
-struct StormSetupSourceMetadata: Content, Sendable {
+struct StormSetupSourceMetadata: Content, Sendable, Equatable {
+    let sourceKind: HrrrSourceKind
     let model: HrrrModel?
     let product: HrrrProduct?
     let domain: HrrrDomain?
@@ -24,7 +47,64 @@ struct StormSetupSourceMetadata: Content, Sendable {
     let validTime: Date?
     let fieldSetVersion: HrrrFieldSetVersion?
     let bbox: StormSetupHrrrBoundingBox?
-    let nomadsURL: URL?
+    let primaryDownloadURL: URL?
+    let idxURL: URL?
+
+    init(
+        sourceKind: HrrrSourceKind = .nomadsFilteredSubset,
+        model: HrrrModel?,
+        product: HrrrProduct?,
+        domain: HrrrDomain?,
+        runTime: Date?,
+        forecastHour: Int?,
+        validTime: Date?,
+        fieldSetVersion: HrrrFieldSetVersion?,
+        bbox: StormSetupHrrrBoundingBox? = nil,
+        primaryDownloadURL: URL? = nil,
+        idxURL: URL? = nil
+    ) {
+        self.sourceKind = sourceKind
+        self.model = model
+        self.product = product
+        self.domain = domain
+        self.runTime = runTime
+        self.forecastHour = forecastHour
+        self.validTime = validTime
+        self.fieldSetVersion = fieldSetVersion
+        self.bbox = bbox
+        self.primaryDownloadURL = primaryDownloadURL
+        self.idxURL = idxURL
+    }
+
+    init(
+        model: HrrrModel?,
+        product: HrrrProduct?,
+        domain: HrrrDomain?,
+        runTime: Date?,
+        forecastHour: Int?,
+        validTime: Date?,
+        fieldSetVersion: HrrrFieldSetVersion?,
+        bbox: StormSetupHrrrBoundingBox? = nil,
+        nomadsURL: URL? = nil
+    ) {
+        self.init(
+            sourceKind: .nomadsFilteredSubset,
+            model: model,
+            product: product,
+            domain: domain,
+            runTime: runTime,
+            forecastHour: forecastHour,
+            validTime: validTime,
+            fieldSetVersion: fieldSetVersion,
+            bbox: bbox,
+            primaryDownloadURL: nomadsURL,
+            idxURL: nil
+        )
+    }
+
+    var nomadsURL: URL? {
+        primaryDownloadURL
+    }
 }
 
 struct TornadoRawParameters: Content, Sendable {
@@ -34,7 +114,8 @@ struct TornadoRawParameters: Content, Sendable {
     let mlcinJkg: Double?
     let dcapeJkg: Double?
     let mllclM: Double?
-    let temperatureDewpointSpreadF: Double?
+    let tempDewPtDeltaF: Double?
+    let threeCapeJkg: Double?
     let lclLfcSeparationM: Double?
     let lapseRate03kmCkm: Double?
     let lapseRate700500mbCkm: Double?
@@ -54,6 +135,64 @@ struct TornadoRawParameters: Content, Sendable {
     let stormRelativeWind46km: DirectionSpeed?
     let meanWind850300mb: DirectionSpeed?
     let diagnostics: [TornadoRawParameterDiagnostic]?
+
+    init(
+        sbcapeJkg: Double?,
+        mlcapeJkg: Double?,
+        mucapeJkg: Double?,
+        mlcinJkg: Double?,
+        dcapeJkg: Double?,
+        mllclM: Double?,
+        tempDewPtDeltaF: Double? = nil,
+        threeCapeJkg: Double? = nil,
+        lclLfcSeparationM: Double?,
+        lapseRate03kmCkm: Double?,
+        lapseRate700500mbCkm: Double?,
+        shear06kmKt: Double?,
+        shear03kmKt: Double?,
+        shear01kmKt: Double?,
+        effectiveShearKt: Double?,
+        srh01kmM2s2: Double?,
+        srh03kmM2s2: Double?,
+        effectiveSrhM2s2: Double?,
+        supercellComposite: Double?,
+        significantTornadoFixed: Double?,
+        significantTornadoEffective: Double?,
+        significantHail: Double?,
+        bunkersRightMotion: DirectionSpeed?,
+        bunkersLeftMotion: DirectionSpeed?,
+        stormRelativeWind46km: DirectionSpeed?,
+        meanWind850300mb: DirectionSpeed?,
+        diagnostics: [TornadoRawParameterDiagnostic]? = nil
+    ) {
+        self.sbcapeJkg = sbcapeJkg
+        self.mlcapeJkg = mlcapeJkg
+        self.mucapeJkg = mucapeJkg
+        self.mlcinJkg = mlcinJkg
+        self.dcapeJkg = dcapeJkg
+        self.mllclM = mllclM
+        self.tempDewPtDeltaF = tempDewPtDeltaF
+        self.threeCapeJkg = threeCapeJkg
+        self.lclLfcSeparationM = lclLfcSeparationM
+        self.lapseRate03kmCkm = lapseRate03kmCkm
+        self.lapseRate700500mbCkm = lapseRate700500mbCkm
+        self.shear06kmKt = shear06kmKt
+        self.shear03kmKt = shear03kmKt
+        self.shear01kmKt = shear01kmKt
+        self.effectiveShearKt = effectiveShearKt
+        self.srh01kmM2s2 = srh01kmM2s2
+        self.srh03kmM2s2 = srh03kmM2s2
+        self.effectiveSrhM2s2 = effectiveSrhM2s2
+        self.supercellComposite = supercellComposite
+        self.significantTornadoFixed = significantTornadoFixed
+        self.significantTornadoEffective = significantTornadoEffective
+        self.significantHail = significantHail
+        self.bunkersRightMotion = bunkersRightMotion
+        self.bunkersLeftMotion = bunkersLeftMotion
+        self.stormRelativeWind46km = stormRelativeWind46km
+        self.meanWind850300mb = meanWind850300mb
+        self.diagnostics = diagnostics
+    }
 }
 
 extension TornadoRawParameters {
@@ -65,7 +204,8 @@ extension TornadoRawParameters {
             mlcinJkg != nil,
             dcapeJkg != nil,
             mllclM != nil,
-            temperatureDewpointSpreadF != nil,
+            tempDewPtDeltaF != nil,
+            threeCapeJkg != nil,
             lclLfcSeparationM != nil,
             lapseRate03kmCkm != nil,
             lapseRate700500mbCkm != nil,
@@ -100,6 +240,10 @@ enum TornadoRawParameterKey: String, Content, Sendable {
     case mlcapeJkg
     case mucapeJkg
     case mlcinJkg
+    case temperature2mK
+    case dewpoint2mK
+    case tempDewPtDeltaF
+    case threeCapeJkg
     case srh01kmM2s2
     case srh03kmM2s2
     case effectiveSrhM2s2

@@ -8,6 +8,14 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     func assess(raw: TornadoRawParameters, freshness: IngredientFreshness) -> TornadoIngredientAssessment {
+        assess(raw: raw, freshness: freshness, evidence: nil)
+    }
+
+    func assess(
+        raw: TornadoRawParameters,
+        freshness: IngredientFreshness,
+        evidence anvilEvidence: AnvilIngredientEvidence?
+    ) -> TornadoIngredientAssessment {
         let instability = assessInstability(raw)
         let moisture = assessMoisture(raw)
         let cloudBase = assessCloudBase(raw)
@@ -23,7 +31,7 @@ struct TornadoIngredientInterpreter: Sendable {
             lowLevelRotation,
             cloudBase,
             compositeSignal
-        ].filter { $0 != .unknown }.count
+            ].filter { $0 != .unknown }.count
 
         let limitingFactors = makeLimitingFactors(
             raw: raw,
@@ -37,7 +45,7 @@ struct TornadoIngredientInterpreter: Sendable {
             compositeSignal: compositeSignal
         )
 
-        let overall = assessOverall(
+        let baselineOverall = assessOverall(
             instability: instability,
             cloudBase: cloudBase,
             deepShear: deepShear,
@@ -46,8 +54,17 @@ struct TornadoIngredientInterpreter: Sendable {
             knownCorePillars: knownCorePillars
         )
 
+        let baselineConfidence = assessConfidence(freshness: freshness, knownCorePillars: knownCorePillars)
+        let evidenceAdjusted = assessAnvilEvidence(
+            rawOverall: baselineOverall,
+            rawConfidence: baselineConfidence,
+            freshness: freshness,
+            knownCorePillars: knownCorePillars,
+            evidence: anvilEvidence
+        )
+
         return TornadoIngredientAssessment(
-            overall: overall,
+            overall: evidenceAdjusted.overall,
             instability: instability,
             moisture: moisture,
             cloudBase: cloudBase,
@@ -56,7 +73,7 @@ struct TornadoIngredientInterpreter: Sendable {
             lowLevelRotation: lowLevelRotation,
             stormMode: stormMode,
             compositeSignal: compositeSignal,
-            confidence: assessConfidence(freshness: freshness, knownCorePillars: knownCorePillars),
+            confidence: evidenceAdjusted.confidence,
             trend: .unknown,
             stormModeHint: .unknown,
             primaryDrivers: makePrimaryDrivers(
@@ -70,9 +87,10 @@ struct TornadoIngredientInterpreter: Sendable {
             ),
             limitingFactors: limitingFactors,
             summary: makeSummary(
-                overall: overall,
+                overall: evidenceAdjusted.overall,
                 limitingFactors: limitingFactors,
-                compositeSignal: compositeSignal
+                compositeSignal: compositeSignal,
+                anvilEvidence: anvilEvidence
             )
         )
     }
@@ -396,28 +414,125 @@ struct TornadoIngredientInterpreter: Sendable {
     private func makeSummary(
         overall: IngredientSupport,
         limitingFactors: [TornadoLimitingFactor],
-        compositeSignal: IngredientSupport
+        compositeSignal: IngredientSupport,
+        anvilEvidence: AnvilIngredientEvidence?
     ) -> String {
+        let baseSummary: String
+
         switch overall {
         case .weak:
-            return "The setup is weakly supportive. Key ingredients are limited and the environment is not especially favorable."
+            baseSummary = "The setup is weakly supportive. Key ingredients are limited and the environment is not especially favorable."
         case .conditional:
             if limitingFactors.contains(.weakLowLevelRotation) {
-                return "The setup is conditionally supportive. Instability and deep shear are present, but low-level rotation is modest."
+                baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but low-level rotation is modest."
+            } else if compositeSignal == .unknown {
+                baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but the composite signal is not available yet."
+            } else {
+                baseSummary = "The setup is conditionally supportive. The ingredients are there, but the lineup is still incomplete."
             }
-
-            if compositeSignal == .unknown {
-                return "The setup is conditionally supportive. Instability and deep shear are present, but the composite signal is not available yet."
-            }
-
-            return "The setup is conditionally supportive. The ingredients are there, but the lineup is still incomplete."
         case .supportive:
-            return "The setup is supportive. Instability, deep shear, and cloud bases are in a favorable range."
+            baseSummary = "The setup is supportive. Instability, deep shear, and cloud bases are in a favorable range."
         case .strong:
-            return "The setup is strongly supportive. Multiple ingredients line up, including instability, deep shear, and low-level rotation."
+            baseSummary = "The setup is strongly supportive. Multiple ingredients line up, including instability, deep shear, and low-level rotation."
         case .unknown:
-            return "There is not enough ingredient data to judge the setup confidently."
+            baseSummary = "There is not enough ingredient data to judge the setup confidently."
         }
+
+        guard let anvilEvidence else {
+            return baseSummary
+        }
+
+        return baseSummary + " " + makeAnvilEvidenceSummaryClause(anvilEvidence)
+    }
+
+    private func makeAnvilEvidenceSummaryClause(_ evidence: AnvilIngredientEvidence) -> String {
+        if evidence.status == .unavailable {
+            return "Anvil analysis is unavailable, so confidence is limited."
+        }
+
+        if evidence.isDegraded {
+            return "Anvil analysis is degraded, so confidence is limited."
+        }
+
+        guard let strongestSupport = evidence.strongestSupport else {
+            return "Anvil analysis is not available."
+        }
+
+        switch strongestSupport {
+        case .weak:
+            return "Anvil analysis is not reinforcing the setup."
+        case .conditional:
+            return "Anvil analysis is only modestly supportive."
+        case .supportive:
+            return "Anvil analysis also leans supportive."
+        case .strong:
+            return "Anvil analysis reinforces the setup."
+        case .unknown:
+            return "Anvil analysis is not available."
+        }
+    }
+
+    private func assessAnvilEvidence(
+        rawOverall: IngredientSupport,
+        rawConfidence: SnapshotConfidence,
+        freshness: IngredientFreshness,
+        knownCorePillars: Int,
+        evidence: AnvilIngredientEvidence?
+    ) -> (overall: IngredientSupport, confidence: SnapshotConfidence) {
+        guard let evidence else {
+            return (rawOverall, rawConfidence)
+        }
+
+        var overall = rawOverall
+        var confidence = rawConfidence
+
+        guard let strongestSupport = evidence.strongestSupport else {
+            if evidence.isDegraded {
+                confidence = confidence.lowered()
+            }
+            return (overall, confidence)
+        }
+
+        if evidence.isDegraded {
+            confidence = confidence.lowered()
+            return (overall, confidence)
+        }
+
+        switch strongestSupport {
+        case .strong:
+            if overall == .weak, knownCorePillars >= 3 {
+                overall = overall.raised()
+            } else if overall == .conditional, knownCorePillars >= 4 {
+                overall = overall.raised()
+            } else if overall == .supportive, knownCorePillars >= 4 {
+                overall = .strong
+            }
+            if !freshness.isDegraded {
+                confidence = confidence.raised()
+            }
+        case .supportive:
+            if overall == .weak, knownCorePillars >= 3 {
+                overall = overall.raised()
+            } else if overall == .conditional, knownCorePillars >= 4 {
+                overall = overall.raised()
+            }
+            if !freshness.isDegraded {
+                confidence = confidence.raised()
+            }
+        case .conditional:
+            if !freshness.isDegraded {
+                confidence = confidence.raised()
+            }
+        case .weak:
+            if overall != .weak {
+                overall = overall.lowered()
+            }
+            confidence = confidence.lowered()
+        case .unknown:
+            break
+        }
+
+        return (overall, confidence)
     }
 }
 
@@ -425,7 +540,7 @@ private extension TornadoIngredientInterpreter {
     func moistureScore(_ raw: TornadoRawParameters) -> Double? {
         let scores: [Double] = [
             raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
-            raw.temperatureDewpointSpreadF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
+            raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
         ].compactMap { $0 }
 
         guard !scores.isEmpty else {
@@ -438,7 +553,7 @@ private extension TornadoIngredientInterpreter {
     func cloudBaseScore(_ raw: TornadoRawParameters) -> Double? {
         let scores: [Double] = [
             raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
-            raw.temperatureDewpointSpreadF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
+            raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
         ].compactMap { $0 }
 
         guard !scores.isEmpty else {

@@ -1,0 +1,37 @@
+{
+  "effectiveLayer": {
+    "status": "found",
+    "basePressureMb": 1000.0,
+    "topPressureMb": 925.0,
+    "baseMetersAgl": 0.0,
+    "topMetersAgl": 690.0
+  },
+  "stormMotion": {
+    "status": "computed",
+    "bunkersRight": {
+      "uKt": 36.80394762849837,
+      "vKt": 13.53066796460426,
+      "speedKt": 39.21236458834915,
+      "directionTowardDeg": 69.81446460119884,
+      "uMs": 18.933570033795217,
+      "vMs": 6.960770950382875,
+      "speedMs": 20.172565688288692
+    }
+  },
+  "mucape": 362.1018454649957,
+  "mlcape": 191.7304143918497,
+  "mlcin": -221.93726424748172,
+  "mllclMetersAgl": 1179.4130766012365,
+  "effectiveSrh": 29.42420403684148,
+  "effectiveBulkShearMs": 30.134722226263612,
+  "scp": 0.2130911716615775,
+  "stpCin": 0.0,
+  "stpFixed": 0.10598607777331374,
+  "ship": 0.02328171526804675,
+  "quality": {
+    "profileLevelCount": 20,
+    "warnings": [
+      "dew point greater than temperature at one or more levels"
+    ]
+  }
+}

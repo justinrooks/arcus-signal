@@ -16,6 +16,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
     static let localGribSubsetCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("grib-subsets", isDirectory: true)
 
+    static let localPressureGribSubsetCacheRootURL = localStormSetupCacheRootURL
+        .appendingPathComponent("pressure-grib-subsets", isDirectory: true)
+
     static let localSampledSnapshotCacheRootURL = localStormSetupCacheRootURL
         .appendingPathComponent("sampled-snapshots", isDirectory: true)
 
@@ -44,16 +47,55 @@ struct StormSetupConfiguration: Sendable, Equatable {
         let gribSubsetMaximumByteCount = Self.environmentInt(
             for: "STORM_SETUP_GRIB_MAX_BYTES",
             in: environment
-        ) ?? 25 * 1024 * 1024
+        ) ?? 200 * 1024 * 1024
+
+        let pressureArtifactProbeIntervalSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_PROBE_INTERVAL_SECONDS",
+            in: environment
+        ) ?? 5 * 60
+
+        let pressureArtifactMaxStaleAgeSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_MAX_STALE_AGE_SECONDS",
+            in: environment
+        ) ?? 2 * 60 * 60
+
+        let pressureArtifactDeleteGraceSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_DELETE_GRACE_SECONDS",
+            in: environment
+        ) ?? 60 * 60
+
+        let pressureArtifactCleanupIntervalSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_CLEANUP_INTERVAL_SECONDS",
+            in: environment
+        ) ?? 15 * 60
+
+        let pressureArtifactRecoveryTimeoutSeconds = Self.environmentPositiveTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS",
+            defaultValue: 30 * 60,
+            in: environment
+        )
 
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
         ) ?? 15
 
+        let anvilProfileAnalysisBaseURL = Self.environmentURL(
+            for: "ANVIL_PROFILE_ANALYSIS_BASE_URL",
+            in: environment
+        )
+        let anvilProfileAnalysisTimeoutSeconds = Self.environmentTimeInterval(
+            for: "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS",
+            in: environment
+        )
+
         return StormSetupConfiguration(
             gribSubsetCacheRootURL: cacheRootURL.appendingPathComponent(
                 "grib-subsets",
+                isDirectory: true
+            ),
+            pressureGribSubsetCacheRootURL: cacheRootURL.appendingPathComponent(
+                "pressure-grib-subsets",
                 isDirectory: true
             ),
             sampledSnapshotCacheRootURL: cacheRootURL.appendingPathComponent(
@@ -62,29 +104,102 @@ struct StormSetupConfiguration: Sendable, Equatable {
             ),
             gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
             gribSubsetMaximumByteCount: gribSubsetMaximumByteCount,
+            pressureArtifactProbeIntervalSeconds: pressureArtifactProbeIntervalSeconds,
+            pressureArtifactMaxStaleAgeSeconds: pressureArtifactMaxStaleAgeSeconds,
+            pressureArtifactDeleteGraceSeconds: pressureArtifactDeleteGraceSeconds,
+            pressureArtifactCleanupIntervalSeconds: pressureArtifactCleanupIntervalSeconds,
+            pressureArtifactRecoveryTimeoutSeconds: pressureArtifactRecoveryTimeoutSeconds,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
-            wgrib2TimeoutSeconds: wgrib2TimeoutSeconds
+            wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
+            anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
+            anvilProfileAnalysisTimeoutSeconds: anvilProfileAnalysisTimeoutSeconds
         )
     }
 
     static let `default` = StormSetupConfiguration(
         gribSubsetCacheRootURL: localGribSubsetCacheRootURL,
+        pressureGribSubsetCacheRootURL: localPressureGribSubsetCacheRootURL,
         sampledSnapshotCacheRootURL: localSampledSnapshotCacheRootURL,
         gribSubsetCacheRetentionSeconds: 12 * 60 * 60,
-        gribSubsetMaximumByteCount: 25 * 1024 * 1024,
+        gribSubsetMaximumByteCount: 200 * 1024 * 1024,
+        pressureArtifactProbeIntervalSeconds: 5 * 60,
+        pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
+        pressureArtifactDeleteGraceSeconds: 60 * 60,
+        pressureArtifactCleanupIntervalSeconds: 15 * 60,
+        pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
-        wgrib2TimeoutSeconds: 15
+        wgrib2TimeoutSeconds: 15,
+        anvilProfileAnalysisBaseURL: nil,
+        anvilProfileAnalysisTimeoutSeconds: nil
     )
 
     let gribSubsetCacheRootURL: URL
+    let pressureGribSubsetCacheRootURL: URL
     let sampledSnapshotCacheRootURL: URL
     let gribSubsetCacheRetentionSeconds: TimeInterval
     let gribSubsetMaximumByteCount: Int
+    let pressureArtifactProbeIntervalSeconds: TimeInterval
+    let pressureArtifactMaxStaleAgeSeconds: TimeInterval
+    let pressureArtifactDeleteGraceSeconds: TimeInterval
+    let pressureArtifactCleanupIntervalSeconds: TimeInterval
+    let pressureArtifactRecoveryTimeoutSeconds: TimeInterval
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
+    let anvilProfileAnalysisBaseURL: URL?
+    let anvilProfileAnalysisTimeoutSeconds: TimeInterval?
+
+    init(
+        gribSubsetCacheRootURL: URL,
+        pressureGribSubsetCacheRootURL: URL,
+        sampledSnapshotCacheRootURL: URL,
+        gribSubsetCacheRetentionSeconds: TimeInterval,
+        gribSubsetMaximumByteCount: Int,
+        pressureArtifactProbeIntervalSeconds: TimeInterval,
+        pressureArtifactMaxStaleAgeSeconds: TimeInterval,
+        pressureArtifactDeleteGraceSeconds: TimeInterval,
+        pressureArtifactCleanupIntervalSeconds: TimeInterval,
+        pressureArtifactRecoveryTimeoutSeconds: TimeInterval,
+        wgrib2ExecutableURL: URL,
+        wgrib2TimeoutSeconds: TimeInterval,
+        anvilProfileAnalysisBaseURL: URL? = nil,
+        anvilProfileAnalysisTimeoutSeconds: TimeInterval? = nil
+    ) {
+        self.gribSubsetCacheRootURL = gribSubsetCacheRootURL
+        self.pressureGribSubsetCacheRootURL = pressureGribSubsetCacheRootURL
+        self.sampledSnapshotCacheRootURL = sampledSnapshotCacheRootURL
+        self.gribSubsetCacheRetentionSeconds = gribSubsetCacheRetentionSeconds
+        self.gribSubsetMaximumByteCount = gribSubsetMaximumByteCount
+        self.pressureArtifactProbeIntervalSeconds = pressureArtifactProbeIntervalSeconds
+        self.pressureArtifactMaxStaleAgeSeconds = pressureArtifactMaxStaleAgeSeconds
+        self.pressureArtifactDeleteGraceSeconds = pressureArtifactDeleteGraceSeconds
+        self.pressureArtifactCleanupIntervalSeconds = pressureArtifactCleanupIntervalSeconds
+        self.pressureArtifactRecoveryTimeoutSeconds = pressureArtifactRecoveryTimeoutSeconds
+        self.wgrib2ExecutableURL = wgrib2ExecutableURL
+        self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
+        self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL
+        self.anvilProfileAnalysisTimeoutSeconds = anvilProfileAnalysisTimeoutSeconds
+    }
 
     func makeWgrib2Client(runner: ProcessRunner = ProcessRunner()) -> Wgrib2Client {
         Wgrib2Client(configuration: self, runner: runner)
+    }
+
+    func makeAnvilProfileClient(httpClient: any HTTPClient) throws -> any AnvilProfileClient {
+        guard let baseURL = anvilProfileAnalysisBaseURL,
+              let timeoutSeconds = anvilProfileAnalysisTimeoutSeconds else {
+            throw AnvilProfileClientError.missingConfiguration(
+                missingKeys: [
+                    anvilProfileAnalysisBaseURL == nil ? "ANVIL_PROFILE_ANALYSIS_BASE_URL" : nil,
+                    anvilProfileAnalysisTimeoutSeconds == nil ? "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS" : nil
+                ].compactMap { $0 }
+            )
+        }
+
+        return DefaultAnvilProfileClient(
+            baseURL: baseURL,
+            timeoutSeconds: timeoutSeconds,
+            httpClient: httpClient
+        )
     }
 
     private static func environmentFileURL(
@@ -132,6 +247,35 @@ struct StormSetupConfiguration: Sendable, Equatable {
         }
 
         return TimeInterval(rawValue)
+    }
+
+    private static func environmentPositiveTimeInterval(
+        for key: String,
+        defaultValue: TimeInterval,
+        in environment: [String: String]
+    ) -> TimeInterval {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return defaultValue
+        }
+
+        guard let parsed = TimeInterval(rawValue), parsed > 0 else {
+            return 1
+        }
+
+        return parsed
+    }
+
+    private static func environmentURL(
+        for key: String,
+        in environment: [String: String]
+    ) -> URL? {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return nil
+        }
+
+        return URL(string: rawValue)
     }
 }
 

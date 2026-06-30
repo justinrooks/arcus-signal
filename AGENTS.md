@@ -32,6 +32,19 @@ Treat these as the source of truth for:
 - Keep solutions, code, and suggestions as simple as possible. We are iterating and building
 - Don't over engineer, over architect, or over design solutions or suggestions.
 
+## Arcus-Signal Slice Boundaries
+
+For Vapor server work, prefer slices around one of:
+- One route behavior.
+- One service method.
+- One DTO or decoding path.
+- One persistence query/model interaction.
+- One notification/update workflow.
+- One parser/classifier/scoring behavior.
+- One focused test suite.
+
+Stop before mixing route changes, persistence changes, notification behavior, and refactors in the same pass unless explicitly requested.
+
 ## Key Architecture Decisions
 
 - Two executables, one shared `App` module.

@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{apiBaseUrl}}/api/v1/dev/anvil/profile-preview?h3=613167714648719359"
+method: GET
+queryParams:
+  h3: "613167714648719359"
+order: 4161507080523653

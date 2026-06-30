@@ -27,6 +27,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.queues.add(IngestNWSAlertsJob())
     app.queues.add(TargetEventRevisionJob())
     app.queues.add(NotificationSendJob())
+    app.queues.add(PressureArtifactWarmJob())
+    app.queues.add(CleanupPressureArtifactsJob())
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
@@ -44,8 +46,26 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         configureWorkerQueueSettings(on: app)
         configureWorkerRuntime(on: app)
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)
+        app.recordWorkerScheduledJob("DispatchIngestNWSAlertsScheduledJob")
+        app.queues.schedule(ProbeHRRRPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds))
+        app.recordWorkerScheduledJob("ProbeHRRRPressureArtifactsScheduledJob")
+        app.queues.schedule(CleanupPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactCleanupIntervalSeconds))
+        app.recordWorkerScheduledJob("CleanupPressureArtifactsScheduledJob")
         app.queues.schedule(RefreshOperatorDashboardSnapshotScheduledJob()).every(seconds: OperatorDashboardConfig.fastRefreshIntervalSeconds)
+        app.recordWorkerScheduledJob("RefreshOperatorDashboardSnapshotScheduledJob")
         app.logger.info("Configured scheduled ingestion dispatch (every 60 seconds).")
+        app.logger.info(
+            "Configured scheduled HRRR pressure artifact probe.",
+            metadata: [
+                "intervalSeconds": .stringConvertible(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds)
+            ]
+        )
+        app.logger.info(
+            "Configured scheduled HRRR pressure artifact cleanup.",
+            metadata: [
+                "intervalSeconds": .stringConvertible(app.stormSetupConfiguration.pressureArtifactCleanupIntervalSeconds)
+            ]
+        )
         try configureWorkerRoutes(app)
     }
 }
@@ -85,6 +105,8 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddCompletionFieldsToTargetDispatchOutbox())
     app.migrations.add(CreateNotificationSendAttempts())
     app.migrations.add(CreateOperatorDashboardSnapshots())
+    app.migrations.add(CreatePressureArtifactCatalog())
+    app.migrations.add(AddClaimFencingToPressureArtifactCatalog())
 }
 
 private func configureAPNs(on app: Application) async throws {

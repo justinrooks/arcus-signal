@@ -16,6 +16,30 @@ struct StormSetupIngredientNormalizationTests {
         #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .sbcapeJkg)
     }
 
+    @Test("temperature and dew point normalize from Kelvin to a Fahrenheit delta")
+    func temperatureAndDewPointNormalizeToAFahrenheitDelta() {
+        let result = normalize(
+            [
+                "1:0:d=2026060313:TMP:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=295.15",
+                "2:0:d=2026060313:DPT:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=289.15"
+            ]
+        )
+
+        #expect(result.raw.tempDewPtDeltaF?.isApproximatelyEqual(to: 10.8) == true)
+        #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .temperature2mK)
+        #expect(result.raw.diagnostics?.last?.matchedRawParameterKey == .dewpoint2mK)
+    }
+
+    @Test("representative 0-3 km CAPE inventory maps to threeCape")
+    func cape3InventoryMapsToThreeCape() {
+        let result = normalize(
+            "18:4358:d=2026061812:CAPE:0-3000 m above ground:1 hour fcst::lon=255.538301,lat=39.778672,val=0"
+        )
+
+        #expect(result.raw.threeCapeJkg == 0)
+        #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .threeCapeJkg)
+    }
+
     @Test("representative CIN inventory maps to the documented CIN field")
     func cinInventoryMapsWhenIdentifiable() {
         let result = normalize(
@@ -44,6 +68,16 @@ struct StormSetupIngredientNormalizationTests {
 
         #expect(result.raw.srh03kmM2s2 == 160)
         #expect(result.raw.srh01kmM2s2 == nil)
+    }
+
+    @Test("surface HGT inventory is captured as the selected surface height")
+    func surfaceHeightInventoryMapsToSelectedSurfaceHeight() {
+        let result = normalize(
+            "1:0:d=2026060313:HGT:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1234"
+        )
+
+        #expect(result.surfaceHeightMslM == 1234)
+        #expect(result.raw.mllclM == nil)
     }
 
     @Test("0-6 km shear components map to kt with explicit conversion")

@@ -23,6 +23,11 @@ protocol StormSetupFieldSampling: Sendable {
         from subset: GribSubsetCacheResult,
         around centroid: StormSetupCentroid
     ) async throws -> [HrrrFieldSample]
+
+    func sample(
+        localFileURL: URL,
+        around centroid: StormSetupCentroid
+    ) async throws -> [HrrrFieldSample]
 }
 
 protocol StormSetupIngredientNormalizing: Sendable {
@@ -30,7 +35,11 @@ protocol StormSetupIngredientNormalizing: Sendable {
 }
 
 protocol StormSetupIngredientAssessing: Sendable {
-    func assess(raw: TornadoRawParameters, freshness: IngredientFreshness) -> TornadoIngredientAssessment
+    func assess(
+        raw: TornadoRawParameters,
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence?
+    ) -> TornadoIngredientAssessment
 }
 
 enum StormSetupCurrentSnapshotFailureStage: String, Sendable {
@@ -93,6 +102,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     private let fieldSampler: any StormSetupFieldSampling
     private let normalizer: any StormSetupIngredientNormalizing
     private let interpreter: any StormSetupIngredientAssessing
+    private let anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)?
     private let logger: Logger
 
     init(
@@ -105,6 +115,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         fieldSampler: any StormSetupFieldSampling,
         normalizer: any StormSetupIngredientNormalizing = TornadoIngredientNormalizer(),
         interpreter: any StormSetupIngredientAssessing = TornadoIngredientInterpreter(),
+        anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)? = nil,
         logger: Logger = Logger(label: "storm-setup")
     ) {
         self.h3Resolver = h3Resolver
@@ -116,6 +127,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         self.fieldSampler = fieldSampler
         self.normalizer = normalizer
         self.interpreter = interpreter
+        self.anvilProfileAnalysisProvider = anvilProfileAnalysisProvider
         self.logger = logger
     }
 
@@ -129,6 +141,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         fieldSampler: any StormSetupFieldSampling,
         normalizer: any StormSetupIngredientNormalizing,
         interpreter: any StormSetupIngredientAssessing,
+        anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)? = nil,
         logger: Logger
     ) {
         self.h3Resolver = h3Resolver
@@ -140,6 +153,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         self.fieldSampler = fieldSampler
         self.normalizer = normalizer
         self.interpreter = interpreter
+        self.anvilProfileAnalysisProvider = anvilProfileAnalysisProvider
         self.logger = logger
     }
 
@@ -154,6 +168,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         var failures: [StormSetupCurrentSnapshotFailure] = []
 
         for (index, candidate) in runResolution.candidates.enumerated() {
+            try Task.checkCancellation()
             let sourceMetadata = hrrrNomadsURLBuilder.makeSourceMetadata(
                 for: candidate,
                 around: resolved.centroid
@@ -203,6 +218,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     )
                 }
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 let failure = classify(error: error, sourceMetadata: sourceMetadata)
                 failures.append(failure)
                 logFailure(
@@ -229,6 +245,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             rulesVersion: .current
         )
         if let cached = await snapshotCache.loadSnapshot(for: cacheKey) {
+            try Task.checkCancellation()
             logger.info(
                 "Storm Setup sampled snapshot cache hit.",
                 metadata: candidateMetadata(sourceMetadata, extra: [
@@ -237,9 +254,10 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     "expiresAt": .string("\(cached.expiresAt)")
                 ])
             )
-            return cached.snapshot
+            return try await composeSnapshotWithCurrentAnvilEvidence(from: cached.snapshot)
         }
 
+        try Task.checkCancellation()
         logger.info(
             "Storm Setup sampled snapshot cache miss.",
             metadata: candidateMetadata(sourceMetadata)
@@ -249,6 +267,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             for: HrrrRunResolution(targetValidTime: targetValidTime, candidates: [makeCandidate(from: sourceMetadata)]),
             around: centroid
         )
+        try Task.checkCancellation()
 
         logger.info(
             "Storm Setup GRIB subset ready.",
@@ -265,6 +284,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         )
 
         let samples = try await fieldSampler.sample(from: subset, around: centroid)
+        try Task.checkCancellation()
         let normalized = normalizer.normalize(samples: samples)
 
         guard normalized.raw.nonNilFieldCount > 0 else {
@@ -275,18 +295,19 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         let freshness = IngredientFreshness.make(source: sourceMetadata, fetchedAt: subset.fetchedAt)
-        let assessment = interpreter.assess(raw: normalized.raw, freshness: freshness)
-        let snapshot = TornadoIngredientSnapshot(
+        let surfaceSnapshot = TornadoIngredientSnapshot(
             h3Cell: resolvedH3Cell,
             centroid: centroid,
             source: sourceMetadata,
             raw: normalized.raw,
-            assessment: assessment,
+            surfaceHeightMslM: normalized.surfaceHeightMslM,
+            assessment: interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: nil),
             freshness: freshness
         )
 
         do {
-            _ = try await snapshotCache.store(snapshot: snapshot, for: cacheKey)
+            _ = try await snapshotCache.store(snapshot: surfaceSnapshot, for: cacheKey)
+            try Task.checkCancellation()
             logger.info(
                 "Storm Setup sampled snapshot cached.",
                 metadata: candidateMetadata(
@@ -298,6 +319,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 )
             )
         } catch {
+            try rethrowCancellationIfNeeded(error)
             logger.warning(
                 "Storm Setup sampled snapshot cache write failed.",
                 metadata: candidateMetadata(
@@ -309,18 +331,208 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
         }
 
-        return snapshot
+        return try await composeSnapshotWithCurrentAnvilEvidence(from: surfaceSnapshot)
     }
 
     private func makeCandidate(from sourceMetadata: StormSetupSourceMetadata) -> HrrrRunCandidate {
-        HrrrRunCandidate(
+        let product = sourceMetadata.product ?? .wrfsfc
+        return HrrrRunCandidate(
             model: sourceMetadata.model ?? .hrrr,
-            product: sourceMetadata.product ?? .wrfsfc,
+            product: product,
             domain: sourceMetadata.domain ?? .conus,
             runTime: sourceMetadata.runTime ?? dateProvider.now(),
             forecastHour: sourceMetadata.forecastHour ?? 0,
-            fieldSetVersion: sourceMetadata.fieldSetVersion ?? .tornadoV1
+            fieldSetVersion: sourceMetadata.fieldSetVersion ?? product.defaultFieldSetVersion
         )
+    }
+
+    private func resolveAnvilEvidence(
+        for h3Cell: Int64,
+        sourceMetadata: StormSetupSourceMetadata,
+        surfaceHeightMslM: Double?
+    ) async throws -> AnvilEvidenceResolution {
+        guard let anvilProfileAnalysisProvider else {
+            return .unavailable(reason: "Anvil analysis provider is not configured.")
+        }
+
+        guard let selectedSurfaceValidTime = sourceMetadata.validTime else {
+            return .unavailable(reason: "Selected surface HRRR source was missing valid time metadata.")
+        }
+
+        do {
+            try Task.checkCancellation()
+            let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(
+                for: h3Cell,
+                surfaceHeightMslM: surfaceHeightMslM
+            )
+            try Task.checkCancellation()
+
+            guard analysis.request.validTime == analysis.debug.validTime else {
+                return .unavailable(
+                    reason: "Anvil request valid time \(analysis.request.validTime) did not match debug valid time \(analysis.debug.validTime)."
+                )
+            }
+
+            let pressureArtifactRunTime = analysis.debug.runTime
+            let pressureArtifactForecastHour = analysis.debug.forecastHour
+            let pressureArtifactValidTime = analysis.debug.validTime
+            let pressureArtifactProduct = analysis.debug.product
+            let staleWarnings = makeStaleWarnings(from: analysis.debug.warnings)
+
+            if pressureArtifactValidTime == selectedSurfaceValidTime {
+                return .exact(
+                    evidence: AnvilIngredientEvidence(response: analysis.response),
+                    pressureArtifactRunTime: pressureArtifactRunTime,
+                    pressureArtifactForecastHour: pressureArtifactForecastHour,
+                    pressureArtifactValidTime: pressureArtifactValidTime,
+                    pressureArtifactProduct: pressureArtifactProduct
+                )
+            }
+
+            guard pressureArtifactValidTime < selectedSurfaceValidTime,
+                  !staleWarnings.isEmpty else {
+                return .unavailable(
+                    reason: "Anvil evidence valid time \(pressureArtifactValidTime) did not match the selected surface HRRR valid time \(selectedSurfaceValidTime)."
+                )
+            }
+
+            return .stale(
+                evidence: AnvilIngredientEvidence(
+                    response: analysis.response,
+                    additionalWarnings: staleWarnings
+                ),
+                pressureArtifactRunTime: pressureArtifactRunTime,
+                pressureArtifactForecastHour: pressureArtifactForecastHour,
+                pressureArtifactValidTime: pressureArtifactValidTime,
+                pressureArtifactProduct: pressureArtifactProduct,
+                staleAgeSeconds: staleAgeSeconds(
+                    selectedSurfaceValidTime: selectedSurfaceValidTime,
+                    pressureArtifactValidTime: pressureArtifactValidTime
+                )
+            )
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            return .unavailable(reason: String(describing: error))
+        }
+    }
+
+    private func composeSnapshotWithCurrentAnvilEvidence(
+        from snapshot: TornadoIngredientSnapshot
+    ) async throws -> TornadoIngredientSnapshot {
+        let resolution = try await resolveAnvilEvidence(
+            for: snapshot.h3Cell,
+            sourceMetadata: snapshot.source,
+            surfaceHeightMslM: snapshot.surfaceHeightMslM
+        )
+        try Task.checkCancellation()
+
+        if anvilProfileAnalysisProvider == nil {
+            logger.info(
+                "Storm Setup Anvil evidence resolved.",
+                metadata: anvilEvidenceResolutionMetadata(
+                    source: snapshot.source,
+                    resolution: resolution
+                )
+            )
+            return snapshot
+        }
+
+        let assessment = interpreter.assess(
+            raw: snapshot.raw,
+            freshness: snapshot.freshness,
+            evidence: resolution.evidence
+        )
+
+        let composed = TornadoIngredientSnapshot(
+            h3Cell: snapshot.h3Cell,
+            centroid: snapshot.centroid,
+            source: snapshot.source,
+            raw: snapshot.raw,
+            surfaceHeightMslM: snapshot.surfaceHeightMslM,
+            assessment: assessment,
+            freshness: snapshot.freshness,
+            anvilEvidence: resolution.evidence
+        )
+
+        logger.info(
+            "Storm Setup Anvil evidence resolved.",
+            metadata: anvilEvidenceResolutionMetadata(
+                source: composed.source,
+                resolution: resolution
+            )
+        )
+
+        return composed
+    }
+
+    private func makeStaleWarnings(from warnings: [String]) -> [String] {
+        warnings.filter { warning in
+            warning.hasPrefix("Pressure artifact stale fallback selected:")
+        }
+    }
+
+    private func anvilEvidenceResolutionMetadata(
+        source: StormSetupSourceMetadata,
+        resolution: AnvilEvidenceResolution
+    ) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [
+            "artifactOutcome": .string(resolution.artifactOutcome.rawValue),
+            "evidenceStatus": .string(resolution.evidence.status.rawValue),
+            "selectedSurfaceValidTime": .string(source.validTime?.ISO8601Format() ?? "nil"),
+            "pressureArtifactValidTime": .string(resolution.pressureArtifactValidTime?.ISO8601Format() ?? "nil")
+        ]
+
+        if let pressureArtifactRunTime = resolution.pressureArtifactRunTime {
+            metadata["pressureArtifactRunTime"] = .string(pressureArtifactRunTime.ISO8601Format())
+        }
+
+        if let pressureArtifactForecastHour = resolution.pressureArtifactForecastHour {
+            metadata["pressureArtifactForecastHour"] = .stringConvertible(pressureArtifactForecastHour)
+        }
+
+        if let pressureArtifactProduct = resolution.pressureArtifactProduct {
+            metadata["pressureArtifactProduct"] = .string(pressureArtifactProduct.rawValue)
+        }
+
+        if let staleAgeSeconds = resolution.staleAgeSeconds {
+            metadata["staleAgeSeconds"] = .stringConvertible(staleAgeSeconds)
+        }
+
+        if let reason = conciseEvidenceReason(for: resolution.evidence) {
+            metadata["reason"] = .string(reason)
+        }
+
+        return metadata
+    }
+
+    private func staleAgeSeconds(
+        selectedSurfaceValidTime: Date,
+        pressureArtifactValidTime: Date
+    ) -> Int {
+        max(0, Int(selectedSurfaceValidTime.timeIntervalSince(pressureArtifactValidTime).rounded(.down)))
+    }
+
+    private func conciseEvidenceReason(for evidence: AnvilIngredientEvidence) -> String? {
+        switch evidence.status {
+        case .available:
+            return nil
+        case .unavailable:
+            return evidence.reason
+        case .degraded:
+            if let warning = evidence.diagnostics.warnings.first {
+                return warning
+            }
+            if !evidence.diagnostics.hasEffectiveLayer {
+                return "effective layer not found"
+            }
+            if !evidence.diagnostics.hasStormMotion {
+                return "storm motion not computed"
+            }
+            if evidence.diagnostics.qualityProfileLevelCount < 5 {
+                return "insufficient profile levels"
+            }
+            return "Anvil evidence is degraded."
+        }
     }
 
     private func classify(
@@ -416,6 +628,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         extra: [String: Logger.MetadataValue] = [:]
     ) -> Logger.Metadata {
         var metadata: Logger.Metadata = [
+            "sourceKind": .string(sourceMetadata.sourceKind.rawValue),
             "model": .string(sourceMetadata.model?.rawValue ?? "nil"),
             "product": .string(sourceMetadata.product?.rawValue ?? "nil"),
             "domain": .string(sourceMetadata.domain?.rawValue ?? "nil"),
@@ -423,7 +636,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             "forecastHour": .string(sourceMetadata.forecastHour.map(String.init) ?? "nil"),
             "validTime": .string(sourceMetadata.validTime?.description ?? "nil"),
             "fieldSetVersion": .string(sourceMetadata.fieldSetVersion?.rawValue ?? "nil"),
-            "nomadsURL": .string(sourceMetadata.nomadsURL?.absoluteString ?? "nil")
+            "primaryDownloadURL": .string(sourceMetadata.primaryDownloadURL?.absoluteString ?? "nil")
         ]
 
         if let bbox = sourceMetadata.bbox {
@@ -438,6 +651,71 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
         return metadata
     }
+}
+
+private struct AnvilEvidenceResolution: Sendable {
+    let evidence: AnvilIngredientEvidence
+    let artifactOutcome: StormSetupAnvilArtifactOutcome
+    let pressureArtifactRunTime: Date?
+    let pressureArtifactForecastHour: Int?
+    let pressureArtifactValidTime: Date?
+    let pressureArtifactProduct: HrrrProduct?
+    let staleAgeSeconds: Int?
+
+    static func exact(
+        evidence: AnvilIngredientEvidence,
+        pressureArtifactRunTime: Date,
+        pressureArtifactForecastHour: Int,
+        pressureArtifactValidTime: Date,
+        pressureArtifactProduct: HrrrProduct
+    ) -> AnvilEvidenceResolution {
+        AnvilEvidenceResolution(
+            evidence: evidence,
+            artifactOutcome: .exact,
+            pressureArtifactRunTime: pressureArtifactRunTime,
+            pressureArtifactForecastHour: pressureArtifactForecastHour,
+            pressureArtifactValidTime: pressureArtifactValidTime,
+            pressureArtifactProduct: pressureArtifactProduct,
+            staleAgeSeconds: nil
+        )
+    }
+
+    static func stale(
+        evidence: AnvilIngredientEvidence,
+        pressureArtifactRunTime: Date,
+        pressureArtifactForecastHour: Int,
+        pressureArtifactValidTime: Date,
+        pressureArtifactProduct: HrrrProduct,
+        staleAgeSeconds: Int
+    ) -> AnvilEvidenceResolution {
+        AnvilEvidenceResolution(
+            evidence: evidence,
+            artifactOutcome: .stale,
+            pressureArtifactRunTime: pressureArtifactRunTime,
+            pressureArtifactForecastHour: pressureArtifactForecastHour,
+            pressureArtifactValidTime: pressureArtifactValidTime,
+            pressureArtifactProduct: pressureArtifactProduct,
+            staleAgeSeconds: staleAgeSeconds
+        )
+    }
+
+    static func unavailable(reason: String) -> AnvilEvidenceResolution {
+        AnvilEvidenceResolution(
+            evidence: .unavailable(reason: reason),
+            artifactOutcome: .unavailable,
+            pressureArtifactRunTime: nil,
+            pressureArtifactForecastHour: nil,
+            pressureArtifactValidTime: nil,
+            pressureArtifactProduct: nil,
+            staleAgeSeconds: nil
+        )
+    }
+}
+
+private enum StormSetupAnvilArtifactOutcome: String, Sendable {
+    case exact
+    case stale
+    case unavailable
 }
 
 extension DefaultStormSetupProvider {
@@ -475,6 +753,7 @@ extension DefaultStormSetupProvider {
             fieldSampler: sampler,
             normalizer: TornadoIngredientNormalizer(),
             interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: application.anvilProfileAnalysisProvider,
             logger: logger ?? application.logger
         )
     }

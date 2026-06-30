@@ -46,14 +46,18 @@ struct NomadsGribDownloader: Sendable {
         var failures: [NomadsGribCandidateFailure] = []
 
         for candidate in resolution.candidates {
+            try Task.checkCancellation()
             let sourceMetadata = hrrrNomadsURLBuilder.makeSourceMetadata(
                 for: candidate,
                 around: centroid
             )
 
             do {
-                return try await cache.loadOrFetch(sourceMetadata: sourceMetadata)
+                let subset = try await cache.loadOrFetch(sourceMetadata: sourceMetadata)
+                try Task.checkCancellation()
+                return subset
             } catch {
+                try rethrowCancellationIfNeeded(error)
                 failures.append(
                     NomadsGribCandidateFailure(
                         source: sourceMetadata,
