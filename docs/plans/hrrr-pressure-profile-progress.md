@@ -536,6 +536,36 @@ Handoff outcome:
 - The pressure-profile epic is complete and the progress ledger is now the durable handoff record.
 - Future maintenance should treat `docs/hrrr-pressure-profile.md` and this progress log as the current reference, and the historical pressure-level plan as superseded.
 
+### Issue #124 - 09: Add a pure Anvil surface-profile normalization seam
+
+Status: Completed
+
+Scope:
+- Introduce a pure normalizer for `AnvilAnalyzeProfileResponse` to `AnvilIngredientEvidence`.
+- Keep the existing support-band thresholds, degraded-state rules, and missing-value handling unchanged.
+- Add focused tests for the normalization seam.
+
+Files changed:
+- `Sources/App/StormSetup/AnvilSurfaceProfileNormalizer.swift`
+- `Sources/App/StormSetup/AnvilIngredientEvidence.swift`
+- `Tests/AppTests/AnvilSurfaceProfileNormalizerTests.swift`
+- `docs/plans/hrrr-pressure-profile-progress.md`
+
+Tests and commands run:
+- `swift test --filter AnvilSurfaceProfileNormalizerTests`
+- `swift test --filter StormSetupHrrrSourceTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
+
+Local verification notes:
+- The normalization path remains pure and deterministic.
+- Existing surface and pressure defaults were left unchanged.
+- No networking, provider wiring, or `TornadoIngredientNormalizer` changes were introduced.
+
+Deferred scope:
+- Any future tuning of Anvil evidence thresholds or semantics.
+- Networking, transport, and provider wiring remain out of scope for this slice.
+
 ---
 
 ## Final Completion Summary

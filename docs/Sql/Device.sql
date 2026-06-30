@@ -1,7 +1,7 @@
 -- Use these queries to get device specific details about
 -- presence and installation
 
-SELECT * FROM device_installations where installation_id =  '131c8480-c74a-47c2-8cec-8d10ee6dc19f';
+SELECT * FROM device_installations; --where installation_id =  '131c8480-c74a-47c2-8cec-8d10ee6dc19f';
 SELECT * FROM device_presence;
 
 SELECT d.location_auth, d.app_version,p.*

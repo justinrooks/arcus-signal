@@ -23,30 +23,11 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
         response: AnvilAnalyzeProfileResponse,
         additionalWarnings: [String]
     ) {
-        let combinedWarnings = response.quality.warnings + additionalWarnings
-        let diagnostics = AnvilIngredientDiagnostics(
-            hasEffectiveLayer: response.effectiveLayer.status.lowercased() == "found",
-            hasStormMotion: response.stormMotion.status.lowercased() == "computed",
-            qualityProfileLevelCount: response.quality.profileLevelCount,
-            warnings: combinedWarnings
+        let normalized = AnvilSurfaceProfileNormalizer().normalize(
+            response: response,
+            additionalWarnings: additionalWarnings
         )
-
-        let scp = response.scp.map { AnvilIngredientMetricEvidence(support: Self.supportBand(forSCP: $0)) }
-
-        let stpSupports = [response.stpCin, response.stpFixed]
-            .compactMap { $0 }
-            .map(Self.supportBand(forSTP:))
-        let stp = stpSupports.max().map { AnvilIngredientMetricEvidence(support: $0) }
-
-        let ship = response.ship.map { AnvilIngredientMetricEvidence(support: Self.supportBand(forSHIP: $0)) }
-        let supportCount = [scp, stp, ship].compactMap { $0 }.count
-
-        self.status = diagnostics.isDegraded || supportCount == 0 ? .degraded : .available
-        self.reason = nil
-        self.scp = scp
-        self.stp = stp
-        self.ship = ship
-        self.diagnostics = diagnostics
+        self = normalized
     }
 
     static func unavailable(reason: String) -> AnvilIngredientEvidence {
@@ -65,7 +46,7 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
         )
     }
 
-    private init(
+    init(
         status: AnvilIngredientEvidenceStatus,
         reason: String?,
         scp: AnvilIngredientMetricEvidence?,
@@ -91,45 +72,6 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
 
     var isDegraded: Bool {
         status != .available || diagnostics.isDegraded || supportCount == 0
-    }
-
-    private static func supportBand(forSCP value: Double) -> IngredientSupport {
-        switch value {
-        case ..<0.5:
-            return .weak
-        case ..<1.5:
-            return .conditional
-        case ..<3:
-            return .supportive
-        default:
-            return .strong
-        }
-    }
-
-    private static func supportBand(forSTP value: Double) -> IngredientSupport {
-        switch value {
-        case ..<0.5:
-            return .weak
-        case ..<1.25:
-            return .conditional
-        case ..<2.5:
-            return .supportive
-        default:
-            return .strong
-        }
-    }
-
-    private static func supportBand(forSHIP value: Double) -> IngredientSupport {
-        switch value {
-        case ..<0.5:
-            return .weak
-        case ..<1:
-            return .conditional
-        case ..<2:
-            return .supportive
-        default:
-            return .strong
-        }
     }
 }
 
