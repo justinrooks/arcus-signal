@@ -71,6 +71,8 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.debug.idxAvailable == nil)
         #expect(preview.debug.gribAvailable == nil)
         #expect(preview.debug.selectedPressureLevels == [925, 850, 700, 600, 500, 400, 300])
+        #expect(preview.debug.surfacePressureMb == 940)
+        #expect(preview.debug.surfaceSubsetCacheHit == false)
         #expect(preview.request.profile.pressureMb == [940, 925, 850, 700, 600, 500, 400, 300])
     }
 
@@ -234,6 +236,8 @@ struct AnvilProfilePreviewProviderTests {
         #expect(preview.request.forecastHour == staleArtifact.forecastHour)
         #expect(preview.request.validTime == staleArtifact.validTime)
         #expect(preview.debug.warnings.contains(staleWarning))
+        #expect(preview.debug.surfacePressureMb == 940)
+        #expect(preview.debug.surfaceSubsetCacheHit == false)
         #expect(preview.request.profile.pressureMb == [940, 925, 850, 700, 600, 500, 400, 300])
     }
 

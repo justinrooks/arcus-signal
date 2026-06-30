@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import Vapor
 
 protocol AnvilProfilePreviewProviding: Sendable {
@@ -46,6 +47,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let pressureSourceResolver: any HrrrPressureDirectObjectResolving
     private let pressureProfileLoader: any HrrrPressureProfileLoading
     private let requestBuilder: AnvilProfileRequestBuilder
+    private let logger: Logger
 
     init(
         h3Resolver: any StormSetupH3Resolving = DefaultStormSetupH3Resolver(),
@@ -54,7 +56,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         pressureArtifactCatalogLookupService: (any PressureArtifactCatalogLookupProviding)? = nil,
         surfaceProfileLoader: (any HrrrAnvilSurfaceProfileLoading)? = nil,
         pressureSourceResolver: any HrrrPressureDirectObjectResolving,
-        pressureProfileLoader: any HrrrPressureProfileLoading
+        pressureProfileLoader: any HrrrPressureProfileLoading,
+        logger: Logger = Logger(label: "anvil-profile-preview")
     ) {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
@@ -63,6 +66,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         self.pressureSourceResolver = pressureSourceResolver
         self.pressureProfileLoader = pressureProfileLoader
         self.requestBuilder = AnvilProfileRequestBuilder(h3Resolver: h3Resolver)
+        self.logger = logger
     }
 
     init(application: Application) {
@@ -111,7 +115,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             pressureArtifactCatalogLookupService: pressureArtifactCatalogLookupService,
             surfaceProfileLoader: surfaceProfileLoader,
             pressureSourceResolver: pressureSourceResolver,
-            pressureProfileLoader: pressureProfileLoader
+            pressureProfileLoader: pressureProfileLoader,
+            logger: application.logger
         )
     }
 
@@ -275,7 +280,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             for: candidate,
             targetValidTime: targetValidTime
         )
-        let surfaceLevel = try await loadSurfaceLevel(
+        let surfaceLevelLoadResult = try await loadSurfaceLevel(
             from: candidate,
             cycleRunTime: sourceResolution.source.runTime ?? candidate.runTime,
             cycleForecastHour: sourceResolution.source.forecastHour ?? candidate.forecastHour,
@@ -285,7 +290,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let loadResult = try await loadPressureProfile(
             sourceResolution: sourceResolution,
             centroid: centroid,
-            surfaceHeightMslM: surfaceLevel.heightMslM
+            surfaceHeightMslM: surfaceLevelLoadResult.level.heightMslM
         )
         try Task.checkCancellation()
 
@@ -295,7 +300,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 h3Cell: h3Cell,
                 runTime: sourceResolution.source.runTime ?? candidate.runTime,
                 forecastHour: sourceResolution.source.forecastHour ?? candidate.forecastHour,
-                surfaceLevel: surfaceLevel,
+                surfaceLevel: surfaceLevelLoadResult.level,
                 groupedProfile: loadResult.groupedProfile
             )
         } catch let error as AnvilProfileRequestBuilderError {
@@ -319,6 +324,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             ),
             selectedMessageCount: loadResult.selection.selectedMessages.count,
             selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
+            surfacePressureMb: surfaceLevelLoadResult.level.pressureMb,
+            surfaceSubsetCacheHit: surfaceLevelLoadResult.subsetCacheHit,
             rangeCount: loadResult.byteRangePlan.ranges.count,
             totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
             pressureLevelsRequested: loadResult.selection.requestedLevels.map { $0.pressureMb },
@@ -350,7 +357,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         centroid: StormSetupCentroid,
         staleWarning: String? = nil
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
-        let surfaceLevel = try await loadSurfaceLevel(
+        let surfaceLevelLoadResult = try await loadSurfaceLevel(
             from: sourceCandidate,
             cycleRunTime: readyArtifact.runTime,
             cycleForecastHour: readyArtifact.forecastHour,
@@ -360,7 +367,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let loadResult = try await loadPressureProfile(
             readyArtifact: readyArtifact,
             centroid: centroid,
-            surfaceHeightMslM: surfaceLevel.heightMslM
+            surfaceHeightMslM: surfaceLevelLoadResult.level.heightMslM
         )
 
         let buildResult: AnvilProfileRequestBuildResult
@@ -369,7 +376,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 h3Cell: h3Cell,
                 runTime: readyArtifact.runTime,
                 forecastHour: readyArtifact.forecastHour,
-                surfaceLevel: surfaceLevel,
+                surfaceLevel: surfaceLevelLoadResult.level,
                 groupedProfile: loadResult.groupedProfile
             )
         } catch let error as AnvilProfileRequestBuilderError {
@@ -393,6 +400,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             ),
             selectedMessageCount: loadResult.selection.selectedMessages.count,
             selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
+            surfacePressureMb: surfaceLevelLoadResult.level.pressureMb,
+            surfaceSubsetCacheHit: surfaceLevelLoadResult.subsetCacheHit,
             rangeCount: loadResult.byteRangePlan.ranges.count,
             totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
             pressureLevelsRequested: loadResult.selection.requestedLevels.map { $0.pressureMb },
@@ -481,25 +490,11 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         cycleForecastHour: Int,
         targetValidTime: Date,
         centroid: StormSetupCentroid
-    ) async throws -> StormSetupPressureProfileLevel {
+    ) async throws -> SurfaceLevelLoadResult {
         let inputResolution = HrrrRunResolution(
             targetValidTime: targetValidTime,
             candidates: [sourceCandidate]
         )
-
-        let loadResult: HrrrAnvilSurfaceProfileLoadResult
-        do {
-            loadResult = try await surfaceProfileLoader.loadSurfaceProfile(
-                for: inputResolution,
-                around: centroid
-            )
-        } catch let error as AnvilProfilePreviewError {
-            throw error
-        } catch {
-            try rethrowCancellationIfNeeded(error)
-            throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
-        }
-
         let expectedSurfaceCandidate = HrrrRunCandidate(
             model: sourceCandidate.model,
             product: .wrfsfc,
@@ -513,20 +508,99 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             candidates: [expectedSurfaceCandidate]
         )
 
+        logger.info(
+            "Anvil preview exact-cycle surface source selected.",
+            metadata: surfaceDiagnosticsMetadata(
+                pressureSource: sourceCandidate,
+                surfaceCandidate: expectedSurfaceCandidate,
+                surfaceStage: .selected
+            )
+        )
+
+        let loadResult: HrrrAnvilSurfaceProfileLoadResult
+        do {
+            loadResult = try await surfaceProfileLoader.loadSurfaceProfile(
+                for: inputResolution,
+                around: centroid
+            )
+        } catch let error as AnvilProfilePreviewError {
+            logger.warning(
+                "Anvil preview exact-cycle surface row rejected.",
+                metadata: surfaceDiagnosticsMetadata(
+                    pressureSource: sourceCandidate,
+                    surfaceCandidate: expectedSurfaceCandidate,
+                    surfaceStage: .unavailable,
+                    surfaceRowIncluded: false,
+                    reason: error.description
+                )
+            )
+            throw error
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            logger.warning(
+                "Anvil preview exact-cycle surface row rejected.",
+                metadata: surfaceDiagnosticsMetadata(
+                    pressureSource: sourceCandidate,
+                    surfaceCandidate: expectedSurfaceCandidate,
+                    surfaceStage: .unavailable,
+                    surfaceRowIncluded: false,
+                    reason: String(describing: error)
+                )
+            )
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
+        }
+
         guard loadResult.sourceResolution == expectedResolution else {
             let actualSurfaceCandidate = loadResult.sourceResolution.primaryCandidate?.fileName ?? "unknown"
+            logger.warning(
+                "Anvil preview exact-cycle surface row rejected.",
+                metadata: surfaceDiagnosticsMetadata(
+                    pressureSource: sourceCandidate,
+                    surfaceCandidate: expectedSurfaceCandidate,
+                    surfaceStage: .mismatched,
+                    surfaceSubsetCacheHit: loadResult.subsetCacheResult.cacheHit,
+                    surfaceRowIncluded: false,
+                    reason: "Matching surface source identity did not match the expected exact-cycle surface candidate. Expected \(expectedSurfaceCandidate.fileName), got \(actualSurfaceCandidate)."
+                )
+            )
             throw AnvilProfilePreviewError.unusableProfile(
                 reason: "Matching surface source identity did not match the expected exact-cycle surface candidate. Expected \(expectedSurfaceCandidate.fileName), got \(actualSurfaceCandidate)."
             )
         }
 
         guard let surfaceLevel = makeSurfaceLevel(from: loadResult.samples) else {
+            logger.warning(
+                "Anvil preview exact-cycle surface row rejected.",
+                metadata: surfaceDiagnosticsMetadata(
+                    pressureSource: sourceCandidate,
+                    surfaceCandidate: expectedSurfaceCandidate,
+                    surfaceStage: .incomplete,
+                    surfaceSubsetCacheHit: loadResult.subsetCacheResult.cacheHit,
+                    surfaceRowIncluded: false,
+                    reason: "Matching surface profile was incomplete. Missing or invalid surface fields were not reported."
+                )
+            )
             throw AnvilProfilePreviewError.unusableProfile(
                 reason: "Matching surface profile was incomplete. Missing or invalid surface fields were not reported."
             )
         }
 
-        return surfaceLevel
+        logger.info(
+            "Anvil preview exact-cycle surface row included.",
+            metadata: surfaceDiagnosticsMetadata(
+                pressureSource: sourceCandidate,
+                surfaceCandidate: expectedSurfaceCandidate,
+                surfaceStage: .included,
+                surfaceSubsetCacheHit: loadResult.subsetCacheResult.cacheHit,
+                surfacePressureMb: surfaceLevel.pressureMb,
+                surfaceRowIncluded: true
+            )
+        )
+
+        return SurfaceLevelLoadResult(
+            level: surfaceLevel,
+            subsetCacheHit: loadResult.subsetCacheResult.cacheHit
+        )
     }
 
     private func makeSurfaceLevel(
@@ -759,6 +833,59 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         return "Pressure artifact stale fallback selected: \(ageSeconds)s older than target valid time \(targetLabel)."
     }
 
+    private func surfaceDiagnosticsMetadata(
+        pressureSource: HrrrRunCandidate,
+        surfaceCandidate: HrrrRunCandidate,
+        surfaceStage: SurfaceDiagnosticsStage,
+        surfaceSubsetCacheHit: Bool? = nil,
+        surfacePressureMb: Int? = nil,
+        surfaceRowIncluded: Bool? = nil,
+        reason: String? = nil
+    ) -> Logger.Metadata {
+        var metadata: Logger.Metadata = [
+            "pressureSourceRunTime": .string(pressureSource.runTime.ISO8601Format()),
+            "pressureSourceForecastHour": .stringConvertible(pressureSource.forecastHour),
+            "pressureSourceValidTime": .string(pressureSource.validTime.ISO8601Format()),
+            "surfaceSourceRunTime": .string(surfaceCandidate.runTime.ISO8601Format()),
+            "surfaceSourceForecastHour": .stringConvertible(surfaceCandidate.forecastHour),
+            "surfaceSourceValidTime": .string(surfaceCandidate.validTime.ISO8601Format()),
+            "surfaceSourceProduct": .string(surfaceCandidate.product.rawValue),
+            "surfaceSourceFieldSetVersion": .string(surfaceCandidate.fieldSetVersion.rawValue),
+            "surfaceStage": .string(surfaceStage.rawValue)
+        ]
+
+        if let surfaceSubsetCacheHit {
+            metadata["surfaceSubsetCacheHit"] = .string("\(surfaceSubsetCacheHit)")
+        }
+
+        if let surfacePressureMb {
+            metadata["surfacePressureMb"] = .stringConvertible(surfacePressureMb)
+        }
+
+        if let surfaceRowIncluded {
+            metadata["surfaceRowIncluded"] = .string("\(surfaceRowIncluded)")
+        }
+
+        if let reason {
+            metadata["reason"] = .string(reason)
+        }
+
+        return metadata
+    }
+
+}
+
+private struct SurfaceLevelLoadResult: Sendable {
+    let level: StormSetupPressureProfileLevel
+    let subsetCacheHit: Bool
+}
+
+private enum SurfaceDiagnosticsStage: String, Sendable {
+    case selected
+    case included
+    case mismatched
+    case incomplete
+    case unavailable
 }
 
 extension Application {

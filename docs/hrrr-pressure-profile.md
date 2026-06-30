@@ -79,8 +79,11 @@ When the path fails, the useful signals are:
   - Surface as absent evidence or degraded confidence, not zeroes.
 - Transient Anvil POST transport failure
   - Surface the failure directly; Arcus Signal does not retry the request inside Storm Setup.
+- Development-only preview diagnostics
+  - Report `surfacePressureMb` and `surfaceSubsetCacheHit` for exact-cycle surface inspection.
+  - Keep those diagnostics out of `storm-setup/current`; the synthesized surface row stays internal to preview assembly and Anvil request construction.
 
-The preview and analysis debug payloads should be used to inspect selected message counts, ranges, cache state, and missing levels.
+The preview and analysis debug payloads should be used to inspect selected message counts, ranges, cache state, surface pressure/cache state, and missing levels.
 
 ## Degraded and Deferred Modes
 

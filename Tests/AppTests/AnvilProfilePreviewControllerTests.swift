@@ -141,6 +141,8 @@ struct AnvilProfilePreviewControllerTests {
                     "selectedPressureLevels",
                     "sourceKind",
                     "subsetCacheHit",
+                    "surfacePressureMb",
+                    "surfaceSubsetCacheHit",
                     "totalSelectedRangeBytes",
                     "validTime",
                     "warnings"
@@ -243,6 +245,8 @@ struct AnvilProfilePreviewControllerTests {
             centroid: request.location.centroid,
             selectedMessageCount: 5,
             selectedPressureLevels: [925, 850, 700, 600, 500, 400, 300],
+            surfacePressureMb: 940,
+            surfaceSubsetCacheHit: false,
             rangeCount: 5,
             totalSelectedRangeBytes: 1024,
             pressureLevelsRequested: [1000, 925, 850, 700, 600, 500, 400, 300],

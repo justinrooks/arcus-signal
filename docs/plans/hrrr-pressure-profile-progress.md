@@ -732,6 +732,44 @@ Local verification notes:
 - Preview paths now fail fast if matching exact-cycle surface data is missing or incomplete, before pressure sampling starts.
 - Pressure artifact lookup and Anvil transport remain unchanged.
 
+### Issue #129 - 06: Add surface-layer diagnostics, documentation, and final verification
+
+Status: Completed
+
+Scope:
+- Extend the development-only preview diagnostics with exact-cycle surface pressure and surface-subset cache state.
+- Add concise structured logs for exact-cycle surface source selection, inclusion, and rejection.
+- Reconcile the pressure-profile docs to reflect the final exact-cycle surface layer behavior.
+- Run the final verification set for the surface-layer slice.
+
+Files changed:
+- `Sources/App/Models/API/AnvilAnalyzeProfilePreviewResponse.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Tests/AppTests/AnvilProfileAnalysisControllerTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewControllerTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/PressureArtifactDiagnosticsTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `docs/hrrr-pressure-profile.md`
+- `docs/plans/hrrr-pressure-profile-runbook.md`
+- `docs/plans/hrrr-pressure-profile-progress.md`
+
+Tests and commands run:
+- `swift test --filter AnvilProfilePreviewProviderTests` passed
+- `swift test --filter AnvilProfilePreviewControllerTests` passed
+- `swift test --filter PressureArtifactDiagnosticsTests` passed
+- `swift build -Xswiftc -strict-concurrency=complete` passed
+- `swift test --no-parallel --quiet` failed in `HRRRPressureArtifactProbeServiceTests` with 4 pre-existing issues
+- `swift test --parallel --num-workers 8 --quiet` failed in `HRRRPressureArtifactProbeServiceTests` with 4 pre-existing issues
+- `git diff --check` passed
+
+Local verification notes:
+- The preview debug payload now reports `surfacePressureMb` and `surfaceSubsetCacheHit` without exposing the exact-cycle surface row through `storm-setup/current`.
+- Exact-cycle surface source selection and final inclusion now emit concise structured logs that stay clear of full array dumps and raw location logging.
+- Failure logs remain focused on the surface loading stage and the rejection reason, which keeps the diagnostics useful without widening the public contract.
+- The repo-wide quiet test gates still surface two unrelated `HRRRPressureArtifactProbeServiceTests` regressions; they are outside this diagnostics/documentation slice.
+
 ---
 
 ## Final Completion Summary
@@ -739,11 +777,11 @@ Local verification notes:
 - Epic `#85` is complete.
 - Follow-on surface-profile seams `#124` and `#125` are complete.
 - Follow-on Anvil request-builder seam `#126` is complete.
-- Sub-issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, `#102`, and `#100` are all complete.
-- The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, ingredient-evidence mapping, and the explicit Anvil surface-row builder seam.
-- Issue `#130` completes the dedicated Anvil surface-row path so previews no longer rely on the tornado surface field set.
+- Sub-issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, `#102`, `#100`, `#129`, and `#130` are all complete.
+- The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, ingredient-evidence mapping, the explicit Anvil surface-row builder seam, and the final development-only surface-layer diagnostics.
+- Issue `#130` completes the dedicated Anvil surface-row path so previews no longer rely on the tornado surface field set, and issue `#129` adds the final preview diagnostics and documentation reconciliation around that path.
 - The #126 verification record is `swift test --filter AnvilProfileRequestBuilderTests`, `swift build -Xswiftc -strict-concurrency=complete`, and `git diff --check` all passing.
 - Known remaining risks are environmental only:
   - the filtered test suites still have outstanding failures in the current working tree or fixtures
   - live HRRR, NOMADS, and Anvil verification was not part of this docs-only finalization pass
-- Deferred work from the epic is intentionally closed out; no new runtime behavior was added in this documentation pass.
+- Deferred work from the epic is intentionally closed out; the remaining changes are development-only diagnostics and documentation reconciliation, not new user-facing behavior.

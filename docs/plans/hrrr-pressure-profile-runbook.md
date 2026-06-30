@@ -127,6 +127,7 @@ Implement only the current issue's scope.
 - Add offline deterministic tests for each slice.
 - Run the narrowest meaningful verification before finishing.
 - Update `docs/plans/hrrr-pressure-profile-progress.md` before finishing.
+- Any development-only preview diagnostics for exact-cycle surface data must stay out of `storm-setup/current` and must not dump full arrays or raw coordinates.
 
 ### Forbidden
 

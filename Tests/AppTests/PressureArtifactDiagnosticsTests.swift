@@ -567,6 +567,175 @@ struct PressureArtifactDiagnosticsTests {
         assertNoRequestPathSensitiveMetadata(in: [exactEvent, staleEvent, unavailableEvent, mismatchEvent, missingProviderEvent])
         assertNoSensitiveMetadata(in: [exactEvent, staleEvent, unavailableEvent, mismatchEvent, missingProviderEvent])
     }
+
+    @Test("preview diagnostics include surface pressure and surface cache state")
+    func previewDiagnosticsIncludeSurfacePressureAndSurfaceCacheState() async throws {
+        let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: makeTruncatedToHour(now),
+            forecastHour: 0
+        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+        let expectedSurfaceCandidate = HrrrRunCandidate(
+            model: pressureCandidate.model,
+            product: .wrfsfc,
+            domain: pressureCandidate.domain,
+            runTime: pressureCandidate.runTime,
+            forecastHour: pressureCandidate.forecastHour,
+            fieldSetVersion: .anvilSurfaceV1
+        )
+        let expectedCentroid = try DefaultStormSetupH3Resolver().resolve(h3Cell: h3Cell).centroid
+        let loggerContext = makeCapturingLogger(label: "preview-surface-success")
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            makePreviewPressureSourceResolution(
+                candidate: pressureCandidate,
+                idxAvailable: true
+            )
+        }
+        let surfaceProfileLoader = PreviewStubSurfaceProfileLoader { _, resolution, centroid in
+            #expect(resolution.targetValidTime == makeTruncatedToHour(now))
+            #expect(resolution.candidates == [pressureCandidate])
+            #expect(centroid == expectedCentroid)
+            return previewMakeSurfaceProfileLoadResult(
+                sourceResolution: HrrrRunResolution(
+                    targetValidTime: makeTruncatedToHour(now),
+                    candidates: [expectedSurfaceCandidate]
+                ),
+                fetchedAt: now,
+                cacheHit: true,
+                samples: previewMakeSurfaceSamples()
+            )
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, centroid, surfaceHeightMslM in
+            #expect(sourceResolution.candidate == pressureCandidate)
+            #expect(sourceResolution.source.runTime == pressureCandidate.runTime)
+            #expect(sourceResolution.source.forecastHour == pressureCandidate.forecastHour)
+            #expect(sourceResolution.source.validTime == pressureCandidate.validTime)
+            #expect(centroid == expectedCentroid)
+            #expect(surfaceHeightMslM == 1_234)
+            return previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                subsetCacheHit: false,
+                samples: previewMakeEightLevelPressureSamples(),
+                surfaceHeightMslM: surfaceHeightMslM
+            )
+        }
+        let provider = DefaultAnvilProfilePreviewProvider(
+            h3Resolver: DefaultStormSetupH3Resolver(),
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: makeTruncatedToHour(now), candidates: [surfaceCandidate])
+            ),
+            surfaceProfileLoader: surfaceProfileLoader,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader,
+            logger: loggerContext.logger
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+        let sourceSelected = try #require(try loggerContext.event(matching: "Anvil preview exact-cycle surface source selected."))
+        let rowIncluded = try #require(try loggerContext.event(matching: "Anvil preview exact-cycle surface row included."))
+
+        #expect(metadataString(sourceSelected.metadata, "pressureSourceRunTime") == pressureCandidate.runTime.ISO8601Format())
+        #expect(metadataString(sourceSelected.metadata, "pressureSourceForecastHour") == String(pressureCandidate.forecastHour))
+        #expect(metadataString(sourceSelected.metadata, "pressureSourceValidTime") == pressureCandidate.validTime.ISO8601Format())
+        #expect(metadataString(sourceSelected.metadata, "surfaceSourceRunTime") == expectedSurfaceCandidate.runTime.ISO8601Format())
+        #expect(metadataString(sourceSelected.metadata, "surfaceSourceForecastHour") == String(expectedSurfaceCandidate.forecastHour))
+        #expect(metadataString(sourceSelected.metadata, "surfaceSourceValidTime") == expectedSurfaceCandidate.validTime.ISO8601Format())
+        #expect(metadataString(sourceSelected.metadata, "surfaceStage") == "selected")
+        #expect(metadataString(rowIncluded.metadata, "surfacePressureMb") == "940")
+        #expect(metadataString(rowIncluded.metadata, "surfaceSubsetCacheHit") == "true")
+        #expect(metadataString(rowIncluded.metadata, "surfaceRowIncluded") == "true")
+        #expect(preview.debug.surfacePressureMb == 940)
+        #expect(preview.debug.surfaceSubsetCacheHit == true)
+        #expect(preview.request.profile.pressureMb.first == 940)
+        #expect(preview.request.profile.pressureMb.count == 8)
+        #expect(await pressureProfileLoader.callCount == 1)
+        #expect(await surfaceProfileLoader.callCount == 1)
+        assertNoSensitiveMetadata(in: loggerContext.events)
+        assertNoRequestPathSensitiveMetadata(in: loggerContext.events)
+        for event in loggerContext.events {
+            #expect(event.metadata.keys.contains("selectedPressureLevels") == false)
+            #expect(event.metadata.keys.contains("pressureLevelsRequested") == false)
+            #expect(event.metadata.keys.contains("pressureLevelsRetained") == false)
+        }
+    }
+
+    @Test("preview diagnostics report a concise surface rejection reason")
+    func previewDiagnosticsReportConciseSurfaceRejectionReason() async throws {
+        let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: makeTruncatedToHour(now),
+            forecastHour: 0
+        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+        let mismatchCandidate = HrrrRunCandidate(
+            product: .wrfsfc,
+            runTime: pressureCandidate.runTime.addingTimeInterval(-3_600),
+            forecastHour: pressureCandidate.forecastHour
+        )
+        let loggerContext = makeCapturingLogger(label: "preview-surface-rejection")
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, _ in
+            makePreviewPressureSourceResolution(
+                candidate: pressureCandidate,
+                idxAvailable: true
+            )
+        }
+        let surfaceProfileLoader = PreviewStubSurfaceProfileLoader { _, _, _ in
+            previewMakeSurfaceProfileLoadResult(
+                sourceResolution: HrrrRunResolution(
+                    targetValidTime: makeTruncatedToHour(now),
+                    candidates: [mismatchCandidate]
+                ),
+                fetchedAt: now,
+                cacheHit: false,
+                samples: previewMakeSurfaceSamples()
+            )
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, _, _, _ in
+            Issue.record("Pressure profile loading should not have been reached after a surface mismatch.")
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: "unexpected pressure load")
+        }
+        let provider = DefaultAnvilProfilePreviewProvider(
+            h3Resolver: DefaultStormSetupH3Resolver(),
+            dateProvider: makeFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: makeTruncatedToHour(now), candidates: [surfaceCandidate])
+            ),
+            surfaceProfileLoader: surfaceProfileLoader,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader,
+            logger: loggerContext.logger
+        )
+
+        do {
+            _ = try await provider.previewProfile(for: h3Cell)
+            Issue.record("Expected a surface source mismatch to fail.")
+        } catch let error as AnvilProfilePreviewError {
+            if case .unusableProfile(let reason) = error {
+                #expect(reason.contains("Matching surface source identity"))
+            } else {
+                Issue.record("Expected unusable profile error but got \(error).")
+            }
+        }
+
+        let rejected = try #require(try loggerContext.event(matching: "Anvil preview exact-cycle surface row rejected."))
+        #expect(metadataString(rejected.metadata, "surfaceStage") == "mismatched")
+        #expect(metadataString(rejected.metadata, "surfaceRowIncluded") == "false")
+        #expect(metadataString(rejected.metadata, "reason")?.contains("Matching surface source identity") == true)
+        #expect(rejected.metadata.keys.contains("selectedPressureLevels") == false)
+        #expect(rejected.metadata.keys.contains("pressureLevelsRequested") == false)
+        #expect(rejected.metadata.keys.contains("pressureLevelsRetained") == false)
+        #expect(rejected.metadata.keys.contains("h3") == false)
+        #expect(rejected.metadata.keys.contains("latitude") == false)
+        #expect(rejected.metadata.keys.contains("longitude") == false)
+        #expect(await pressureProfileLoader.callCount == 0)
+        assertNoSensitiveMetadata(in: loggerContext.events)
+        assertNoRequestPathSensitiveMetadata(in: loggerContext.events)
+    }
 }
 
 private extension PressureArtifactDiagnosticsTests {
@@ -763,6 +932,38 @@ private extension PressureArtifactDiagnosticsTests {
         }
 
         return date
+    }
+
+    func makeTruncatedToHour(_ date: Date) -> Date {
+        StormSetupUTC.calendar.date(
+            from: DateComponents(
+                timeZone: TimeZone(secondsFromGMT: 0),
+                year: StormSetupUTC.calendar.component(.year, from: date),
+                month: StormSetupUTC.calendar.component(.month, from: date),
+                day: StormSetupUTC.calendar.component(.day, from: date),
+                hour: StormSetupUTC.calendar.component(.hour, from: date)
+            )
+        ) ?? date
+    }
+
+    func makePreviewPressureSourceResolution(
+        candidate: HrrrRunCandidate,
+        idxAvailable: Bool
+    ) -> HrrrPressureDirectObjectResolution {
+        let builder = HrrrPressureDirectObjectURLBuilder()
+        let source = builder.makeSourceMetadata(for: candidate)
+        let idxURL = source.idxURL ?? builder.makeIdxURL(for: candidate)
+
+        return HrrrPressureDirectObjectResolution(
+            candidate: candidate,
+            source: source,
+            idxProbe: HrrrRemoteObjectProbeResult(
+                url: idxURL,
+                available: idxAvailable,
+                status: idxAvailable ? 200 : 404
+            ),
+            gribProbe: nil
+        )
     }
 
     func makeCapturingLogger(label: String) -> CapturingLoggerContext {
@@ -988,6 +1189,8 @@ private extension PressureArtifactDiagnosticsTests {
             centroid: StormSetupCentroid(latitude: 39.78, longitude: -104.46),
             selectedMessageCount: 0,
             selectedPressureLevels: [],
+            surfacePressureMb: 940,
+            surfaceSubsetCacheHit: false,
             rangeCount: 0,
             totalSelectedRangeBytes: 0,
             pressureLevelsRequested: [],

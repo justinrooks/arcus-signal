@@ -1588,6 +1588,8 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
                 centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
                 selectedMessageCount: 5,
                 selectedPressureLevels: [1000, 925, 850],
+                surfacePressureMb: 940,
+                surfaceSubsetCacheHit: false,
                 rangeCount: 3,
                 totalSelectedRangeBytes: 1024,
                 pressureLevelsRequested: [1000, 925, 850],

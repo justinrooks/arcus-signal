@@ -127,6 +127,8 @@ struct AnvilProfileAnalysisProviderTests {
                 centroid: StormSetupCentroid(latitude: request.location.lat, longitude: request.location.lon),
                 selectedMessageCount: 5,
                 selectedPressureLevels: [1000, 925, 850],
+                surfacePressureMb: 940,
+                surfaceSubsetCacheHit: true,
                 rangeCount: 3,
                 totalSelectedRangeBytes: 1024,
                 pressureLevelsRequested: [1000, 925, 850],
