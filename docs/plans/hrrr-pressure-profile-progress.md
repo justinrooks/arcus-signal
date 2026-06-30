@@ -566,11 +566,44 @@ Deferred scope:
 - Any future tuning of Anvil evidence thresholds or semantics.
 - Networking, transport, and provider wiring remain out of scope for this slice.
 
+### Issue #125 - 10: Add a pure Anvil surface-profile loading seam
+
+Status: Completed
+
+Scope:
+- Add a narrow loader that builds one matching `wrfsfc` candidate from the current surface-cycle resolution.
+- Reuse the existing subset-loading and field-sampling seams.
+- Preserve cancellation and avoid fallback to another cycle.
+
+Files changed:
+- `Sources/App/StormSetup/HrrrAnvilSurfaceProfileLoading.swift`
+- `Tests/AppTests/HrrrAnvilSurfaceProfileLoadingTests.swift`
+- `docs/plans/hrrr-pressure-profile-progress.md`
+
+Tests and commands run:
+- `swift test --filter HrrrAnvilSurfaceProfileLoadingTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
+
+Local verification notes:
+- The loader now constructs a single `wrfsfc` candidate and passes exactly one resolution into the subset loader.
+- Cancellation short-circuits the load path before any second cycle or sampler work can run.
+- The new tests stay offline and deterministic; they only use local stubs and fixture samples.
+
+Deferred scope:
+- Wiring the surface-profile loader into any provider or controller.
+- Any Anvil contract or response changes beyond the loader seam itself.
+
+Handoff notes for `#126`:
+- Reuse the new surface loader instead of rebuilding the `wrfsfc` candidate logic again.
+- Keep any provider wiring pointed at the injected subset/cache/sampler seams so the offline tests remain deterministic.
+
 ---
 
 ## Final Completion Summary
 
 - Epic `#85` is complete.
+- Follow-on surface-profile seams `#124` and `#125` are complete.
 - Sub-issues `#91`, `#99`, `#98`, `#92`, `#103`, `#101`, `#102`, and `#100` are all complete.
 - The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, and ingredient-evidence mapping.
 - The final verification record is `swift build --target App` passing and the two filtered test commands above surfacing concrete failures that should be tracked separately from this documentation pass.
