@@ -28,6 +28,8 @@ services:
       ANVIL_PROFILE_ANALYSIS_BASE_URL: ${ANVIL_PROFILE_ANALYSIS_BASE_URL:-http://host.docker.internal:8089/api}
       ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS: "10"
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
