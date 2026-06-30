@@ -183,6 +183,26 @@ actor PreviewStubPressureProfileLoader: HrrrPressureProfileLoading {
     }
 }
 
+actor PreviewStubSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
+    private let handler: @Sendable (Int, HrrrRunResolution, StormSetupCentroid) async throws -> HrrrAnvilSurfaceProfileLoadResult
+    private(set) var callCount = 0
+
+    init(
+        handler: @escaping @Sendable (Int, HrrrRunResolution, StormSetupCentroid) async throws -> HrrrAnvilSurfaceProfileLoadResult
+    ) {
+        self.handler = handler
+    }
+
+    func loadSurfaceProfile(
+        for resolution: HrrrRunResolution,
+        around centroid: StormSetupCentroid
+    ) async throws -> HrrrAnvilSurfaceProfileLoadResult {
+        let index = callCount
+        callCount += 1
+        return try await handler(index, resolution, centroid)
+    }
+}
+
 actor PreviewStubStormSetupFieldSampler: StormSetupFieldSampling {
     private let handler: @Sendable (GribSubsetCacheResult, StormSetupCentroid) async throws -> [HrrrFieldSample]
 
@@ -308,6 +328,31 @@ func previewMakePressureProfileLoadResult(
     )
 }
 
+func previewMakeSurfaceProfileLoadResult(
+    sourceResolution: HrrrRunResolution,
+    fetchedAt: Date,
+    cacheHit: Bool = false,
+    samples: [HrrrFieldSample]? = nil
+) -> HrrrAnvilSurfaceProfileLoadResult {
+    let subsetCacheResult = previewMakeSubsetResult(
+        source: HrrrNomadsURLBuilder().makeSourceMetadata(
+            for: sourceResolution.primaryCandidate ?? HrrrRunCandidate(
+                runTime: fetchedAt,
+                forecastHour: 0
+            ),
+            around: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+        ),
+        fetchedAt: fetchedAt,
+        cacheHit: cacheHit
+    )
+
+    return HrrrAnvilSurfaceProfileLoadResult(
+        sourceResolution: sourceResolution,
+        subsetCacheResult: subsetCacheResult,
+        samples: samples ?? previewMakeSurfaceSamples()
+    )
+}
+
 func previewMakeReadyPressureProfileLoadResult(
     readyArtifact: PressureArtifactCatalogReadyArtifact,
     fetchedAt: Date,
@@ -393,6 +438,42 @@ func previewMakePressureSubsetCacheResult(
         fetchedAt: fetchedAt,
         expiresAt: fetchedAt.addingTimeInterval(3600),
         cacheHit: cacheHit
+    )
+}
+
+func previewMakeSurfaceSamples(
+    pressurePa: Double = 94_000,
+    heightMslM: Double = 1_234,
+    temperatureK: Double = 295.15,
+    dewpointK: Double = 289.15,
+    uWindMs: Double = -4.25,
+    vWindMs: Double = 6.5
+) -> [HrrrFieldSample] {
+    [
+        previewSample("1:0:d=2026060313:PRES:surface:9 hour fcst:lon=-104.47,lat=39.79,val=\(pressurePa)"),
+        previewSample("2:0:d=2026060313:HGT:surface:9 hour fcst:lon=-104.47,lat=39.79,val=\(heightMslM)"),
+        previewSample("3:0:d=2026060313:TMP:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=\(temperatureK)"),
+        previewSample("4:0:d=2026060313:DPT:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=\(dewpointK)"),
+        previewSample("5:0:d=2026060313:UGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=\(uWindMs)"),
+        previewSample("6:0:d=2026060313:VGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=\(vWindMs)")
+    ]
+}
+
+func previewMakeSurfaceLevel(
+    pressurePa: Double = 94_000,
+    heightMslM: Double = 1_234,
+    temperatureK: Double = 295.15,
+    dewpointK: Double = 289.15,
+    uWindMs: Double = -4.25,
+    vWindMs: Double = 6.5
+) -> StormSetupPressureProfileLevel {
+    StormSetupPressureProfileLevel(
+        pressureMb: Int((pressurePa / 100).rounded()),
+        heightMslM: heightMslM,
+        temperatureC: temperatureK - 273.15,
+        dewpointC: dewpointK - 273.15,
+        uWindMs: uWindMs,
+        vWindMs: vWindMs
     )
 }
 

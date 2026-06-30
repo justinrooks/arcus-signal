@@ -225,7 +225,7 @@ struct AnvilProfilePreviewControllerTests {
                 makeLevel(pressureMb: 400, heightMslM: 7100, temperatureC: -14.4, dewpointC: -20.8, uWindMs: -23.5, vWindMs: 27.8),
                 makeLevel(pressureMb: 300, heightMslM: 9300, temperatureC: -27.0, dewpointC: -32.8, uWindMs: -28.9, vWindMs: 31.4)
             ],
-            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 600, 500, 400, 300])
+            surfaceHeightMslM: 1_234
         )
 
         let builder = AnvilProfileRequestBuilder()
@@ -233,6 +233,7 @@ struct AnvilProfilePreviewControllerTests {
             h3Cell: h3Cell,
             runTime: runTime,
             forecastHour: forecastHour,
+            surfaceLevel: makeLevel(pressureMb: 940, heightMslM: 1_234, temperatureC: 22.0, dewpointC: 16.0, uWindMs: -4.25, vWindMs: 6.5),
             groupedProfile: grouping
         ).request
         let debug = AnvilAnalyzeProfilePreviewDebugDTO(
@@ -244,11 +245,11 @@ struct AnvilProfilePreviewControllerTests {
             h3: request.location.h3,
             centroid: request.location.centroid,
             selectedMessageCount: 5,
-            selectedPressureLevels: [1000],
+            selectedPressureLevels: [925, 850, 700, 600, 500, 400, 300],
             rangeCount: 5,
             totalSelectedRangeBytes: 1024,
-            pressureLevelsRequested: [1000],
-            pressureLevelsRetained: grouping.retainedLevels.map(\.pressureMb),
+            pressureLevelsRequested: [1000, 925, 850, 700, 600, 500, 400, 300],
+            pressureLevelsRetained: grouping.retainedLevels.map { $0.pressureMb },
             missingLevels: [],
             warnings: [makeDroppedLevelsWarning(from: grouping.missingLevels)],
             subsetCacheHit: false,
@@ -381,18 +382,47 @@ private func makeAssessment() -> TornadoIngredientAssessment {
 
 private func makeGroupingResult(
     levels: [StormSetupPressureProfileLevel],
-    missingLevels: [StormSetupPressureProfileMissingLevel] = []
+    missingLevels: [StormSetupPressureProfileMissingLevel] = [],
+    surfaceHeightMslM: Double? = nil
 ) -> StormSetupPressureProfileGroupingResult {
-    let droppedLevels = missingLevels.map { missingLevel in
-        StormSetupPressureProfileDroppedLevel(
-            pressureMb: missingLevel.pressureMb,
-            reason: .incomplete(missingVariables: missingLevel.missingVariables)
-        )
+    let retainedLevels: [StormSetupPressureProfileLevel]
+    let droppedLevels: [StormSetupPressureProfileDroppedLevel]
+
+    if let surfaceHeightMslM {
+        let retained = levels.filter { $0.heightMslM > surfaceHeightMslM + 1 }
+        let dropped = levels
+            .filter { $0.heightMslM <= surfaceHeightMslM + 1 }
+            .map {
+                StormSetupPressureProfileDroppedLevel(
+                    pressureMb: $0.pressureMb,
+                    reason: .belowGround(
+                        surfaceHeightMslM: surfaceHeightMslM,
+                        levelHeightMslM: $0.heightMslM,
+                        toleranceM: 1
+                    )
+                )
+            }
+
+        retainedLevels = retained
+        droppedLevels = dropped + missingLevels.map { missingLevel in
+            StormSetupPressureProfileDroppedLevel(
+                pressureMb: missingLevel.pressureMb,
+                reason: .incomplete(missingVariables: missingLevel.missingVariables)
+            )
+        }
+    } else {
+        retainedLevels = levels
+        droppedLevels = missingLevels.map { missingLevel in
+            StormSetupPressureProfileDroppedLevel(
+                pressureMb: missingLevel.pressureMb,
+                reason: .incomplete(missingVariables: missingLevel.missingVariables)
+            )
+        }
     }
 
     return StormSetupPressureProfileGroupingResult(
         requestedLevels: StormSetupPressureLevel.preferredDescending,
-        retainedLevels: levels,
+        retainedLevels: retainedLevels,
         missingLevels: missingLevels,
         droppedLevels: droppedLevels,
         ignoredSamples: []

@@ -634,6 +634,40 @@ Handoff notes for `#127`:
 
 ---
 
+### Issue #127 - 12: Load matching surface data before pressure sampling in preview wiring
+
+Status: Completed
+
+Scope:
+- Inject the Anvil surface-profile loader into the preview provider.
+- Load exact-cycle surface data before pressure sampling for ready, stale, and direct/manual preview paths.
+- Ignore caller-supplied preview surface height for now, while keeping the temporary seam in place.
+- Feed the loaded surface row into the frozen Anvil request builder and below-ground pressure filtering.
+
+Deferred:
+- Any change to pressure artifact lookup rules.
+- Any change to the Anvil transport client or request transport behavior.
+- Removing the temporary `surfaceHeightMslM` preview seam.
+
+Files changed:
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Tests/AppTests/AnvilProfilePreviewTestSupport.swift`
+- `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+- `Tests/AppTests/AnvilProfilePreviewControllerTests.swift`
+
+Tests and commands run:
+- `swift test --filter AnvilProfilePreviewProviderTests`
+- `swift build -Xswiftc -strict-concurrency=complete`
+- `git diff --check`
+
+Local verification notes:
+- Ready and stale preview paths now load matching surface data before pressure profile grouping.
+- Surface identity is validated on the exact cycle, and surface-source failures stop before pressure profile loading.
+- The old `surfaceHeightMslM` surface preview seam remains in place but is ignored by the provider.
+- Pressure artifact lookup, stale selection, and Anvil transport wiring were left untouched.
+
+---
+
 ## Final Completion Summary
 
 - Epic `#85` is complete.

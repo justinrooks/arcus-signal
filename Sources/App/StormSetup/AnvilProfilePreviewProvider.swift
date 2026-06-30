@@ -48,6 +48,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let h3Resolver: any StormSetupH3Resolving
     private let hrrrRunResolver: any HrrrRunResolving
     private let pressureArtifactCatalogLookupService: (any PressureArtifactCatalogLookupProviding)?
+    private let surfaceProfileLoader: any HrrrAnvilSurfaceProfileLoading
     private let pressureSourceResolver: any HrrrPressureDirectObjectResolving
     private let pressureProfileLoader: any HrrrPressureProfileLoading
     private let surfaceHeightMslM: Double?
@@ -58,6 +59,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         hrrrRunResolver: (any HrrrRunResolving)? = nil,
         pressureArtifactCatalogLookupService: (any PressureArtifactCatalogLookupProviding)? = nil,
+        surfaceProfileLoader: (any HrrrAnvilSurfaceProfileLoading)? = nil,
         pressureSourceResolver: any HrrrPressureDirectObjectResolving,
         pressureProfileLoader: any HrrrPressureProfileLoading,
         surfaceHeightMslM: Double? = nil
@@ -65,6 +67,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
         self.pressureArtifactCatalogLookupService = pressureArtifactCatalogLookupService
+        self.surfaceProfileLoader = surfaceProfileLoader ?? DefaultSyntheticAnvilSurfaceProfileLoader()
         self.pressureSourceResolver = pressureSourceResolver
         self.pressureProfileLoader = pressureProfileLoader
         self.surfaceHeightMslM = surfaceHeightMslM
@@ -84,6 +87,16 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             maximumStaleAgeSeconds: configuration.pressureArtifactMaxStaleAgeSeconds,
             logger: application.logger
         )
+        let surfaceSubsetLoader = NomadsGribDownloader(
+            cache: GribSubsetCache(
+                httpClient: httpClient,
+                rootURL: configuration.gribSubsetCacheRootURL,
+                dateProvider: dateProvider,
+                retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
+                maximumByteCount: configuration.gribSubsetMaximumByteCount
+            ),
+            hrrrNomadsURLBuilder: HrrrNomadsURLBuilder()
+        )
         let pressureSourceResolver = DefaultHrrrPressureDirectObjectResolver(httpClient: httpClient)
         let pressureProfileLoader = DefaultHrrrPressureProfileLoader(
             httpClient: httpClient,
@@ -94,13 +107,18 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 dateProvider: dateProvider,
                 retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
                 maximumByteCount: configuration.gribSubsetMaximumByteCount
-            ),
+                ),
+                fieldSampler: HrrrFieldSampler(client: configuration.makeWgrib2Client())
+            )
+        let surfaceProfileLoader = DefaultHrrrAnvilSurfaceProfileLoader(
+            subsetLoader: surfaceSubsetLoader,
             fieldSampler: HrrrFieldSampler(client: configuration.makeWgrib2Client())
         )
 
         self.init(
             dateProvider: dateProvider,
             pressureArtifactCatalogLookupService: pressureArtifactCatalogLookupService,
+            surfaceProfileLoader: surfaceProfileLoader,
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -110,11 +128,9 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         for h3Cell: Int64,
         surfaceHeightMslM: Double? = nil
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        _ = surfaceHeightMslM
         let resolved = try h3Resolver.resolve(h3Cell: h3Cell)
         let runResolution = hrrrRunResolver.resolveRunCandidates()
-        let selectedSurfaceHeightMslM = surfaceHeightMslM ?? self.surfaceHeightMslM
-        let validatedSurfaceHeightMslM = validateSurfaceHeightMslM(selectedSurfaceHeightMslM)
-        let surfaceHeightWarning = surfaceHeightWarning(for: selectedSurfaceHeightMslM, validated: validatedSurfaceHeightMslM)
 
         guard !runResolution.candidates.isEmpty else {
             throw AnvilProfilePreviewError.upstreamUnavailable(
@@ -140,15 +156,14 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                         for: pressureCandidate
                     ) {
                         try Task.checkCancellation()
-                        return try await previewReadyArtifact(
-                            readyArtifact,
-                            h3Cell: resolved.h3Cell,
-                            centroid: resolved.centroid,
-                            surfaceHeightMslM: validatedSurfaceHeightMslM,
-                            surfaceHeightWarning: surfaceHeightWarning
-                        )
-                    }
-                } catch let error as AnvilProfilePreviewError {
+                    return try await previewReadyArtifact(
+                        readyArtifact,
+                        sourceCandidate: pressureCandidate,
+                        h3Cell: resolved.h3Cell,
+                        centroid: resolved.centroid,
+                    )
+                }
+            } catch let error as AnvilProfilePreviewError {
                     switch error {
                     case .upstreamUnavailable:
                         upstreamFailures.append(error.description)
@@ -168,13 +183,16 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                     for: pressureResolution
                 ) {
                     try Task.checkCancellation()
+                    let staleSourceCandidate = makeStaleSurfaceSourceCandidate(
+                        from: pressureResolution.primaryCandidate ?? pressureResolution.candidates.first!,
+                        matching: staleArtifact
+                    )
                     return try await previewReadyArtifact(
                         staleArtifact,
+                        sourceCandidate: staleSourceCandidate,
                         h3Cell: resolved.h3Cell,
                         centroid: resolved.centroid,
                         staleWarning: makeStaleWarning(for: staleArtifact, targetValidTime: pressureResolution.targetValidTime),
-                        surfaceHeightMslM: validatedSurfaceHeightMslM,
-                        surfaceHeightWarning: surfaceHeightWarning
                     )
                 }
             } catch let error as AnvilProfilePreviewError {
@@ -223,8 +241,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                     h3Cell: resolved.h3Cell,
                     centroid: resolved.centroid,
                     targetValidTime: runResolution.targetValidTime,
-                    surfaceHeightMslM: validatedSurfaceHeightMslM,
-                    surfaceHeightWarning: surfaceHeightWarning
                 )
                 try Task.checkCancellation()
                 return preview
@@ -265,17 +281,22 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         h3Cell: Int64,
         centroid: StormSetupCentroid,
         targetValidTime: Date,
-        surfaceHeightMslM: Double?,
-        surfaceHeightWarning: String?
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
         let sourceResolution = try await resolvePressureSource(
             for: candidate,
             targetValidTime: targetValidTime
         )
+        let surfaceLevel = try await loadSurfaceLevel(
+            from: candidate,
+            cycleRunTime: sourceResolution.source.runTime ?? candidate.runTime,
+            cycleForecastHour: sourceResolution.source.forecastHour ?? candidate.forecastHour,
+            targetValidTime: targetValidTime,
+            centroid: centroid
+        )
         let loadResult = try await loadPressureProfile(
             sourceResolution: sourceResolution,
             centroid: centroid,
-            surfaceHeightMslM: surfaceHeightMslM
+            surfaceHeightMslM: surfaceLevel.heightMslM
         )
         try Task.checkCancellation()
 
@@ -285,6 +306,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 h3Cell: h3Cell,
                 runTime: sourceResolution.source.runTime ?? candidate.runTime,
                 forecastHour: sourceResolution.source.forecastHour ?? candidate.forecastHour,
+                surfaceLevel: surfaceLevel,
                 groupedProfile: loadResult.groupedProfile
             )
         } catch let error as AnvilProfileRequestBuilderError {
@@ -310,8 +332,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
             rangeCount: loadResult.byteRangePlan.ranges.count,
             totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
-            pressureLevelsRequested: loadResult.selection.requestedLevels.map(\.pressureMb),
-            pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map(\.pressureMb),
+            pressureLevelsRequested: loadResult.selection.requestedLevels.map { $0.pressureMb },
+            pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map { $0.pressureMb },
             missingLevels: loadResult.selection.missingLevels.map {
                 AnvilAnalyzeProfilePreviewMissingLevelDTO(
                     pressureMb: $0.pressureMb,
@@ -320,8 +342,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             },
             warnings: makeWarnings(
                 for: buildResult.warnings,
-                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count,
-                additionalWarnings: surfaceHeightWarning.map { [$0] } ?? []
+                ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count
             ),
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
             primaryDownloadURL: sourceResolution.source.primaryDownloadURL,
@@ -335,16 +356,22 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
     private func previewReadyArtifact(
         _ readyArtifact: PressureArtifactCatalogReadyArtifact,
+        sourceCandidate: HrrrRunCandidate,
         h3Cell: Int64,
         centroid: StormSetupCentroid,
-        staleWarning: String? = nil,
-        surfaceHeightMslM: Double?,
-        surfaceHeightWarning: String?
+        staleWarning: String? = nil
     ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        let surfaceLevel = try await loadSurfaceLevel(
+            from: sourceCandidate,
+            cycleRunTime: readyArtifact.runTime,
+            cycleForecastHour: readyArtifact.forecastHour,
+            targetValidTime: readyArtifact.validTime,
+            centroid: centroid
+        )
         let loadResult = try await loadPressureProfile(
             readyArtifact: readyArtifact,
             centroid: centroid,
-            surfaceHeightMslM: surfaceHeightMslM
+            surfaceHeightMslM: surfaceLevel.heightMslM
         )
 
         let buildResult: AnvilProfileRequestBuildResult
@@ -353,6 +380,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 h3Cell: h3Cell,
                 runTime: readyArtifact.runTime,
                 forecastHour: readyArtifact.forecastHour,
+                surfaceLevel: surfaceLevel,
                 groupedProfile: loadResult.groupedProfile
             )
         } catch let error as AnvilProfileRequestBuilderError {
@@ -378,8 +406,8 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             selectedPressureLevels: uniquePressureLevels(from: loadResult.selection),
             rangeCount: loadResult.byteRangePlan.ranges.count,
             totalSelectedRangeBytes: loadResult.subsetCacheResult.byteSize,
-            pressureLevelsRequested: loadResult.selection.requestedLevels.map(\.pressureMb),
-            pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map(\.pressureMb),
+            pressureLevelsRequested: loadResult.selection.requestedLevels.map { $0.pressureMb },
+            pressureLevelsRetained: loadResult.groupedProfile.retainedLevels.map { $0.pressureMb },
             missingLevels: loadResult.selection.missingLevels.map {
                 AnvilAnalyzeProfilePreviewMissingLevelDTO(
                     pressureMb: $0.pressureMb,
@@ -389,7 +417,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             warnings: makeWarnings(
                 for: buildResult.warnings,
                 ignoredSampleCount: loadResult.groupedProfile.ignoredSamples.count,
-                additionalWarnings: [staleWarning, surfaceHeightWarning].compactMap { $0 }
+                additionalWarnings: [staleWarning].compactMap { $0 }
             ),
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit,
             primaryDownloadURL: readyArtifact.localFileURL,
@@ -458,6 +486,132 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         }
     }
 
+    private func loadSurfaceLevel(
+        from sourceCandidate: HrrrRunCandidate,
+        cycleRunTime: Date,
+        cycleForecastHour: Int,
+        targetValidTime: Date,
+        centroid: StormSetupCentroid
+    ) async throws -> StormSetupPressureProfileLevel {
+        let inputResolution = HrrrRunResolution(
+            targetValidTime: targetValidTime,
+            candidates: [sourceCandidate]
+        )
+
+        let loadResult: HrrrAnvilSurfaceProfileLoadResult
+        do {
+            loadResult = try await surfaceProfileLoader.loadSurfaceProfile(
+                for: inputResolution,
+                around: centroid
+            )
+        } catch let error as AnvilProfilePreviewError {
+            throw error
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            throw AnvilProfilePreviewError.upstreamUnavailable(reason: String(describing: error))
+        }
+
+        let expectedSurfaceCandidate = HrrrRunCandidate(
+            model: sourceCandidate.model,
+            product: .wrfsfc,
+            domain: sourceCandidate.domain,
+            runTime: cycleRunTime,
+            forecastHour: cycleForecastHour,
+            fieldSetVersion: HrrrProduct.wrfsfc.defaultFieldSetVersion
+        )
+        let expectedResolution = HrrrRunResolution(
+            targetValidTime: targetValidTime,
+            candidates: [expectedSurfaceCandidate]
+        )
+
+        guard loadResult.sourceResolution == expectedResolution else {
+            let actualSurfaceCandidate = loadResult.sourceResolution.primaryCandidate?.fileName ?? "unknown"
+            throw AnvilProfilePreviewError.unusableProfile(
+                reason: "Matching surface source identity did not match the expected exact-cycle surface candidate. Expected \(expectedSurfaceCandidate.fileName), got \(actualSurfaceCandidate)."
+            )
+        }
+
+        guard let surfaceLevel = makeSurfaceLevel(from: loadResult.samples) else {
+            throw AnvilProfilePreviewError.unusableProfile(
+                reason: "Matching surface profile was incomplete. Missing or invalid surface fields were not reported."
+            )
+        }
+
+        return surfaceLevel
+    }
+
+    private func makeSurfaceLevel(
+        from samples: [HrrrFieldSample]
+    ) -> StormSetupPressureProfileLevel? {
+        struct Draft {
+            var pressureMb: Double?
+            var heightMslM: Double?
+            var temperatureC: Double?
+            var dewpointC: Double?
+            var uWindMs: Double?
+            var vWindMs: Double?
+        }
+
+        var draft = Draft()
+
+        for sample in samples {
+            let point = sample.point
+            guard let descriptor = point.inventoryDescriptor, let value = point.value else {
+                continue
+            }
+
+            let variable = descriptor.variable.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            let level = descriptor.level.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+            switch (variable, level) {
+            case ("PRES", "surface"):
+                if draft.pressureMb == nil {
+                    draft.pressureMb = value / 100
+                }
+            case ("HGT", "surface"):
+                if draft.heightMslM == nil {
+                    draft.heightMslM = value
+                }
+            case ("TMP", "2 m above ground"):
+                if draft.temperatureC == nil {
+                    draft.temperatureC = value - 273.15
+                }
+            case ("DPT", "2 m above ground"):
+                if draft.dewpointC == nil {
+                    draft.dewpointC = value - 273.15
+                }
+            case ("UGRD", "10 m above ground"):
+                if draft.uWindMs == nil {
+                    draft.uWindMs = value
+                }
+            case ("VGRD", "10 m above ground"):
+                if draft.vWindMs == nil {
+                    draft.vWindMs = value
+                }
+            default:
+                continue
+            }
+        }
+
+        guard let pressureMb = draft.pressureMb,
+              let heightMslM = draft.heightMslM,
+              let temperatureC = draft.temperatureC,
+              let dewpointC = draft.dewpointC,
+              let uWindMs = draft.uWindMs,
+              let vWindMs = draft.vWindMs else {
+            return nil
+        }
+
+        return StormSetupPressureProfileLevel(
+            pressureMb: Int(pressureMb.rounded()),
+            heightMslM: heightMslM,
+            temperatureC: temperatureC,
+            dewpointC: dewpointC,
+            uWindMs: uWindMs,
+            vWindMs: vWindMs
+        )
+    }
+
     private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
         let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
         return HrrrRunCandidate(
@@ -467,6 +621,20 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             runTime: runTime,
             forecastHour: candidate.forecastHour + 1,
             fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
+        )
+    }
+
+    private func makeStaleSurfaceSourceCandidate(
+        from sourceCandidate: HrrrRunCandidate,
+        matching readyArtifact: PressureArtifactCatalogReadyArtifact
+    ) -> HrrrRunCandidate {
+        HrrrRunCandidate(
+            model: sourceCandidate.model,
+            product: .wrfsfc,
+            domain: sourceCandidate.domain,
+            runTime: readyArtifact.runTime,
+            forecastHour: readyArtifact.forecastHour,
+            fieldSetVersion: HrrrProduct.wrfsfc.defaultFieldSetVersion
         )
     }
 
@@ -602,25 +770,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         return "Pressure artifact stale fallback selected: \(ageSeconds)s older than target valid time \(targetLabel)."
     }
 
-    private func validateSurfaceHeightMslM(_ value: Double?) -> Double? {
-        guard let value, value.isFinite, (-500...9_000).contains(value) else {
-            return nil
-        }
-
-        return value
-    }
-
-    private func surfaceHeightWarning(for selectedSurfaceHeightMslM: Double?, validated: Double?) -> String? {
-        guard selectedSurfaceHeightMslM != nil else {
-            return "Below-ground pressure-level filtering unavailable because selected surface height was missing."
-        }
-
-        guard validated == nil else {
-            return nil
-        }
-
-        return "Below-ground pressure-level filtering unavailable because selected surface height was invalid."
-    }
 }
 
 extension Application {
@@ -636,4 +785,78 @@ extension Application {
 
 private struct AnvilProfilePreviewProviderKey: StorageKey {
     typealias Value = any AnvilProfilePreviewProviding
+}
+
+private struct DefaultSyntheticAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
+    func loadSurfaceProfile(
+        for resolution: HrrrRunResolution,
+        around centroid: StormSetupCentroid
+    ) async throws -> HrrrAnvilSurfaceProfileLoadResult {
+        guard let primaryCandidate = resolution.primaryCandidate else {
+            throw AnvilProfilePreviewError.upstreamUnavailable(
+                reason: "No HRRR surface candidate was available for the preview run."
+            )
+        }
+
+        let surfaceCandidate = HrrrRunCandidate(
+            model: primaryCandidate.model,
+            product: .wrfsfc,
+            domain: primaryCandidate.domain,
+            runTime: primaryCandidate.runTime,
+            forecastHour: primaryCandidate.forecastHour,
+            fieldSetVersion: HrrrProduct.wrfsfc.defaultFieldSetVersion
+        )
+        let sourceResolution = HrrrRunResolution(
+            targetValidTime: resolution.targetValidTime,
+            candidates: [surfaceCandidate]
+        )
+        let source = HrrrNomadsURLBuilder().makeSourceMetadata(
+            for: primaryCandidate,
+            around: centroid
+        )
+
+        return HrrrAnvilSurfaceProfileLoadResult(
+            sourceResolution: sourceResolution,
+            subsetCacheResult: GribSubsetCacheResult(
+                source: source,
+                localFileURL: URL(fileURLWithPath: "/private/tmp/arcus-signal-synthetic-surface.grib2"),
+                byteSize: 1_024,
+                fetchedAt: Date(),
+                expiresAt: Date().addingTimeInterval(3_600),
+                cacheHit: false
+            ),
+            samples: [
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(from: "1:0:d=2026060313:PRES:surface:9 hour fcst:lon=-104.47,lat=39.79,val=94000")
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(from: "2:0:d=2026060313:HGT:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1234")
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(from: "3:0:d=2026060313:TMP:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=295.15")
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(from: "4:0:d=2026060313:DPT:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=289.15")
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(from: "5:0:d=2026060313:UGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-4.25")
+                ),
+                HrrrFieldSample(
+                    requestedLongitude: centroid.longitude,
+                    requestedLatitude: centroid.latitude,
+                    point: Wgrib2PointSample.parse(from: "6:0:d=2026060313:VGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=6.5")
+                )
+            ]
+        )
+    }
 }
