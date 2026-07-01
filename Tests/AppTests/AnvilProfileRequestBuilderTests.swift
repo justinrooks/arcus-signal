@@ -26,6 +26,7 @@ struct AnvilProfileRequestBuilderTests {
             h3Cell: h3Cell,
             runTime: runTime,
             forecastHour: forecastHour,
+            surfaceLevel: makeSurfaceLevel(),
             groupedProfile: grouping
         )
         let expectedCentroid = try DefaultStormSetupH3Resolver().resolve(h3Cell: h3Cell)
@@ -36,12 +37,12 @@ struct AnvilProfileRequestBuilderTests {
         #expect(result.request.location.lat.isApproximatelyEqual(to: expectedCentroid.centroid.latitude))
         #expect(result.request.location.lon.isApproximatelyEqual(to: expectedCentroid.centroid.longitude))
         #expect(result.request.location.h3 == h3String(for: h3Cell))
-        #expect(result.request.profile.pressureMb == [1000, 925, 850, 700, 500])
-        #expect(result.request.profile.heightMslM == [1200, 1500, 1800, 2450, 5600])
-        #expect(result.request.profile.temperatureC == [28.4, 22.8, 17.5, 10.0, -4.2])
-        #expect(result.request.profile.dewpointC == [12.3, 10.1, 11.2, 1.0, -12.0])
-        #expect(result.request.profile.uWindMs == [-2.1, -5.4, -6.25, -12.5, -18.75])
-        #expect(result.request.profile.vWindMs == [4.6, 7.9, 8.75, 14.2, 22.0])
+        #expect(result.request.profile.pressureMb == [1012.4, 1000, 925, 850, 700, 500])
+        #expect(result.request.profile.heightMslM == [320, 1200, 1500, 1800, 2450, 5600])
+        #expect(result.request.profile.temperatureC == [29.6, 28.4, 22.8, 17.5, 10.0, -4.2])
+        #expect(result.request.profile.dewpointC == [16.4, 12.3, 10.1, 11.2, 1.0, -12.0])
+        #expect(result.request.profile.uWindMs == [-1.4, -2.1, -5.4, -6.25, -12.5, -18.75])
+        #expect(result.request.profile.vWindMs == [3.8, 4.6, 7.9, 8.75, 14.2, 22.0])
         #expect(result.warnings.isEmpty)
     }
 
@@ -54,6 +55,7 @@ struct AnvilProfileRequestBuilderTests {
             h3Cell: 617_700_169_958_293_503,
             runTime: runTime,
             forecastHour: forecastHour,
+            surfaceLevel: makeSurfaceLevel(),
             groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
         )
 
@@ -74,6 +76,7 @@ struct AnvilProfileRequestBuilderTests {
             h3Cell: 123,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
             forecastHour: 1,
+            surfaceLevel: makeSurfaceLevel(),
             groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
         )
 
@@ -101,6 +104,7 @@ struct AnvilProfileRequestBuilderTests {
                 h3Cell: 617_700_169_958_293_503,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
                 forecastHour: 3,
+                surfaceLevel: makeSurfaceLevel(),
                 groupedProfile: grouping
             )
         }
@@ -129,7 +133,100 @@ struct AnvilProfileRequestBuilderTests {
                 h3Cell: 617_700_169_958_293_503,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
                 forecastHour: 3,
+                surfaceLevel: makeSurfaceLevel(),
                 groupedProfile: makeGroupingResult(levels: Array(makeFiveLevelProfile().prefix(4)))
+            )
+        }
+    }
+
+    @Test("surface row is prepended without interpolation")
+    func surfaceRowIsPrependedWithoutInterpolation() throws {
+        let builder = makeBuilder()
+        let surfaceLevel = makeSurfaceLevel(
+            pressureMb: 1012,
+            heightMslM: 320,
+            temperatureC: 29.6,
+            dewpointC: 16.4,
+            uWindMs: -1.4,
+            vWindMs: 3.8
+        )
+
+        let result = try builder.build(
+            h3Cell: 617_700_169_958_293_503,
+            runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+            forecastHour: 3,
+            surfaceLevel: surfaceLevel,
+            groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
+        )
+
+        #expect(result.request.profile.pressureMb == [1012, 1000, 925, 850, 700, 500])
+        #expect(result.request.profile.heightMslM == [320, 1200, 1500, 1800, 2450, 5600])
+        #expect(result.request.profile.temperatureC == [29.6, 28.4, 22.8, 17.5, 10.0, -4.2])
+        #expect(result.request.profile.dewpointC == [16.4, 12.3, 10.1, 11.2, 1.0, -12.0])
+        #expect(result.request.profile.uWindMs == [-1.4, -2.1, -5.4, -6.25, -12.5, -18.75])
+        #expect(result.request.profile.vWindMs == [3.8, 4.6, 7.9, 8.75, 14.2, 22.0])
+    }
+
+    @Test("surface row still requires five retained pressure levels")
+    func surfaceRowStillRequiresFiveRetainedPressureLevels() {
+        let builder = makeBuilder()
+        let surfaceLevel = makeSurfaceLevel(
+            pressureMb: 1012,
+            heightMslM: 320,
+            temperatureC: 29.6,
+            dewpointC: 16.4,
+            uWindMs: -1.4,
+            vWindMs: 3.8
+        )
+
+        #expect(throws: AnvilProfileRequestBuilderError.self) {
+            _ = try builder.build(
+                h3Cell: 617_700_169_958_293_503,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+                forecastHour: 3,
+                surfaceLevel: surfaceLevel,
+                groupedProfile: makeGroupingResult(levels: Array(makeFiveLevelProfile().prefix(4)))
+            )
+        }
+    }
+
+    @Test("invalid surface ordering is rejected instead of being sorted away")
+    func invalidSurfaceOrderingIsRejectedInsteadOfBeingSortedAway() {
+        let builder = makeBuilder()
+        let surfaceLevel = makeSurfaceLevel(
+            pressureMb: 990,
+            heightMslM: 320,
+            temperatureC: 29.6,
+            dewpointC: 16.4,
+            uWindMs: -1.4,
+            vWindMs: 3.8
+        )
+
+        #expect(throws: AnvilProfileRequestBuilderError.self) {
+            _ = try builder.build(
+                h3Cell: 617_700_169_958_293_503,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+                forecastHour: 3,
+                surfaceLevel: surfaceLevel,
+                groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
+            )
+        }
+    }
+
+    @Test("surface height must be below the first retained pressure level")
+    func invalidSurfaceHeightIsRejected() {
+        let surfaceLevel = makeSurfaceLevel(
+            pressureMb: 1_012,
+            heightMslM: 1_200
+        )
+
+        #expect(throws: AnvilProfileRequestBuilderError.self) {
+            _ = try makeBuilder().build(
+                h3Cell: 617_700_169_958_293_503,
+                runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
+                forecastHour: 3,
+                surfaceLevel: surfaceLevel,
+                groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
             )
         }
     }
@@ -143,6 +240,7 @@ struct AnvilProfileRequestBuilderTests {
                 h3Cell: 0,
                 runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
                 forecastHour: 3,
+                surfaceLevel: makeSurfaceLevel(),
                 groupedProfile: makeGroupingResult(levels: makeFiveLevelProfile())
             )
         }
@@ -165,6 +263,7 @@ struct AnvilProfileRequestBuilderTests {
             h3Cell: 617_700_169_958_293_503,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
             forecastHour: 3,
+            surfaceLevel: makeSurfaceLevel(),
             groupedProfile: grouping
         )
 
@@ -181,7 +280,7 @@ struct AnvilProfileRequestBuilderTests {
                 return false
             }
         }))
-        #expect(result.request.profile.pressureMb.count == 5)
+        #expect(result.request.profile.pressureMb.count == 6)
     }
 
     @Test("dropped levels are surfaced as quality warnings")
@@ -201,6 +300,7 @@ struct AnvilProfileRequestBuilderTests {
             h3Cell: 617_700_169_958_293_503,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
             forecastHour: 3,
+            surfaceLevel: makeSurfaceLevel(),
             groupedProfile: grouping
         )
 
@@ -239,10 +339,14 @@ struct AnvilProfileRequestBuilderTests {
             h3Cell: 617_700_169_958_293_503,
             runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
             forecastHour: 3,
+            surfaceLevel: makeSurfaceLevel(
+                pressureMb: 940,
+                heightMslM: 1_300
+            ),
             groupedProfile: grouping
         )
 
-        #expect(result.request.profile.pressureMb == [925, 850, 700, 600, 500])
+        #expect(result.request.profile.pressureMb == [940, 925, 850, 700, 600, 500])
         #expect(result.warnings.contains(where: { warning in
             if case .droppedLevels(let levels) = warning {
                 return levels == grouping.droppedLevels
@@ -253,6 +357,24 @@ struct AnvilProfileRequestBuilderTests {
 
     private func makeBuilder() -> AnvilProfileRequestBuilder {
         AnvilProfileRequestBuilder()
+    }
+
+    private func makeSurfaceLevel(
+        pressureMb: Double = 1_012.4,
+        heightMslM: Double = 320,
+        temperatureC: Double = 29.6,
+        dewpointC: Double = 16.4,
+        uWindMs: Double = -1.4,
+        vWindMs: Double = 3.8
+    ) -> StormSetupSurfaceProfileLevel {
+        StormSetupSurfaceProfileLevel(
+            pressureMb: pressureMb,
+            heightMslM: heightMslM,
+            temperatureC: temperatureC,
+            dewpointC: dewpointC,
+            uWindMs: uWindMs,
+            vWindMs: vWindMs
+        )
     }
 
     private func makeFiveLevelProfile() -> [StormSetupPressureProfileLevel] {

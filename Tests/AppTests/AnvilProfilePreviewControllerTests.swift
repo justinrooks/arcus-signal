@@ -141,6 +141,8 @@ struct AnvilProfilePreviewControllerTests {
                     "selectedPressureLevels",
                     "sourceKind",
                     "subsetCacheHit",
+                    "surfacePressureMb",
+                    "surfaceSubsetCacheHit",
                     "totalSelectedRangeBytes",
                     "validTime",
                     "warnings"
@@ -149,12 +151,9 @@ struct AnvilProfilePreviewControllerTests {
         }
     }
 
-    @Test("forwards the selected surface height from storm setup to preview generation")
-    func forwardsSelectedSurfaceHeightToPreviewProvider() async throws {
+    @Test("routes preview requests to the provider without extra snapshot lookups")
+    func routesPreviewRequestsToTheProvider() async throws {
         try await withApp(debugEndpointsEnabled: true) { app in
-            let snapshot = makeSnapshot(surfaceHeightMslM: 1675.14)
-            app.stormSetupProvider = StaticStormSetupProvider(snapshot: snapshot)
-
             let previewProvider = CapturingAnvilProfilePreviewProvider(
                 response: makePreviewResponse()
             )
@@ -164,7 +163,7 @@ struct AnvilProfilePreviewControllerTests {
                 #expect(res.status == .ok)
             }
 
-            #expect(await previewProvider.recordedSurfaceHeightMslM == 1675.14)
+            #expect(await previewProvider.requestCount == 1)
         }
     }
 
@@ -225,7 +224,7 @@ struct AnvilProfilePreviewControllerTests {
                 makeLevel(pressureMb: 400, heightMslM: 7100, temperatureC: -14.4, dewpointC: -20.8, uWindMs: -23.5, vWindMs: 27.8),
                 makeLevel(pressureMb: 300, heightMslM: 9300, temperatureC: -27.0, dewpointC: -32.8, uWindMs: -28.9, vWindMs: 31.4)
             ],
-            missingLevels: makeMissingLevels(excluding: [1000, 925, 850, 700, 600, 500, 400, 300])
+            surfaceHeightMslM: 1_234
         )
 
         let builder = AnvilProfileRequestBuilder()
@@ -233,6 +232,7 @@ struct AnvilProfilePreviewControllerTests {
             h3Cell: h3Cell,
             runTime: runTime,
             forecastHour: forecastHour,
+            surfaceLevel: previewMakeSurfaceLevel(),
             groupedProfile: grouping
         ).request
         let debug = AnvilAnalyzeProfilePreviewDebugDTO(
@@ -244,11 +244,13 @@ struct AnvilProfilePreviewControllerTests {
             h3: request.location.h3,
             centroid: request.location.centroid,
             selectedMessageCount: 5,
-            selectedPressureLevels: [1000],
+            selectedPressureLevels: [925, 850, 700, 600, 500, 400, 300],
+            surfacePressureMb: 940,
+            surfaceSubsetCacheHit: false,
             rangeCount: 5,
             totalSelectedRangeBytes: 1024,
-            pressureLevelsRequested: [1000],
-            pressureLevelsRetained: grouping.retainedLevels.map(\.pressureMb),
+            pressureLevelsRequested: [1000, 925, 850, 700, 600, 500, 400, 300],
+            pressureLevelsRetained: grouping.retainedLevels.map { $0.pressureMb },
             missingLevels: [],
             warnings: [makeDroppedLevelsWarning(from: grouping.missingLevels)],
             subsetCacheHit: false,
@@ -283,80 +285,17 @@ private actor StaticStormSetupProvider: StormSetupProviding {
 
 private actor CapturingAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
     private let response: AnvilAnalyzeProfilePreviewResponse
-    private(set) var recordedSurfaceHeightMslM: Double?
+    private(set) var requestCount = 0
 
     init(response: AnvilAnalyzeProfilePreviewResponse) {
         self.response = response
     }
 
-    func previewProfile(
-        for h3Cell: Int64,
-        surfaceHeightMslM: Double?
-    ) async throws -> AnvilAnalyzeProfilePreviewResponse {
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
         _ = h3Cell
-        recordedSurfaceHeightMslM = surfaceHeightMslM
+        requestCount += 1
         return response
     }
-}
-
-private func makeSnapshot(surfaceHeightMslM: Double?) -> TornadoIngredientSnapshot {
-    TornadoIngredientSnapshot(
-        h3Cell: 617_700_169_958_293_503,
-        centroid: StormSetupCentroid(latitude: 39.7392, longitude: -104.9903),
-        source: StormSetupSourceMetadata(
-            model: .hrrr,
-            product: .wrfsfc,
-            domain: .conus,
-            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
-            forecastHour: 3,
-            validTime: previewMakeUTCDate(year: 2026, month: 6, day: 20, hour: 1),
-            fieldSetVersion: .tornadoV1
-        ),
-        raw: TornadoRawParameters(
-            sbcapeJkg: nil,
-            mlcapeJkg: nil,
-            mucapeJkg: nil,
-            mlcinJkg: nil,
-            dcapeJkg: nil,
-            mllclM: nil,
-            tempDewPtDeltaF: nil,
-            threeCapeJkg: nil,
-            lclLfcSeparationM: nil,
-            lapseRate03kmCkm: nil,
-            lapseRate700500mbCkm: nil,
-            shear06kmKt: nil,
-            shear03kmKt: nil,
-            shear01kmKt: nil,
-            effectiveShearKt: nil,
-            srh01kmM2s2: nil,
-            srh03kmM2s2: nil,
-            effectiveSrhM2s2: nil,
-            supercellComposite: nil,
-            significantTornadoFixed: nil,
-            significantTornadoEffective: nil,
-            significantHail: nil,
-            bunkersRightMotion: nil,
-            bunkersLeftMotion: nil,
-            stormRelativeWind46km: nil,
-            meanWind850300mb: nil,
-            diagnostics: nil
-        ),
-        surfaceHeightMslM: surfaceHeightMslM,
-        assessment: makeAssessment(),
-        freshness: IngredientFreshness.make(
-            source: StormSetupSourceMetadata(
-                model: .hrrr,
-                product: .wrfsfc,
-                domain: .conus,
-                runTime: previewMakeUTCDate(year: 2026, month: 6, day: 19, hour: 22),
-                forecastHour: 3,
-                validTime: previewMakeUTCDate(year: 2026, month: 6, day: 20, hour: 1),
-                fieldSetVersion: .tornadoV1
-            ),
-            fetchedAt: previewMakeUTCDate(year: 2026, month: 6, day: 20, hour: 1)
-        ),
-        anvilEvidence: nil
-    )
 }
 
 private func makeAssessment() -> TornadoIngredientAssessment {
@@ -381,18 +320,47 @@ private func makeAssessment() -> TornadoIngredientAssessment {
 
 private func makeGroupingResult(
     levels: [StormSetupPressureProfileLevel],
-    missingLevels: [StormSetupPressureProfileMissingLevel] = []
+    missingLevels: [StormSetupPressureProfileMissingLevel] = [],
+    surfaceHeightMslM: Double? = nil
 ) -> StormSetupPressureProfileGroupingResult {
-    let droppedLevels = missingLevels.map { missingLevel in
-        StormSetupPressureProfileDroppedLevel(
-            pressureMb: missingLevel.pressureMb,
-            reason: .incomplete(missingVariables: missingLevel.missingVariables)
-        )
+    let retainedLevels: [StormSetupPressureProfileLevel]
+    let droppedLevels: [StormSetupPressureProfileDroppedLevel]
+
+    if let surfaceHeightMslM {
+        let retained = levels.filter { $0.heightMslM > surfaceHeightMslM + 1 }
+        let dropped = levels
+            .filter { $0.heightMslM <= surfaceHeightMslM + 1 }
+            .map {
+                StormSetupPressureProfileDroppedLevel(
+                    pressureMb: $0.pressureMb,
+                    reason: .belowGround(
+                        surfaceHeightMslM: surfaceHeightMslM,
+                        levelHeightMslM: $0.heightMslM,
+                        toleranceM: 1
+                    )
+                )
+            }
+
+        retainedLevels = retained
+        droppedLevels = dropped + missingLevels.map { missingLevel in
+            StormSetupPressureProfileDroppedLevel(
+                pressureMb: missingLevel.pressureMb,
+                reason: .incomplete(missingVariables: missingLevel.missingVariables)
+            )
+        }
+    } else {
+        retainedLevels = levels
+        droppedLevels = missingLevels.map { missingLevel in
+            StormSetupPressureProfileDroppedLevel(
+                pressureMb: missingLevel.pressureMb,
+                reason: .incomplete(missingVariables: missingLevel.missingVariables)
+            )
+        }
     }
 
     return StormSetupPressureProfileGroupingResult(
         requestedLevels: StormSetupPressureLevel.preferredDescending,
-        retainedLevels: levels,
+        retainedLevels: retainedLevels,
         missingLevels: missingLevels,
         droppedLevels: droppedLevels,
         ignoredSamples: []

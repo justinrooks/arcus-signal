@@ -16,6 +16,8 @@ struct AnvilAnalyzeProfilePreviewDebugDTO: Content, Sendable, Equatable {
     let centroid: StormSetupCentroid
     let selectedMessageCount: Int
     let selectedPressureLevels: [Int]
+    let surfacePressureMb: Double
+    let surfaceSubsetCacheHit: Bool
     let rangeCount: Int
     let totalSelectedRangeBytes: Int64
     let pressureLevelsRequested: [Int]

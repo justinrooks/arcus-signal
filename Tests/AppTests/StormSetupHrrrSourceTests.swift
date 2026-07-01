@@ -120,6 +120,35 @@ struct StormSetupHrrrSourceTests {
         #expect(!urlString.contains("latest"))
     }
 
+    @Test("NOMADS URL builder includes the Anvil surface row field set")
+    func urlBuilderIncludesAnvilSurfaceFieldSet() throws {
+        let candidate = HrrrRunCandidate(
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9,
+            fieldSetVersion: .anvilSurfaceV1
+        )
+        let centroid = StormSetupCentroid(latitude: 39.7825, longitude: -104.4661)
+        let builder = HrrrNomadsURLBuilder()
+
+        let metadata = builder.makeSourceMetadata(for: candidate, around: centroid)
+        let urlString = metadata.primaryDownloadURL?.absoluteString ?? ""
+
+        #expect(metadata.fieldSetVersion == .anvilSurfaceV1)
+        #expect(urlString.contains("/cgi-bin/filter_hrrr_2d.pl"))
+        #expect(urlString.contains("file=hrrr.t13z.wrfsfcf09.grib2"))
+        #expect(urlString.contains("var_PRES=on"))
+        #expect(urlString.contains("var_HGT=on"))
+        #expect(urlString.contains("var_TMP=on"))
+        #expect(urlString.contains("var_DPT=on"))
+        #expect(urlString.contains("var_UGRD=on"))
+        #expect(urlString.contains("var_VGRD=on"))
+        #expect(urlString.contains("lev_surface=on"))
+        #expect(urlString.contains("lev_2_m_above_ground=on"))
+        #expect(urlString.contains("lev_10_m_above_ground=on"))
+        #expect(!urlString.contains("var_CAPE=on"))
+        #expect(!urlString.contains("lev_90-0_mb_above_ground=on"))
+    }
+
     @Test("NOMADS URL builder includes pressure-level variables and levels")
     func urlBuilderIncludesPressureFieldSet() throws {
         let candidate = HrrrRunCandidate(

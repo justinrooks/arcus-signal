@@ -118,6 +118,8 @@ Implement only the current issue's scope.
 - Resolve H3 to centroid latitude/longitude internally before sampling.
 - Use `wgrib2 -s -lon` through the existing wrapper for point decoding.
 - Return missing/unavailable fields as missing diagnostics, not fake zeroes.
+- Build one exact-cycle `wrfsfc` surface row matching the pressure source run time, forecast hour, and valid time.
+- Require finite `PRES`, `HGT`, `TMP`, `DPT`, `UGRD`, and `VGRD` values before Anvil request assembly.
 - Normalize units explicitly:
   - temperature/dewpoint in Celsius for Anvil profile DTOs
   - wind components in meters per second unless Anvil contract says otherwise
@@ -127,6 +129,7 @@ Implement only the current issue's scope.
 - Add offline deterministic tests for each slice.
 - Run the narrowest meaningful verification before finishing.
 - Update `docs/plans/hrrr-pressure-profile-progress.md` before finishing.
+- Any development-only preview diagnostics for exact-cycle surface data must stay out of `storm-setup/current` and must not dump full arrays or raw coordinates.
 
 ### Forbidden
 
@@ -139,6 +142,7 @@ Implement only the current issue's scope.
 - Do not describe outputs as tornado prediction, hail prediction, probability, or risk score.
 - Do not add a broad NOAA provider framework.
 - Do not use live HRRR, live NOMADS, live AWS, or live Anvil calls in unit tests.
+- Do not fabricate a surface row or substitute another HRRR run when exact-cycle surface data is unavailable.
 - Do not close or rewrite unrelated notification/APNs/NWS issues as part of pressure-profile work.
 
 If a future-facing seam is required, keep it:

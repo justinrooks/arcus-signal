@@ -32,12 +32,10 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
         )
 
         let scp = response.scp.map { AnvilIngredientMetricEvidence(support: Self.supportBand(forSCP: $0)) }
-
         let stpSupports = [response.stpCin, response.stpFixed]
             .compactMap { $0 }
             .map(Self.supportBand(forSTP:))
         let stp = stpSupports.max().map { AnvilIngredientMetricEvidence(support: $0) }
-
         let ship = response.ship.map { AnvilIngredientMetricEvidence(support: Self.supportBand(forSHIP: $0)) }
         let supportCount = [scp, stp, ship].compactMap { $0 }.count
 
@@ -65,7 +63,7 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
         )
     }
 
-    private init(
+    init(
         status: AnvilIngredientEvidenceStatus,
         reason: String?,
         scp: AnvilIngredientMetricEvidence?,
@@ -95,40 +93,28 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
 
     private static func supportBand(forSCP value: Double) -> IngredientSupport {
         switch value {
-        case ..<0.5:
-            return .weak
-        case ..<1.5:
-            return .conditional
-        case ..<3:
-            return .supportive
-        default:
-            return .strong
+        case ..<0.5: return .weak
+        case ..<1.5: return .conditional
+        case ..<3: return .supportive
+        default: return .strong
         }
     }
 
     private static func supportBand(forSTP value: Double) -> IngredientSupport {
         switch value {
-        case ..<0.5:
-            return .weak
-        case ..<1.25:
-            return .conditional
-        case ..<2.5:
-            return .supportive
-        default:
-            return .strong
+        case ..<0.5: return .weak
+        case ..<1.25: return .conditional
+        case ..<2.5: return .supportive
+        default: return .strong
         }
     }
 
     private static func supportBand(forSHIP value: Double) -> IngredientSupport {
         switch value {
-        case ..<0.5:
-            return .weak
-        case ..<1:
-            return .conditional
-        case ..<2:
-            return .supportive
-        default:
-            return .strong
+        case ..<0.5: return .weak
+        case ..<1: return .conditional
+        case ..<2: return .supportive
+        default: return .strong
         }
     }
 }
