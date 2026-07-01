@@ -604,7 +604,7 @@ struct PressureArtifactDiagnosticsTests {
                 ),
                 fetchedAt: now,
                 cacheHit: true,
-                samples: previewMakeSurfaceSamples()
+                surfaceLevel: previewMakeSurfaceLevel()
             )
         }
         let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, centroid, surfaceHeightMslM in
@@ -645,7 +645,7 @@ struct PressureArtifactDiagnosticsTests {
         #expect(metadataString(sourceSelected.metadata, "surfaceSourceForecastHour") == String(expectedSurfaceCandidate.forecastHour))
         #expect(metadataString(sourceSelected.metadata, "surfaceSourceValidTime") == expectedSurfaceCandidate.validTime.ISO8601Format())
         #expect(metadataString(sourceSelected.metadata, "surfaceStage") == "selected")
-        #expect(metadataString(rowIncluded.metadata, "surfacePressureMb") == "940")
+        #expect(metadataString(rowIncluded.metadata, "surfacePressureMb") == "940.0")
         #expect(metadataString(rowIncluded.metadata, "surfaceSubsetCacheHit") == "true")
         #expect(metadataString(rowIncluded.metadata, "surfaceRowIncluded") == "true")
         #expect(preview.debug.surfacePressureMb == 940)
@@ -692,7 +692,7 @@ struct PressureArtifactDiagnosticsTests {
                 ),
                 fetchedAt: now,
                 cacheHit: false,
-                samples: previewMakeSurfaceSamples()
+                surfaceLevel: previewMakeSurfaceLevel()
             )
         }
         let pressureProfileLoader = PreviewStubPressureProfileLoader { _, _, _, _ in

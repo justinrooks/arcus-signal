@@ -62,7 +62,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         self.h3Resolver = h3Resolver
         self.hrrrRunResolver = hrrrRunResolver ?? DefaultHrrrRunResolver(dateProvider: dateProvider)
         self.pressureArtifactCatalogLookupService = pressureArtifactCatalogLookupService
-        self.surfaceProfileLoader = surfaceProfileLoader ?? DefaultSyntheticAnvilSurfaceProfileLoader()
+        self.surfaceProfileLoader = surfaceProfileLoader ?? DefaultUnavailableAnvilSurfaceProfileLoader()
         self.pressureSourceResolver = pressureSourceResolver
         self.pressureProfileLoader = pressureProfileLoader
         self.requestBuilder = AnvilProfileRequestBuilder(h3Resolver: h3Resolver)
@@ -523,6 +523,18 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 for: inputResolution,
                 around: centroid
             )
+        } catch let error as AnvilSurfaceProfileNormalizationError {
+            logger.warning(
+                "Anvil preview exact-cycle surface row rejected.",
+                metadata: surfaceDiagnosticsMetadata(
+                    pressureSource: sourceCandidate,
+                    surfaceCandidate: expectedSurfaceCandidate,
+                    surfaceStage: .incomplete,
+                    surfaceRowIncluded: false,
+                    reason: error.description
+                )
+            )
+            throw AnvilProfilePreviewError.unusableProfile(reason: error.description)
         } catch let error as AnvilProfilePreviewError {
             logger.warning(
                 "Anvil preview exact-cycle surface row rejected.",
@@ -568,22 +580,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             )
         }
 
-        guard let surfaceLevel = makeSurfaceLevel(from: loadResult.samples) else {
-            logger.warning(
-                "Anvil preview exact-cycle surface row rejected.",
-                metadata: surfaceDiagnosticsMetadata(
-                    pressureSource: sourceCandidate,
-                    surfaceCandidate: expectedSurfaceCandidate,
-                    surfaceStage: .incomplete,
-                    surfaceSubsetCacheHit: loadResult.subsetCacheResult.cacheHit,
-                    surfaceRowIncluded: false,
-                    reason: "Matching surface profile was incomplete. Missing or invalid surface fields were not reported."
-                )
-            )
-            throw AnvilProfilePreviewError.unusableProfile(
-                reason: "Matching surface profile was incomplete. Missing or invalid surface fields were not reported."
-            )
-        }
+        let surfaceLevel = loadResult.surfaceLevel
 
         logger.info(
             "Anvil preview exact-cycle surface row included.",
@@ -600,78 +597,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         return SurfaceLevelLoadResult(
             level: surfaceLevel,
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit
-        )
-    }
-
-    private func makeSurfaceLevel(
-        from samples: [HrrrFieldSample]
-    ) -> StormSetupPressureProfileLevel? {
-        struct Draft {
-            var pressureMb: Double?
-            var heightMslM: Double?
-            var temperatureC: Double?
-            var dewpointC: Double?
-            var uWindMs: Double?
-            var vWindMs: Double?
-        }
-
-        var draft = Draft()
-
-        for sample in samples {
-            let point = sample.point
-            guard let descriptor = point.inventoryDescriptor, let value = point.value else {
-                continue
-            }
-
-            let variable = descriptor.variable.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            let level = descriptor.level.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-            switch (variable, level) {
-            case ("PRES", "surface"):
-                if draft.pressureMb == nil {
-                    draft.pressureMb = value / 100
-                }
-            case ("HGT", "surface"):
-                if draft.heightMslM == nil {
-                    draft.heightMslM = value
-                }
-            case ("TMP", "2 m above ground"):
-                if draft.temperatureC == nil {
-                    draft.temperatureC = value - 273.15
-                }
-            case ("DPT", "2 m above ground"):
-                if draft.dewpointC == nil {
-                    draft.dewpointC = value - 273.15
-                }
-            case ("UGRD", "10 m above ground"):
-                if draft.uWindMs == nil {
-                    draft.uWindMs = value
-                }
-            case ("VGRD", "10 m above ground"):
-                if draft.vWindMs == nil {
-                    draft.vWindMs = value
-                }
-            default:
-                continue
-            }
-        }
-
-        guard let pressureMb = draft.pressureMb,
-              let heightMslM = draft.heightMslM,
-              let temperatureC = draft.temperatureC,
-              let dewpointC = draft.dewpointC,
-              let uWindMs = draft.uWindMs,
-              let vWindMs = draft.vWindMs else {
-            return nil
-        }
-
-        return StormSetupPressureProfileLevel(
-            pressureMb: Int(pressureMb.rounded()),
-            heightMslM: heightMslM,
-            temperatureC: temperatureC,
-            dewpointC: dewpointC,
-            uWindMs: uWindMs,
-            vWindMs: vWindMs
         )
     }
 
@@ -723,6 +648,13 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         case .pressureNotStrictlyDescending(let previousPressureMb, let pressureMb):
             return .unusableProfile(
                 reason: "Pressure levels were not strictly descending: \(previousPressureMb) then \(pressureMb). \(droppedSummary)"
+            )
+        case .surfaceHeightNotBelowFirstPressureLevel(
+            let surfaceHeightMslM,
+            let firstPressureLevelHeightMslM
+        ):
+            return .unusableProfile(
+                reason: "Surface height \(surfaceHeightMslM)m was not below the first retained pressure-level height \(firstPressureLevelHeightMslM)m. \(droppedSummary)"
             )
         }
     }
@@ -838,7 +770,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         surfaceCandidate: HrrrRunCandidate,
         surfaceStage: SurfaceDiagnosticsStage,
         surfaceSubsetCacheHit: Bool? = nil,
-        surfacePressureMb: Int? = nil,
+        surfacePressureMb: Double? = nil,
         surfaceRowIncluded: Bool? = nil,
         reason: String? = nil
     ) -> Logger.Metadata {
@@ -876,7 +808,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 }
 
 private struct SurfaceLevelLoadResult: Sendable {
-    let level: StormSetupPressureProfileLevel
+    let level: StormSetupSurfaceProfileLevel
     let subsetCacheHit: Bool
 }
 
@@ -903,76 +835,15 @@ private struct AnvilProfilePreviewProviderKey: StorageKey {
     typealias Value = any AnvilProfilePreviewProviding
 }
 
-private struct DefaultSyntheticAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
+private struct DefaultUnavailableAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
     func loadSurfaceProfile(
         for resolution: HrrrRunResolution,
         around centroid: StormSetupCentroid
     ) async throws -> HrrrAnvilSurfaceProfileLoadResult {
-        guard let primaryCandidate = resolution.primaryCandidate else {
-            throw AnvilProfilePreviewError.upstreamUnavailable(
-                reason: "No HRRR surface candidate was available for the preview run."
-            )
-        }
-
-        let surfaceCandidate = HrrrRunCandidate(
-            model: primaryCandidate.model,
-            product: .wrfsfc,
-            domain: primaryCandidate.domain,
-            runTime: primaryCandidate.runTime,
-            forecastHour: primaryCandidate.forecastHour,
-            fieldSetVersion: .anvilSurfaceV1
-        )
-        let sourceResolution = HrrrRunResolution(
-            targetValidTime: resolution.targetValidTime,
-            candidates: [surfaceCandidate]
-        )
-        let source = HrrrNomadsURLBuilder().makeSourceMetadata(
-            for: surfaceCandidate,
-            around: centroid
-        )
-
-        return HrrrAnvilSurfaceProfileLoadResult(
-            sourceResolution: sourceResolution,
-            subsetCacheResult: GribSubsetCacheResult(
-                source: source,
-                localFileURL: URL(fileURLWithPath: "/private/tmp/arcus-signal-synthetic-surface.grib2"),
-                byteSize: 1_024,
-                fetchedAt: Date(),
-                expiresAt: Date().addingTimeInterval(3_600),
-                cacheHit: false
-            ),
-            samples: [
-                HrrrFieldSample(
-                    requestedLongitude: centroid.longitude,
-                    requestedLatitude: centroid.latitude,
-                    point: Wgrib2PointSample.parse(from: "1:0:d=2026060313:PRES:surface:9 hour fcst:lon=-104.47,lat=39.79,val=94000")
-                ),
-                HrrrFieldSample(
-                    requestedLongitude: centroid.longitude,
-                    requestedLatitude: centroid.latitude,
-                    point: Wgrib2PointSample.parse(from: "2:0:d=2026060313:HGT:surface:9 hour fcst:lon=-104.47,lat=39.79,val=1234")
-                ),
-                HrrrFieldSample(
-                    requestedLongitude: centroid.longitude,
-                    requestedLatitude: centroid.latitude,
-                    point: Wgrib2PointSample.parse(from: "3:0:d=2026060313:TMP:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=295.15")
-                ),
-                HrrrFieldSample(
-                    requestedLongitude: centroid.longitude,
-                    requestedLatitude: centroid.latitude,
-                    point: Wgrib2PointSample.parse(from: "4:0:d=2026060313:DPT:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=289.15")
-                ),
-                HrrrFieldSample(
-                    requestedLongitude: centroid.longitude,
-                    requestedLatitude: centroid.latitude,
-                    point: Wgrib2PointSample.parse(from: "5:0:d=2026060313:UGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-4.25")
-                ),
-                HrrrFieldSample(
-                    requestedLongitude: centroid.longitude,
-                    requestedLatitude: centroid.latitude,
-                    point: Wgrib2PointSample.parse(from: "6:0:d=2026060313:VGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=6.5")
-                )
-            ]
+        _ = resolution
+        _ = centroid
+        throw AnvilProfilePreviewError.internalExecutionFailure(
+            reason: "An HRRR surface profile loader was not configured."
         )
     }
 }

@@ -232,7 +232,7 @@ struct AnvilProfilePreviewControllerTests {
             h3Cell: h3Cell,
             runTime: runTime,
             forecastHour: forecastHour,
-            surfaceLevel: makeLevel(pressureMb: 940, heightMslM: 1_234, temperatureC: 22.0, dewpointC: 16.0, uWindMs: -4.25, vWindMs: 6.5),
+            surfaceLevel: previewMakeSurfaceLevel(),
             groupedProfile: grouping
         ).request
         let debug = AnvilAnalyzeProfilePreviewDebugDTO(

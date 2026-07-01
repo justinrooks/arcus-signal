@@ -52,9 +52,7 @@ struct HrrrAnvilSurfaceProfileLoadingTests {
             #expect(subset.source.fieldSetVersion == .anvilSurfaceV1)
             #expect(subset.byteSize == 1_024)
             #expect(requestCentroid == centroid)
-            return [
-                previewSample("1:0:d=2026060313:HGT:1000 mb:9 hour fcst:lon=-104.47,lat=39.79,val=100")
-            ]
+            return previewMakeSurfaceSamples(pressurePa: 94_040)
         }
         let loader = DefaultHrrrAnvilSurfaceProfileLoader(
             subsetLoader: subsetLoader,
@@ -68,7 +66,8 @@ struct HrrrAnvilSurfaceProfileLoadingTests {
 
         #expect(result.sourceResolution.candidates == [expectedSurfaceCandidate])
         #expect(result.subsetCacheResult.cacheHit == false)
-        #expect(result.samples.count == 1)
+        #expect(result.surfaceLevel.pressureMb == 940.4)
+        #expect(result.surfaceLevel.heightMslM == 1_234)
     }
 
     @Test("loader preserves cancellation and does not advance to another cycle")

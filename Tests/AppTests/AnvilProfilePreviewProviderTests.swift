@@ -55,6 +55,7 @@ struct AnvilProfilePreviewProviderTests {
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
             ),
             pressureArtifactCatalogLookupService: lookupService,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -150,6 +151,7 @@ struct AnvilProfilePreviewProviderTests {
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [firstCandidate, secondCandidate])
             ),
             pressureArtifactCatalogLookupService: lookupService,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -222,6 +224,7 @@ struct AnvilProfilePreviewProviderTests {
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
             ),
             pressureArtifactCatalogLookupService: lookupService,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -270,6 +273,7 @@ struct AnvilProfilePreviewProviderTests {
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
             ),
             pressureArtifactCatalogLookupService: lookupService,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -328,6 +332,7 @@ struct AnvilProfilePreviewProviderTests {
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
             ),
             pressureArtifactCatalogLookupService: lookupService,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -448,6 +453,7 @@ struct AnvilProfilePreviewProviderTests {
             hrrrRunResolver: PreviewStaticHrrrRunResolver(
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [firstCandidate, secondCandidate])
             ),
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -564,6 +570,7 @@ struct AnvilProfilePreviewProviderTests {
             h3Resolver: DefaultStormSetupH3Resolver(),
             dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
             hrrrRunResolver: resolver,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -615,6 +622,7 @@ struct AnvilProfilePreviewProviderTests {
             h3Resolver: DefaultStormSetupH3Resolver(),
             dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
             hrrrRunResolver: resolver,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -664,7 +672,7 @@ struct AnvilProfilePreviewProviderTests {
                     candidates: [mismatchCandidate]
                 ),
                 fetchedAt: now,
-                samples: previewMakeSurfaceSamples()
+                surfaceLevel: previewMakeSurfaceLevel()
             )
         }
 
@@ -806,7 +814,7 @@ struct AnvilProfilePreviewProviderTests {
                     )]
                 ),
                 fetchedAt: now,
-                samples: previewMakeSurfaceSamples(
+                surfaceLevel: previewMakeSurfaceLevel(
                     heightMslM: 2_450
                 )
             )
@@ -910,6 +918,7 @@ struct AnvilProfilePreviewProviderTests {
             h3Resolver: DefaultStormSetupH3Resolver(),
             dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
             hrrrRunResolver: resolver,
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: pressureSourceResolver,
             pressureProfileLoader: pressureProfileLoader
         )
@@ -994,6 +1003,7 @@ struct AnvilProfilePreviewProviderTests {
             hrrrRunResolver: PreviewStaticHrrrRunResolver(
                 resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [candidate])
             ),
+            surfaceProfileLoader: previewMakeExactCycleSurfaceProfileLoader(fetchedAt: now),
             pressureSourceResolver: PreviewStubPressureSourceResolver { _, resolution in
                 guard let candidate = resolution.candidates.first else {
                     throw AnvilProfilePreviewError.internalExecutionFailure(

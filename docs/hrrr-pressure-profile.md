@@ -25,6 +25,20 @@ It is not a new design proposal. It records the finished byte-range implementati
 - The server does not store raw user lat/lon for this path.
 - The Anvil result is used as supporting evidence inside Storm Setup, not as a separate prediction product.
 
+## Exact-Cycle Surface Row
+
+Every Anvil profile begins with one surface row sampled from the HRRR `wrfsfc` product. The surface source must match the selected pressure artifact's model, domain, run time, forecast hour, and valid time. Arcus Signal does not substitute another cycle.
+
+The dedicated `anvil-surface-v1` field set selects:
+
+- `PRES` and `HGT` at `surface`
+- `TMP` and `DPT` at `2 m above ground`
+- `UGRD` and `VGRD` at `10 m above ground`
+
+The loader deterministically selects the first matching value for each field, converts pressure from Pa to mb and temperature/dewpoint from K to Celsius, and requires all six values to be finite. Invalid pressure sentinel values are rejected. The normalized surface pressure remains a `Double`; it is not rounded to a standard pressure level.
+
+The request builder requires this complete surface row in addition to at least five retained pressure levels. Surface pressure must be greater than the first pressure-level pressure, and surface height must be lower than the first pressure-level height.
+
 ## Runtime Configuration
 
 ### Shared Storm Setup
@@ -71,6 +85,8 @@ When the path fails, the useful signals are:
   - Reported as upstream unavailability.
 - Missing required pressure levels
   - Reported as an unusable profile, not a fabricated profile.
+- Missing or invalid exact-cycle surface fields
+  - Reported as an unusable profile with the affected `PRES`, `HGT`, `TMP`, `DPT`, `UGRD`, or `VGRD` field names.
 - Partial-content download problems
   - The byte-range downloader expects valid partial-content responses and rejects ignored-range behavior.
 - `wgrib2` execution failure
@@ -89,6 +105,8 @@ The preview and analysis debug payloads should be used to inspect selected messa
 
 - No live HRRR, NOMADS, or Anvil calls should be used in unit tests.
 - There is no fallback from byte-range downloads to whole-file pressure downloads.
+- There is no cross-cycle or fabricated fallback for a missing exact-cycle surface row.
+- Surface-row failure stops profile assembly before Anvil dispatch.
 - Pressure-level tuning remains a product decision, not a transport contract.
 - Anvil severe-weather values are internal ingredient evidence, not user-facing tornado prediction language.
 - Anvil profile-analysis POSTs are intentionally non-retrying to avoid duplicate upstream compute.

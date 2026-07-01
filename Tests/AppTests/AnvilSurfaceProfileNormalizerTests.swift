@@ -4,122 +4,67 @@ import Testing
 
 @Suite("Anvil surface profile normalizer", .serialized)
 struct AnvilSurfaceProfileNormalizerTests {
-    @Test("response values normalize into stable evidence bands and diagnostics")
-    func responseValuesNormalizeIntoStableEvidenceBandsAndDiagnostics() {
-        let evidence = AnvilSurfaceProfileNormalizer().normalize(response: makeResponse(
-            scp: 0.2130911716615775,
-            stpCin: 0.0,
-            stpFixed: 2.4,
-            ship: 0.6,
-            profileLevelCount: 20,
-            warnings: []
-        ))
-
-        #expect(evidence.scp?.support == .weak)
-        #expect(evidence.stp?.support == .supportive)
-        #expect(evidence.ship?.support == .conditional)
-        #expect(evidence.status == .available)
-        #expect(evidence.reason == nil)
-        #expect(evidence.diagnostics.hasEffectiveLayer)
-        #expect(evidence.diagnostics.hasStormMotion)
-        #expect(evidence.diagnostics.qualityProfileLevelCount == 20)
-        #expect(evidence.diagnostics.warnings.isEmpty)
-        #expect(!evidence.isDegraded)
-        #expect(evidence.strongestSupport == .supportive)
-    }
-
-    @Test("additional warnings keep the same bands but mark evidence degraded")
-    func additionalWarningsMarkEvidenceDegraded() {
-        let evidence = AnvilSurfaceProfileNormalizer().normalize(
-            response: makeResponse(
-                scp: 4.2,
-                stpCin: 0.0,
-                stpFixed: 3.4,
-                ship: 1.5,
-                profileLevelCount: 20,
-                warnings: []
-            ),
-            additionalWarnings: ["profile cache stale"]
-        )
-
-        #expect(evidence.scp?.support == .strong)
-        #expect(evidence.stp?.support == .strong)
-        #expect(evidence.ship?.support == .supportive)
-        #expect(evidence.status == .degraded)
-        #expect(evidence.reason == nil)
-        #expect(evidence.diagnostics.warnings == ["profile cache stale"])
-        #expect(evidence.isDegraded)
-    }
-
-    @Test("missing values and degraded diagnostics remain visible as degraded evidence")
-    func missingValuesAndDegradedDiagnosticsRemainVisibleAsDegradedEvidence() {
-        let evidence = AnvilSurfaceProfileNormalizer().normalize(response: makeResponse(
-            scp: nil,
-            stpCin: nil,
-            stpFixed: nil,
-            ship: nil,
-            effectiveLayerStatus: "notFound",
-            stormMotionStatus: "notComputed",
-            profileLevelCount: 3,
-            warnings: ["profile incomplete"]
-        ))
-
-        #expect(evidence.scp == nil)
-        #expect(evidence.stp == nil)
-        #expect(evidence.ship == nil)
-        #expect(evidence.status == .degraded)
-        #expect(evidence.supportCount == 0)
-        #expect(evidence.strongestSupport == nil)
-        #expect(evidence.isDegraded)
-        #expect(!evidence.diagnostics.hasEffectiveLayer)
-        #expect(!evidence.diagnostics.hasStormMotion)
-        #expect(evidence.diagnostics.isDegraded)
-    }
-
-    private func makeResponse(
-        scp: Double?,
-        stpCin: Double?,
-        stpFixed: Double?,
-        ship: Double?,
-        effectiveLayerStatus: String = "found",
-        stormMotionStatus: String = "computed",
-        profileLevelCount: Int,
-        warnings: [String]
-    ) -> AnvilAnalyzeProfileResponse {
-        AnvilAnalyzeProfileResponse(
-            effectiveLayer: AnvilEffectiveLayerDTO(
-                status: effectiveLayerStatus,
-                basePressureMb: 1000,
-                topPressureMb: 925,
-                baseMetersAgl: 0,
-                topMetersAgl: 690
-            ),
-            stormMotion: AnvilStormMotionDTO(
-                status: stormMotionStatus,
-                bunkersRight: AnvilBunkersRightStormMotionDTO(
-                    uKt: 36.80394762849837,
-                    vKt: 13.53066796460426,
-                    speedKt: 39.21236458834915,
-                    directionTowardDeg: 69.81446460119884,
-                    uMs: 18.933570033795217,
-                    vMs: 6.960770950382875,
-                    speedMs: 20.172565688288692
-                )
-            ),
-            mucape: 362.1018454649957,
-            mlcape: 191.7304143918497,
-            mlcin: -221.93726424748172,
-            mllclMetersAgl: 1179.4130766012365,
-            effectiveSrh: 29.42420403684148,
-            effectiveBulkShearMs: 30.134722226263612,
-            scp: scp,
-            stpCin: stpCin,
-            stpFixed: stpFixed,
-            ship: ship,
-            quality: AnvilQualityDTO(
-                profileLevelCount: profileLevelCount,
-                warnings: warnings
+    @Test("complete samples normalize units and preserve fractional surface pressure")
+    func completeSamplesNormalizeUnits() throws {
+        let level = try AnvilSurfaceProfileNormalizer().normalize(
+            samples: previewMakeSurfaceSamples(
+                pressurePa: 94_040,
+                heightMslM: 1_234,
+                temperatureK: 295.15,
+                dewpointK: 289.15,
+                uWindMs: -4.25,
+                vWindMs: 6.5
             )
         )
+
+        #expect(level.pressureMb == 940.4)
+        #expect(level.heightMslM == 1_234)
+        #expect(level.temperatureC.isApproximatelyEqual(to: 22))
+        #expect(level.dewpointC.isApproximatelyEqual(to: 16))
+        #expect(level.uWindMs == -4.25)
+        #expect(level.vWindMs == 6.5)
+    }
+
+    @Test("first matching value is selected deterministically")
+    func firstMatchingValueIsSelected() throws {
+        let samples = previewMakeSurfaceSamples(pressurePa: 94_000)
+            + [previewSample("7:0:d=2026060313:PRES:surface:9 hour fcst:lon=-104.47,lat=39.79,val=95000")]
+
+        let level = try AnvilSurfaceProfileNormalizer().normalize(samples: samples)
+
+        #expect(level.pressureMb == 940)
+    }
+
+    @Test("missing and nonfinite fields are reported by name")
+    func missingAndNonfiniteFieldsAreReported() {
+        let samples = previewMakeSurfaceSamples().filter {
+            !["TMP", "VGRD"].contains($0.point.inventoryDescriptor?.variable)
+        }
+        + [previewSample("7:0:d=2026060313:TMP:2 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=nan")]
+
+        do {
+            _ = try AnvilSurfaceProfileNormalizer().normalize(samples: samples)
+            Issue.record("Expected incomplete surface profile rejection.")
+        } catch let error as AnvilSurfaceProfileNormalizationError {
+            #expect(error.invalidFields == [.temperature, .vWind])
+            #expect(error.description.contains("TMP"))
+            #expect(error.description.contains("VGRD"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("out-of-range pressure is rejected without integer conversion")
+    func outOfRangePressureIsRejected() {
+        do {
+            _ = try AnvilSurfaceProfileNormalizer().normalize(
+                samples: previewMakeSurfaceSamples(pressurePa: 9.999e20)
+            )
+            Issue.record("Expected invalid surface pressure rejection.")
+        } catch let error as AnvilSurfaceProfileNormalizationError {
+            #expect(error.invalidFields == [.pressure])
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 }

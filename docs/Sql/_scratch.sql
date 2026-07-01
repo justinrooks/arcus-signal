@@ -164,4 +164,4 @@ SELECT run_time, forecast_hour, valid_time, status, local_path, byte_size, error
    ORDER BY valid_time DESC, updated_at DESC
    LIMIT 10;
 
-DELETE FROM pressure_artifact_catalog where status = 'failed'
+DELETE FROM pressure_artifact_catalog

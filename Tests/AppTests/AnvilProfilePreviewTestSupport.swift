@@ -203,6 +203,33 @@ actor PreviewStubSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
     }
 }
 
+func previewMakeExactCycleSurfaceProfileLoader(
+    fetchedAt: Date,
+    surfaceLevel: StormSetupSurfaceProfileLevel = previewMakeSurfaceLevel()
+) -> PreviewStubSurfaceProfileLoader {
+    PreviewStubSurfaceProfileLoader { _, resolution, _ in
+        guard let sourceCandidate = resolution.primaryCandidate else {
+            throw AnvilProfilePreviewError.internalExecutionFailure(reason: "missing surface source candidate")
+        }
+        let surfaceCandidate = HrrrRunCandidate(
+            model: sourceCandidate.model,
+            product: .wrfsfc,
+            domain: sourceCandidate.domain,
+            runTime: sourceCandidate.runTime,
+            forecastHour: sourceCandidate.forecastHour,
+            fieldSetVersion: .anvilSurfaceV1
+        )
+        return previewMakeSurfaceProfileLoadResult(
+            sourceResolution: HrrrRunResolution(
+                targetValidTime: resolution.targetValidTime,
+                candidates: [surfaceCandidate]
+            ),
+            fetchedAt: fetchedAt,
+            surfaceLevel: surfaceLevel
+        )
+    }
+}
+
 actor PreviewStubStormSetupFieldSampler: StormSetupFieldSampling {
     private let handler: @Sendable (GribSubsetCacheResult, StormSetupCentroid) async throws -> [HrrrFieldSample]
 
@@ -328,7 +355,7 @@ func previewMakeSurfaceProfileLoadResult(
     sourceResolution: HrrrRunResolution,
     fetchedAt: Date,
     cacheHit: Bool = false,
-    samples: [HrrrFieldSample]? = nil
+    surfaceLevel: StormSetupSurfaceProfileLevel = previewMakeSurfaceLevel()
 ) -> HrrrAnvilSurfaceProfileLoadResult {
     let subsetCacheResult = previewMakeSubsetResult(
         source: HrrrNomadsURLBuilder().makeSourceMetadata(
@@ -345,7 +372,7 @@ func previewMakeSurfaceProfileLoadResult(
     return HrrrAnvilSurfaceProfileLoadResult(
         sourceResolution: sourceResolution,
         subsetCacheResult: subsetCacheResult,
-        samples: samples ?? previewMakeSurfaceSamples()
+        surfaceLevel: surfaceLevel
     )
 }
 
@@ -462,9 +489,9 @@ func previewMakeSurfaceLevel(
     dewpointK: Double = 289.15,
     uWindMs: Double = -4.25,
     vWindMs: Double = 6.5
-) -> StormSetupPressureProfileLevel {
-    StormSetupPressureProfileLevel(
-        pressureMb: Int((pressurePa / 100).rounded()),
+) -> StormSetupSurfaceProfileLevel {
+    StormSetupSurfaceProfileLevel(
+        pressureMb: pressurePa / 100,
         heightMslM: heightMslM,
         temperatureC: temperatureK - 273.15,
         dewpointC: dewpointK - 273.15,

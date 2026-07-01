@@ -10,7 +10,7 @@ protocol HrrrAnvilSurfaceProfileLoading: Sendable {
 struct HrrrAnvilSurfaceProfileLoadResult: Sendable {
     let sourceResolution: HrrrRunResolution
     let subsetCacheResult: GribSubsetCacheResult
-    let samples: [HrrrFieldSample]
+    let surfaceLevel: StormSetupSurfaceProfileLevel
 }
 
 enum HrrrAnvilSurfaceProfileLoadingError: Error, Sendable, CustomStringConvertible {
@@ -53,11 +53,12 @@ struct DefaultHrrrAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
             around: centroid
         )
         try Task.checkCancellation()
+        let surfaceLevel = try AnvilSurfaceProfileNormalizer().normalize(samples: samples)
 
         return HrrrAnvilSurfaceProfileLoadResult(
             sourceResolution: surfaceResolution,
             subsetCacheResult: subset,
-            samples: samples
+            surfaceLevel: surfaceLevel
         )
     }
 

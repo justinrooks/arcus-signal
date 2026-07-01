@@ -17,7 +17,7 @@ struct AnvilProfileRequestBuilder: Sendable {
         h3Cell: Int64,
         runTime: Date,
         forecastHour: Int,
-        surfaceLevel: StormSetupPressureProfileLevel? = nil,
+        surfaceLevel: StormSetupSurfaceProfileLevel,
         groupedProfile: StormSetupPressureProfileGroupingResult
     ) throws -> AnvilProfileRequestBuildResult {
         let resolved = try h3Resolver.resolve(h3Cell: h3Cell)
@@ -89,7 +89,6 @@ struct AnvilProfileRequestBuilder: Sendable {
     }
 
     struct ProfileArrays: Sendable, Equatable {
-        let levels: [StormSetupPressureProfileLevel]
         let pressureMb: [Double]
         let heightMslM: [Double]
         let temperatureC: [Double]
@@ -98,32 +97,37 @@ struct AnvilProfileRequestBuilder: Sendable {
         let vWindMs: [Double]
 
         init(levels: [StormSetupPressureProfileLevel]) throws {
-            try self.init(levels: levels, surfaceLevel: nil)
+            try self.init(
+                pressureMb: levels.map { Double($0.pressureMb) },
+                heightMslM: levels.map(\.heightMslM),
+                temperatureC: levels.map(\.temperatureC),
+                dewpointC: levels.map(\.dewpointC),
+                uWindMs: levels.map(\.uWindMs),
+                vWindMs: levels.map(\.vWindMs)
+            )
         }
 
         init(
             levels: [StormSetupPressureProfileLevel],
-            surfaceLevel: StormSetupPressureProfileLevel?
+            surfaceLevel: StormSetupSurfaceProfileLevel
         ) throws {
-            let assembledLevels = surfaceLevel.map { [$0] } ?? []
-            let orderedLevels = assembledLevels + levels
-
-            guard let violation = Self.firstPressureViolation(
-                in: orderedLevels.map { Double($0.pressureMb) }
-            ) else {
-                self.levels = orderedLevels
-                self.pressureMb = orderedLevels.map { Double($0.pressureMb) }
-                self.heightMslM = orderedLevels.map(\.heightMslM)
-                self.temperatureC = orderedLevels.map(\.temperatureC)
-                self.dewpointC = orderedLevels.map(\.dewpointC)
-                self.uWindMs = orderedLevels.map(\.uWindMs)
-                self.vWindMs = orderedLevels.map(\.vWindMs)
-                return
+            guard let firstLevel = levels.first else {
+                throw AnvilProfileRequestBuilderError.noRetainedLevels
+            }
+            guard surfaceLevel.heightMslM < firstLevel.heightMslM else {
+                throw AnvilProfileRequestBuilderError.surfaceHeightNotBelowFirstPressureLevel(
+                    surfaceHeightMslM: surfaceLevel.heightMslM,
+                    firstPressureLevelHeightMslM: firstLevel.heightMslM
+                )
             }
 
-            throw AnvilProfileRequestBuilderError.pressureNotStrictlyDescending(
-                previousPressureMb: violation.previous,
-                pressureMb: violation.current
+            try self.init(
+                pressureMb: [surfaceLevel.pressureMb] + levels.map { Double($0.pressureMb) },
+                heightMslM: [surfaceLevel.heightMslM] + levels.map(\.heightMslM),
+                temperatureC: [surfaceLevel.temperatureC] + levels.map(\.temperatureC),
+                dewpointC: [surfaceLevel.dewpointC] + levels.map(\.dewpointC),
+                uWindMs: [surfaceLevel.uWindMs] + levels.map(\.uWindMs),
+                vWindMs: [surfaceLevel.vWindMs] + levels.map(\.vWindMs)
             )
         }
 
@@ -144,7 +148,6 @@ struct AnvilProfileRequestBuilder: Sendable {
                 vWindMs: vWindMs
             )
             guard let violation = Self.firstPressureViolation(in: pressureMb) else {
-                self.levels = []
                 self.pressureMb = pressureMb
                 self.heightMslM = heightMslM
                 self.temperatureC = temperatureC
@@ -241,6 +244,10 @@ enum AnvilProfileRequestBuilderError: Error, Sendable, Equatable {
     case tooFewRetainedLevels(actual: Int, minimum: Int)
     case unequalArrayLengths(expected: Int, actual: Int)
     case pressureNotStrictlyDescending(previousPressureMb: Double, pressureMb: Double)
+    case surfaceHeightNotBelowFirstPressureLevel(
+        surfaceHeightMslM: Double,
+        firstPressureLevelHeightMslM: Double
+    )
 }
 
 private func zip6<A, B, C, D, E, F>(

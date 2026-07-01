@@ -536,18 +536,18 @@ Handoff outcome:
 - The pressure-profile epic is complete and the progress ledger is now the durable handoff record.
 - Future maintenance should treat `docs/hrrr-pressure-profile.md` and this progress log as the current reference, and the historical pressure-level plan as superseded.
 
-### Issue #124 - 09: Add a pure Anvil surface-profile normalization seam
+### Issue #124 - 09: Define and normalize the Anvil surface profile field set
 
 Status: Completed
 
 Scope:
-- Introduce a pure normalizer for `AnvilAnalyzeProfileResponse` to `AnvilIngredientEvidence`.
-- Keep the existing support-band thresholds, degraded-state rules, and missing-value handling unchanged.
-- Add focused tests for the normalization seam.
+- Introduce a dedicated surface profile level with fractional pressure.
+- Normalize exact `PRES`, `HGT`, `TMP`, `DPT`, `UGRD`, and `VGRD` samples into one complete row.
+- Reject missing, nonfinite, and invalid pressure values with field-specific diagnostics.
 
 Files changed:
 - `Sources/App/StormSetup/AnvilSurfaceProfileNormalizer.swift`
-- `Sources/App/StormSetup/AnvilIngredientEvidence.swift`
+- `Sources/App/StormSetup/StormSetupSurfaceProfileModels.swift`
 - `Tests/AppTests/AnvilSurfaceProfileNormalizerTests.swift`
 - `docs/plans/hrrr-pressure-profile-progress.md`
 
@@ -558,12 +558,12 @@ Tests and commands run:
 - `git diff --check`
 
 Local verification notes:
-- The normalization path remains pure and deterministic.
-- Existing surface and pressure defaults were left unchanged.
+- The normalization path remains pure and deterministically selects the first matching value.
+- Pressure remains a `Double`; temperatures are converted from K to Celsius.
+- Existing HRRR surface and pressure field-set defaults were left unchanged.
 - No networking, provider wiring, or `TornadoIngredientNormalizer` changes were introduced.
 
 Deferred scope:
-- Any future tuning of Anvil evidence thresholds or semantics.
 - Networking, transport, and provider wiring remain out of scope for this slice.
 
 ### Issue #125 - 10: Add a pure Anvil surface-profile loading seam
@@ -587,6 +587,7 @@ Tests and commands run:
 
 Local verification notes:
 - The loader now constructs a single `wrfsfc` candidate and passes exactly one resolution into the subset loader.
+- The loader returns a normalized surface row rather than unchecked raw samples.
 - Cancellation short-circuits the load path before any second cycle or sampler work can run.
 - The new tests stay offline and deterministic; they only use local stubs and fixture samples.
 
@@ -603,10 +604,11 @@ Handoff notes for `#126`:
 Status: Completed
 
 Scope:
-- Extend the frozen Anvil profile-request builder with an optional explicit surface row.
+- Extend the frozen Anvil profile-request builder with a required explicit surface row.
 - Prepend the surface row without interpolation while preserving the existing request DTO shape.
 - Keep the five retained pressure-level minimum independent of the surface row.
 - Reject invalid pressure ordering instead of sorting the profile rows into a valid-looking sequence.
+- Reject a surface height that is not below the first retained pressure-level height.
 
 Files changed:
 - `Sources/App/StormSetup/AnvilProfileRequestBuilder.swift`
@@ -619,7 +621,7 @@ Tests and commands run:
 - `git diff --check`
 
 Local verification notes:
-- The builder now accepts an optional `surfaceLevel` seam and prepends it directly to the frozen profile arrays.
+- The builder requires `surfaceLevel` and prepends it directly to the frozen profile arrays.
 - The request DTO remains unchanged, so downstream consumers still see the same nested `profile` shape.
 - The retained pressure-level minimum is still enforced before the surface row is attached.
 - Invalid pressure ordering now fails fast instead of being normalized by sorting.
@@ -781,7 +783,29 @@ Local verification notes:
 - The completed implementation path is byte-range `.idx` selection, partial-content pressure subset download, preview wiring, Anvil profile transport, ingredient-evidence mapping, the explicit Anvil surface-row builder seam, and the final development-only surface-layer diagnostics.
 - Issue `#130` completes the dedicated Anvil surface-row path so previews no longer rely on the tornado surface field set, and issue `#129` adds the final preview diagnostics and documentation reconciliation around that path.
 - The #126 verification record is `swift test --filter AnvilProfileRequestBuilderTests`, `swift build -Xswiftc -strict-concurrency=complete`, and `git diff --check` all passing.
-- Known remaining risks are environmental only:
-  - the filtered test suites still have outstanding failures in the current working tree or fixtures
-  - live HRRR, NOMADS, and Anvil verification was not part of this docs-only finalization pass
-- Deferred work from the epic is intentionally closed out; the remaining changes are development-only diagnostics and documentation reconciliation, not new user-facing behavior.
+- Known remaining validation constraints:
+  - the repository-wide suite still has pre-existing `HRRRPressureArtifactProbeServiceTests` failures
+  - live HRRR, NOMADS, and Anvil verification was not part of this finalization pass
+- Deferred work from the epic is intentionally closed out.
+
+### Post-review surface-row correction
+
+Status: Completed
+
+- Replaced the misnamed Anvil-response evidence normalizer with the required raw HRRR surface-sample normalizer.
+- Restored ingredient-evidence mapping to `AnvilIngredientEvidence`.
+- Preserved fractional surface pressure and removed the trapping `Double`-to-`Int` conversion.
+- Made the normalized surface row part of the loader result.
+- Required the surface row in request assembly and added strict surface-height ordering.
+- Replaced the synthetic default surface loader with an explicit failure when no loader is configured.
+- Updated tests to inject exact-cycle surface fixtures instead of relying on fabricated production defaults.
+
+Validation:
+- `swift test --filter AnvilSurfaceProfileNormalizerTests` passed.
+- `swift test --filter HrrrAnvilSurfaceProfileLoadingTests` passed.
+- `swift test --filter AnvilProfileRequestBuilderTests` passed.
+- `swift test --filter AnvilProfilePreviewProviderTests` passed.
+- `swift test --filter PressureArtifactDiagnosticsTests` passed.
+- `swift test --filter AnvilProfileAnalysisControllerTests` passed.
+- `swift build -Xswiftc -strict-concurrency=complete` passed with the pre-existing `ArcusEvent.title` deprecation warning.
+- `swift test --no-parallel --quiet` still fails only in the previously recorded pressure-artifact probe tests.
