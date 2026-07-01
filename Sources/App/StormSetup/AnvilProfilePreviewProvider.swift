@@ -145,19 +145,12 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             for candidate in runResolution.candidates {
                 try Task.checkCancellation()
                 let pressureCandidate = makePressureCandidate(from: candidate)
+                var readyArtifact: PressureArtifactCatalogReadyArtifact?
                 do {
-                    if let readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(
+                    readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(
                         for: pressureCandidate
-                    ) {
-                        try Task.checkCancellation()
-                    return try await previewReadyArtifact(
-                        readyArtifact,
-                        sourceCandidate: pressureCandidate,
-                        h3Cell: resolved.h3Cell,
-                        centroid: resolved.centroid,
                     )
-                }
-            } catch let error as AnvilProfilePreviewError {
+                } catch let error as AnvilProfilePreviewError {
                     switch error {
                     case .upstreamUnavailable:
                         upstreamFailures.append(error.description)
@@ -169,6 +162,16 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
                 } catch {
                     try rethrowCancellationIfNeeded(error)
                     internalFailures.append(String(describing: error))
+                }
+
+                if let readyArtifact {
+                    try Task.checkCancellation()
+                    return try await previewReadyArtifact(
+                        readyArtifact,
+                        sourceCandidate: pressureCandidate,
+                        h3Cell: resolved.h3Cell,
+                        centroid: resolved.centroid,
+                    )
                 }
             }
 
@@ -281,7 +284,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
             targetValidTime: targetValidTime
         )
         let surfaceLevelLoadResult = try await loadSurfaceLevel(
-            from: candidate,
+            from: sourceResolution.candidate,
             cycleRunTime: sourceResolution.source.runTime ?? candidate.runTime,
             cycleForecastHour: sourceResolution.source.forecastHour ?? candidate.forecastHour,
             targetValidTime: targetValidTime,

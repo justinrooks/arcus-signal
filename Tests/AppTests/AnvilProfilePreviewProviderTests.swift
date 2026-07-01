@@ -351,6 +351,104 @@ struct AnvilProfilePreviewProviderTests {
         }
     }
 
+    @Test("provider does not fall back after an exact surface load failure")
+    func providerDoesNotFallBackAfterExactSurfaceLoadFailure() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let firstCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let secondCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 21),
+            forecastHour: 1
+        )
+        let firstPressureCandidate = makePressureCandidate(from: firstCandidate)
+        let secondPressureCandidate = makePressureCandidate(from: secondCandidate)
+        let exactArtifact = previewMakeReadyPressureArtifact(
+            runTime: firstPressureCandidate.runTime,
+            forecastHour: firstPressureCandidate.forecastHour,
+            validTime: firstPressureCandidate.validTime
+        )
+        let lookupService = PreviewStubPressureArtifactCatalogLookupService(
+            handler: { lookedUpCandidate in
+                if lookedUpCandidate == firstPressureCandidate {
+                    return exactArtifact
+                }
+
+                if lookedUpCandidate == secondPressureCandidate {
+                    return nil
+                }
+
+                Issue.record("Unexpected exact lookup candidate \(lookedUpCandidate.fileName).")
+                return nil
+            },
+            staleHandler: { _ in
+                Issue.record("Stale lookup should not be used after an exact surface load failure.")
+                return nil
+            }
+        )
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, resolution in
+            guard let candidate = resolution.candidates.first else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(reason: "missing pressure candidate")
+            }
+
+            return previewMakePressureSourceResolution(candidate: candidate, idxAvailable: true)
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, _, surfaceHeightMslM in
+            #expect(surfaceHeightMslM == 1_234)
+            return previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                samples: previewMakeEightLevelPressureSamples(),
+                surfaceHeightMslM: surfaceHeightMslM
+            )
+        }
+        let surfaceProfileLoader = PreviewStubSurfaceProfileLoader { callIndex, resolution, _ in
+            guard let candidate = resolution.primaryCandidate else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(reason: "missing surface candidate")
+            }
+
+            if callIndex == 0 {
+                throw AnvilProfilePreviewError.upstreamUnavailable(
+                    reason: "AWS surface object unavailable for \(candidate.fileName)."
+                )
+            }
+
+            return previewMakeSurfaceProfileLoadResult(
+                sourceResolution: resolution,
+                fetchedAt: now,
+                surfaceLevel: previewMakeSurfaceLevel()
+            )
+        }
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [firstCandidate, secondCandidate])
+            ),
+            pressureArtifactCatalogLookupService: lookupService,
+            surfaceProfileLoader: surfaceProfileLoader,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        do {
+            _ = try await provider.previewProfile(for: h3Cell)
+            Issue.record("Expected the exact surface load failure to stop the preview before fallback.")
+        } catch let error as AnvilProfilePreviewError {
+            if case .upstreamUnavailable(let reason) = error {
+                #expect(reason.contains("AWS surface object unavailable for \(firstPressureCandidate.fileName)."))
+                #expect(await lookupService.callCount == 1)
+                #expect(await lookupService.staleCallCount == 0)
+                #expect(await surfaceProfileLoader.callCount == 1)
+                #expect(await pressureSourceResolver.callCount == 0)
+                #expect(await pressureProfileLoader.callCount == 0)
+                return
+            }
+            Issue.record("Expected upstream unavailable error but got \(error).")
+        }
+    }
+
     @Test("provider stops before pressure work when the surface source is unavailable")
     func providerStopsBeforePressureWorkWhenSurfaceSourceIsUnavailable() async throws {
         let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -630,6 +728,77 @@ struct AnvilProfilePreviewProviderTests {
         let preview = try await provider.previewProfile(for: h3Cell)
 
         #expect(preview.request.profile.pressureMb == [940, 925, 850, 700, 600, 500, 400, 300])
+    }
+
+    @Test("provider uses the resolved pressure candidate for cold-path surface loading")
+    func providerUsesTheResolvedPressureCandidateForColdPathSurfaceLoading() async throws {
+        let now = previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let h3Cell: Int64 = 617_700_169_958_293_503
+        let surfaceCandidate = HrrrRunCandidate(
+            runTime: previewMakeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+        let resolvedPressureCandidate = makePressureCandidate(from: pressureCandidate)
+        let pressureSourceResolver = PreviewStubPressureSourceResolver { _, resolution in
+            guard let candidate = resolution.candidates.first else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(reason: "missing pressure candidate")
+            }
+
+            #expect(candidate == pressureCandidate)
+            return previewMakePressureSourceResolution(candidate: resolvedPressureCandidate, idxAvailable: true)
+        }
+        let surfaceProfileLoader = PreviewStubSurfaceProfileLoader { _, resolution, _ in
+            guard let candidate = resolution.primaryCandidate else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(reason: "missing surface candidate")
+            }
+
+            guard candidate == resolvedPressureCandidate else {
+                throw AnvilProfilePreviewError.internalExecutionFailure(
+                    reason: "surface loader saw \(candidate.fileName) instead of resolved \(resolvedPressureCandidate.fileName)"
+                )
+            }
+
+            let surfaceCandidate = HrrrRunCandidate(
+                model: candidate.model,
+                product: .wrfsfc,
+                domain: candidate.domain,
+                runTime: candidate.runTime,
+                forecastHour: candidate.forecastHour,
+                fieldSetVersion: .anvilSurfaceV1
+            )
+            return previewMakeSurfaceProfileLoadResult(
+                sourceResolution: HrrrRunResolution(
+                    targetValidTime: resolution.targetValidTime,
+                    candidates: [surfaceCandidate]
+                ),
+                fetchedAt: now,
+                surfaceLevel: previewMakeSurfaceLevel()
+            )
+        }
+        let pressureProfileLoader = PreviewStubPressureProfileLoader { _, sourceResolution, _, surfaceHeightMslM in
+            #expect(sourceResolution.candidate == resolvedPressureCandidate)
+            return previewMakePressureProfileLoadResult(
+                sourceResolution: sourceResolution,
+                fetchedAt: now,
+                samples: previewMakeEightLevelPressureSamples(),
+                surfaceHeightMslM: surfaceHeightMslM
+            )
+        }
+        let provider = DefaultAnvilProfilePreviewProvider(
+            dateProvider: PreviewFixedStormSetupDateProvider(nowDate: now),
+            hrrrRunResolver: PreviewStaticHrrrRunResolver(
+                resolution: HrrrRunResolution(targetValidTime: now.truncatedToHour, candidates: [surfaceCandidate])
+            ),
+            surfaceProfileLoader: surfaceProfileLoader,
+            pressureSourceResolver: pressureSourceResolver,
+            pressureProfileLoader: pressureProfileLoader
+        )
+
+        let preview = try await provider.previewProfile(for: h3Cell)
+
+        #expect(preview.request.runTime == resolvedPressureCandidate.runTime)
+        #expect(preview.request.forecastHour == resolvedPressureCandidate.forecastHour)
     }
 
     @Test("provider rejects mismatched exact-cycle surface data before pressure loading")
