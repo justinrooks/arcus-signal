@@ -70,3 +70,45 @@
 - Implementation recommended: no
 - Implementation status: implemented on 2026-06-28 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/HrrrPressureSubsetGribCacheTests.swift)
 - Out-of-scope repositories intentionally not scanned: none
+
+## 2026-07-07
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-06-30T15:00:37.541Z` through `2026-07-07T00:00:00-06:00`); commits `852d7f1c1ea36076773b5bcdf04b8cb182be623c` and `4c1da3bdd50e2cd5f919e4fb9ac1bccf07716ce8`
+- High-risk areas inspected:
+  - `Sources/App/Clients/NwsClient.swift` NWS active-alert URL construction and supported-event whitelist
+  - `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift` exact-cycle surface loading and preview fallback behavior
+  - `Sources/App/StormSetup/AnvilProfileRequestBuilder.swift` surface-row assembly
+  - `Sources/App/StormSetup/HrrrAnvilSurfaceProfileLoading.swift`
+  - `Sources/App/StormSetup/AnvilSurfaceProfileNormalizer.swift`
+- Files inspected:
+  - `Sources/App/Clients/NwsClient.swift`
+  - `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+  - `Sources/App/StormSetup/AnvilProfileRequestBuilder.swift`
+  - `Sources/App/StormSetup/HrrrAnvilSurfaceProfileLoading.swift`
+  - `Sources/App/StormSetup/AnvilSurfaceProfileNormalizer.swift`
+  - `Sources/App/StormSetup/StormSetupSurfaceProfileModels.swift`
+  - `Tests/AppTests/AppTests.swift`
+  - `Tests/AppTests/AnvilProfilePreviewProviderTests.swift`
+  - `Tests/AppTests/AnvilProfileRequestBuilderTests.swift`
+  - `Tests/AppTests/HrrrAnvilSurfaceProfileLoadingTests.swift`
+  - `Tests/AppTests/AnvilSurfaceProfileNormalizerTests.swift`
+- Existing relevant tests found:
+  - `Tests/AppTests/AppTests.swift` covers NWS DTO mapping and confirms `Special Weather Statement` is preserved in event mapping, but it does not exercise `NwsHttpClient` request construction
+  - `Tests/AppTests/AnvilProfilePreviewProviderTests.swift` covers exact-cycle surface loading, failure handling, and no-fallback behavior
+  - `Tests/AppTests/AnvilProfileRequestBuilderTests.swift` covers surface-row prepend, ordering, and rejection paths
+  - `Tests/AppTests/HrrrAnvilSurfaceProfileLoadingTests.swift` covers exact-cycle surface candidate construction and cancellation
+  - `Tests/AppTests/AnvilSurfaceProfileNormalizerTests.swift` covers unit normalization and invalid-field rejection
+- Recommended test gaps table:
+  - Behavior: `NwsHttpClient.fetchActiveAlertsJsonData()` should keep building `/alerts/active` with `status=actual`, `region_type=land`, and the curated `event` whitelist, including the newly enabled severe-weather types
+  - Repo: `arcus-signal`
+  - Evidence: commit `4c1da3bdd50e2cd5f919e4fb9ac1bccf07716ce8` updated [`/Users/justin/Code/arcus-signal/Sources/App/Clients/NwsClient.swift`](/Users/justin/Code/arcus-signal/Sources/App/Clients/NwsClient.swift#L39) and [`/Users/justin/Code/arcus-signal/Sources/App/Clients/NwsClient.swift`](/Users/justin/Code/arcus-signal/Sources/App/Clients/NwsClient.swift#L137); implemented by [`/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift)
+  - Risk reduced: prevents silent drops in the NWS ingest filter that would hide user-visible severe-weather alerts
+  - Test type: unit
+  - Suggested test name: `fetchActiveAlertsJsonDataBuildsSupportedEventQuery`
+  - Size: XS
+  - Confidence: Medium
+- Top recommended test: already implemented on 2026-07-07 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift)
+- Watchlist items: none
+- Implementation recommended: no
+- Implementation status: implemented on 2026-07-07 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift)
+- Out-of-scope repositories intentionally not scanned: none
