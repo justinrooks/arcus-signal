@@ -15,6 +15,25 @@ struct StormSetupCurrentResponseDTOTests {
         let setupObject = object?["setup"] as? [String: Any]
         #expect(setupObject?.keys.sorted() == ["centroid", "freshness", "h3Cell", "source", "surfaceHeightMslM"])
 
+        let profileAnalysisObject = object?["profileAnalysis"] as? [String: Any]
+        #expect(profileAnalysisObject?.keys.sorted() == [
+            "effectiveBulkShearMs",
+            "effectiveLayer",
+            "effectiveSrh",
+            "mlcape",
+            "mlcin",
+            "mllclMetersAgl",
+            "mucape",
+            "quality",
+            "scp",
+            "ship",
+            "stormMotion",
+            "stpCin",
+            "stpFixed"
+        ])
+        #expect(profileAnalysisObject?["request"] == nil)
+        #expect(profileAnalysisObject?["debug"] == nil)
+
         let decoded = try decoder().decode(StormSetupCurrentResponse.self, from: encoded)
         #expect(decoded.setup.h3Cell == response.setup.h3Cell)
         #expect(decoded.setup.centroid == response.setup.centroid)

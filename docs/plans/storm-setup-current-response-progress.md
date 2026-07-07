@@ -205,7 +205,7 @@ Handoff notes for #136:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/136
 
-Status: Not started
+Status: Complete
 
 Scope:
 - Add focused tests proving the production response returns all required sections together.
@@ -213,6 +213,31 @@ Scope:
 
 Deferred:
 - Live HRRR or live Anvil verification.
+
+Files changed:
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `Tests/AppTests/StormSetupCurrentResponseDTOTests.swift`
+- `docs/plans/storm-setup-current-response-progress.md`
+
+Tests / commands run:
+- `swift test --filter StormSetupCurrentResponseDTOTests`
+- `swift test --filter StormSetupControllerTests`
+- `swift test --filter StormSetupProviderTests`
+
+Local verification notes:
+- The production route test now pins the full composed response contract, including exact `AnvilAnalyzeProfileResponse` values in `profileAnalysis`.
+- The provider test proves the composed response still comes from a single Anvil analysis call.
+- The DTO test now asserts the encoded production `profileAnalysis` section only contains response fields and does not expose dev-only request or debug payloads.
+
+Deferred scope:
+- App-facing contract docs and migration notes for issue `#137`.
+- Any dev endpoint lifecycle changes for `api/v1/dev/anvil/profile-analysis`.
+
+Handoff notes for `#137`:
+- Use the new tests as the canonical production contract reference.
+- `StormSetupCurrentResponse.profileAnalysis` should be treated as the app-facing payload, while `AnvilAnalyzeProfileRequest` and `AnvilAnalyzeProfilePreviewDebugDTO` remain dev-only.
+- Do not expand the migration doc slice beyond contract documentation.
 
 ### Issue #137 - 04: Prepare app-facing Storm Setup current response contract docs
 

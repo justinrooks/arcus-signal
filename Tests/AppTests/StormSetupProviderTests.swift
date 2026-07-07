@@ -111,6 +111,7 @@ struct StormSetupProviderTests {
                 )
             ]
         }
+        let expectedAnalysis = makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime).response
         let anvilProvider = CountingAnvilProfileAnalysisProvider(
             response: makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime)
         )
@@ -138,7 +139,7 @@ struct StormSetupProviderTests {
 
         #expect(response.setup.h3Cell == fixedH3)
         #expect(response.ingredients.sbcapeJkg == 1450)
-        #expect(response.profileAnalysis != nil)
+        #expect(response.profileAnalysis == expectedAnalysis)
         #expect(response.assessment.overall == .supportive)
         #expect(response.assessment.confidence == .high)
         #expect(await anvilProvider.requestCount == 1)
@@ -1703,7 +1704,7 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
     )
 }
 
-    private func makeStormSetupRouteAnalysisResponse(
+    func makeStormSetupRouteAnalysisResponse(
         validTime: Date = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
         warnings: [String] = []
     ) -> AnvilAnalyzeProfileAnalysisResponse {

@@ -23,6 +23,7 @@ struct StormSetupControllerTests {
         try await withApp { app in
             let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
             app.stormSetupProvider = makeStormSetupRouteProvider(now: fixedNow)
+            let expectedAnalysis = makeStormSetupRouteAnalysisResponse(validTime: fixedNow).response
 
             let inputH3: Int64 = 617700169958293503
 
@@ -46,7 +47,7 @@ struct StormSetupControllerTests {
                 #expect(response.setup.freshness.isDegraded == false)
                 #expect(response.ingredients.sbcapeJkg == 1450)
                 #expect(response.ingredients.mlcinJkg == -35)
-                #expect(response.profileAnalysis != nil)
+                #expect(response.profileAnalysis == expectedAnalysis)
                 #expect(response.assessment.overall == .conditional)
                 #expect(response.assessment.confidence == .moderate)
                 #expect(response.assessment.summary.contains("conditionally supportive"))
