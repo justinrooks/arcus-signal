@@ -590,7 +590,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         return TornadoRawParameters(
-            sbcapeJkg: diagnostics.sbcapeJkg,
+            sbcapeJkg: profileAnalysis.sbcin ?? diagnostics.sbcapeJkg,
             mlcapeJkg: profileAnalysis.mlcape ?? diagnostics.mlcapeJkg,
             mucapeJkg: profileAnalysis.mucape ?? diagnostics.mucapeJkg,
             mlcinJkg: profileAnalysis.mlcin ?? diagnostics.mlcinJkg,
@@ -601,30 +601,29 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             dewpoint2mK: nil,
             surfacePressurePa: nil,
             wind10m: nil,
-            threeCapeJkg: diagnostics.threeCapeJkg,
+            threeCapeJkg: profileAnalysis.threeCapeJkg ?? diagnostics.threeCapeJkg,
             lclLfcSeparationM: diagnostics.lclLfcSeparationM,
-            lapseRate03kmCkm: diagnostics.lapseRate03kmCkm,
+            lapseRate03kmCkm: profileAnalysis.lapserate03km ?? diagnostics.lapseRate03kmCkm,
             lapseRate700500mbCkm: diagnostics.lapseRate700500mbCkm,
             shear06kmKt: diagnostics.shear06kmKt,
             shear03kmKt: diagnostics.shear03kmKt,
             shear01kmKt: diagnostics.shear01kmKt,
-            effectiveShearKt: profileAnalysis.effectiveBulkShearMs.map { $0 * 1.943_844_492_440_6 } ?? diagnostics.effectiveShearKt,
-            srh01kmM2s2: diagnostics.srh01kmM2s2,
-            srh03kmM2s2: diagnostics.srh03kmM2s2,
+            effectiveShearKt: profileAnalysis.effectiveBulkShearMs.map { $0 * 1.943_844_492_440_6 },
+            srh01kmM2s2: profileAnalysis.srh01km ?? diagnostics.srh01kmM2s2,
+            srh03kmM2s2: profileAnalysis.srh03km ?? diagnostics.srh03kmM2s2,
             effectiveSrhM2s2: profileAnalysis.effectiveSrh ?? diagnostics.effectiveSrhM2s2,
             supercellComposite: profileAnalysis.scp ?? diagnostics.supercellComposite,
             significantTornadoFixed: profileAnalysis.stpFixed ?? diagnostics.significantTornadoFixed,
             significantTornadoEffective: profileAnalysis.stpCin ?? diagnostics.significantTornadoEffective,
-            significantHail: diagnostics.significantHail,
-            bunkersRightMotion: bunkersRightMotion ?? diagnostics.bunkersRightMotion,
-            bunkersLeftMotion: diagnostics.bunkersLeftMotion,
-            stormRelativeWind46km: diagnostics.stormRelativeWind46km,
-            meanWind850300mb: diagnostics.meanWind850300mb,
+            significantHail: profileAnalysis.ship,
+            bunkersRightMotion: bunkersRightMotion,
+            bunkersLeftMotion: nil,
+            stormRelativeWind46km: nil,
+            meanWind850300mb: nil,
             diagnostics: nil,
             effectiveBulkShearMs: profileAnalysis.effectiveBulkShearMs,
             effectiveLayer: profileAnalysis.effectiveLayer,
-            stormMotion: profileAnalysis.stormMotion,
-            ship: profileAnalysis.ship
+            stormMotion: profileAnalysis.stormMotion
         )
     }
 

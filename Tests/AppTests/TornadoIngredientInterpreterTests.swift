@@ -42,6 +42,58 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.overall == .conditional)
     }
 
+    @Test("canonical Anvil fields drive conditional tornado messaging when CIN still limits realization")
+    func canonicalAnvilFieldsDriveConditionalTornadoMessaging() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 3200,
+                mlcapeJkg: 1800,
+                mucapeJkg: 2200,
+                mlcinJkg: -95,
+                mllclM: 950,
+                tempDewPtDeltaF: 28,
+                effectiveBulkShearMs: 22,
+                shear06kmKt: 18,
+                srh01kmM2s2: 40,
+                srh03kmM2s2: 60,
+                effectiveSrhM2s2: 175,
+                supercellComposite: 2.4,
+                significantTornadoFixed: 1.7,
+                significantTornadoEffective: 0.9
+            )
+        )
+
+        #expect(assessment.instability == .supportive)
+        #expect(assessment.cloudBase == .supportive)
+        #expect(assessment.deepShear == .supportive)
+        #expect(assessment.lowLevelRotation == .supportive)
+        #expect(assessment.compositeSignal == .supportive)
+        #expect(assessment.capInhibition == .conditional)
+        #expect(assessment.overall == .conditional)
+        #expect(assessment.summary.contains("conditionally supportive"))
+        #expect(assessment.summary.contains("CIN and storm initiation may keep the tornado potential from fully realizing."))
+    }
+
+    @Test("native diagnostics still drive the assessment when canonical fields are absent")
+    func nativeDiagnosticsStillDriveAssessmentWhenCanonicalFieldsAreAbsent() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 1200,
+                mlcinJkg: -35,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 45,
+                srh01kmM2s2: 80,
+                srh03kmM2s2: 160
+            )
+        )
+
+        #expect(assessment.instability == .conditional)
+        #expect(assessment.cloudBase == .strong)
+        #expect(assessment.deepShear == .supportive)
+        #expect(assessment.lowLevelRotation == .conditional)
+        #expect(assessment.overall == .conditional)
+    }
+
     @Test("supportive setup yields overall supportive")
     func supportiveSetupYieldsSupportiveOverall() {
         let assessment = interpret(
@@ -488,6 +540,7 @@ struct TornadoIngredientInterpreterTests {
         mlcinJkg: Double? = nil,
         mllclM: Double? = nil,
         tempDewPtDeltaF: Double? = nil,
+        effectiveBulkShearMs: Double? = nil,
         shear06kmKt: Double? = nil,
         effectiveShearKt: Double? = nil,
         srh01kmM2s2: Double? = nil,
@@ -523,7 +576,8 @@ struct TornadoIngredientInterpreterTests {
             bunkersLeftMotion: nil,
             stormRelativeWind46km: nil,
             meanWind850300mb: nil,
-            diagnostics: nil
+            diagnostics: nil,
+            effectiveBulkShearMs: effectiveBulkShearMs
         )
     }
 }

@@ -51,6 +51,7 @@ struct TornadoIngredientInterpreter: Sendable {
             deepShear: deepShear,
             lowLevelRotation: lowLevelRotation,
             compositeSignal: compositeSignal,
+            capInhibition: capInhibition,
             knownCorePillars: knownCorePillars
         )
 
@@ -89,6 +90,8 @@ struct TornadoIngredientInterpreter: Sendable {
             summary: makeSummary(
                 overall: evidenceAdjusted.overall,
                 limitingFactors: limitingFactors,
+                capInhibition: capInhibition,
+                lowLevelRotation: lowLevelRotation,
                 compositeSignal: compositeSignal,
                 anvilEvidence: anvilEvidence
             )
@@ -96,11 +99,19 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessInstability(_ raw: TornadoRawParameters) -> IngredientSupport {
-        let values = [raw.mlcapeJkg, raw.mucapeJkg, raw.sbcapeJkg].compactMap { $0 }
-        guard let strongest = values.max() else {
+        let values = [raw.mlcapeJkg, raw.mucapeJkg].compactMap { $0 }
+        if let strongest = values.max() {
+            return assessInstabilityValue(strongest)
+        }
+
+        guard let sbcape = raw.sbcapeJkg else {
             return .unknown
         }
 
+        return assessInstabilityValue(sbcape)
+    }
+
+    private func assessInstabilityValue(_ strongest: Double) -> IngredientSupport {
         switch strongest {
         case ..<1000:
             return .weak
@@ -165,11 +176,19 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessDeepShear(_ raw: TornadoRawParameters) -> IngredientSupport {
+        if let effectiveBulkShearMs = raw.effectiveBulkShearMs {
+            return assessDeepShearValue(effectiveBulkShearMs * 1.943_844_492_440_6)
+        }
+
         let values = [raw.effectiveShearKt, raw.shear06kmKt].compactMap { $0 }
         guard let strongest = values.max() else {
             return .unknown
         }
 
+        return assessDeepShearValue(strongest)
+    }
+
+    private func assessDeepShearValue(_ strongest: Double) -> IngredientSupport {
         switch strongest {
         case ..<30:
             return .weak
@@ -183,8 +202,11 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessLowLevelRotation(_ raw: TornadoRawParameters) -> IngredientSupport {
+        if let effectiveSrh = raw.effectiveSrhM2s2 {
+            return assessEffectiveSRH(effectiveSrh)
+        }
+
         let supports = [
-            raw.effectiveSrhM2s2.map(assessEffectiveSRH),
             raw.srh03kmM2s2.map(assessSRH03km),
             raw.srh01kmM2s2.map(assessSRH01km)
         ].compactMap { $0 }
@@ -258,6 +280,7 @@ struct TornadoIngredientInterpreter: Sendable {
         deepShear: IngredientSupport,
         lowLevelRotation: IngredientSupport,
         compositeSignal: IngredientSupport,
+        capInhibition: IngredientSupport,
         knownCorePillars: Int
     ) -> IngredientSupport {
         guard knownCorePillars >= 4 else {
@@ -283,6 +306,15 @@ struct TornadoIngredientInterpreter: Sendable {
            compositeSignal >= .supportive,
            strongAgreementCount >= 3 {
             return .strong
+        }
+
+        if instability >= .supportive,
+           deepShear >= .supportive,
+           lowLevelRotation >= .conditional,
+           cloudBase >= .supportive,
+           compositeSignal >= .conditional,
+           capInhibition <= .conditional {
+            return .conditional
         }
 
         if instability >= .supportive,
@@ -414,6 +446,8 @@ struct TornadoIngredientInterpreter: Sendable {
     private func makeSummary(
         overall: IngredientSupport,
         limitingFactors: [TornadoLimitingFactor],
+        capInhibition: IngredientSupport,
+        lowLevelRotation: IngredientSupport,
         compositeSignal: IngredientSupport,
         anvilEvidence: AnvilIngredientEvidence?
     ) -> String {
@@ -423,7 +457,9 @@ struct TornadoIngredientInterpreter: Sendable {
         case .weak:
             baseSummary = "The setup is weakly supportive. Key ingredients are limited and the environment is not especially favorable."
         case .conditional:
-            if limitingFactors.contains(.weakLowLevelRotation) {
+            if capInhibition <= .conditional {
+                baseSummary = "The setup is conditionally supportive. The ingredients are there, but CIN and storm initiation may keep the tornado potential from fully realizing."
+            } else if lowLevelRotation <= .conditional {
                 baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but low-level rotation is modest."
             } else if compositeSignal == .unknown {
                 baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but the composite signal is not available yet."
@@ -538,29 +574,19 @@ struct TornadoIngredientInterpreter: Sendable {
 
 private extension TornadoIngredientInterpreter {
     func moistureScore(_ raw: TornadoRawParameters) -> Double? {
-        let scores: [Double] = [
-            raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
-            raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
-        ].compactMap { $0 }
-
-        guard !scores.isEmpty else {
-            return nil
+        if let mllcl = raw.mllclM {
+            return score(idealLow: mllcl, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0)
         }
 
-        return scores.reduce(0, +) / Double(scores.count)
+        return raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (12, 0.75), (18, 0.45)], worstScore: 0.0) }
     }
 
     func cloudBaseScore(_ raw: TornadoRawParameters) -> Double? {
-        let scores: [Double] = [
-            raw.mllclM.map { score(idealLow: $0, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0) },
-            raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
-        ].compactMap { $0 }
-
-        guard !scores.isEmpty else {
-            return nil
+        if let mllcl = raw.mllclM {
+            return score(idealLow: mllcl, thresholds: [(800, 1.0), (1000, 0.6), (1500, 0.35)], worstScore: 0.0)
         }
 
-        return scores.reduce(0, +) / Double(scores.count)
+        return raw.tempDewPtDeltaF.map { score(idealLow: $0, thresholds: [(8, 1.0), (15, 0.75), (22, 0.45)], worstScore: 0.0) }
     }
 
     func score(idealLow value: Double, thresholds: [(Double, Double)], worstScore: Double) -> Double {

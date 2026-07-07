@@ -155,7 +155,7 @@ struct StormSetupProviderTests {
         #expect(response.ingredients.diagnostics.dewpoint2mK == 289.15)
         #expect(response.ingredients.diagnostics.surfacePressurePa == 94_000)
         #expect(response.profileAnalysis == expectedAnalysis)
-        #expect(response.assessment.overall == .supportive)
+        #expect(response.assessment.overall == .conditional)
         #expect(response.assessment.confidence == .high)
         #expect(await anvilProvider.requestCount == 1)
     }
@@ -289,7 +289,7 @@ struct StormSetupProviderTests {
 
         #expect(snapshot.anvilEvidence?.status == .available)
         #expect(snapshot.anvilEvidence?.reason == nil)
-        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.overall == .conditional)
         #expect(snapshot.assessment.confidence == .high)
         #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
         #expect(loadCount == 1)
@@ -655,7 +655,7 @@ struct StormSetupProviderTests {
         #expect(snapshot.raw.sbcapeJkg == 1450)
         #expect(snapshot.anvilEvidence?.status == .available)
         #expect(snapshot.anvilEvidence?.reason == nil)
-        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.overall == .conditional)
         #expect(snapshot.assessment.confidence == .high)
         #expect(loadCount == 1)
         #expect(storeCount == 1)
@@ -754,7 +754,7 @@ struct StormSetupProviderTests {
         #expect(snapshot.anvilEvidence?.scp?.support == .strong)
         #expect(snapshot.anvilEvidence?.stp?.support == .strong)
         #expect(snapshot.anvilEvidence?.ship?.support == .strong)
-        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.overall == .conditional)
         #expect(snapshot.assessment.confidence == .high)
         #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
     }
@@ -956,7 +956,7 @@ struct StormSetupProviderTests {
         #expect(snapshot.source.forecastHour == secondCandidate.forecastHour)
         #expect(snapshot.anvilEvidence?.status == .available)
         #expect(snapshot.anvilEvidence?.reason == nil)
-        #expect(snapshot.assessment.overall == .supportive)
+        #expect(snapshot.assessment.overall == .conditional)
         #expect(snapshot.assessment.confidence == .high)
     }
 

@@ -148,7 +148,6 @@ struct TornadoRawParameters: Content, Sendable, Equatable {
     let effectiveBulkShearMs: Double?
     let effectiveLayer: AnvilEffectiveLayerDTO?
     let stormMotion: AnvilStormMotionDTO?
-    let ship: Double?
     let diagnostics: [TornadoRawParameterDiagnostic]?
 
     init(
@@ -185,8 +184,7 @@ struct TornadoRawParameters: Content, Sendable, Equatable {
         diagnostics: [TornadoRawParameterDiagnostic]? = nil,
         effectiveBulkShearMs: Double? = nil,
         effectiveLayer: AnvilEffectiveLayerDTO? = nil,
-        stormMotion: AnvilStormMotionDTO? = nil,
-        ship: Double? = nil
+        stormMotion: AnvilStormMotionDTO? = nil
     ) {
         self.sbcapeJkg = sbcapeJkg
         self.mlcapeJkg = mlcapeJkg
@@ -221,7 +219,6 @@ struct TornadoRawParameters: Content, Sendable, Equatable {
         self.effectiveBulkShearMs = effectiveBulkShearMs
         self.effectiveLayer = effectiveLayer
         self.stormMotion = stormMotion
-        self.ship = ship
         self.diagnostics = diagnostics
     }
 }

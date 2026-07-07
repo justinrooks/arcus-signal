@@ -35,7 +35,6 @@ extension TornadoRawParameters {
         diagnostics: nil,
         effectiveBulkShearMs: nil,
         effectiveLayer: nil,
-        stormMotion: nil,
-        ship: nil
+        stormMotion: nil
     )
 }

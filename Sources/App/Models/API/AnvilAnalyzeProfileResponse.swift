@@ -13,6 +13,14 @@ struct AnvilAnalyzeProfileResponse: Codable, Sendable, Equatable {
     let stpCin: Double?
     let stpFixed: Double?
     let ship: Double?
+    let srh01km: Double?
+    let srh03km: Double?
+    let sbcape: Double?
+    let sbcin: Double?
+    let bulkShear06kmMs: Double?
+    let lapserate03km: Double?
+    let threeCapeJkg: Double?
+    
     let quality: AnvilQualityDTO
 }
 
