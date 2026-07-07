@@ -4,6 +4,25 @@ import Vapor
 
 protocol StormSetupProviding: Sendable {
     func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot
+    func currentResponse(for h3Cell: Int64) async throws -> StormSetupCurrentResponse
+}
+
+extension StormSetupProviding {
+    func currentResponse(for h3Cell: Int64) async throws -> StormSetupCurrentResponse {
+        let snapshot = try await currentSnapshot(for: h3Cell)
+        return StormSetupCurrentResponse(
+            setup: StormSetupCurrentSetupResponse(
+                h3Cell: snapshot.h3Cell,
+                centroid: snapshot.centroid,
+                source: snapshot.source,
+                surfaceHeightMslM: snapshot.surfaceHeightMslM,
+                freshness: snapshot.freshness
+            ),
+            ingredients: snapshot.raw,
+            profileAnalysis: nil,
+            assessment: snapshot.assessment
+        )
+    }
 }
 
 protocol StormSetupSnapshotCaching: Sendable {
@@ -158,6 +177,14 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     }
 
     func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot {
+        try await currentComposition(for: h3Cell).snapshot
+    }
+
+    func currentResponse(for h3Cell: Int64) async throws -> StormSetupCurrentResponse {
+        try await currentComposition(for: h3Cell).response
+    }
+
+    private func currentComposition(for h3Cell: Int64) async throws -> StormSetupCurrentComposition {
         let resolved = try h3Resolver.resolve(h3Cell: h3Cell)
         let runResolution = hrrrRunResolver.resolveRunCandidates()
 
@@ -182,13 +209,13 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
 
             do {
-                let snapshot = try await loadSnapshot(
+                let composition = try await loadComposition(
                     for: sourceMetadata,
                     around: resolved.centroid,
                     targetValidTime: runResolution.targetValidTime,
                     resolvedH3Cell: resolved.h3Cell
                 )
-                return snapshot
+                return composition
             } catch let error as StormSetupCurrentSnapshotError {
                 switch error {
                 case .insufficientNormalizedData(let source, let reason):
@@ -233,12 +260,12 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         throw StormSetupCurrentSnapshotError.noUsableHrrrCandidate(failures)
     }
 
-    private func loadSnapshot(
+    private func loadComposition(
         for sourceMetadata: StormSetupSourceMetadata,
         around centroid: StormSetupCentroid,
         targetValidTime: Date,
         resolvedH3Cell: Int64
-    ) async throws -> TornadoIngredientSnapshot {
+    ) async throws -> StormSetupCurrentComposition {
         let cacheKey = try StormSetupSnapshotCacheKey(
             h3Cell: resolvedH3Cell,
             sourceMetadata: sourceMetadata,
@@ -254,7 +281,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     "expiresAt": .string("\(cached.expiresAt)")
                 ])
             )
-            return try await composeSnapshotWithCurrentAnvilEvidence(from: cached.snapshot)
+            return try await composeCurrentCompositionWithCurrentAnvilEvidence(from: cached.snapshot)
         }
 
         try Task.checkCancellation()
@@ -331,7 +358,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
         }
 
-        return try await composeSnapshotWithCurrentAnvilEvidence(from: surfaceSnapshot)
+        return try await composeCurrentCompositionWithCurrentAnvilEvidence(from: surfaceSnapshot)
     }
 
     private func makeCandidate(from sourceMetadata: StormSetupSourceMetadata) -> HrrrRunCandidate {
@@ -378,6 +405,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             if pressureArtifactValidTime == selectedSurfaceValidTime {
                 return .exact(
                     evidence: AnvilIngredientEvidence(response: analysis.response),
+                    profileAnalysis: analysis.response,
                     pressureArtifactRunTime: pressureArtifactRunTime,
                     pressureArtifactForecastHour: pressureArtifactForecastHour,
                     pressureArtifactValidTime: pressureArtifactValidTime,
@@ -397,6 +425,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     response: analysis.response,
                     additionalWarnings: staleWarnings
                 ),
+                profileAnalysis: analysis.response,
                 pressureArtifactRunTime: pressureArtifactRunTime,
                 pressureArtifactForecastHour: pressureArtifactForecastHour,
                 pressureArtifactValidTime: pressureArtifactValidTime,
@@ -412,16 +441,13 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
     }
 
-    private func composeSnapshotWithCurrentAnvilEvidence(
+    private func composeCurrentCompositionWithCurrentAnvilEvidence(
         from snapshot: TornadoIngredientSnapshot
-    ) async throws -> TornadoIngredientSnapshot {
-        let resolution = try await resolveAnvilEvidence(
-            for: snapshot.h3Cell,
-            sourceMetadata: snapshot.source
-        )
-        try Task.checkCancellation()
-
-        if anvilProfileAnalysisProvider == nil {
+    ) async throws -> StormSetupCurrentComposition {
+        guard anvilProfileAnalysisProvider != nil else {
+            let resolution = AnvilEvidenceResolution.unavailable(
+                reason: "Anvil analysis provider is not configured."
+            )
             logger.info(
                 "Storm Setup Anvil evidence resolved.",
                 metadata: anvilEvidenceResolutionMetadata(
@@ -429,14 +455,25 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     resolution: resolution
                 )
             )
-            return snapshot
+            return StormSetupCurrentComposition(
+                snapshot: snapshot,
+                profileAnalysis: nil
+            )
         }
+
+        let resolution = try await resolveAnvilEvidence(
+            for: snapshot.h3Cell,
+            sourceMetadata: snapshot.source
+        )
+        try Task.checkCancellation()
 
         let assessment = interpreter.assess(
             raw: snapshot.raw,
             freshness: snapshot.freshness,
             evidence: resolution.evidence
         )
+
+        let profileAnalysis = resolution.artifactOutcome == .exact ? resolution.profileAnalysis : nil
 
         let composed = TornadoIngredientSnapshot(
             h3Cell: snapshot.h3Cell,
@@ -457,7 +494,10 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
         )
 
-        return composed
+        return StormSetupCurrentComposition(
+            snapshot: composed,
+            profileAnalysis: profileAnalysis
+        )
     }
 
     private func makeStaleWarnings(from warnings: [String]) -> [String] {
@@ -650,6 +690,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
 private struct AnvilEvidenceResolution: Sendable {
     let evidence: AnvilIngredientEvidence
+    let profileAnalysis: AnvilAnalyzeProfileResponse?
     let artifactOutcome: StormSetupAnvilArtifactOutcome
     let pressureArtifactRunTime: Date?
     let pressureArtifactForecastHour: Int?
@@ -659,6 +700,7 @@ private struct AnvilEvidenceResolution: Sendable {
 
     static func exact(
         evidence: AnvilIngredientEvidence,
+        profileAnalysis: AnvilAnalyzeProfileResponse,
         pressureArtifactRunTime: Date,
         pressureArtifactForecastHour: Int,
         pressureArtifactValidTime: Date,
@@ -666,6 +708,7 @@ private struct AnvilEvidenceResolution: Sendable {
     ) -> AnvilEvidenceResolution {
         AnvilEvidenceResolution(
             evidence: evidence,
+            profileAnalysis: profileAnalysis,
             artifactOutcome: .exact,
             pressureArtifactRunTime: pressureArtifactRunTime,
             pressureArtifactForecastHour: pressureArtifactForecastHour,
@@ -677,6 +720,7 @@ private struct AnvilEvidenceResolution: Sendable {
 
     static func stale(
         evidence: AnvilIngredientEvidence,
+        profileAnalysis: AnvilAnalyzeProfileResponse,
         pressureArtifactRunTime: Date,
         pressureArtifactForecastHour: Int,
         pressureArtifactValidTime: Date,
@@ -685,6 +729,7 @@ private struct AnvilEvidenceResolution: Sendable {
     ) -> AnvilEvidenceResolution {
         AnvilEvidenceResolution(
             evidence: evidence,
+            profileAnalysis: profileAnalysis,
             artifactOutcome: .stale,
             pressureArtifactRunTime: pressureArtifactRunTime,
             pressureArtifactForecastHour: pressureArtifactForecastHour,
@@ -697,6 +742,7 @@ private struct AnvilEvidenceResolution: Sendable {
     static func unavailable(reason: String) -> AnvilEvidenceResolution {
         AnvilEvidenceResolution(
             evidence: .unavailable(reason: reason),
+            profileAnalysis: nil,
             artifactOutcome: .unavailable,
             pressureArtifactRunTime: nil,
             pressureArtifactForecastHour: nil,
@@ -711,6 +757,26 @@ private enum StormSetupAnvilArtifactOutcome: String, Sendable {
     case exact
     case stale
     case unavailable
+}
+
+private struct StormSetupCurrentComposition: Sendable {
+    let snapshot: TornadoIngredientSnapshot
+    let profileAnalysis: AnvilAnalyzeProfileResponse?
+
+    var response: StormSetupCurrentResponse {
+        StormSetupCurrentResponse(
+            setup: StormSetupCurrentSetupResponse(
+                h3Cell: snapshot.h3Cell,
+                centroid: snapshot.centroid,
+                source: snapshot.source,
+                surfaceHeightMslM: snapshot.surfaceHeightMslM,
+                freshness: snapshot.freshness
+            ),
+            ingredients: snapshot.raw,
+            profileAnalysis: profileAnalysis,
+            assessment: snapshot.assessment
+        )
+    }
 }
 
 extension DefaultStormSetupProvider {

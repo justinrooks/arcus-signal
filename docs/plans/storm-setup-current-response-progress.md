@@ -166,7 +166,7 @@ Handoff notes for #135:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/135
 
-Status: Not started
+Status: Complete
 
 Scope:
 - Preserve `AnvilAnalyzeProfileResponse` through the existing provider flow.
@@ -176,6 +176,29 @@ Scope:
 Deferred:
 - Dev endpoint deprecation/removal.
 - iOS implementation.
+
+Files changed:
+- `Sources/App/Controllers/StormSetupController.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+
+Tests / commands run:
+- `swift test --filter StormSetupProviderTests`
+- `swift test --filter StormSetupControllerTests`
+
+Local verification notes:
+- `GET /api/v1/storm-setup/current` now returns `StormSetupCurrentResponse` with explicit `setup`, `ingredients`, `profileAnalysis`, and `assessment` sections.
+- The provider threads the existing Anvil analysis response through the same execution path and exposes it only for usable exact analysis results.
+- The legacy surface snapshot path still returns surface-only data when Anvil is not configured.
+
+Deferred scope:
+- Dev endpoint lifecycle changes for `api/v1/dev/anvil/profile-analysis`.
+- Any iOS-side contract migration work.
+
+Handoff notes for #136:
+- Add contract coverage for the production composed response payload shape and nil `profileAnalysis` paths that remain usable without Anvil.
+- Keep the verification focused on the production endpoint only; do not broaden into dev endpoint behavior.
 
 ### Issue #136 - 03: Add production Storm Setup current response contract tests
 
