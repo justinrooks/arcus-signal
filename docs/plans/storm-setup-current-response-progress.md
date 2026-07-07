@@ -244,14 +244,44 @@ Handoff notes for `#137`:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/137
 
-Status: Not started
+Status: Complete
 
 Scope:
 - Add a compact fixture or contract note for the iOS migration.
 - Clarify that production returns `AnvilAnalyzeProfileResponse`, not the dev request/debug envelope.
 
-Deferred:
+App-facing contract note:
+
+- Production `GET /api/v1/storm-setup/current?h3=<cell>` returns `StormSetupCurrentResponse`.
+- Response shape:
+  - `setup`: `StormSetupCurrentSetupResponse`
+  - `ingredients`: `TornadoRawParameters`
+  - `profileAnalysis`: `AnvilAnalyzeProfileResponse?`
+  - `assessment`: `TornadoIngredientAssessment`
+- Intended app mapping:
+  - summary UI from `assessment`
+  - surface detail UI from `ingredients`
+  - profile detail UI from `profileAnalysis`
+  - setup/source metadata from `setup`
+- `AnvilAnalyzeProfileRequest` and `AnvilAnalyzeProfilePreviewDebugDTO` remain dev-only on `GET /api/v1/dev/anvil/profile-analysis`.
+
+Files changed:
+- `docs/plans/storm-setup-current-response-progress.md`
+
+Tests / commands run:
+- `rg -n "AnvilAnalyzeProfileRequest|AnvilAnalyzeProfilePreviewDebugDTO" docs/plans/storm-setup-current-response*`
+
+Local verification notes:
+- The new contract note keeps the production response explicit and app-facing.
+- The remaining request/debug DTO references in the storm-setup-current docs are either dev-only or point at the dev endpoint.
+
+Deferred scope:
 - Editing the SkyAware app.
+- Adding a fixture, since the existing contract tests already pin the payload shape.
+
+Handoff notes for `#138`:
+- Do not change the dev Anvil endpoint lifecycle in this slice.
+- Keep the production response note as the app-facing contract reference until the lifecycle decision is made separately.
 
 ### Issue #138 - 05: Decide dev Anvil profile-analysis endpoint lifecycle
 
