@@ -6,6 +6,7 @@ struct TornadoIngredientSnapshot: Content, Sendable {
     let centroid: StormSetupCentroid
     let source: StormSetupSourceMetadata
     let raw: TornadoRawParameters
+    let canonical: TornadoRawParameters?
     let surfaceHeightMslM: Double?
     let assessment: TornadoIngredientAssessment
     let freshness: IngredientFreshness
@@ -16,6 +17,7 @@ struct TornadoIngredientSnapshot: Content, Sendable {
         centroid: StormSetupCentroid,
         source: StormSetupSourceMetadata,
         raw: TornadoRawParameters,
+        canonical: TornadoRawParameters? = nil,
         surfaceHeightMslM: Double? = nil,
         assessment: TornadoIngredientAssessment,
         freshness: IngredientFreshness,
@@ -25,10 +27,15 @@ struct TornadoIngredientSnapshot: Content, Sendable {
         self.centroid = centroid
         self.source = source
         self.raw = raw
+        self.canonical = canonical
         self.surfaceHeightMslM = surfaceHeightMslM
         self.assessment = assessment
         self.freshness = freshness
         self.anvilEvidence = anvilEvidence
+    }
+
+    var canonicalIngredients: TornadoRawParameters {
+        canonical ?? raw
     }
 }
 
@@ -107,7 +114,7 @@ struct StormSetupSourceMetadata: Content, Sendable, Equatable {
     }
 }
 
-struct TornadoRawParameters: Content, Sendable {
+struct TornadoRawParameters: Content, Sendable, Equatable {
     let sbcapeJkg: Double?
     let mlcapeJkg: Double?
     let mucapeJkg: Double?
@@ -115,6 +122,10 @@ struct TornadoRawParameters: Content, Sendable {
     let dcapeJkg: Double?
     let mllclM: Double?
     let tempDewPtDeltaF: Double?
+    let temperature2mK: Double?
+    let dewpoint2mK: Double?
+    let surfacePressurePa: Double?
+    let wind10m: DirectionSpeed?
     let threeCapeJkg: Double?
     let lclLfcSeparationM: Double?
     let lapseRate03kmCkm: Double?
@@ -134,6 +145,10 @@ struct TornadoRawParameters: Content, Sendable {
     let bunkersLeftMotion: DirectionSpeed?
     let stormRelativeWind46km: DirectionSpeed?
     let meanWind850300mb: DirectionSpeed?
+    let effectiveBulkShearMs: Double?
+    let effectiveLayer: AnvilEffectiveLayerDTO?
+    let stormMotion: AnvilStormMotionDTO?
+    let ship: Double?
     let diagnostics: [TornadoRawParameterDiagnostic]?
 
     init(
@@ -144,6 +159,10 @@ struct TornadoRawParameters: Content, Sendable {
         dcapeJkg: Double?,
         mllclM: Double?,
         tempDewPtDeltaF: Double? = nil,
+        temperature2mK: Double? = nil,
+        dewpoint2mK: Double? = nil,
+        surfacePressurePa: Double? = nil,
+        wind10m: DirectionSpeed? = nil,
         threeCapeJkg: Double? = nil,
         lclLfcSeparationM: Double?,
         lapseRate03kmCkm: Double?,
@@ -163,7 +182,11 @@ struct TornadoRawParameters: Content, Sendable {
         bunkersLeftMotion: DirectionSpeed?,
         stormRelativeWind46km: DirectionSpeed?,
         meanWind850300mb: DirectionSpeed?,
-        diagnostics: [TornadoRawParameterDiagnostic]? = nil
+        diagnostics: [TornadoRawParameterDiagnostic]? = nil,
+        effectiveBulkShearMs: Double? = nil,
+        effectiveLayer: AnvilEffectiveLayerDTO? = nil,
+        stormMotion: AnvilStormMotionDTO? = nil,
+        ship: Double? = nil
     ) {
         self.sbcapeJkg = sbcapeJkg
         self.mlcapeJkg = mlcapeJkg
@@ -172,6 +195,10 @@ struct TornadoRawParameters: Content, Sendable {
         self.dcapeJkg = dcapeJkg
         self.mllclM = mllclM
         self.tempDewPtDeltaF = tempDewPtDeltaF
+        self.temperature2mK = temperature2mK
+        self.dewpoint2mK = dewpoint2mK
+        self.surfacePressurePa = surfacePressurePa
+        self.wind10m = wind10m
         self.threeCapeJkg = threeCapeJkg
         self.lclLfcSeparationM = lclLfcSeparationM
         self.lapseRate03kmCkm = lapseRate03kmCkm
@@ -191,6 +218,10 @@ struct TornadoRawParameters: Content, Sendable {
         self.bunkersLeftMotion = bunkersLeftMotion
         self.stormRelativeWind46km = stormRelativeWind46km
         self.meanWind850300mb = meanWind850300mb
+        self.effectiveBulkShearMs = effectiveBulkShearMs
+        self.effectiveLayer = effectiveLayer
+        self.stormMotion = stormMotion
+        self.ship = ship
         self.diagnostics = diagnostics
     }
 }
@@ -230,7 +261,7 @@ extension TornadoRawParameters {
     }
 }
 
-struct DirectionSpeed: Content, Sendable {
+struct DirectionSpeed: Content, Sendable, Equatable {
     let directionDegrees: Double
     let speedKt: Double
 }
@@ -242,6 +273,8 @@ enum TornadoRawParameterKey: String, Content, Sendable {
     case mlcinJkg
     case temperature2mK
     case dewpoint2mK
+    case surfacePressurePa
+    case wind10m
     case tempDewPtDeltaF
     case threeCapeJkg
     case srh01kmM2s2
@@ -252,7 +285,7 @@ enum TornadoRawParameterKey: String, Content, Sendable {
     case mllclM
 }
 
-struct TornadoRawParameterDiagnostic: Content, Sendable {
+struct TornadoRawParameterDiagnostic: Content, Sendable, Equatable {
     let inventory: String
     let parsedValue: Double?
     let matchedRawParameterKey: TornadoRawParameterKey?

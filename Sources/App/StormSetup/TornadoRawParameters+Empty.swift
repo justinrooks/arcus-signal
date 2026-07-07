@@ -9,6 +9,10 @@ extension TornadoRawParameters {
         dcapeJkg: nil,
         mllclM: nil,
         tempDewPtDeltaF: nil,
+        temperature2mK: nil,
+        dewpoint2mK: nil,
+        surfacePressurePa: nil,
+        wind10m: nil,
         threeCapeJkg: nil,
         lclLfcSeparationM: nil,
         lapseRate03kmCkm: nil,
@@ -28,6 +32,10 @@ extension TornadoRawParameters {
         bunkersLeftMotion: nil,
         stormRelativeWind46km: nil,
         meanWind850300mb: nil,
-        diagnostics: nil
+        diagnostics: nil,
+        effectiveBulkShearMs: nil,
+        effectiveLayer: nil,
+        stormMotion: nil,
+        ship: nil
     )
 }

@@ -127,6 +127,10 @@ struct StormSetupProviderTests {
                 mucapeJkg: 1600,
                 mlcinJkg: -35,
                 mllclM: 950,
+                temperature2mK: 295.15,
+                dewpoint2mK: 289.15,
+                surfacePressurePa: 94_000,
+                wind10m: DirectionSpeed(directionDegrees: 69.8, speedKt: 39.2),
                 shear06kmKt: 42,
                 srh01kmM2s2: 80,
                 srh03kmM2s2: 160
@@ -138,7 +142,18 @@ struct StormSetupProviderTests {
         let response = try await provider.currentResponse(for: fixedH3)
 
         #expect(response.setup.h3Cell == fixedH3)
-        #expect(response.ingredients.sbcapeJkg == 1450)
+        #expect(response.ingredients.canonical.mucapeJkg == 362.1018454649957)
+        #expect(response.ingredients.canonical.mlcapeJkg == 191.7304143918497)
+        #expect(response.ingredients.canonical.mlcinJkg == -221.93726424748172)
+        #expect(response.ingredients.canonical.mllclM == 1179.4130766012365)
+        #expect(response.ingredients.canonical.effectiveBulkShearMs == 30.134722226263612)
+        #expect(response.ingredients.canonical.effectiveLayer?.status == "found")
+        #expect(response.ingredients.canonical.stormMotion?.status == "computed")
+        #expect(response.ingredients.canonical.ship == 2.3)
+        #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
+        #expect(response.ingredients.diagnostics.temperature2mK == 295.15)
+        #expect(response.ingredients.diagnostics.dewpoint2mK == 289.15)
+        #expect(response.ingredients.diagnostics.surfacePressurePa == 94_000)
         #expect(response.profileAnalysis == expectedAnalysis)
         #expect(response.assessment.overall == .supportive)
         #expect(response.assessment.confidence == .high)
@@ -190,6 +205,10 @@ struct StormSetupProviderTests {
                 mucapeJkg: 1600,
                 mlcinJkg: -35,
                 mllclM: 950,
+                temperature2mK: 295.15,
+                dewpoint2mK: 289.15,
+                surfacePressurePa: 94_000,
+                wind10m: DirectionSpeed(directionDegrees: 69.8, speedKt: 39.2),
                 shear06kmKt: 42,
                 srh01kmM2s2: 80,
                 srh03kmM2s2: 160
@@ -201,6 +220,7 @@ struct StormSetupProviderTests {
         let response = try await provider.currentResponse(for: fixedH3)
 
         #expect(response.profileAnalysis == nil)
+        #expect(response.ingredients.canonical == response.ingredients.diagnostics)
         #expect(response.assessment.overall == .conditional)
         #expect(response.assessment.confidence == .low)
         #expect(response.assessment.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
@@ -1342,6 +1362,10 @@ struct StormSetupProviderTests {
         mucapeJkg: Double? = nil,
         mlcinJkg: Double? = nil,
         mllclM: Double? = nil,
+        temperature2mK: Double? = nil,
+        dewpoint2mK: Double? = nil,
+        surfacePressurePa: Double? = nil,
+        wind10m: DirectionSpeed? = nil,
         shear06kmKt: Double? = nil,
         srh01kmM2s2: Double? = nil,
         srh03kmM2s2: Double? = nil
@@ -1354,6 +1378,10 @@ struct StormSetupProviderTests {
             dcapeJkg: nil,
             mllclM: mllclM,
             tempDewPtDeltaF: nil,
+            temperature2mK: temperature2mK,
+            dewpoint2mK: dewpoint2mK,
+            surfacePressurePa: surfacePressurePa,
+            wind10m: wind10m,
             lclLfcSeparationM: nil,
             lapseRate03kmCkm: nil,
             lapseRate700500mbCkm: nil,
@@ -1807,6 +1835,10 @@ func makeStormSetupRouteRaw() -> TornadoRawParameters {
         dcapeJkg: nil,
         mllclM: 950,
         tempDewPtDeltaF: 17,
+        temperature2mK: 295.15,
+        dewpoint2mK: 289.15,
+        surfacePressurePa: 94_000,
+        wind10m: DirectionSpeed(directionDegrees: 69.8, speedKt: 39.2),
         lclLfcSeparationM: nil,
         lapseRate03kmCkm: nil,
         lapseRate700500mbCkm: nil,

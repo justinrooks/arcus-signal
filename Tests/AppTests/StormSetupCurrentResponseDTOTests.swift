@@ -12,25 +12,31 @@ struct StormSetupCurrentResponseDTOTests {
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         #expect(object?.keys.sorted() == ["assessment", "ingredients", "profileAnalysis", "setup"])
 
+        let ingredientsObject = object?["ingredients"] as? [String: Any]
+        #expect(ingredientsObject?.keys.sorted() == ["canonical", "diagnostics"])
+
         let setupObject = object?["setup"] as? [String: Any]
         #expect(setupObject?.keys.sorted() == ["centroid", "freshness", "h3Cell", "source", "surfaceHeightMslM"])
 
+        let canonicalObject = ingredientsObject?["canonical"] as? [String: Any]
+        #expect(canonicalObject?["mucapeJkg"] as? Double == 362.1)
+        #expect(canonicalObject?["mlcapeJkg"] as? Double == 191.7)
+        #expect(canonicalObject?["mlcinJkg"] as? Double == -221.9)
+        #expect(canonicalObject?["mllclM"] as? Double == 1179.4)
+        #expect(canonicalObject?["effectiveBulkShearMs"] as? Double == 30.1)
+        #expect(canonicalObject?["effectiveSrhM2s2"] as? Double == 29.4)
+        #expect(canonicalObject?["ship"] as? Double == 0.02)
+        #expect(canonicalObject?["effectiveLayer"] != nil)
+        #expect(canonicalObject?["stormMotion"] != nil)
+
+        let diagnosticsObject = ingredientsObject?["diagnostics"] as? [String: Any]
+        #expect(diagnosticsObject?["sbcapeJkg"] as? Double == 1450)
+        #expect(diagnosticsObject?["temperature2mK"] as? Double == 295.15)
+        #expect(diagnosticsObject?["dewpoint2mK"] as? Double == 289.15)
+        #expect(diagnosticsObject?["surfacePressurePa"] as? Double == 94_000)
+        #expect(diagnosticsObject?["wind10m"] != nil)
+
         let profileAnalysisObject = object?["profileAnalysis"] as? [String: Any]
-        #expect(profileAnalysisObject?.keys.sorted() == [
-            "effectiveBulkShearMs",
-            "effectiveLayer",
-            "effectiveSrh",
-            "mlcape",
-            "mlcin",
-            "mllclMetersAgl",
-            "mucape",
-            "quality",
-            "scp",
-            "ship",
-            "stormMotion",
-            "stpCin",
-            "stpFixed"
-        ])
         #expect(profileAnalysisObject?["request"] == nil)
         #expect(profileAnalysisObject?["debug"] == nil)
 
@@ -46,7 +52,7 @@ struct StormSetupCurrentResponseDTOTests {
         #expect(decoded.setup.freshness.expiresAt == response.setup.freshness.expiresAt)
         #expect(decoded.setup.freshness.isStale == response.setup.freshness.isStale)
         #expect(decoded.setup.freshness.isDegraded == response.setup.freshness.isDegraded)
-        #expect(decoded.ingredients.sbcapeJkg == response.ingredients.sbcapeJkg)
+        #expect(decoded.ingredients == response.ingredients)
         #expect(decoded.profileAnalysis == response.profileAnalysis)
         #expect(decoded.assessment.overall == response.assessment.overall)
         #expect(decoded.assessment.confidence == response.assessment.confidence)
@@ -63,6 +69,7 @@ struct StormSetupCurrentResponseDTOTests {
         #expect(decoded.profileAnalysis == nil)
         #expect(decoded.setup.h3Cell == response.setup.h3Cell)
         #expect(decoded.assessment.summary == response.assessment.summary)
+        #expect(decoded.ingredients == response.ingredients)
     }
 
     private func makeResponse(profileAnalysis: AnvilAnalyzeProfileResponse?) -> StormSetupCurrentResponse {
@@ -92,32 +99,9 @@ struct StormSetupCurrentResponseDTOTests {
                     isDegraded: false
                 )
             ),
-            ingredients: TornadoRawParameters(
-                sbcapeJkg: 1450,
-                mlcapeJkg: 980,
-                mucapeJkg: 1710,
-                mlcinJkg: -35,
-                dcapeJkg: nil,
-                mllclM: 1150,
-                lclLfcSeparationM: 210,
-                lapseRate03kmCkm: nil,
-                lapseRate700500mbCkm: nil,
-                shear06kmKt: 31,
-                shear03kmKt: 25,
-                shear01kmKt: 18,
-                effectiveShearKt: 34,
-                srh01kmM2s2: 120,
-                srh03kmM2s2: 180,
-                effectiveSrhM2s2: 145,
-                supercellComposite: 2.4,
-                significantTornadoFixed: 1.7,
-                significantTornadoEffective: 2.1,
-                significantHail: 0.8,
-                bunkersRightMotion: nil,
-                bunkersLeftMotion: nil,
-                stormRelativeWind46km: nil,
-                meanWind850300mb: nil,
-                diagnostics: nil
+            ingredients: StormSetupTornadoIngredientsResponse(
+                canonical: makeCanonicalIngredients(profileAnalysis: profileAnalysis),
+                diagnostics: makeDiagnosticsIngredients()
             ),
             profileAnalysis: profileAnalysis,
             assessment: makeAssessment()
@@ -179,6 +163,86 @@ struct StormSetupCurrentResponseDTOTests {
                 profileLevelCount: 20,
                 warnings: []
             )
+        )
+    }
+
+    private func makeCanonicalIngredients(profileAnalysis: AnvilAnalyzeProfileResponse?) -> TornadoRawParameters {
+        guard let profileAnalysis else {
+            return makeDiagnosticsIngredients()
+        }
+
+        return TornadoRawParameters(
+            sbcapeJkg: 1450,
+            mlcapeJkg: profileAnalysis.mlcape,
+            mucapeJkg: profileAnalysis.mucape,
+            mlcinJkg: profileAnalysis.mlcin,
+            dcapeJkg: nil,
+            mllclM: profileAnalysis.mllclMetersAgl,
+            tempDewPtDeltaF: 17,
+            temperature2mK: nil,
+            dewpoint2mK: nil,
+            surfacePressurePa: nil,
+            wind10m: nil,
+            threeCapeJkg: nil,
+            lclLfcSeparationM: 210,
+            lapseRate03kmCkm: nil,
+            lapseRate700500mbCkm: nil,
+            shear06kmKt: 31,
+            shear03kmKt: 25,
+            shear01kmKt: 18,
+            effectiveShearKt: profileAnalysis.effectiveBulkShearMs.map { $0 * 1.943_844_492_440_6 },
+            srh01kmM2s2: 120,
+            srh03kmM2s2: 180,
+            effectiveSrhM2s2: profileAnalysis.effectiveSrh,
+            supercellComposite: profileAnalysis.scp,
+            significantTornadoFixed: profileAnalysis.stpFixed,
+            significantTornadoEffective: profileAnalysis.stpCin,
+            significantHail: 0.8,
+            bunkersRightMotion: DirectionSpeed(directionDegrees: 69.8, speedKt: 39.2),
+            bunkersLeftMotion: nil,
+            stormRelativeWind46km: nil,
+            meanWind850300mb: nil,
+            diagnostics: nil,
+            effectiveBulkShearMs: profileAnalysis.effectiveBulkShearMs,
+            effectiveLayer: profileAnalysis.effectiveLayer,
+            stormMotion: profileAnalysis.stormMotion,
+            ship: profileAnalysis.ship
+        )
+    }
+
+    private func makeDiagnosticsIngredients() -> TornadoRawParameters {
+        TornadoRawParameters(
+            sbcapeJkg: 1450,
+            mlcapeJkg: 980,
+            mucapeJkg: 1710,
+            mlcinJkg: -35,
+            dcapeJkg: nil,
+            mllclM: 1150,
+            tempDewPtDeltaF: 17,
+            temperature2mK: 295.15,
+            dewpoint2mK: 289.15,
+            surfacePressurePa: 94_000,
+            wind10m: DirectionSpeed(directionDegrees: 69.8, speedKt: 39.2),
+            threeCapeJkg: nil,
+            lclLfcSeparationM: 210,
+            lapseRate03kmCkm: nil,
+            lapseRate700500mbCkm: nil,
+            shear06kmKt: 31,
+            shear03kmKt: 25,
+            shear01kmKt: 18,
+            effectiveShearKt: 34,
+            srh01kmM2s2: 120,
+            srh03kmM2s2: 180,
+            effectiveSrhM2s2: 145,
+            supercellComposite: 2.4,
+            significantTornadoFixed: 1.7,
+            significantTornadoEffective: 2.1,
+            significantHail: 0.8,
+            bunkersRightMotion: nil,
+            bunkersLeftMotion: nil,
+            stormRelativeWind46km: nil,
+            meanWind850300mb: nil,
+            diagnostics: nil
         )
     }
 

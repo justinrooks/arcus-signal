@@ -96,6 +96,9 @@ private struct TornadoRawParametersBuilder {
     var mllclM: ParameterCandidate?
     var temperature2mK: ParameterCandidate?
     var dewpoint2mK: ParameterCandidate?
+    var surfacePressurePa: ParameterCandidate?
+    var wind10mU: ParameterCandidate?
+    var wind10mV: ParameterCandidate?
     var threeCapeJkg: ParameterCandidate?
     var srh01kmM2s2: ParameterCandidate?
     var srh03kmM2s2: ParameterCandidate?
@@ -126,6 +129,8 @@ private struct TornadoRawParametersBuilder {
             temperature2mK = candidate(existing: temperature2mK, value: value, priority: priority)
         case .dewpoint2mK:
             dewpoint2mK = candidate(existing: dewpoint2mK, value: value, priority: priority)
+        case .surfacePressurePa:
+            surfacePressurePa = candidate(existing: surfacePressurePa, value: value, priority: priority)
         case .tempDewPtDeltaF:
             break
         case .threeCapeJkg:
@@ -134,12 +139,14 @@ private struct TornadoRawParametersBuilder {
             srh01kmM2s2 = candidate(existing: srh01kmM2s2, value: value, priority: priority)
         case .srh03kmM2s2:
             srh03kmM2s2 = candidate(existing: srh03kmM2s2, value: value, priority: priority)
+        case .mllclM:
+            mllclM = candidate(existing: mllclM, value: value, priority: priority)
         case .effectiveSrhM2s2, .effectiveShearKt:
             break
         case .shear06kmKt:
             break
-        case .mllclM:
-            mllclM = candidate(existing: mllclM, value: value, priority: priority)
+        case .wind10m:
+            break
         }
     }
 
@@ -149,15 +156,23 @@ private struct TornadoRawParametersBuilder {
         value: Double,
         priority: Int
     ) {
-        guard key == .shear06kmKt else {
-            return
-        }
-
-        switch component {
-        case .u:
-            shear06kmU = candidate(existing: shear06kmU, value: value, priority: priority)
-        case .v:
-            shear06kmV = candidate(existing: shear06kmV, value: value, priority: priority)
+        switch key {
+        case .shear06kmKt:
+            switch component {
+            case .u:
+                shear06kmU = candidate(existing: shear06kmU, value: value, priority: priority)
+            case .v:
+                shear06kmV = candidate(existing: shear06kmV, value: value, priority: priority)
+            }
+        case .wind10m:
+            switch component {
+            case .u:
+                wind10mU = candidate(existing: wind10mU, value: value, priority: priority)
+            case .v:
+                wind10mV = candidate(existing: wind10mV, value: value, priority: priority)
+            }
+        default:
+            break
         }
     }
 
@@ -167,6 +182,16 @@ private struct TornadoRawParametersBuilder {
             shear06kmKt = hypot(shear06kmU.value, shear06kmV.value) * Self.metresPerSecondToKnots
         } else {
             shear06kmKt = nil
+        }
+
+        let wind10m: DirectionSpeed?
+        if let wind10mU, let wind10mV {
+            wind10m = DirectionSpeed(
+                directionDegrees: directionDegrees(u: wind10mU.value, v: wind10mV.value),
+                speedKt: hypot(wind10mU.value, wind10mV.value) * Self.metresPerSecondToKnots
+            )
+        } else {
+            wind10m = nil
         }
 
         let tempDewPtDeltaF: Double?
@@ -187,6 +212,10 @@ private struct TornadoRawParametersBuilder {
                 dcapeJkg: nil,
                 mllclM: mllclM?.value,
                 tempDewPtDeltaF: tempDewPtDeltaF,
+                temperature2mK: temperature2mK?.value,
+                dewpoint2mK: dewpoint2mK?.value,
+                surfacePressurePa: surfacePressurePa?.value,
+                wind10m: wind10m,
                 threeCapeJkg: threeCapeJkg?.value,
                 lclLfcSeparationM: nil,
                 lapseRate03kmCkm: nil,
@@ -227,6 +256,12 @@ private struct TornadoRawParametersBuilder {
 
     private static let metresPerSecondToKnots = 1.943_844_492_440_6
     private static let kelvinToFahrenheitDelta = 1.8
+
+    private func directionDegrees(u: Double, v: Double) -> Double {
+        let radians = atan2(u, v)
+        let degrees = radians * 180 / .pi
+        return degrees >= 0 ? degrees : degrees + 360
+    }
 }
 
 private struct ParameterCandidate: Sendable, Equatable {

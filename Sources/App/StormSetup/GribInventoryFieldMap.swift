@@ -14,13 +14,15 @@ struct GribInventoryFieldMap: Sendable {
             return capeMatch(for: level)
         case "CIN":
             return cinMatch(for: level)
+        case "PRES":
+            return pressureMatch(for: level)
         case "TMP":
             return temperatureMatch(for: level)
         case "DPT":
             return dewpointMatch(for: level)
         case "HLCY":
             return helicityMatch(for: level)
-        case "VUCSH", "VVCSH":
+        case "VUCSH", "VVCSH", "UGRD", "VGRD":
             return shearComponentMatch(for: variable, level: level)
         case "HGT":
             return hgtMatch(for: level)
@@ -60,6 +62,14 @@ struct GribInventoryFieldMap: Sendable {
         return .direct(.dewpoint2mK, priority: 0)
     }
 
+    private func pressureMatch(for level: String) -> GribInventoryFieldMatch? {
+        guard level == "surface" else {
+            return nil
+        }
+
+        return .direct(.surfacePressurePa, priority: 0)
+    }
+
     private func cinMatch(for level: String) -> GribInventoryFieldMatch? {
         switch level {
         case "90-0 mb above ground":
@@ -83,12 +93,16 @@ struct GribInventoryFieldMap: Sendable {
     }
 
     private func shearComponentMatch(for variable: String, level: String) -> GribInventoryFieldMatch? {
-        guard level == "0-6000 m above ground" || level == "0-6 km above ground" else {
+        switch level {
+        case "0-6000 m above ground", "0-6 km above ground":
+            let component: VectorComponent = variable == "VUCSH" ? .u : .v
+            return .vectorComponent(.shear06kmKt, component, priority: 0)
+        case "10 m above ground":
+            let component: VectorComponent = variable == "UGRD" ? .u : .v
+            return .vectorComponent(.wind10m, component, priority: 0)
+        default:
             return nil
         }
-
-        let component: VectorComponent = variable == "VUCSH" ? .u : .v
-        return .vectorComponent(.shear06kmKt, component, priority: 0)
     }
 
     private func hgtMatch(for level: String) -> GribInventoryFieldMatch? {

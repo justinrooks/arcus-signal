@@ -3,7 +3,7 @@ import Vapor
 
 struct StormSetupCurrentResponse: Content, Sendable {
     let setup: StormSetupCurrentSetupResponse
-    let ingredients: TornadoRawParameters
+    let ingredients: StormSetupTornadoIngredientsResponse
     let profileAnalysis: AnvilAnalyzeProfileResponse?
     let assessment: TornadoIngredientAssessment
 }
@@ -14,4 +14,9 @@ struct StormSetupCurrentSetupResponse: Content, Sendable {
     let source: StormSetupSourceMetadata
     let surfaceHeightMslM: Double?
     let freshness: IngredientFreshness
+}
+
+struct StormSetupTornadoIngredientsResponse: Content, Sendable, Equatable {
+    let canonical: TornadoRawParameters
+    let diagnostics: TornadoRawParameters
 }

@@ -18,7 +18,10 @@ extension StormSetupProviding {
                 surfaceHeightMslM: snapshot.surfaceHeightMslM,
                 freshness: snapshot.freshness
             ),
-            ingredients: snapshot.raw,
+            ingredients: StormSetupTornadoIngredientsResponse(
+                canonical: snapshot.canonicalIngredients,
+                diagnostics: snapshot.raw
+            ),
             profileAnalysis: nil,
             assessment: snapshot.assessment
         )
@@ -467,8 +470,12 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         )
         try Task.checkCancellation()
 
+        let canonicalIngredients = resolution.profileAnalysis.map {
+            makeCanonicalIngredients(from: snapshot.raw, profileAnalysis: $0)
+        } ?? snapshot.canonical
+
         let assessment = interpreter.assess(
-            raw: snapshot.raw,
+            raw: canonicalIngredients ?? snapshot.raw,
             freshness: snapshot.freshness,
             evidence: resolution.evidence
         )
@@ -480,6 +487,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             centroid: snapshot.centroid,
             source: snapshot.source,
             raw: snapshot.raw,
+            canonical: canonicalIngredients,
             surfaceHeightMslM: snapshot.surfaceHeightMslM,
             assessment: assessment,
             freshness: snapshot.freshness,
@@ -568,6 +576,56 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             }
             return "Anvil evidence is degraded."
         }
+    }
+
+    private func makeCanonicalIngredients(
+        from diagnostics: TornadoRawParameters,
+        profileAnalysis: AnvilAnalyzeProfileResponse
+    ) -> TornadoRawParameters {
+        let bunkersRightMotion = profileAnalysis.stormMotion.bunkersRight.map { bunkersRight in
+            DirectionSpeed(
+                directionDegrees: bunkersRight.directionTowardDeg,
+                speedKt: bunkersRight.speedKt
+            )
+        }
+
+        return TornadoRawParameters(
+            sbcapeJkg: diagnostics.sbcapeJkg,
+            mlcapeJkg: profileAnalysis.mlcape ?? diagnostics.mlcapeJkg,
+            mucapeJkg: profileAnalysis.mucape ?? diagnostics.mucapeJkg,
+            mlcinJkg: profileAnalysis.mlcin ?? diagnostics.mlcinJkg,
+            dcapeJkg: diagnostics.dcapeJkg,
+            mllclM: profileAnalysis.mllclMetersAgl ?? diagnostics.mllclM,
+            tempDewPtDeltaF: diagnostics.tempDewPtDeltaF,
+            temperature2mK: nil,
+            dewpoint2mK: nil,
+            surfacePressurePa: nil,
+            wind10m: nil,
+            threeCapeJkg: diagnostics.threeCapeJkg,
+            lclLfcSeparationM: diagnostics.lclLfcSeparationM,
+            lapseRate03kmCkm: diagnostics.lapseRate03kmCkm,
+            lapseRate700500mbCkm: diagnostics.lapseRate700500mbCkm,
+            shear06kmKt: diagnostics.shear06kmKt,
+            shear03kmKt: diagnostics.shear03kmKt,
+            shear01kmKt: diagnostics.shear01kmKt,
+            effectiveShearKt: profileAnalysis.effectiveBulkShearMs.map { $0 * 1.943_844_492_440_6 } ?? diagnostics.effectiveShearKt,
+            srh01kmM2s2: diagnostics.srh01kmM2s2,
+            srh03kmM2s2: diagnostics.srh03kmM2s2,
+            effectiveSrhM2s2: profileAnalysis.effectiveSrh ?? diagnostics.effectiveSrhM2s2,
+            supercellComposite: profileAnalysis.scp ?? diagnostics.supercellComposite,
+            significantTornadoFixed: profileAnalysis.stpFixed ?? diagnostics.significantTornadoFixed,
+            significantTornadoEffective: profileAnalysis.stpCin ?? diagnostics.significantTornadoEffective,
+            significantHail: diagnostics.significantHail,
+            bunkersRightMotion: bunkersRightMotion ?? diagnostics.bunkersRightMotion,
+            bunkersLeftMotion: diagnostics.bunkersLeftMotion,
+            stormRelativeWind46km: diagnostics.stormRelativeWind46km,
+            meanWind850300mb: diagnostics.meanWind850300mb,
+            diagnostics: nil,
+            effectiveBulkShearMs: profileAnalysis.effectiveBulkShearMs,
+            effectiveLayer: profileAnalysis.effectiveLayer,
+            stormMotion: profileAnalysis.stormMotion,
+            ship: profileAnalysis.ship
+        )
     }
 
     private func classify(
@@ -772,7 +830,10 @@ private struct StormSetupCurrentComposition: Sendable {
                 surfaceHeightMslM: snapshot.surfaceHeightMslM,
                 freshness: snapshot.freshness
             ),
-            ingredients: snapshot.raw,
+            ingredients: StormSetupTornadoIngredientsResponse(
+                canonical: snapshot.canonicalIngredients,
+                diagnostics: snapshot.raw
+            ),
             profileAnalysis: profileAnalysis,
             assessment: snapshot.assessment
         )
