@@ -42,10 +42,10 @@ struct StormSetupCurrentResponseDTOTests {
         #expect(profileAnalysisObject?["ship"] as? Double == 0.02)
 
         let viabilityObject = object?["tornadoViability"] as? [String: Any]
-        #expect(viabilityObject?.keys.sorted() == ["confidence", "details", "limitingFactors", "overall", "summary"])
+        #expect(viabilityObject?.keys.sorted() == ["confidence", "details", "limitingFactors", "overall", "primaryFailureMode", "realization", "summary"])
 
         let viabilityDetailsObject = viabilityObject?["details"] as? [String: Any]
-        #expect(viabilityDetailsObject?.keys.sorted() == ["capInhibition", "cloudBase", "compositeSignal", "deepShear", "instability", "lowLevelRotation", "moisture", "stormMode"])
+        #expect(viabilityDetailsObject?.keys.sorted() == ["cloudBase", "cloudBaseEfficiency", "deepShear", "inhibition", "instability", "lowLevelRotation", "lowLevelStretching", "moisture", "stormMode", "stormViability", "supercellComposite", "supercellViability", "tornadoComposite", "tornadoEfficiency"])
 
         let decoded = try decoder().decode(StormSetupCurrentResponse.self, from: encoded)
         #expect(decoded.setup.h3Cell == response.setup.h3Cell)
@@ -114,19 +114,27 @@ struct StormSetupCurrentResponseDTOTests {
     private func makeViabilityReport() -> TornadoViabilityReport {
         TornadoViabilityReport(
             overall: .conditional,
+            realization: .conditional,
+            primaryFailureMode: .conditionalInitiation,
             confidence: .moderate,
             summary: "Conditions remain conditionally supportive.",
             details: TornadoViabilityDetails(
+                stormViability: .supportive,
+                supercellViability: .strong,
+                tornadoEfficiency: .supportive,
+                inhibition: .weak,
                 instability: .supportive,
                 moisture: .strong,
                 cloudBase: .conditional,
-                capInhibition: .weak,
                 deepShear: .supportive,
                 lowLevelRotation: .supportive,
-                stormMode: .conditional,
-                compositeSignal: .supportive
+                lowLevelStretching: .conditional,
+                cloudBaseEfficiency: .conditional,
+                supercellComposite: .supportive,
+                tornadoComposite: .supportive,
+                stormMode: .conditional
             ),
-            limitingFactors: [.weakLift],
+            limitingFactors: [.conditionalInitiation],
         )
     }
 

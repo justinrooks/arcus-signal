@@ -1,4 +1,5 @@
 import Foundation
+import Vapor
 
 struct TornadoIngredientInterpreter: Sendable {
     private let rulesVersion: StormSetupRulesVersion
@@ -25,7 +26,7 @@ struct TornadoIngredientInterpreter: Sendable {
             cloudBase: diagnosis.cloudBase,
             capInhibition: diagnosis.capInhibition,
             deepShear: diagnosis.deepShear,
-            lowLevelRotation: diagnosis.lowLevelRotation,
+            lowLevelRotation: diagnosis.tornadoEfficiency,
             stormMode: diagnosis.stormMode,
             compositeSignal: diagnosis.compositeSignal,
             confidence: diagnosis.confidence,
@@ -33,7 +34,17 @@ struct TornadoIngredientInterpreter: Sendable {
             stormModeHint: .unknown,
             primaryDrivers: diagnosis.primaryDrivers,
             limitingFactors: diagnosis.limitingFactors,
-            summary: diagnosis.summary
+            summary: diagnosis.summary,
+            lowLevelRotationSupport: diagnosis.lowLevelRotation,
+            lowLevelStretching: diagnosis.lowLevelStretching,
+            cloudBaseEfficiency: diagnosis.cloudBaseEfficiency,
+            tornadoEfficiency: diagnosis.tornadoEfficiency,
+            stormViability: diagnosis.stormViability,
+            supercellViability: diagnosis.supercellViability,
+            supercellComposite: diagnosis.supercellComposite,
+            realization: diagnosis.realization,
+            primaryFailureMode: diagnosis.failureMode,
+            viabilityLimiters: diagnosis.viabilityLimiters
         )
     }
 
@@ -48,8 +59,8 @@ struct TornadoIngredientInterpreter: Sendable {
         let capInhibition = assessCapInhibition(raw)
         let deepShear = assessDeepShear(raw)
         let lowLevelRotation = assessLowLevelRotation(raw)
-        let lowLevelStretching = raw.threeCapeJkg.map(assessThreeCape)
-        let cloudBaseEfficiency = cloudBaseSupport(raw)
+        let lowLevelStretching = assessLowLevelStretching(raw)
+        let cloudBaseEfficiency = assessCloudBaseEfficiency(raw)
         let supercellSupport = assessSupercellSupport(raw)
         let tornadoComposite = assessTornadoCompositeSupport(raw)
         let compositeConfirmation = assessCompositeConfirmation(
@@ -76,10 +87,23 @@ struct TornadoIngredientInterpreter: Sendable {
         let knownCorePillars = [
             instability,
             deepShear,
-            lowLevelRotation,
+            tornadoEfficiency,
             cloudBase,
             supercellSupport
         ].filter { $0 != .unknown }.count
+
+        let viabilityLimiters = makeViabilityLimiters(
+            raw: raw,
+            instability: instability,
+            moisture: moisture,
+            deepShear: deepShear,
+            lowLevelRotation: lowLevelRotation,
+            lowLevelStretching: lowLevelStretching,
+            cloudBaseEfficiency: cloudBaseEfficiency,
+            stormMode: stormMode,
+            supercellSupport: supercellSupport,
+            tornadoComposite: tornadoComposite
+        )
 
         let limitingFactors = makeLimitingFactors(
             raw: raw,
@@ -88,7 +112,7 @@ struct TornadoIngredientInterpreter: Sendable {
             cloudBase: cloudBase,
             capInhibition: capInhibition,
             deepShear: deepShear,
-            lowLevelRotation: lowLevelRotation,
+            lowLevelRotation: tornadoEfficiency,
             stormMode: stormMode,
             compositeSignal: tornadoComposite
         )
@@ -97,7 +121,7 @@ struct TornadoIngredientInterpreter: Sendable {
             instability: instability,
             cloudBase: cloudBase,
             deepShear: deepShear,
-            lowLevelRotation: lowLevelRotation,
+            lowLevelRotation: tornadoEfficiency,
             supercellSupport: supercellSupport,
             compositeSignal: tornadoComposite,
             capInhibition: capInhibition,
@@ -122,14 +146,17 @@ struct TornadoIngredientInterpreter: Sendable {
             cloudBaseEfficiency: cloudBaseEfficiency ?? .unknown,
             tornadoEfficiency: tornadoEfficiency,
             inhibition: capInhibition,
+            supercellComposite: supercellSupport,
             compositeConfirmation: compositeConfirmation,
             realization: assessRealization(
                 overall: evidenceAdjusted.overall,
                 tornadoEfficiency: tornadoEfficiency,
-                inhibition: capInhibition
+                inhibition: capInhibition,
+                viabilityLimiters: viabilityLimiters
             ),
             failureMode: assessFailureMode(
                 limitingFactors: limitingFactors,
+                viabilityLimiters: viabilityLimiters,
                 supercellSupport: supercellSupport,
                 tornadoComposite: tornadoComposite,
                 compositeConfirmation: compositeConfirmation
@@ -153,11 +180,14 @@ struct TornadoIngredientInterpreter: Sendable {
                 cloudBase: cloudBase,
                 capInhibition: capInhibition,
                 deepShear: deepShear,
-                lowLevelRotation: lowLevelRotation,
+                lowLevelRotation: tornadoEfficiency,
+                lowLevelStretching: lowLevelStretching,
                 supercellSupport: supercellSupport,
+                supercellComposite: supercellSupport,
                 compositeSignal: tornadoComposite
             ),
             limitingFactors: limitingFactors,
+            viabilityLimiters: viabilityLimiters,
             instability: instability,
             moisture: moisture,
             cloudBase: cloudBase,
@@ -272,31 +302,27 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessLowLevelRotation(_ raw: TornadoRawParameters) -> IngredientSupport {
-        let rotationSupport: IngredientSupport?
-
         if let srh01kmM2s2 = raw.srh01kmM2s2 {
-            rotationSupport = assessSRH01km(srh01kmM2s2)
-        } else if let effectiveSrh = raw.effectiveSrhM2s2 {
-            rotationSupport = assessEffectiveSRH(effectiveSrh)
-        } else if let srh03kmM2s2 = raw.srh03kmM2s2 {
-            rotationSupport = assessSRH03km(srh03kmM2s2)
-        } else {
-            rotationSupport = nil
+            return assessSRH01km(srh01kmM2s2)
         }
 
-        let stretchingSupport = raw.threeCapeJkg.map(assessThreeCape)
-        let cloudBaseTier = cloudBaseSupport(raw)
-        let supports = [rotationSupport, stretchingSupport].compactMap { $0 }
-        guard !supports.isEmpty else {
-            return .unknown
+        if let effectiveSrh = raw.effectiveSrhM2s2 {
+            return assessEffectiveSRH(effectiveSrh)
         }
 
-        var combined = supports.min() ?? .unknown
-        if let cloudBaseTier {
-            combined = min(combined, cloudBaseTier)
+        if let srh03kmM2s2 = raw.srh03kmM2s2 {
+            return assessSRH03km(srh03kmM2s2)
         }
 
-        return combined
+        return .unknown
+    }
+
+    private func assessLowLevelStretching(_ raw: TornadoRawParameters) -> IngredientSupport? {
+        raw.threeCapeJkg.map(assessThreeCape)
+    }
+
+    private func assessCloudBaseEfficiency(_ raw: TornadoRawParameters) -> IngredientSupport? {
+        cloudBaseSupport(raw)
     }
 
     private func assessSupercellSupport(_ raw: TornadoRawParameters) -> IngredientSupport {
@@ -345,6 +371,71 @@ struct TornadoIngredientInterpreter: Sendable {
         cloudBaseEfficiency: IngredientSupport?
     ) -> IngredientSupport {
         combineSupport(lowLevelRotation, lowLevelStretching, cloudBaseEfficiency)
+    }
+
+    private func makeViabilityLimiters(
+        raw: TornadoRawParameters,
+        instability: IngredientSupport,
+        moisture: IngredientSupport,
+        deepShear: IngredientSupport,
+        lowLevelRotation: IngredientSupport,
+        lowLevelStretching: IngredientSupport?,
+        cloudBaseEfficiency: IngredientSupport?,
+        stormMode: IngredientSupport,
+        supercellSupport: IngredientSupport,
+        tornadoComposite: IngredientSupport
+    ) -> [TornadoViabilityLimiter] {
+        var factors: [TornadoViabilityLimiter] = []
+        var seen = Set<TornadoViabilityLimiter>()
+
+        func append(_ factor: TornadoViabilityLimiter) {
+            guard seen.insert(factor).inserted else {
+                return
+            }
+            factors.append(factor)
+        }
+
+        if instability == .weak {
+            append(.weakInstability)
+        }
+        if deepShear == .weak {
+            append(.weakDeepShear)
+        }
+        if lowLevelRotation == .weak {
+            append(.weakLowLevelRotation)
+        }
+        if let lowLevelStretching, lowLevelStretching == .weak, lowLevelRotation >= .conditional {
+            append(.weakLowLevelStretching)
+        }
+        if let cloudBaseEfficiency, cloudBaseEfficiency == .weak {
+            append(.elevatedCloudBases)
+        }
+        if let cin = raw.mlcinJkg {
+            if cin <= -150 {
+                append(.strongCap)
+            } else if cin < -75 {
+                append(.conditionalInitiation)
+            }
+        }
+        if supercellSupport == .weak {
+            append(.weakStormOrganization)
+        }
+        if let fixed = raw.significantTornadoFixed,
+           let effective = raw.significantTornadoEffective,
+           fixed >= 1.5,
+           effective + 0.5 < fixed {
+            append(.fixedEffectiveStpDisagreement)
+        }
+        if moisture == .weak {
+            append(.poorMoisture)
+        }
+        if tornadoComposite == .weak, factors.isEmpty {
+            append(.unknown)
+        } else if stormMode == .unknown, factors.isEmpty {
+            append(.missingStormMode)
+        }
+
+        return factors
     }
 
     private func assessSRH01km(_ value: Double) -> IngredientSupport {
@@ -535,8 +626,17 @@ struct TornadoIngredientInterpreter: Sendable {
     private func assessRealization(
         overall: IngredientSupport,
         tornadoEfficiency: IngredientSupport,
-        inhibition: IngredientSupport
+        inhibition: IngredientSupport,
+        viabilityLimiters: [TornadoViabilityLimiter]
     ) -> TornadoViabilityRealization {
+        if viabilityLimiters.contains(.strongCap) {
+            return .blocked
+        }
+        if viabilityLimiters.contains(.conditionalInitiation) ||
+            viabilityLimiters.contains(.fixedEffectiveStpDisagreement) {
+            return .conditional
+        }
+
         switch overall {
         case .unknown:
             return .unknown
@@ -544,12 +644,16 @@ struct TornadoIngredientInterpreter: Sendable {
             return .blocked
         case .conditional:
             if inhibition <= .conditional {
-                return .blocked
+                return .conditional
             }
 
             return tornadoEfficiency >= .supportive ? .conditional : .blocked
         case .supportive:
-            return inhibition <= .conditional ? .blocked : .conditional
+            if inhibition <= .conditional {
+                return .conditional
+            }
+
+            return .realized
         case .strong:
             return .realized
         }
@@ -557,10 +661,29 @@ struct TornadoIngredientInterpreter: Sendable {
 
     private func assessFailureMode(
         limitingFactors: [TornadoLimitingFactor],
+        viabilityLimiters: [TornadoViabilityLimiter],
         supercellSupport: IngredientSupport,
         tornadoComposite: IngredientSupport,
         compositeConfirmation: IngredientSupport
     ) -> TornadoViabilityFailureMode {
+        if viabilityLimiters.contains(.strongCap) {
+            return .strongCap
+        }
+        if viabilityLimiters.contains(.conditionalInitiation) {
+            return .conditionalInitiation
+        }
+        if viabilityLimiters.contains(.fixedEffectiveStpDisagreement) {
+            return .fixedEffectiveStpDisagreement
+        }
+        if viabilityLimiters.contains(.weakStormOrganization) {
+            return .weakStormOrganization
+        }
+        if viabilityLimiters.contains(.weakLowLevelStretching) {
+            return .weakLowLevelStretching
+        }
+        if viabilityLimiters.contains(.missingStormMode) {
+            return .missingStormMode
+        }
         if limitingFactors.contains(.weakInstability) {
             return .weakInstability
         }
@@ -573,11 +696,8 @@ struct TornadoIngredientInterpreter: Sendable {
         if limitingFactors.contains(.elevatedCloudBases) {
             return .elevatedCloudBases
         }
-        if limitingFactors.contains(.strongCap) {
-            return .strongCap
-        }
         if limitingFactors.contains(.weakLift) {
-            return .weakLift
+            return .conditionalInitiation
         }
         if limitingFactors.contains(.poorMoisture) {
             return .poorMoisture
@@ -619,7 +739,9 @@ struct TornadoIngredientInterpreter: Sendable {
         capInhibition: IngredientSupport,
         deepShear: IngredientSupport,
         lowLevelRotation: IngredientSupport,
+        lowLevelStretching: IngredientSupport?,
         supercellSupport: IngredientSupport,
+        supercellComposite: IngredientSupport,
         compositeSignal: IngredientSupport
     ) -> [String] {
         var drivers: [String] = []
@@ -633,11 +755,17 @@ struct TornadoIngredientInterpreter: Sendable {
         if lowLevelRotation == .supportive || lowLevelRotation == .strong {
             drivers.append("Low-level tornado ingredients are supportive.")
         }
+        if lowLevelStretching == .supportive || lowLevelStretching == .strong {
+            drivers.append("Low-level stretching is supportive.")
+        }
         if cloudBase >= .supportive {
             drivers.append("Cloud bases are favorable.")
         }
         if supercellSupport >= .supportive {
             drivers.append("Supercell organization is supportive.")
+        }
+        if supercellComposite >= .supportive {
+            drivers.append("Supercell composite support is present.")
         }
         if compositeSignal >= .supportive {
             drivers.append("Tornado composite guidance is supportive.")
@@ -855,6 +983,7 @@ struct TornadoViabilityDiagnosis: Sendable {
     let cloudBaseEfficiency: IngredientSupport
     let tornadoEfficiency: IngredientSupport
     let inhibition: IngredientSupport
+    let supercellComposite: IngredientSupport
     let compositeConfirmation: IngredientSupport
     let realization: TornadoViabilityRealization
     let failureMode: TornadoViabilityFailureMode
@@ -863,6 +992,7 @@ struct TornadoViabilityDiagnosis: Sendable {
     let summary: String
     let primaryDrivers: [String]
     let limitingFactors: [TornadoLimitingFactor]
+    let viabilityLimiters: [TornadoViabilityLimiter]
     let instability: IngredientSupport
     let moisture: IngredientSupport
     let cloudBase: IngredientSupport
@@ -872,23 +1002,28 @@ struct TornadoViabilityDiagnosis: Sendable {
     let compositeSignal: IngredientSupport
 }
 
-enum TornadoViabilityRealization: Sendable {
+enum TornadoViabilityRealization: Content, Sendable, Hashable {
     case unknown
     case blocked
     case conditional
     case realized
 }
 
-enum TornadoViabilityFailureMode: Sendable {
+enum TornadoViabilityFailureMode: Content, Sendable, Hashable {
     case none
     case weakInstability
     case weakDeepShear
     case weakLowLevelRotation
+    case weakLowLevelStretching
     case elevatedCloudBases
     case strongCap
+    case conditionalInitiation
+    case weakStormOrganization
     case weakLift
     case messyStormMode
     case poorMoisture
+    case fixedEffectiveStpDisagreement
+    case missingStormMode
     case compositeMismatch
 }
 

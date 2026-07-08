@@ -241,7 +241,7 @@ Handoff notes:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/143
 
-Status: Pending
+Status: Complete
 
 Scope:
 - Distinguish weak SRH, weak 3CAPE, elevated cloud bases, strong cap, conditional initiation, weak storm organization, and STP disagreement.
@@ -258,6 +258,36 @@ Files likely touched:
 
 Tests / commands:
 - `swift test --filter TornadoIngredientInterpreterTests`
+
+Files changed:
+- `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
+- `Sources/App/StormSetup/StormSetupCurrentResponse.swift`
+- `Sources/App/StormSetup/TornadoIngredientAssessment.swift`
+- `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
+- `Tests/AppTests/StormSetupCurrentResponseDTOTests.swift`
+
+Behavior change:
+- Low-level rotation, low-level stretching, cloud-base efficiency, and tornado efficiency are now separated in the internal diagnosis and surfaced distinctly in the public tornado viability report.
+- Weak SRH and weak 3CAPE now produce different report limiters, with elevated cloud bases, strong cap, conditional initiation, weak storm organization, and fixed/effective STP disagreement represented separately.
+- `primaryFailureMode` is now emitted on the tornado viability report and realization can remain conditional for moderate CIN or STP disagreement without collapsing into strong-cap language.
+- Missing storm-mode data is still reported as unknown rather than invented.
+
+Tests run:
+- `swift test --filter TornadoIngredientInterpreterTests`
+
+Skipped validation:
+- Full repository test suite.
+- Provider/controller integration tests outside the focused interpreter filter.
+
+Deferred scope:
+- #144 summary rewrite.
+- Any further public copy tuning beyond the minimal test-driven adjustments.
+- New weather inputs or storm-mode inference from radar/reflectivity/UH.
+
+Handoff notes for #144:
+- The public report now has the right structure and limiter precision; #144 should focus on tightening summary language around the richer diagnosis.
+- Preserve SHIP as data-only.
+- Keep diagnosis authoritative; do not reintroduce combined low-level wording unless the summary explicitly wants to talk about the combined tornado-efficiency bucket.
 
 Handoff notes:
 - Existing `TornadoLimitingFactor` does not need to drive the new report.

@@ -166,6 +166,173 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.limitingFactors.contains(.weakLowLevelRotation))
     }
 
+    @Test("weak SRH with adequate 3CAPE produces a low-level rotation limiter")
+    func weakSrhWithAdequateThreeCapeProducesRotationLimiter() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2500,
+                mucapeJkg: 2600,
+                mlcinJkg: -45,
+                mllclM: 900,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 50,
+                srh01kmM2s2: 60,
+                threeCapeJkg: 120,
+                supercellComposite: 2.8,
+                significantTornadoFixed: 1.8,
+                significantTornadoEffective: 1.4
+            )
+        )
+
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.details.lowLevelRotation == .weak)
+        #expect(report.details.lowLevelStretching >= .supportive)
+        #expect(report.limitingFactors.contains(.weakLowLevelRotation))
+        #expect(!report.limitingFactors.contains(.weakLowLevelStretching))
+    }
+
+    @Test("adequate SRH with weak 3CAPE produces a low-level stretching limiter")
+    func adequateSrhWithWeakThreeCapeProducesStretchingLimiter() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2500,
+                mucapeJkg: 2600,
+                mlcinJkg: -45,
+                mllclM: 900,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 50,
+                srh01kmM2s2: 180,
+                threeCapeJkg: 10,
+                supercellComposite: 2.8,
+                significantTornadoFixed: 1.8,
+                significantTornadoEffective: 1.4
+            )
+        )
+
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.details.lowLevelRotation >= .supportive)
+        #expect(report.details.lowLevelStretching == .weak)
+        #expect(report.limitingFactors.contains(.weakLowLevelStretching))
+        #expect(!report.limitingFactors.contains(.weakLowLevelRotation))
+    }
+
+    @Test("elevated cloud bases produce their own limiter")
+    func elevatedCloudBasesProduceTheirOwnLimiter() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2200,
+                mlcapeJkg: 2400,
+                mucapeJkg: 2500,
+                mlcinJkg: -40,
+                mllclM: 1650,
+                tempDewPtDeltaF: 23,
+                shear06kmKt: 48,
+                srh01kmM2s2: 170,
+                threeCapeJkg: 100,
+                supercellComposite: 2.4,
+                significantTornadoFixed: 1.7,
+                significantTornadoEffective: 1.2
+            )
+        )
+
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.details.cloudBaseEfficiency == .weak)
+        #expect(report.limitingFactors.contains(.elevatedCloudBases))
+    }
+
+    @Test("strong CIN produces a strong-cap failure mode")
+    func strongCinProducesStrongCapFailureMode() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2500,
+                mlcapeJkg: 2700,
+                mucapeJkg: 2800,
+                mlcinJkg: -165,
+                mllclM: 850,
+                tempDewPtDeltaF: 9,
+                shear06kmKt: 50,
+                srh01kmM2s2: 185,
+                threeCapeJkg: 120,
+                supercellComposite: 3.2,
+                significantTornadoFixed: 2.4,
+                significantTornadoEffective: 2.1
+            )
+        )
+
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.primaryFailureMode == .strongCap)
+        #expect(report.realization == .blocked)
+        #expect(report.limitingFactors.contains(.strongCap))
+    }
+
+    @Test("moderate CIN with supportive ingredients stays conditional instead of becoming a strong cap")
+    func moderateCinKeepsRealizationConditional() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2600,
+                mucapeJkg: 2700,
+                mlcinJkg: -90,
+                mllclM: 850,
+                tempDewPtDeltaF: 9,
+                shear06kmKt: 52,
+                srh01kmM2s2: 190,
+                threeCapeJkg: 120,
+                supercellComposite: 3.1,
+                significantTornadoFixed: 2.3,
+                significantTornadoEffective: 2.0
+            )
+        )
+
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.primaryFailureMode == .conditionalInitiation)
+        #expect(report.realization == .conditional)
+        #expect(report.limitingFactors.contains(.conditionalInitiation))
+        #expect(!report.limitingFactors.contains(.strongCap))
+    }
+
+    @Test("fixed and effective STP disagreement can make realization conditional")
+    func fixedAndEffectiveStpDisagreementCanMakeRealizationConditional() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2500,
+                mlcapeJkg: 2700,
+                mucapeJkg: 2800,
+                mlcinJkg: -40,
+                mllclM: 850,
+                tempDewPtDeltaF: 9,
+                shear06kmKt: 52,
+                srh01kmM2s2: 190,
+                threeCapeJkg: 120,
+                supercellComposite: 3.1,
+                significantTornadoFixed: 3.6,
+                significantTornadoEffective: 1.0
+            )
+        )
+
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.primaryFailureMode == .fixedEffectiveStpDisagreement)
+        #expect(report.realization == .conditional)
+        #expect(report.limitingFactors.contains(.fixedEffectiveStpDisagreement))
+    }
+
+    @Test("missing storm-mode data stays unknown in the report")
+    func missingStormModeDataStaysUnknownInTheReport() {
+        let report = TornadoViabilityReport(assessment: interpret(raw: .empty))
+
+        #expect(report.details.stormMode == .unknown)
+        #expect(report.realization == .unknown)
+        #expect(report.primaryFailureMode == .missingStormMode)
+    }
+
     @Test("weak 0-1 km SRH limits tornado messaging even with elevated composite signals")
     func weakSrh01LimitsTornadoMessagingEvenWithElevatedCompositeSignals() {
         let assessment = interpret(
@@ -209,8 +376,12 @@ struct TornadoIngredientInterpreterTests {
             )
         )
 
+        let report = TornadoViabilityReport(assessment: assessment)
+
         #expect(assessment.lowLevelRotation == .weak)
-        #expect(assessment.summary.contains("low-level rotation and stretching are still the limiter."))
+        #expect(assessment.lowLevelStretching == .weak)
+        #expect(assessment.tornadoEfficiency == .weak)
+        #expect(report.limitingFactors.contains(.weakLowLevelStretching))
     }
 
     @Test("aligned low-level tornado ingredients increase concern without implying certainty")
@@ -248,14 +419,16 @@ struct TornadoIngredientInterpreterTests {
             cloudBaseEfficiency: .weak,
             tornadoEfficiency: .conditional,
             inhibition: .supportive,
+            supercellComposite: .strong,
             compositeConfirmation: .conditional,
             realization: .conditional,
-            failureMode: .compositeMismatch,
+            failureMode: .fixedEffectiveStpDisagreement,
             confidence: .high,
             overall: .supportive,
             summary: "diagnosis summary",
             primaryDrivers: ["diagnosis driver"],
             limitingFactors: [.weakDeepShear, .poorMoisture],
+            viabilityLimiters: [.weakDeepShear, .poorMoisture],
             instability: .strong,
             moisture: .conditional,
             cloudBase: .weak,
@@ -268,16 +441,24 @@ struct TornadoIngredientInterpreterTests {
         let report = TornadoViabilityReport(diagnosis: diagnosis)
 
         #expect(report.overall == .supportive)
+        #expect(report.realization == .conditional)
+        #expect(report.primaryFailureMode == .fixedEffectiveStpDisagreement)
         #expect(report.confidence == .high)
         #expect(report.summary == "diagnosis summary")
+        #expect(report.details.stormViability == .supportive)
+        #expect(report.details.supercellViability == .strong)
+        #expect(report.details.tornadoEfficiency == .conditional)
+        #expect(report.details.inhibition == .supportive)
         #expect(report.details.instability == .strong)
         #expect(report.details.moisture == .conditional)
         #expect(report.details.cloudBase == .weak)
-        #expect(report.details.capInhibition == .supportive)
         #expect(report.details.deepShear == .supportive)
         #expect(report.details.lowLevelRotation == .conditional)
+        #expect(report.details.lowLevelStretching == .supportive)
+        #expect(report.details.cloudBaseEfficiency == .weak)
+        #expect(report.details.supercellComposite == .strong)
+        #expect(report.details.tornadoComposite == .conditional)
         #expect(report.details.stormMode == .unknown)
-        #expect(report.details.compositeSignal == .conditional)
         #expect(report.limitingFactors == [.weakDeepShear, .poorMoisture])
     }
 
@@ -396,7 +577,11 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(onlySrh.lowLevelRotation != .unknown)
-        #expect(onlyThreeCape.lowLevelRotation != .unknown)
+        #expect(onlySrh.lowLevelStretching == .unknown)
+        #expect(onlyThreeCape.lowLevelRotation == .unknown)
+        #expect(onlyThreeCape.lowLevelRotationSupport == .unknown)
+        #expect(onlyThreeCape.lowLevelStretching == .supportive)
+        #expect(onlyThreeCape.tornadoEfficiency == .unknown)
     }
 
     @Test("strong cap limiting factor only appears at -150 CIN or weaker")
