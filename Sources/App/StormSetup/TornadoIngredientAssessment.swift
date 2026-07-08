@@ -83,6 +83,41 @@ struct TornadoIngredientAssessment: Content, Sendable {
     }
 }
 
+extension TornadoIngredientAssessment {
+    func adjusted(
+        confidence: SnapshotConfidence? = nil,
+        summary: String? = nil
+    ) -> TornadoIngredientAssessment {
+        TornadoIngredientAssessment(
+            overall: overall,
+            instability: instability,
+            moisture: moisture,
+            cloudBase: cloudBase,
+            capInhibition: capInhibition,
+            deepShear: deepShear,
+            lowLevelRotation: lowLevelRotation,
+            stormMode: stormMode,
+            compositeSignal: compositeSignal,
+            confidence: confidence ?? self.confidence,
+            trend: trend,
+            stormModeHint: stormModeHint,
+            primaryDrivers: primaryDrivers,
+            limitingFactors: limitingFactors,
+            summary: summary ?? self.summary,
+            lowLevelRotationSupport: lowLevelRotationSupport,
+            lowLevelStretching: lowLevelStretching,
+            cloudBaseEfficiency: cloudBaseEfficiency,
+            tornadoEfficiency: tornadoEfficiency,
+            stormViability: stormViability,
+            supercellViability: supercellViability,
+            supercellComposite: supercellComposite,
+            realization: realization,
+            primaryFailureMode: primaryFailureMode,
+            viabilityLimiters: viabilityLimiters
+        )
+    }
+}
+
 enum IngredientSupport: String, Content, Sendable, Hashable, Comparable {
     case weak
     case conditional

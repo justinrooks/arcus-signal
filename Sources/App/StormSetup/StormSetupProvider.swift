@@ -59,7 +59,8 @@ protocol StormSetupIngredientNormalizing: Sendable {
 protocol StormSetupIngredientAssessing: Sendable {
     func assess(
         raw: TornadoRawParameters,
-        freshness: IngredientFreshness
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence?
     ) -> TornadoIngredientAssessment
 }
 
@@ -330,7 +331,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             source: sourceMetadata,
             raw: normalized.raw,
             surfaceHeightMslM: normalized.surfaceHeightMslM,
-            assessment: interpreter.assess(raw: normalized.raw, freshness: freshness),
+            assessment: interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: nil),
             freshness: freshness
         )
 
@@ -469,13 +470,26 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         )
         try Task.checkCancellation()
 
-        let canonicalIngredients = resolution.profileAnalysis.map {
-            makeCanonicalIngredients(from: snapshot.raw, profileAnalysis: $0)
-        } ?? snapshot.canonical
+        let canonicalIngredients: TornadoRawParameters? = resolution.artifactOutcome == .exact
+            ? resolution.profileAnalysis.map {
+                makeCanonicalIngredients(from: snapshot.raw, profileAnalysis: $0)
+            }
+            : nil
 
-        let assessment = interpreter.assess(
-            raw: canonicalIngredients ?? snapshot.raw,
-            freshness: snapshot.freshness
+        let assessmentIngredients = canonicalIngredients ?? snapshot.raw
+        let baselineAssessment = interpreter.assess(
+            raw: assessmentIngredients,
+            freshness: snapshot.freshness,
+            evidence: nil
+        )
+        let evidenceAssessment = interpreter.assess(
+            raw: assessmentIngredients,
+            freshness: snapshot.freshness,
+            evidence: resolution.evidence
+        )
+        let assessment = baselineAssessment.adjusted(
+            confidence: evidenceAssessment.confidence,
+            summary: evidenceAssessment.summary
         )
 
         let profileAnalysis = resolution.artifactOutcome == .exact ? resolution.profileAnalysis : nil
@@ -485,7 +499,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             centroid: snapshot.centroid,
             source: snapshot.source,
             raw: snapshot.raw,
-            canonical: canonicalIngredients,
+            canonical: canonicalIngredients ?? snapshot.canonical,
             surfaceHeightMslM: snapshot.surfaceHeightMslM,
             assessment: assessment,
             freshness: snapshot.freshness,
@@ -819,7 +833,7 @@ private struct StormSetupCurrentComposition: Sendable {
     let profileAnalysis: AnvilAnalyzeProfileResponse?
 
     var response: StormSetupCurrentResponse {
-        StormSetupCurrentResponse(
+        return StormSetupCurrentResponse(
             setup: StormSetupCurrentSetupResponse(
                 h3Cell: snapshot.h3Cell,
                 centroid: snapshot.centroid,

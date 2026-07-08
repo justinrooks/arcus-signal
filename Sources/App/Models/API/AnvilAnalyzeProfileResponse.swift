@@ -22,6 +22,50 @@ struct AnvilAnalyzeProfileResponse: Codable, Sendable, Equatable {
     let threeCapeJkg: Double?
     
     let quality: AnvilQualityDTO
+
+    init(
+        effectiveLayer: AnvilEffectiveLayerDTO,
+        stormMotion: AnvilStormMotionDTO,
+        mucape: Double?,
+        mlcape: Double?,
+        mlcin: Double?,
+        mllclMetersAgl: Double?,
+        effectiveSrh: Double?,
+        effectiveBulkShearMs: Double?,
+        scp: Double?,
+        stpCin: Double?,
+        stpFixed: Double?,
+        ship: Double?,
+        srh01km: Double? = nil,
+        srh03km: Double? = nil,
+        sbcape: Double? = nil,
+        sbcin: Double? = nil,
+        bulkShear06kmMs: Double? = nil,
+        lapserate03km: Double? = nil,
+        threeCapeJkg: Double? = nil,
+        quality: AnvilQualityDTO
+    ) {
+        self.effectiveLayer = effectiveLayer
+        self.stormMotion = stormMotion
+        self.mucape = mucape
+        self.mlcape = mlcape
+        self.mlcin = mlcin
+        self.mllclMetersAgl = mllclMetersAgl
+        self.effectiveSrh = effectiveSrh
+        self.effectiveBulkShearMs = effectiveBulkShearMs
+        self.scp = scp
+        self.stpCin = stpCin
+        self.stpFixed = stpFixed
+        self.ship = ship
+        self.srh01km = srh01km
+        self.srh03km = srh03km
+        self.sbcape = sbcape
+        self.sbcin = sbcin
+        self.bulkShear06kmMs = bulkShear06kmMs
+        self.lapserate03km = lapserate03km
+        self.threeCapeJkg = threeCapeJkg
+        self.quality = quality
+    }
 }
 
 struct AnvilEffectiveLayerDTO: Codable, Sendable, Equatable {

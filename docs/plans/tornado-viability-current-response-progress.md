@@ -433,28 +433,39 @@ Documentation added / updated:
 
 Files changed:
 - `docs/plans/tornado-viability-current-response-progress.md`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/StormSetupCurrentResponse.swift`
+- `Sources/App/StormSetup/TornadoIngredientAssessment.swift`
+- `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
+- `Sources/App/Models/API/AnvilAnalyzeProfileResponse.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisControllerTests.swift`
+- `Tests/AppTests/AnvilProfileAnalysisProviderTests.swift`
+- `Tests/AppTests/PressureArtifactDiagnosticsTests.swift`
 
 Verification run:
 - `rg -n "assessment|tornadoViability|SHIP|significantHail" docs Sources/App/StormSetup Tests/AppTests`
+- `swift test --filter StormSetupProviderTests`
 
 Skipped validation:
-- No production code changes.
+- No full `swift test` pass.
 - No `docs/api-endpoints.md` update because that file does not currently document `storm-setup/current`.
 - No iOS/app-side changes.
 
 Final handoff notes:
-- The app-facing migration is documentation-only and keeps the epic centered on `GET /api/v1/storm-setup/current`.
+- The app-facing migration is documented against the live `GET /api/v1/storm-setup/current` contract.
 - `assessment` is retired at the top level; `tornadoViability` is the contract to consume.
 - SHIP stays visible in raw/profile data and remains excluded from tornado viability interpretation.
+- The provider current-response path now keeps surface viability anchored to the baseline ingredients while using Anvil evidence for confidence and explanation text.
 - Do not add a separate tornado viability endpoint while this epic is still using the existing current-response surface.
 
 ---
 
 ## Verification Ledger
 
-No production-code implementation verification has run yet for this epic.
 Documentation verification completed for #146:
 - `rg -n "assessment|tornadoViability|SHIP|significantHail" docs Sources/App/StormSetup Tests/AppTests`
+- `swift test --filter StormSetupProviderTests`
 
 Planning verification:
 - GitHub issue creation completed for `#139` through `#146`.

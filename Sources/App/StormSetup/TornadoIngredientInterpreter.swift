@@ -10,9 +10,10 @@ struct TornadoIngredientInterpreter: Sendable {
 
     func assess(
         raw: TornadoRawParameters,
-        freshness: IngredientFreshness
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence? = nil
     ) -> TornadoIngredientAssessment {
-        let diagnosis = diagnose(raw: raw, freshness: freshness)
+        let diagnosis = diagnose(raw: raw, freshness: freshness, evidence: evidence)
 
         return TornadoIngredientAssessment(
             overall: diagnosis.overall,
@@ -45,7 +46,8 @@ struct TornadoIngredientInterpreter: Sendable {
 
     private func diagnose(
         raw: TornadoRawParameters,
-        freshness: IngredientFreshness
+        freshness: IngredientFreshness,
+        evidence: AnvilIngredientEvidence?
     ) -> TornadoViabilityDiagnosis {
         let instability = assessInstability(raw)
         let moisture = assessMoisture(raw)
@@ -132,7 +134,7 @@ struct TornadoIngredientInterpreter: Sendable {
             compositeConfirmation: compositeConfirmation
         )
 
-        return TornadoViabilityDiagnosis(
+        let diagnosis = TornadoViabilityDiagnosis(
             stormViability: stormViability,
             supercellViability: supercellViability,
             lowLevelRotation: lowLevelRotation,
@@ -184,6 +186,66 @@ struct TornadoIngredientInterpreter: Sendable {
             stormMode: stormMode,
             compositeSignal: tornadoComposite
         )
+
+        return applyAnvilEvidence(evidence, to: diagnosis)
+    }
+
+    private func applyAnvilEvidence(
+        _ evidence: AnvilIngredientEvidence?,
+        to diagnosis: TornadoViabilityDiagnosis
+    ) -> TornadoViabilityDiagnosis {
+        guard let evidence else {
+            return diagnosis
+        }
+
+        switch evidence.status {
+        case .degraded:
+            return diagnosis.adjusted(
+                overall: diagnosis.overall,
+                confidence: .low,
+                summarySuffix: "Anvil analysis is degraded, so confidence is limited."
+            )
+        case .unavailable:
+            return diagnosis.adjusted(
+                overall: diagnosis.overall,
+                confidence: .low,
+                summarySuffix: "Anvil analysis is unavailable, so confidence is limited."
+            )
+        case .available:
+            let support = evidence.tornadoStrongestSupport
+
+            guard let support else {
+                return diagnosis.adjusted(
+                    overall: diagnosis.overall,
+                    confidence: diagnosis.confidence,
+                    summarySuffix: "Anvil analysis is not reinforcing the setup."
+                )
+            }
+
+            let adjustedOverall: IngredientSupport
+            if support >= .supportive {
+                adjustedOverall = max(diagnosis.overall, .supportive)
+            } else {
+                adjustedOverall = diagnosis.overall.lowered()
+            }
+
+            let adjustedConfidence: SnapshotConfidence
+            if support >= .supportive {
+                adjustedConfidence = diagnosis.confidence.raised()
+            } else {
+                adjustedConfidence = .low
+            }
+
+            let summarySuffix = support >= .supportive
+                ? "Anvil analysis reinforces the setup."
+                : "Anvil analysis is not reinforcing the setup."
+
+            return diagnosis.adjusted(
+                overall: adjustedOverall,
+                confidence: adjustedConfidence,
+                summarySuffix: summarySuffix
+            )
+        }
     }
 
     private func assessInstability(_ raw: TornadoRawParameters) -> IngredientSupport {
@@ -1028,6 +1090,59 @@ enum TornadoViabilityFailureMode: Content, Sendable, Hashable {
     case fixedEffectiveStpDisagreement
     case missingStormMode
     case compositeMismatch
+}
+
+private extension TornadoViabilityDiagnosis {
+    func adjusted(
+        overall: IngredientSupport,
+        confidence: SnapshotConfidence,
+        summarySuffix: String? = nil
+    ) -> TornadoViabilityDiagnosis {
+        TornadoViabilityDiagnosis(
+            stormViability: stormViability,
+            supercellViability: supercellViability,
+            lowLevelRotation: lowLevelRotation,
+            lowLevelStretching: lowLevelStretching,
+            cloudBaseEfficiency: cloudBaseEfficiency,
+            tornadoEfficiency: tornadoEfficiency,
+            inhibition: inhibition,
+            supercellComposite: supercellComposite,
+            compositeConfirmation: compositeConfirmation,
+            realization: realization,
+            failureMode: failureMode,
+            confidence: confidence,
+            overall: overall,
+            summary: summary.appendingAnvilSuffix(summarySuffix),
+            primaryDrivers: primaryDrivers,
+            limitingFactors: limitingFactors,
+            viabilityLimiters: viabilityLimiters,
+            instability: instability,
+            moisture: moisture,
+            cloudBase: cloudBase,
+            capInhibition: capInhibition,
+            deepShear: deepShear,
+            stormMode: stormMode,
+            compositeSignal: compositeSignal
+        )
+    }
+}
+
+private extension String {
+    func appendingAnvilSuffix(_ suffix: String?) -> String {
+        guard let suffix, !suffix.isEmpty else {
+            return self
+        }
+
+        if localizedCaseInsensitiveContains(suffix) {
+            return self
+        }
+
+        if hasSuffix(".") {
+            return self + " " + suffix
+        }
+
+        return self + ". " + suffix
+    }
 }
 
 private extension TornadoIngredientInterpreter {
