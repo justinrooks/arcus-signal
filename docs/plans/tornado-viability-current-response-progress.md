@@ -409,7 +409,7 @@ Handoff notes:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/146
 
-Status: Pending
+Status: Complete
 
 Scope:
 - Document the app-facing `storm-setup/current` response change.
@@ -418,24 +418,43 @@ Scope:
 
 Deferred:
 - SkyAware iOS implementation.
-- Separate endpoint documentation.
 
-Files likely touched:
+Documentation added / updated:
+- Documented the final app-facing `GET /api/v1/storm-setup/current?h3=<signed-int64-cell>` response shape as:
+  - `setup`
+  - `ingredients`
+  - `profileAnalysis`
+  - `tornadoViability`
+- Clarified that top-level `assessment` was removed from the current response and `tornadoViability` is the replacement.
+- Added app-consumption guidance that `tornadoViability.summary` is the primary casual-user message, while `tornadoViability.details` and limiter fields support advanced explanation.
+- Added raw-value drilldown guidance for `ingredients.canonical`, `ingredients.diagnostics`, and `profileAnalysis`.
+- Recorded the SHIP note: SHIP remains available in raw/profile data such as `significantHail` / `ship`, but it is severe-weather context and not part of tornado viability math.
+- Kept the signed `Int64` H3 contract explicit in the current-response documentation.
+
+Files changed:
 - `docs/plans/tornado-viability-current-response-progress.md`
-- Optional: `docs/api-endpoints.md` if current Storm Setup response docs are already present there.
 
-Tests / commands:
+Verification run:
 - `rg -n "assessment|tornadoViability|SHIP|significantHail" docs Sources/App/StormSetup Tests/AppTests`
 
-Handoff notes:
-- Keep docs concise and app-consumable.
-- Do not reopen endpoint design unless the contract changed during implementation.
+Skipped validation:
+- No production code changes.
+- No `docs/api-endpoints.md` update because that file does not currently document `storm-setup/current`.
+- No iOS/app-side changes.
+
+Final handoff notes:
+- The app-facing migration is documentation-only and keeps the epic centered on `GET /api/v1/storm-setup/current`.
+- `assessment` is retired at the top level; `tornadoViability` is the contract to consume.
+- SHIP stays visible in raw/profile data and remains excluded from tornado viability interpretation.
+- Do not add a separate tornado viability endpoint while this epic is still using the existing current-response surface.
 
 ---
 
 ## Verification Ledger
 
-No implementation verification has run yet for this epic.
+No production-code implementation verification has run yet for this epic.
+Documentation verification completed for #146:
+- `rg -n "assessment|tornadoViability|SHIP|significantHail" docs Sources/App/StormSetup Tests/AppTests`
 
 Planning verification:
 - GitHub issue creation completed for `#139` through `#146`.
