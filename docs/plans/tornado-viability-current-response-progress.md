@@ -164,16 +164,30 @@ Handoff notes:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/141
 
-Status: Pending
+Status: Complete
 
 Scope:
 - Split SCP support from STP fixed/effective support.
 - Stop maxing SCP and STP together.
 - Ensure SHIP is retained as data but ignored by tornado viability calculations.
 
-Deferred:
-- Full internal diagnosis object.
-- Summary rewrite beyond what tests require.
+Files changed:
+- `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
+- `Sources/App/StormSetup/AnvilIngredientEvidence.swift`
+- `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
+- `Tests/AppTests/AnvilIngredientEvidenceTests.swift`
+
+Behavior change:
+- SCP now feeds supercell support only.
+- STP fixed/effective feed tornado-specific composite support without being maxed together with SCP.
+- SHIP still decodes and is exposed, but it no longer contributes to tornado viability or confidence adjustments.
+
+Skipped validation:
+- None.
+
+Deferred scope:
+- Full internal tornado viability diagnosis model for #142.
+- Broader summary rewrite beyond the minimal conditional branches needed for this split.
 
 Files likely touched:
 - `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
@@ -188,6 +202,8 @@ Tests / commands:
 Handoff notes:
 - High SCP plus low STP should mean supercell support but limited tornado-specific signal.
 - High fixed STP plus lower effective STP should mean conditional realization.
+- SHIP still ships through `AnvilAnalyzeProfileResponse` and `TornadoRawParameters`, but tornado viability now reads SCP/STP-only evidence for adjustment and summary language.
+- The next slice can add the internal diagnosis model without undoing this split.
 
 ### Issue #142 - 03: Introduce internal tornado viability diagnosis
 

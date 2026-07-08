@@ -18,6 +18,7 @@ struct AnvilIngredientEvidenceTests {
         #expect(evidence.scp?.support == .weak)
         #expect(evidence.stp?.support == .supportive)
         #expect(evidence.ship?.support == .conditional)
+        #expect(evidence.tornadoStrongestSupport == .supportive)
         #expect(evidence.status == .available)
         #expect(evidence.reason == nil)
         #expect(evidence.diagnostics.hasEffectiveLayer)
@@ -63,6 +64,24 @@ struct AnvilIngredientEvidenceTests {
         #expect(evidence.stp == nil)
         #expect(evidence.ship == nil)
         #expect(evidence.isDegraded)
+    }
+
+    @Test("SHIP-only evidence remains available but does not contribute to tornado support")
+    func shipOnlyEvidenceRemainsAvailableButDoesNotContributeToTornadoSupport() {
+        let evidence = AnvilIngredientEvidence(response: makeResponse(
+            scp: nil,
+            stpCin: nil,
+            stpFixed: nil,
+            ship: 2.3,
+            profileLevelCount: 20,
+            warnings: []
+        ))
+
+        #expect(evidence.ship?.support == .strong)
+        #expect(evidence.strongestSupport == .strong)
+        #expect(evidence.tornadoStrongestSupport == nil)
+        #expect(evidence.status == .available)
+        #expect(!evidence.isDegraded)
     }
 
     private func makeResponse(

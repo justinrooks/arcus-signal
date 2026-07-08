@@ -67,7 +67,7 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.cloudBase == .supportive)
         #expect(assessment.deepShear == .supportive)
         #expect(assessment.lowLevelRotation == .weak)
-        #expect(assessment.compositeSignal == .supportive)
+        #expect(assessment.compositeSignal == .conditional)
         #expect(assessment.capInhibition == .conditional)
         #expect(assessment.overall == .conditional)
         #expect(assessment.summary.contains("conditionally supportive"))
@@ -133,6 +133,7 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .strong)
+        #expect(assessment.compositeSignal == .strong)
         #expect(assessment.confidence == .high)
     }
 
@@ -233,8 +234,32 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.lowLevelRotation >= .supportive)
         #expect(assessment.cloudBase >= .supportive)
-        #expect(assessment.overall == .supportive)
-        #expect(assessment.summary.contains("low-level tornado ingredients are in a favorable range."))
+        #expect(assessment.overall == .conditional)
+        #expect(assessment.summary.contains("The fixed-layer tornado signal is stronger than the effective-layer signal"))
+    }
+
+    @Test("high SCP with weak STP stays limited to supercell support")
+    func highScpWithWeakStpStaysLimitedToSupercellSupport() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2500,
+                mucapeJkg: 2600,
+                mlcinJkg: -35,
+                mllclM: 900,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 50,
+                srh01kmM2s2: 170,
+                threeCapeJkg: 110,
+                supercellComposite: 3.2,
+                significantTornadoFixed: 0.8,
+                significantTornadoEffective: 0.9
+            )
+        )
+
+        #expect(assessment.compositeSignal == .conditional)
+        #expect(assessment.overall != .strong)
+        #expect(assessment.summary.contains("Supercell support is present, but tornado-specific composite support is limited."))
     }
 
     @Test("STP mismatch and meaningful CIN keep the tornado wording conditional")
@@ -488,6 +513,28 @@ struct TornadoIngredientInterpreterTests {
         #expect(!assessment.summary.lowercased().contains("ship"))
     }
 
+    @Test("SHIP-only evidence does not raise tornado viability or confidence")
+    func shipOnlyEvidenceDoesNotRaiseTornadoViabilityOrConfidence() {
+        let raw = makeRaw(
+            sbcapeJkg: 1200,
+            mlcapeJkg: 1300,
+            mucapeJkg: 1500,
+            mlcinJkg: -40,
+            mllclM: 950,
+            tempDewPtDeltaF: 17,
+            shear06kmKt: 42,
+            srh01kmM2s2: 90,
+            srh03kmM2s2: 140
+        )
+
+        let baseline = interpret(raw: raw)
+        let withShipOnlyEvidence = interpret(raw: raw, evidence: makeShipOnlyEvidence())
+
+        #expect(withShipOnlyEvidence.overall == baseline.overall)
+        #expect(withShipOnlyEvidence.confidence == baseline.confidence)
+        #expect(withShipOnlyEvidence.summary == baseline.summary + " Anvil analysis is not reinforcing the setup.")
+    }
+
     @Test("healthy weak Anvil evidence can lower support")
     func healthyWeakAnvilEvidenceCanLowerSupport() {
         let assessment = interpret(
@@ -715,6 +762,44 @@ struct TornadoIngredientInterpreterTests {
             stpCin: 0.1,
             stpFixed: 0.3,
             ship: 0.1,
+            quality: AnvilQualityDTO(
+                profileLevelCount: 20,
+                warnings: []
+            )
+        ))
+    }
+
+    private func makeShipOnlyEvidence() -> AnvilIngredientEvidence {
+        AnvilIngredientEvidence(response: AnvilAnalyzeProfileResponse(
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: "found",
+                basePressureMb: 1000,
+                topPressureMb: 925,
+                baseMetersAgl: 0,
+                topMetersAgl: 690
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: "computed",
+                bunkersRight: AnvilBunkersRightStormMotionDTO(
+                    uKt: 36.80394762849837,
+                    vKt: 13.53066796460426,
+                    speedKt: 39.21236458834915,
+                    directionTowardDeg: 69.81446460119884,
+                    uMs: 18.933570033795217,
+                    vMs: 6.960770950382875,
+                    speedMs: 20.172565688288692
+                )
+            ),
+            mucape: 362.1018454649957,
+            mlcape: 191.7304143918497,
+            mlcin: -221.93726424748172,
+            mllclMetersAgl: 1179.4130766012365,
+            effectiveSrh: 29.42420403684148,
+            effectiveBulkShearMs: 30.134722226263612,
+            scp: nil,
+            stpCin: nil,
+            stpFixed: nil,
+            ship: 2.3,
             quality: AnvilQualityDTO(
                 profileLevelCount: 20,
                 warnings: []

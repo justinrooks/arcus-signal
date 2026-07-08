@@ -87,6 +87,10 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
         [scp?.support, stp?.support, ship?.support].compactMap { $0 }.max()
     }
 
+    var tornadoStrongestSupport: IngredientSupport? {
+        [scp?.support, stp?.support].compactMap { $0 }.max()
+    }
+
     var isDegraded: Bool {
         status != .available || diagnostics.isDegraded || supportCount == 0
     }

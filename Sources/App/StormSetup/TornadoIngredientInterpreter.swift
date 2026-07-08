@@ -22,7 +22,8 @@ struct TornadoIngredientInterpreter: Sendable {
         let capInhibition = assessCapInhibition(raw)
         let deepShear = assessDeepShear(raw)
         let lowLevelRotation = assessLowLevelRotation(raw)
-        let compositeSignal = assessCompositeSignal(raw)
+        let supercellSupport = assessSupercellSupport(raw)
+        let compositeSignal = assessTornadoCompositeSupport(raw)
         let stormMode = assessStormMode()
 
         let knownCorePillars = [
@@ -30,7 +31,7 @@ struct TornadoIngredientInterpreter: Sendable {
             deepShear,
             lowLevelRotation,
             cloudBase,
-            compositeSignal
+            supercellSupport
             ].filter { $0 != .unknown }.count
 
         let limitingFactors = makeLimitingFactors(
@@ -50,6 +51,7 @@ struct TornadoIngredientInterpreter: Sendable {
             cloudBase: cloudBase,
             deepShear: deepShear,
             lowLevelRotation: lowLevelRotation,
+            supercellSupport: supercellSupport,
             compositeSignal: compositeSignal,
             capInhibition: capInhibition,
             knownCorePillars: knownCorePillars
@@ -85,6 +87,7 @@ struct TornadoIngredientInterpreter: Sendable {
                 capInhibition: capInhibition,
                 deepShear: deepShear,
                 lowLevelRotation: lowLevelRotation,
+                supercellSupport: supercellSupport,
                 compositeSignal: compositeSignal
             ),
             limitingFactors: limitingFactors,
@@ -95,6 +98,7 @@ struct TornadoIngredientInterpreter: Sendable {
                 capInhibition: capInhibition,
                 cloudBase: cloudBase,
                 lowLevelRotation: lowLevelRotation,
+                supercellSupport: supercellSupport,
                 compositeSignal: compositeSignal,
                 anvilEvidence: anvilEvidence
             )
@@ -232,6 +236,23 @@ struct TornadoIngredientInterpreter: Sendable {
         return combined
     }
 
+    private func assessSupercellSupport(_ raw: TornadoRawParameters) -> IngredientSupport {
+        guard let value = raw.supercellComposite else {
+            return .unknown
+        }
+
+        switch value {
+        case ..<0.5:
+            return .weak
+        case ..<1.5:
+            return .conditional
+        case ..<3:
+            return .supportive
+        default:
+            return .strong
+        }
+    }
+
     private func assessSRH01km(_ value: Double) -> IngredientSupport {
         switch value {
         case ..<100:
@@ -306,22 +327,25 @@ struct TornadoIngredientInterpreter: Sendable {
         return .unknown
     }
 
-    private func assessCompositeSignal(_ raw: TornadoRawParameters) -> IngredientSupport {
-        let values = [
-            raw.supercellComposite,
-            raw.significantTornadoFixed,
-            raw.significantTornadoEffective
-        ].compactMap { $0 }
-        guard let strongest = values.max() else {
-            return .unknown
+    private func assessTornadoCompositeSupport(_ raw: TornadoRawParameters) -> IngredientSupport {
+        if let effective = raw.significantTornadoEffective {
+            return assessTornadoCompositeValue(effective)
         }
 
-        switch strongest {
-        case ..<1:
+        if let fixed = raw.significantTornadoFixed {
+            return assessTornadoCompositeValue(fixed)
+        }
+
+        return .unknown
+    }
+
+    private func assessTornadoCompositeValue(_ value: Double) -> IngredientSupport {
+        switch value {
+        case ..<0.5:
             return .weak
-        case ..<2:
+        case ..<1.25:
             return .conditional
-        case ..<4:
+        case ..<2.5:
             return .supportive
         default:
             return .strong
@@ -333,6 +357,7 @@ struct TornadoIngredientInterpreter: Sendable {
         cloudBase: IngredientSupport,
         deepShear: IngredientSupport,
         lowLevelRotation: IngredientSupport,
+        supercellSupport: IngredientSupport,
         compositeSignal: IngredientSupport,
         capInhibition: IngredientSupport,
         knownCorePillars: Int
@@ -350,6 +375,7 @@ struct TornadoIngredientInterpreter: Sendable {
             deepShear,
             lowLevelRotation,
             cloudBase,
+            supercellSupport,
             compositeSignal
         ].filter { $0 == .strong }.count
 
@@ -357,9 +383,28 @@ struct TornadoIngredientInterpreter: Sendable {
            deepShear >= .supportive,
            lowLevelRotation >= .supportive,
            cloudBase >= .supportive,
+           supercellSupport >= .supportive,
            compositeSignal >= .supportive,
            strongAgreementCount >= 3 {
             return .strong
+        }
+
+        if instability >= .supportive,
+           deepShear >= .supportive,
+           lowLevelRotation >= .conditional,
+           cloudBase >= .supportive,
+           supercellSupport >= .conditional,
+           compositeSignal >= .conditional,
+           capInhibition <= .conditional {
+            return .conditional
+        }
+
+        if instability >= .supportive,
+           deepShear >= .supportive,
+           cloudBase >= .supportive,
+           supercellSupport >= .supportive,
+           compositeSignal <= .conditional {
+            return .conditional
         }
 
         if instability >= .supportive,
@@ -420,6 +465,7 @@ struct TornadoIngredientInterpreter: Sendable {
         capInhibition: IngredientSupport,
         deepShear: IngredientSupport,
         lowLevelRotation: IngredientSupport,
+        supercellSupport: IngredientSupport,
         compositeSignal: IngredientSupport
     ) -> [String] {
         var drivers: [String] = []
@@ -436,8 +482,11 @@ struct TornadoIngredientInterpreter: Sendable {
         if cloudBase >= .supportive {
             drivers.append("Cloud bases are favorable.")
         }
+        if supercellSupport >= .supportive {
+            drivers.append("Supercell organization is supportive.")
+        }
         if compositeSignal >= .supportive {
-            drivers.append("Composite signals are supportive.")
+            drivers.append("Tornado composite guidance is supportive.")
         }
         if moisture >= .supportive {
             drivers.append("Near-surface moisture is supportive.")
@@ -504,6 +553,7 @@ struct TornadoIngredientInterpreter: Sendable {
         capInhibition: IngredientSupport,
         cloudBase: IngredientSupport,
         lowLevelRotation: IngredientSupport,
+        supercellSupport: IngredientSupport,
         compositeSignal: IngredientSupport,
         anvilEvidence: AnvilIngredientEvidence?
     ) -> String {
@@ -518,6 +568,8 @@ struct TornadoIngredientInterpreter: Sendable {
                fixed >= 1.5,
                effective + 0.5 < fixed {
                 baseSummary = "The setup is conditionally supportive. The fixed-layer tornado signal is stronger than the effective-layer signal, so realization stays conditional if storms initiate."
+            } else if supercellSupport >= .supportive, compositeSignal <= .conditional {
+                baseSummary = "The setup is conditionally supportive. Supercell support is present, but tornado-specific composite support is limited."
             } else if capInhibition <= .conditional {
                 baseSummary = "The setup is conditionally supportive. The ingredients are there, but storm initiation and CIN may keep the tornado potential from fully realizing."
             } else if lowLevelRotation <= .conditional, compositeSignal >= .supportive {
@@ -553,8 +605,8 @@ struct TornadoIngredientInterpreter: Sendable {
             return "Anvil analysis is degraded, so confidence is limited."
         }
 
-        guard let strongestSupport = evidence.strongestSupport else {
-            return "Anvil analysis is not available."
+        guard let strongestSupport = evidence.tornadoStrongestSupport else {
+            return evidence.strongestSupport == nil ? "Anvil analysis is not available." : "Anvil analysis is not reinforcing the setup."
         }
 
         switch strongestSupport {
@@ -587,7 +639,7 @@ struct TornadoIngredientInterpreter: Sendable {
         var confidence = rawConfidence
         let rawIsAnvilBacked = raw.effectiveLayer != nil || raw.stormMotion != nil
 
-        guard let strongestSupport = evidence.strongestSupport else {
+        guard let strongestSupport = evidence.tornadoStrongestSupport else {
             if evidence.isDegraded {
                 confidence = confidence.lowered()
             }
