@@ -57,6 +57,7 @@ struct TornadoIngredientInterpreter: Sendable {
 
         let baselineConfidence = assessConfidence(freshness: freshness, knownCorePillars: knownCorePillars)
         let evidenceAdjusted = assessAnvilEvidence(
+            raw: raw,
             rawOverall: baselineOverall,
             rawConfidence: baselineConfidence,
             freshness: freshness,
@@ -89,8 +90,10 @@ struct TornadoIngredientInterpreter: Sendable {
             limitingFactors: limitingFactors,
             summary: makeSummary(
                 overall: evidenceAdjusted.overall,
+                raw: raw,
                 limitingFactors: limitingFactors,
                 capInhibition: capInhibition,
+                cloudBase: cloudBase,
                 lowLevelRotation: lowLevelRotation,
                 compositeSignal: compositeSignal,
                 anvilEvidence: anvilEvidence
@@ -164,14 +167,14 @@ struct TornadoIngredientInterpreter: Sendable {
         }
 
         switch cin {
-        case ..<(-100):
+        case ..<(-150):
             return .weak
         case ..<(-75):
             return .conditional
         case ..<(-25):
-            return .strong
+            return .supportive
         default:
-            return .conditional
+            return .strong
         }
     }
 
@@ -202,19 +205,31 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessLowLevelRotation(_ raw: TornadoRawParameters) -> IngredientSupport {
-        if let effectiveSrh = raw.effectiveSrhM2s2 {
-            return assessEffectiveSRH(effectiveSrh)
+        let rotationSupport: IngredientSupport?
+
+        if let srh01kmM2s2 = raw.srh01kmM2s2 {
+            rotationSupport = assessSRH01km(srh01kmM2s2)
+        } else if let effectiveSrh = raw.effectiveSrhM2s2 {
+            rotationSupport = assessEffectiveSRH(effectiveSrh)
+        } else if let srh03kmM2s2 = raw.srh03kmM2s2 {
+            rotationSupport = assessSRH03km(srh03kmM2s2)
+        } else {
+            rotationSupport = nil
         }
 
-        let supports = [
-            raw.srh03kmM2s2.map(assessSRH03km),
-            raw.srh01kmM2s2.map(assessSRH01km)
-        ].compactMap { $0 }
-        guard let strongest = supports.max() else {
+        let stretchingSupport = raw.threeCapeJkg.map(assessThreeCape)
+        let cloudBaseTier = cloudBaseSupport(raw)
+        let supports = [rotationSupport, stretchingSupport].compactMap { $0 }
+        guard !supports.isEmpty else {
             return .unknown
         }
 
-        return strongest
+        var combined = supports.min() ?? .unknown
+        if let cloudBaseTier {
+            combined = min(combined, cloudBaseTier)
+        }
+
+        return combined
     }
 
     private func assessSRH01km(_ value: Double) -> IngredientSupport {
@@ -244,7 +259,46 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessEffectiveSRH(_ value: Double) -> IngredientSupport {
-        assessSRH01km(value)
+        switch value {
+        case ..<100:
+            return .weak
+        case ..<200:
+            return .conditional
+        case ..<300:
+            return .supportive
+        default:
+            return .strong
+        }
+    }
+
+    private func assessThreeCape(_ value: Double) -> IngredientSupport {
+        switch value {
+        case ..<25:
+            return .weak
+        case ..<75:
+            return .conditional
+        case ..<150:
+            return .supportive
+        default:
+            return .strong
+        }
+    }
+
+    private func cloudBaseSupport(_ raw: TornadoRawParameters) -> IngredientSupport? {
+        guard let score = cloudBaseScore(raw) else {
+            return nil
+        }
+
+        switch score {
+        case ..<0.25:
+            return .weak
+        case ..<0.5:
+            return .conditional
+        case ..<0.75:
+            return .supportive
+        default:
+            return .strong
+        }
     }
 
     private func assessStormMode() -> IngredientSupport {
@@ -377,7 +431,7 @@ struct TornadoIngredientInterpreter: Sendable {
             drivers.append("Deep shear is supportive.")
         }
         if lowLevelRotation == .supportive || lowLevelRotation == .strong {
-            drivers.append("Low-level rotation is supportive.")
+            drivers.append("Low-level tornado ingredients are supportive.")
         }
         if cloudBase >= .supportive {
             drivers.append("Cloud bases are favorable.")
@@ -428,7 +482,7 @@ struct TornadoIngredientInterpreter: Sendable {
         if let mllcl = raw.mllclM, mllcl > 1500 {
             append(.elevatedCloudBases)
         }
-        if let cin = raw.mlcinJkg, cin <= -100 {
+        if let cin = raw.mlcinJkg, cin <= -150 {
             append(.strongCap)
         } else if let cin = raw.mlcinJkg, cin < -75, instability >= .supportive, deepShear >= .supportive {
             append(.weakLift)
@@ -445,8 +499,10 @@ struct TornadoIngredientInterpreter: Sendable {
 
     private func makeSummary(
         overall: IngredientSupport,
+        raw: TornadoRawParameters,
         limitingFactors: [TornadoLimitingFactor],
         capInhibition: IngredientSupport,
+        cloudBase: IngredientSupport,
         lowLevelRotation: IngredientSupport,
         compositeSignal: IngredientSupport,
         anvilEvidence: AnvilIngredientEvidence?
@@ -457,19 +513,26 @@ struct TornadoIngredientInterpreter: Sendable {
         case .weak:
             baseSummary = "The setup is weakly supportive. Key ingredients are limited and the environment is not especially favorable."
         case .conditional:
-            if capInhibition <= .conditional {
-                baseSummary = "The setup is conditionally supportive. The ingredients are there, but CIN and storm initiation may keep the tornado potential from fully realizing."
-            } else if lowLevelRotation <= .conditional {
-                baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but low-level rotation is modest."
+            if let fixed = raw.significantTornadoFixed,
+               let effective = raw.significantTornadoEffective,
+               fixed >= 1.5,
+               effective + 0.5 < fixed {
+                baseSummary = "The setup is conditionally supportive. The fixed-layer tornado signal is stronger than the effective-layer signal, so realization stays conditional if storms initiate."
+            } else if capInhibition <= .conditional {
+                baseSummary = "The setup is conditionally supportive. The ingredients are there, but storm initiation and CIN may keep the tornado potential from fully realizing."
+            } else if lowLevelRotation <= .conditional, compositeSignal >= .supportive {
+                baseSummary = "The setup is conditionally supportive. Supercell ingredients are present, but low-level rotation and stretching are still the limiter."
+            } else if lowLevelRotation >= .supportive, cloudBase >= .conditional {
+                baseSummary = "The setup is conditionally supportive. The low-level tornado ingredients are more aligned, but the outcome still depends on storm initiation."
             } else if compositeSignal == .unknown {
                 baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but the composite signal is not available yet."
             } else {
                 baseSummary = "The setup is conditionally supportive. The ingredients are there, but the lineup is still incomplete."
             }
         case .supportive:
-            baseSummary = "The setup is supportive. Instability, deep shear, and cloud bases are in a favorable range."
+            baseSummary = "The setup is supportive. Instability, deep shear, and low-level tornado ingredients are in a favorable range."
         case .strong:
-            baseSummary = "The setup is strongly supportive. Multiple ingredients line up, including instability, deep shear, and low-level rotation."
+            baseSummary = "The setup is strongly supportive. Multiple ingredients line up, including instability, deep shear, and low-level tornado ingredients."
         case .unknown:
             baseSummary = "There is not enough ingredient data to judge the setup confidently."
         }
@@ -509,6 +572,7 @@ struct TornadoIngredientInterpreter: Sendable {
     }
 
     private func assessAnvilEvidence(
+        raw: TornadoRawParameters,
         rawOverall: IngredientSupport,
         rawConfidence: SnapshotConfidence,
         freshness: IngredientFreshness,
@@ -521,6 +585,7 @@ struct TornadoIngredientInterpreter: Sendable {
 
         var overall = rawOverall
         var confidence = rawConfidence
+        let rawIsAnvilBacked = raw.effectiveLayer != nil || raw.stormMotion != nil
 
         guard let strongestSupport = evidence.strongestSupport else {
             if evidence.isDegraded {
@@ -536,21 +601,25 @@ struct TornadoIngredientInterpreter: Sendable {
 
         switch strongestSupport {
         case .strong:
-            if overall == .weak, knownCorePillars >= 3 {
-                overall = overall.raised()
-            } else if overall == .conditional, knownCorePillars >= 4 {
-                overall = overall.raised()
-            } else if overall == .supportive, knownCorePillars >= 4 {
-                overall = .strong
+            if !rawIsAnvilBacked {
+                if overall == .weak, knownCorePillars >= 3 {
+                    overall = overall.raised()
+                } else if overall == .conditional, knownCorePillars >= 4 {
+                    overall = overall.raised()
+                } else if overall == .supportive, knownCorePillars >= 4 {
+                    overall = .strong
+                }
             }
             if !freshness.isDegraded {
                 confidence = confidence.raised()
             }
         case .supportive:
-            if overall == .weak, knownCorePillars >= 3 {
-                overall = overall.raised()
-            } else if overall == .conditional, knownCorePillars >= 4 {
-                overall = overall.raised()
+            if !rawIsAnvilBacked {
+                if overall == .weak, knownCorePillars >= 3 {
+                    overall = overall.raised()
+                } else if overall == .conditional, knownCorePillars >= 4 {
+                    overall = overall.raised()
+                }
             }
             if !freshness.isDegraded {
                 confidence = confidence.raised()

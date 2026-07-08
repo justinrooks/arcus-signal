@@ -143,6 +143,7 @@ struct StormSetupProviderTests {
 
         #expect(response.setup.h3Cell == fixedH3)
         #expect(response.ingredients.canonical.mucapeJkg == 362.1018454649957)
+        #expect(response.ingredients.canonical.sbcapeJkg == 1450)
         #expect(response.ingredients.canonical.mlcapeJkg == 191.7304143918497)
         #expect(response.ingredients.canonical.mlcinJkg == -221.93726424748172)
         #expect(response.ingredients.canonical.mllclM == 1179.4130766012365)
@@ -155,7 +156,7 @@ struct StormSetupProviderTests {
         #expect(response.ingredients.diagnostics.dewpoint2mK == 289.15)
         #expect(response.ingredients.diagnostics.surfacePressurePa == 94_000)
         #expect(response.profileAnalysis == expectedAnalysis)
-        #expect(response.assessment.overall == .conditional)
+        #expect(response.assessment.overall == .weak)
         #expect(response.assessment.confidence == .high)
         #expect(await anvilProvider.requestCount == 1)
     }
@@ -1809,6 +1810,13 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
                 stpCin: 0.0,
                 stpFixed: 3.4,
                 ship: 2.3,
+                srh01km: 80,
+                srh03km: 140,
+                sbcape: 1450,
+                sbcin: nil,
+                bulkShear06kmMs: nil,
+                lapserate03km: nil,
+                threeCapeJkg: nil,
                 quality: AnvilQualityDTO(
                     profileLevelCount: 20,
                     warnings: []

@@ -24,6 +24,47 @@ struct AnvilAnalyzeProfileResponse: Codable, Sendable, Equatable {
     let quality: AnvilQualityDTO
 }
 
+extension AnvilAnalyzeProfileResponse {
+    init(
+        effectiveLayer: AnvilEffectiveLayerDTO,
+        stormMotion: AnvilStormMotionDTO,
+        mucape: Double?,
+        mlcape: Double?,
+        mlcin: Double?,
+        mllclMetersAgl: Double?,
+        effectiveSrh: Double?,
+        effectiveBulkShearMs: Double?,
+        scp: Double?,
+        stpCin: Double?,
+        stpFixed: Double?,
+        ship: Double?,
+        quality: AnvilQualityDTO
+    ) {
+        self.init(
+            effectiveLayer: effectiveLayer,
+            stormMotion: stormMotion,
+            mucape: mucape,
+            mlcape: mlcape,
+            mlcin: mlcin,
+            mllclMetersAgl: mllclMetersAgl,
+            effectiveSrh: effectiveSrh,
+            effectiveBulkShearMs: effectiveBulkShearMs,
+            scp: scp,
+            stpCin: stpCin,
+            stpFixed: stpFixed,
+            ship: ship,
+            srh01km: nil,
+            srh03km: nil,
+            sbcape: nil,
+            sbcin: nil,
+            bulkShear06kmMs: nil,
+            lapserate03km: nil,
+            threeCapeJkg: nil,
+            quality: quality
+        )
+    }
+}
+
 struct AnvilEffectiveLayerDTO: Codable, Sendable, Equatable {
     let status: String
     let basePressureMb: Double?

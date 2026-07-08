@@ -205,8 +205,7 @@ struct StormSetupCurrentResponseDTOTests {
             diagnostics: nil,
             effectiveBulkShearMs: profileAnalysis.effectiveBulkShearMs,
             effectiveLayer: profileAnalysis.effectiveLayer,
-            stormMotion: profileAnalysis.stormMotion,
-            ship: profileAnalysis.ship
+            stormMotion: profileAnalysis.stormMotion
         )
     }
 

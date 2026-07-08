@@ -590,7 +590,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         return TornadoRawParameters(
-            sbcapeJkg: profileAnalysis.sbcin ?? diagnostics.sbcapeJkg,
+            sbcapeJkg: profileAnalysis.sbcape ?? diagnostics.sbcapeJkg,
             mlcapeJkg: profileAnalysis.mlcape ?? diagnostics.mlcapeJkg,
             mucapeJkg: profileAnalysis.mucape ?? diagnostics.mucapeJkg,
             mlcinJkg: profileAnalysis.mlcin ?? diagnostics.mlcinJkg,

@@ -66,12 +66,12 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.instability == .supportive)
         #expect(assessment.cloudBase == .supportive)
         #expect(assessment.deepShear == .supportive)
-        #expect(assessment.lowLevelRotation == .supportive)
+        #expect(assessment.lowLevelRotation == .weak)
         #expect(assessment.compositeSignal == .supportive)
         #expect(assessment.capInhibition == .conditional)
         #expect(assessment.overall == .conditional)
         #expect(assessment.summary.contains("conditionally supportive"))
-        #expect(assessment.summary.contains("CIN and storm initiation may keep the tornado potential from fully realizing."))
+        #expect(assessment.summary.contains("fixed-layer tornado signal is stronger than the effective-layer signal"))
     }
 
     @Test("native diagnostics still drive the assessment when canonical fields are absent")
@@ -90,7 +90,7 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.instability == .conditional)
         #expect(assessment.cloudBase == .strong)
         #expect(assessment.deepShear == .supportive)
-        #expect(assessment.lowLevelRotation == .conditional)
+        #expect(assessment.lowLevelRotation == .weak)
         #expect(assessment.overall == .conditional)
     }
 
@@ -163,6 +163,204 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.overall == .conditional)
         #expect(assessment.limitingFactors.contains(.weakLowLevelRotation))
+    }
+
+    @Test("weak 0-1 km SRH limits tornado messaging even with elevated composite signals")
+    func weakSrh01LimitsTornadoMessagingEvenWithElevatedCompositeSignals() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2600,
+                mlcapeJkg: 2800,
+                mucapeJkg: 3000,
+                mlcinJkg: -35,
+                mllclM: 850,
+                tempDewPtDeltaF: 8,
+                shear06kmKt: 52,
+                srh01kmM2s2: 60,
+                threeCapeJkg: 120,
+                supercellComposite: 4.2,
+                significantTornadoFixed: 3.2,
+                significantTornadoEffective: 2.8
+            )
+        )
+
+        #expect(assessment.lowLevelRotation == .weak)
+        #expect(assessment.overall == .conditional)
+        #expect(assessment.summary.contains("low-level rotation and stretching are still the limiter."))
+    }
+
+    @Test("weak 0-3 km CAPE limits tornado messaging even with strong SRH")
+    func weakThreeCapeLimitsTornadoMessagingEvenWithStrongSrh() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2200,
+                mlcapeJkg: 2400,
+                mucapeJkg: 2500,
+                mlcinJkg: -30,
+                mllclM: 900,
+                tempDewPtDeltaF: 9,
+                shear06kmKt: 48,
+                srh01kmM2s2: 180,
+                threeCapeJkg: 10,
+                supercellComposite: 2.5,
+                significantTornadoFixed: 1.8,
+                significantTornadoEffective: 1.3
+            )
+        )
+
+        #expect(assessment.lowLevelRotation == .weak)
+        #expect(assessment.summary.contains("low-level rotation and stretching are still the limiter."))
+    }
+
+    @Test("aligned low-level tornado ingredients increase concern without implying certainty")
+    func alignedLowLevelTornadoIngredientsIncreaseConcern() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2000,
+                mlcapeJkg: 2200,
+                mucapeJkg: 2300,
+                mlcinJkg: -35,
+                mllclM: 900,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 46,
+                srh01kmM2s2: 175,
+                threeCapeJkg: 110,
+                supercellComposite: 2.8,
+                significantTornadoFixed: 1.9,
+                significantTornadoEffective: 1.2
+            )
+        )
+
+        #expect(assessment.lowLevelRotation >= .supportive)
+        #expect(assessment.cloudBase >= .supportive)
+        #expect(assessment.overall == .supportive)
+        #expect(assessment.summary.contains("low-level tornado ingredients are in a favorable range."))
+    }
+
+    @Test("STP mismatch and meaningful CIN keep the tornado wording conditional")
+    func stpMismatchAndMeaningfulCinKeepTornadoWordingConditional() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2500,
+                mucapeJkg: 2600,
+                mlcinJkg: -95,
+                mllclM: 950,
+                tempDewPtDeltaF: 11,
+                shear06kmKt: 50,
+                srh01kmM2s2: 170,
+                threeCapeJkg: 115,
+                supercellComposite: 2.6,
+                significantTornadoFixed: 3.4,
+                significantTornadoEffective: 0.9
+            )
+        )
+
+        #expect(assessment.overall == .conditional)
+        #expect(assessment.capInhibition == .conditional)
+        #expect(assessment.summary.contains("fixed-layer tornado signal is stronger than the effective-layer signal"))
+        #expect(assessment.summary.contains("realization stays conditional if storms initiate"))
+    }
+
+    @Test("Anvil-backed canonical ingredients do not get raised twice by the same Anvil evidence")
+    func anvilBackedCanonicalIngredientsDoNotGetRaisedTwice() {
+        let raw = makeRaw(
+            sbcapeJkg: 1450,
+            mlcapeJkg: 191.7304143918497,
+            mucapeJkg: 362.1018454649957,
+            mlcinJkg: -221.93726424748172,
+            mllclM: 1179.4130766012365,
+            effectiveBulkShearMs: 30.134722226263612,
+            srh01kmM2s2: 29.42420403684148,
+            effectiveSrhM2s2: 29.42420403684148,
+            supercellComposite: 4.2,
+            significantTornadoFixed: 3.4,
+            significantTornadoEffective: 0.0,
+            effectiveLayer: AnvilEffectiveLayerDTO(
+                status: "found",
+                basePressureMb: 1000,
+                topPressureMb: 925,
+                baseMetersAgl: 0,
+                topMetersAgl: 690
+            ),
+            stormMotion: AnvilStormMotionDTO(
+                status: "computed",
+                bunkersRight: AnvilBunkersRightStormMotionDTO(
+                    uKt: 36.80394762849837,
+                    vKt: 13.53066796460426,
+                    speedKt: 39.21236458834915,
+                    directionTowardDeg: 69.81446460119884,
+                    uMs: 18.933570033795217,
+                    vMs: 6.960770950382875,
+                    speedMs: 20.172565688288692
+                )
+            )
+        )
+
+        let baseline = interpret(raw: raw)
+        let withEvidence = interpret(raw: raw, evidence: makeHealthyStrongEvidence())
+
+        #expect(withEvidence.overall == baseline.overall)
+    }
+
+    @Test("fallback still works when 0-1 km SRH or 0-3 km CAPE is missing")
+    func missingLowLevelIngredientsStillFallback() {
+        let onlySrh = interpret(
+            raw: makeRaw(
+                mlcapeJkg: 1900,
+                mucapeJkg: 2000,
+                mlcinJkg: -35,
+                mllclM: 950,
+                shear06kmKt: 44,
+                srh01kmM2s2: 170
+            )
+        )
+
+        let onlyThreeCape = interpret(
+            raw: makeRaw(
+                mlcapeJkg: 1900,
+                mucapeJkg: 2000,
+                mlcinJkg: -35,
+                mllclM: 950,
+                shear06kmKt: 44,
+                threeCapeJkg: 105
+            )
+        )
+
+        #expect(onlySrh.lowLevelRotation != .unknown)
+        #expect(onlyThreeCape.lowLevelRotation != .unknown)
+    }
+
+    @Test("strong cap limiting factor only appears at -150 CIN or weaker")
+    func strongCapLimitTracksUpdatedCinThreshold() {
+        let weakCap = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2500,
+                mucapeJkg: 2600,
+                mlcinJkg: -110,
+                mllclM: 900,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 45,
+                srh01kmM2s2: 180
+            )
+        )
+
+        let strongCap = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2400,
+                mlcapeJkg: 2500,
+                mucapeJkg: 2600,
+                mlcinJkg: -150,
+                mllclM: 900,
+                tempDewPtDeltaF: 10,
+                shear06kmKt: 45,
+                srh01kmM2s2: 180
+            )
+        )
+
+        #expect(!weakCap.limitingFactors.contains(.strongCap))
+        #expect(strongCap.limitingFactors.contains(.strongCap))
     }
 
     @Test("elevated cloud bases appear as a limiting factor when MLLCL is high")
@@ -385,12 +583,33 @@ struct TornadoIngredientInterpreterTests {
         #expect(interpret(raw: makeRaw(srh03kmM2s2: 375)).lowLevelRotation == .strong)
     }
 
-    @Test("CIN uses an ideal middle range instead of monotonic scoring")
+    @Test("0-1 km SRH takes priority over effective SRH")
+    func srh01TakesPriorityOverEffectiveSrh() {
+        let assessment = interpret(
+            raw: makeRaw(
+                srh01kmM2s2: 45,
+                srh03kmM2s2: 375,
+                effectiveSrhM2s2: 325
+            )
+        )
+
+        #expect(assessment.lowLevelRotation == .weak)
+    }
+
+    @Test("effective SRH follows its own threshold bands")
+    func effectiveSrhFollowsOwnThresholdBands() {
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 90)).lowLevelRotation == .weak)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 150)).lowLevelRotation == .conditional)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 250)).lowLevelRotation == .supportive)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 320)).lowLevelRotation == .strong)
+    }
+
+    @Test("CIN uses the updated favorable weak-inhibition bands")
     func cinUsesIdealMiddleRange() {
-        #expect(interpret(raw: makeRaw(mlcinJkg: -125)).capInhibition == .weak)
-        #expect(interpret(raw: makeRaw(mlcinJkg: -85)).capInhibition == .conditional)
-        #expect(interpret(raw: makeRaw(mlcinJkg: -50)).capInhibition == .strong)
-        #expect(interpret(raw: makeRaw(mlcinJkg: -10)).capInhibition == .conditional)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -160)).capInhibition == .weak)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -100)).capInhibition == .conditional)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -50)).capInhibition == .supportive)
+        #expect(interpret(raw: makeRaw(mlcinJkg: -10)).capInhibition == .strong)
     }
 
     @Test("LCL height follows updated cloud-base threshold bands")
@@ -545,10 +764,13 @@ struct TornadoIngredientInterpreterTests {
         effectiveShearKt: Double? = nil,
         srh01kmM2s2: Double? = nil,
         srh03kmM2s2: Double? = nil,
+        threeCapeJkg: Double? = nil,
         effectiveSrhM2s2: Double? = nil,
         supercellComposite: Double? = nil,
         significantTornadoFixed: Double? = nil,
-        significantTornadoEffective: Double? = nil
+        significantTornadoEffective: Double? = nil,
+        effectiveLayer: AnvilEffectiveLayerDTO? = nil,
+        stormMotion: AnvilStormMotionDTO? = nil
     ) -> TornadoRawParameters {
         TornadoRawParameters(
             sbcapeJkg: sbcapeJkg,
@@ -558,6 +780,7 @@ struct TornadoIngredientInterpreterTests {
             dcapeJkg: nil,
             mllclM: mllclM,
             tempDewPtDeltaF: tempDewPtDeltaF,
+            threeCapeJkg: threeCapeJkg,
             lclLfcSeparationM: nil,
             lapseRate03kmCkm: nil,
             lapseRate700500mbCkm: nil,
@@ -577,7 +800,9 @@ struct TornadoIngredientInterpreterTests {
             stormRelativeWind46km: nil,
             meanWind850300mb: nil,
             diagnostics: nil,
-            effectiveBulkShearMs: effectiveBulkShearMs
+            effectiveBulkShearMs: effectiveBulkShearMs,
+            effectiveLayer: effectiveLayer,
+            stormMotion: stormMotion
         )
     }
 }

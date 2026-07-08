@@ -224,6 +224,80 @@ struct TornadoRawParameters: Content, Sendable, Equatable {
 }
 
 extension TornadoRawParameters {
+    init(
+        sbcapeJkg: Double?,
+        mlcapeJkg: Double?,
+        mucapeJkg: Double?,
+        mlcinJkg: Double?,
+        dcapeJkg: Double?,
+        mllclM: Double?,
+        tempDewPtDeltaF: Double? = nil,
+        temperature2mK: Double? = nil,
+        dewpoint2mK: Double? = nil,
+        surfacePressurePa: Double? = nil,
+        wind10m: DirectionSpeed? = nil,
+        threeCapeJkg: Double? = nil,
+        lclLfcSeparationM: Double?,
+        lapseRate03kmCkm: Double?,
+        lapseRate700500mbCkm: Double?,
+        shear06kmKt: Double?,
+        shear03kmKt: Double?,
+        shear01kmKt: Double?,
+        effectiveShearKt: Double?,
+        srh01kmM2s2: Double?,
+        srh03kmM2s2: Double?,
+        effectiveSrhM2s2: Double?,
+        supercellComposite: Double?,
+        significantTornadoFixed: Double?,
+        significantTornadoEffective: Double?,
+        bunkersRightMotion: DirectionSpeed?,
+        bunkersLeftMotion: DirectionSpeed?,
+        stormRelativeWind46km: DirectionSpeed?,
+        meanWind850300mb: DirectionSpeed?,
+        diagnostics: [TornadoRawParameterDiagnostic]? = nil,
+        effectiveBulkShearMs: Double? = nil,
+        effectiveLayer: AnvilEffectiveLayerDTO? = nil,
+        stormMotion: AnvilStormMotionDTO? = nil,
+        ship: Double? = nil
+    ) {
+        self.init(
+            sbcapeJkg: sbcapeJkg,
+            mlcapeJkg: mlcapeJkg,
+            mucapeJkg: mucapeJkg,
+            mlcinJkg: mlcinJkg,
+            dcapeJkg: dcapeJkg,
+            mllclM: mllclM,
+            tempDewPtDeltaF: tempDewPtDeltaF,
+            temperature2mK: temperature2mK,
+            dewpoint2mK: dewpoint2mK,
+            surfacePressurePa: surfacePressurePa,
+            wind10m: wind10m,
+            threeCapeJkg: threeCapeJkg,
+            lclLfcSeparationM: lclLfcSeparationM,
+            lapseRate03kmCkm: lapseRate03kmCkm,
+            lapseRate700500mbCkm: lapseRate700500mbCkm,
+            shear06kmKt: shear06kmKt,
+            shear03kmKt: shear03kmKt,
+            shear01kmKt: shear01kmKt,
+            effectiveShearKt: effectiveShearKt,
+            srh01kmM2s2: srh01kmM2s2,
+            srh03kmM2s2: srh03kmM2s2,
+            effectiveSrhM2s2: effectiveSrhM2s2,
+            supercellComposite: supercellComposite,
+            significantTornadoFixed: significantTornadoFixed,
+            significantTornadoEffective: significantTornadoEffective,
+            significantHail: ship,
+            bunkersRightMotion: bunkersRightMotion,
+            bunkersLeftMotion: bunkersLeftMotion,
+            stormRelativeWind46km: stormRelativeWind46km,
+            meanWind850300mb: meanWind850300mb,
+            diagnostics: diagnostics,
+            effectiveBulkShearMs: effectiveBulkShearMs,
+            effectiveLayer: effectiveLayer,
+            stormMotion: stormMotion
+        )
+    }
+
     var nonNilFieldCount: Int {
         [
             sbcapeJkg != nil,
@@ -255,6 +329,10 @@ extension TornadoRawParameters {
         ]
         .filter { $0 }
         .count
+    }
+
+    var ship: Double? {
+        significantHail
     }
 }
 
