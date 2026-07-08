@@ -238,6 +238,49 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.summary.contains("The fixed-layer tornado signal is stronger than the effective-layer signal"))
     }
 
+    @Test("diagnosis-backed reports preserve the internal diagnosis values")
+    func diagnosisBackedReportsPreserveInternalDiagnosisValues() {
+        let diagnosis = TornadoViabilityDiagnosis(
+            stormViability: .supportive,
+            supercellViability: .strong,
+            lowLevelRotation: .conditional,
+            lowLevelStretching: .supportive,
+            cloudBaseEfficiency: .weak,
+            tornadoEfficiency: .conditional,
+            inhibition: .supportive,
+            compositeConfirmation: .conditional,
+            realization: .conditional,
+            failureMode: .compositeMismatch,
+            confidence: .high,
+            overall: .supportive,
+            summary: "diagnosis summary",
+            primaryDrivers: ["diagnosis driver"],
+            limitingFactors: [.weakDeepShear, .poorMoisture],
+            instability: .strong,
+            moisture: .conditional,
+            cloudBase: .weak,
+            capInhibition: .supportive,
+            deepShear: .supportive,
+            stormMode: .unknown,
+            compositeSignal: .conditional
+        )
+
+        let report = TornadoViabilityReport(diagnosis: diagnosis)
+
+        #expect(report.overall == .supportive)
+        #expect(report.confidence == .high)
+        #expect(report.summary == "diagnosis summary")
+        #expect(report.details.instability == .strong)
+        #expect(report.details.moisture == .conditional)
+        #expect(report.details.cloudBase == .weak)
+        #expect(report.details.capInhibition == .supportive)
+        #expect(report.details.deepShear == .supportive)
+        #expect(report.details.lowLevelRotation == .conditional)
+        #expect(report.details.stormMode == .unknown)
+        #expect(report.details.compositeSignal == .conditional)
+        #expect(report.limitingFactors == [.weakDeepShear, .poorMoisture])
+    }
+
     @Test("high SCP with weak STP stays limited to supercell support")
     func highScpWithWeakStpStaysLimitedToSupercellSupport() {
         let assessment = interpret(

@@ -210,7 +210,7 @@ Handoff notes:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/142
 
-Status: Pending
+Status: Complete
 
 Scope:
 - Add internal diagnosis types for storm viability, supercell viability, low-level rotation, low-level stretching, cloud-base efficiency, tornado efficiency, inhibition, composites, realization, failure mode, and confidence.
@@ -223,6 +223,7 @@ Deferred:
 Files likely touched:
 - `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
 - `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
+- `Sources/App/StormSetup/StormSetupCurrentResponse.swift`
 
 Tests / commands:
 - `swift test --filter TornadoIngredientInterpreterTests`
@@ -230,6 +231,10 @@ Tests / commands:
 Handoff notes:
 - Keep diagnosis private/internal unless Swift visibility requires otherwise.
 - Preserve `Content` DTOs separately from internal diagnosis types.
+- The interpreter now builds an internal `TornadoViabilityDiagnosis` and derives the existing assessment/report values from that diagnosis.
+- `TornadoViabilityReport(diagnosis:)` now maps the diagnosis directly for the response boundary; the provider still uses the assessment bridge for now.
+- Representative weak, conditional, supportive, strong, missing-field, Anvil-degraded, and Anvil-backed cases remain covered.
+- #143 can now focus on limiter precision and failure-mode sharpening without reworking the diagnosis plumbing again.
 
 ### Issue #143 - 04: Improve failure modes and limiter precision
 

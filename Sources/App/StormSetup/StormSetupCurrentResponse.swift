@@ -41,6 +41,25 @@ struct TornadoViabilityDetails: Content, Sendable, Equatable {
 }
 
 extension TornadoViabilityReport {
+    init(diagnosis: TornadoViabilityDiagnosis) {
+        self.init(
+            overall: diagnosis.overall,
+            confidence: diagnosis.confidence,
+            summary: diagnosis.summary,
+            details: TornadoViabilityDetails(
+                instability: diagnosis.instability,
+                moisture: diagnosis.moisture,
+                cloudBase: diagnosis.cloudBase,
+                capInhibition: diagnosis.capInhibition,
+                deepShear: diagnosis.deepShear,
+                lowLevelRotation: diagnosis.lowLevelRotation,
+                stormMode: diagnosis.stormMode,
+                compositeSignal: diagnosis.compositeSignal
+            ),
+            limitingFactors: diagnosis.limitingFactors
+        )
+    }
+
     init(assessment: TornadoIngredientAssessment) {
         self.init(
             overall: assessment.overall,
