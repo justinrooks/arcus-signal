@@ -298,7 +298,7 @@ Handoff notes:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/144
 
-Status: Pending
+Status: Complete
 
 Scope:
 - Rewrite `tornadoViability.summary` around environmental capability vs realization.
@@ -309,16 +309,32 @@ Deferred:
 - App UI rendering.
 - Advanced raw-value drilldowns.
 
-Files likely touched:
+Files changed:
 - `Sources/App/StormSetup/TornadoIngredientInterpreter.swift`
 - `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
 
-Tests / commands:
+Behavior change:
+- `tornadoViability.summary` now leads with calm SkyAware capability language such as "environment can support" and "tornado-capable storms" instead of the older weak/supportive phrasing.
+- Conditional summaries now distinguish realization limits from capability limits, with branch-specific limiter copy for CIN, STP disagreement, low-level rotation, low-level stretching, cloud bases, moisture, and storm organization.
+- Supportive and strong summaries now end with weather-aware guidance rather than implying deterministic tornado occurrence.
+- Anvil degraded/unavailable handling remains appended and unchanged.
+
+Tests run:
 - `swift test --filter TornadoIngredientInterpreterTests`
 
+Skipped validation:
+- Full repository test suite.
+- Provider/controller integration tests outside the focused interpreter filter.
+
+Deferred scope:
+- App UI rendering.
+- Advanced raw-value drilldowns.
+- Any matrix or contract expansion reserved for #145.
+
 Handoff notes:
-- Use "tornado-capable storms" and "environment can support" phrasing.
-- Avoid probability/risk/prediction wording.
+- Preserve the current "environment can support" framing and the prohibited-language guardrails.
+- Keep the summary calm, not dramatic.
+- #145 should focus on matrix and contract coverage using the newly stabilized copy.
 
 ### Issue #145 - 06: Expand matrix and contract tests
 

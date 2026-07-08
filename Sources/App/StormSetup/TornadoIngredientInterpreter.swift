@@ -137,6 +137,13 @@ struct TornadoIngredientInterpreter: Sendable {
             knownCorePillars: knownCorePillars,
             evidence: anvilEvidence
         )
+        let failureMode = assessFailureMode(
+            limitingFactors: limitingFactors,
+            viabilityLimiters: viabilityLimiters,
+            supercellSupport: supercellSupport,
+            tornadoComposite: tornadoComposite,
+            compositeConfirmation: compositeConfirmation
+        )
 
         return TornadoViabilityDiagnosis(
             stormViability: stormViability,
@@ -154,19 +161,14 @@ struct TornadoIngredientInterpreter: Sendable {
                 inhibition: capInhibition,
                 viabilityLimiters: viabilityLimiters
             ),
-            failureMode: assessFailureMode(
-                limitingFactors: limitingFactors,
-                viabilityLimiters: viabilityLimiters,
-                supercellSupport: supercellSupport,
-                tornadoComposite: tornadoComposite,
-                compositeConfirmation: compositeConfirmation
-            ),
+            failureMode: failureMode,
             confidence: evidenceAdjusted.confidence,
             overall: evidenceAdjusted.overall,
             summary: makeSummary(
                 overall: evidenceAdjusted.overall,
                 raw: raw,
                 limitingFactors: limitingFactors,
+                failureMode: failureMode,
                 capInhibition: capInhibition,
                 cloudBase: cloudBase,
                 lowLevelRotation: lowLevelRotation,
@@ -669,11 +671,11 @@ struct TornadoIngredientInterpreter: Sendable {
         if viabilityLimiters.contains(.strongCap) {
             return .strongCap
         }
-        if viabilityLimiters.contains(.conditionalInitiation) {
-            return .conditionalInitiation
-        }
         if viabilityLimiters.contains(.fixedEffectiveStpDisagreement) {
             return .fixedEffectiveStpDisagreement
+        }
+        if viabilityLimiters.contains(.conditionalInitiation) {
+            return .conditionalInitiation
         }
         if viabilityLimiters.contains(.weakStormOrganization) {
             return .weakStormOrganization
@@ -832,6 +834,7 @@ struct TornadoIngredientInterpreter: Sendable {
         overall: IngredientSupport,
         raw: TornadoRawParameters,
         limitingFactors: [TornadoLimitingFactor],
+        failureMode: TornadoViabilityFailureMode,
         capInhibition: IngredientSupport,
         cloudBase: IngredientSupport,
         lowLevelRotation: IngredientSupport,
@@ -843,39 +846,135 @@ struct TornadoIngredientInterpreter: Sendable {
 
         switch overall {
         case .weak:
-            baseSummary = "The setup is weakly supportive. Key ingredients are limited and the environment is not especially favorable."
+            baseSummary = "The nearby environment does not currently support tornado-capable storms well."
         case .conditional:
-            if let fixed = raw.significantTornadoFixed,
-               let effective = raw.significantTornadoEffective,
-               fixed >= 1.5,
-               effective + 0.5 < fixed {
-                baseSummary = "The setup is conditionally supportive. The fixed-layer tornado signal is stronger than the effective-layer signal, so realization stays conditional if storms initiate."
-            } else if supercellSupport >= .supportive, compositeSignal <= .conditional {
-                baseSummary = "The setup is conditionally supportive. Supercell support is present, but tornado-specific composite support is limited."
-            } else if capInhibition <= .conditional {
-                baseSummary = "The setup is conditionally supportive. The ingredients are there, but storm initiation and CIN may keep the tornado potential from fully realizing."
-            } else if lowLevelRotation <= .conditional, compositeSignal >= .supportive {
-                baseSummary = "The setup is conditionally supportive. Supercell ingredients are present, but low-level rotation and stretching are still the limiter."
-            } else if lowLevelRotation >= .supportive, cloudBase >= .conditional {
-                baseSummary = "The setup is conditionally supportive. The low-level tornado ingredients are more aligned, but the outcome still depends on storm initiation."
-            } else if compositeSignal == .unknown {
-                baseSummary = "The setup is conditionally supportive. Instability and deep shear are present, but the composite signal is not available yet."
-            } else {
-                baseSummary = "The setup is conditionally supportive. The ingredients are there, but the lineup is still incomplete."
-            }
+            baseSummary = "The nearby environment has some ingredients for tornado-capable storms, but realization is conditional."
         case .supportive:
-            baseSummary = "The setup is supportive. Instability, deep shear, and low-level tornado ingredients are in a favorable range."
+            baseSummary = "The nearby environment can support organized rotating storms, and low-level tornado ingredients are favorable."
         case .strong:
-            baseSummary = "The setup is strongly supportive. Multiple ingredients line up, including instability, deep shear, and low-level tornado ingredients."
+            baseSummary = "The nearby environment strongly supports organized rotating storms, and low-level tornado ingredients are aligned."
         case .unknown:
-            baseSummary = "There is not enough ingredient data to judge the setup confidently."
+            baseSummary = "There is not enough current ingredient data to judge tornado formation viability confidently."
         }
+
+        let limiterSentence = makeSummaryLimiterSentence(
+            overall: overall,
+            failureMode: failureMode,
+            limitingFactors: limitingFactors,
+            raw: raw,
+            lowLevelRotation: lowLevelRotation,
+            supercellSupport: supercellSupport,
+            compositeSignal: compositeSignal
+        )
+        let capabilitySentence = makeSummaryCapabilitySentence(overall: overall)
+        let summary = [baseSummary, limiterSentence, capabilitySentence]
+            .compactMap { $0 }
+            .joined(separator: " ")
 
         guard let anvilEvidence else {
-            return baseSummary
+            return summary
         }
 
-        return baseSummary + " " + makeAnvilEvidenceSummaryClause(anvilEvidence)
+        return summary + " " + makeAnvilEvidenceSummaryClause(anvilEvidence)
+    }
+
+    private func makeSummaryLimiterSentence(
+        overall: IngredientSupport,
+        failureMode: TornadoViabilityFailureMode,
+        limitingFactors: [TornadoLimitingFactor],
+        raw: TornadoRawParameters,
+        lowLevelRotation: IngredientSupport,
+        supercellSupport: IngredientSupport,
+        compositeSignal: IngredientSupport
+    ) -> String? {
+        if overall == .weak {
+            if limitingFactors.contains(.weakInstability) {
+                return "Instability is the main limiting factor."
+            }
+            if limitingFactors.contains(.weakDeepShear) {
+                return "Deep shear is the main limiting factor."
+            }
+            if limitingFactors.contains(.weakLowLevelRotation) {
+                return "Low-level rotation is the main limiting factor."
+            }
+            if limitingFactors.contains(.elevatedCloudBases) {
+                return "Elevated cloud bases are the main limiting factor."
+            }
+            if limitingFactors.contains(.poorMoisture) {
+                return "Near-surface moisture is the main limiting factor."
+            }
+            if limitingFactors.contains(.messyStormMode) {
+                return "Storm organization support is the main limiting factor."
+            }
+            return nil
+        }
+
+        if failureMode == .fixedEffectiveStpDisagreement {
+            return "The fixed-layer signal is stronger than the effective-layer signal, so the setup remains conditional."
+        }
+        if overall == .conditional,
+           supercellSupport >= .supportive,
+           (lowLevelRotation <= .conditional || compositeSignal <= .conditional) {
+            return "The environment can support organized rotating storms, but tornado-specific low-level ingredients are limited."
+        }
+
+        if failureMode == .strongCap {
+            return "CIN may keep the setup from realizing."
+        }
+        if failureMode == .conditionalInitiation || failureMode == .weakLift {
+            return "Storm initiation remains the main question."
+        }
+        if failureMode == .elevatedCloudBases {
+            return "Elevated cloud bases reduce tornado efficiency."
+        }
+        if failureMode == .weakLowLevelStretching {
+            return "Weak low-level buoyancy limits stretching near the ground."
+        }
+        if failureMode == .weakStormOrganization {
+            return "Storm organization support is limited."
+        }
+        if failureMode == .poorMoisture {
+            return "Near-surface moisture is limited."
+        }
+        if failureMode == .weakInstability {
+            return "Instability is limited."
+        }
+        if failureMode == .weakDeepShear {
+            return "Deep shear is limited."
+        }
+        if failureMode == .messyStormMode {
+            return "Storm mode is too messy for a confident call."
+        }
+        if failureMode == .missingStormMode {
+            return "Storm mode is not resolved from the current data."
+        }
+        if failureMode == .compositeMismatch {
+            return "The composite signals do not fully agree."
+        }
+
+        if let fixed = raw.significantTornadoFixed,
+           let effective = raw.significantTornadoEffective,
+           fixed >= 1.5,
+           effective + 0.5 < fixed {
+            return "The fixed-layer signal is stronger than the effective-layer signal, so the setup remains conditional."
+        }
+
+        if overall == .conditional, supercellSupport >= .supportive, lowLevelRotation <= .conditional {
+            return "The environment can support organized rotating storms, but tornado-specific low-level ingredients are limited."
+        }
+
+        return nil
+    }
+
+    private func makeSummaryCapabilitySentence(overall: IngredientSupport) -> String? {
+        switch overall {
+        case .supportive:
+            return "Stay weather-aware if storms can form."
+        case .strong:
+            return "This describes environmental capability, not a guarantee storms will occur."
+        default:
+            return nil
+        }
     }
 
     private func makeAnvilEvidenceSummaryClause(_ evidence: AnvilIngredientEvidence) -> String {

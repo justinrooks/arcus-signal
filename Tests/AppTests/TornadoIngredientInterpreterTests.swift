@@ -21,6 +21,7 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .weak)
+        #expect(assessment.summary.contains("main limiting factor"))
     }
 
     @Test("conditional setup yields overall conditional")
@@ -40,6 +41,8 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .conditional)
+        #expect(assessment.summary.contains("some ingredients for tornado-capable storms"))
+        #expect(assessment.summary.contains("realization is conditional"))
     }
 
     @Test("canonical Anvil fields drive conditional tornado messaging when CIN still limits realization")
@@ -70,8 +73,9 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.compositeSignal == .conditional)
         #expect(assessment.capInhibition == .conditional)
         #expect(assessment.overall == .conditional)
-        #expect(assessment.summary.contains("conditionally supportive"))
-        #expect(assessment.summary.contains("fixed-layer tornado signal is stronger than the effective-layer signal"))
+        #expect(assessment.summary.contains("some ingredients for tornado-capable storms"))
+        #expect(assessment.summary.contains("The fixed-layer signal is stronger than the effective-layer signal"))
+        #expect(assessment.summary.contains("the setup remains conditional"))
     }
 
     @Test("native diagnostics still drive the assessment when canonical fields are absent")
@@ -92,6 +96,7 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.deepShear == .supportive)
         #expect(assessment.lowLevelRotation == .weak)
         #expect(assessment.overall == .conditional)
+        #expect(assessment.summary.contains("some ingredients for tornado-capable storms"))
     }
 
     @Test("supportive setup yields overall supportive")
@@ -111,6 +116,8 @@ struct TornadoIngredientInterpreterTests {
         )
 
         #expect(assessment.overall == .supportive)
+        #expect(assessment.summary.contains("can support organized rotating storms"))
+        #expect(assessment.summary.contains("Stay weather-aware"))
     }
 
     @Test("strong setup yields overall strong only when multiple pillars strongly agree")
@@ -135,6 +142,8 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.overall == .strong)
         #expect(assessment.compositeSignal == .strong)
         #expect(assessment.confidence == .high)
+        #expect(assessment.summary.contains("strongly supports organized rotating storms"))
+        #expect(assessment.summary.contains("not a guarantee storms will occur"))
     }
 
     @Test("missing core fields yields unknown and degraded confidence")
@@ -143,7 +152,7 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.overall == .unknown)
         #expect(assessment.confidence == .degraded)
-        #expect(assessment.summary.contains("not enough ingredient data"))
+        #expect(assessment.summary.contains("not enough current ingredient data"))
     }
 
     @Test("weak low-level rotation is a limiting factor when instability and deep shear are present")
@@ -354,7 +363,8 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.lowLevelRotation == .weak)
         #expect(assessment.overall == .conditional)
-        #expect(assessment.summary.contains("low-level rotation and stretching are still the limiter."))
+        #expect(assessment.summary.contains("organized rotating storms"))
+        #expect(assessment.summary.contains("tornado-specific low-level ingredients are limited"))
     }
 
     @Test("weak 0-3 km CAPE limits tornado messaging even with strong SRH")
@@ -406,7 +416,7 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.lowLevelRotation >= .supportive)
         #expect(assessment.cloudBase >= .supportive)
         #expect(assessment.overall == .conditional)
-        #expect(assessment.summary.contains("The fixed-layer tornado signal is stronger than the effective-layer signal"))
+        #expect(assessment.summary.contains("The fixed-layer signal is stronger than the effective-layer signal"))
     }
 
     @Test("diagnosis-backed reports preserve the internal diagnosis values")
@@ -483,7 +493,7 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.compositeSignal == .conditional)
         #expect(assessment.overall != .strong)
-        #expect(assessment.summary.contains("Supercell support is present, but tornado-specific composite support is limited."))
+        #expect(assessment.summary.contains("The environment can support organized rotating storms, but tornado-specific low-level ingredients are limited."))
     }
 
     @Test("STP mismatch and meaningful CIN keep the tornado wording conditional")
@@ -507,8 +517,8 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.overall == .conditional)
         #expect(assessment.capInhibition == .conditional)
-        #expect(assessment.summary.contains("fixed-layer tornado signal is stronger than the effective-layer signal"))
-        #expect(assessment.summary.contains("realization stays conditional if storms initiate"))
+        #expect(assessment.summary.contains("The fixed-layer signal is stronger than the effective-layer signal"))
+        #expect(assessment.summary.contains("the setup remains conditional"))
     }
 
     @Test("Anvil-backed canonical ingredients do not get raised twice by the same Anvil evidence")
@@ -687,11 +697,12 @@ struct TornadoIngredientInterpreterTests {
             )
         ).summary.lowercased()
 
-        #expect(!summary.contains("likely"))
+        #expect(!summary.contains("tornadoes are likely"))
+        #expect(!summary.contains("tornadoes will occur"))
         #expect(!summary.contains("probability"))
-        #expect(!summary.contains("predictor"))
         #expect(!summary.contains("risk score"))
-        #expect(!summary.contains("at your exact location"))
+        #expect(!summary.contains("prediction"))
+        #expect(!summary.contains("warning replacement"))
     }
 
     @Test("missing Anvil evidence preserves the baseline assessment")
