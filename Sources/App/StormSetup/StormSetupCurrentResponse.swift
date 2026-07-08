@@ -5,7 +5,7 @@ struct StormSetupCurrentResponse: Content, Sendable {
     let setup: StormSetupCurrentSetupResponse
     let ingredients: StormSetupTornadoIngredientsResponse
     let profileAnalysis: AnvilAnalyzeProfileResponse?
-    let assessment: TornadoIngredientAssessment
+    let tornadoViability: TornadoViabilityReport
 }
 
 struct StormSetupCurrentSetupResponse: Content, Sendable {
@@ -19,4 +19,44 @@ struct StormSetupCurrentSetupResponse: Content, Sendable {
 struct StormSetupTornadoIngredientsResponse: Content, Sendable, Equatable {
     let canonical: TornadoRawParameters
     let diagnostics: TornadoRawParameters
+}
+
+struct TornadoViabilityReport: Content, Sendable, Equatable {
+    let overall: IngredientSupport
+    let confidence: SnapshotConfidence
+    let summary: String
+    let details: TornadoViabilityDetails
+    let limitingFactors: [TornadoLimitingFactor]
+}
+
+struct TornadoViabilityDetails: Content, Sendable, Equatable {
+    let instability: IngredientSupport
+    let moisture: IngredientSupport
+    let cloudBase: IngredientSupport
+    let capInhibition: IngredientSupport
+    let deepShear: IngredientSupport
+    let lowLevelRotation: IngredientSupport
+    let stormMode: IngredientSupport
+    let compositeSignal: IngredientSupport
+}
+
+extension TornadoViabilityReport {
+    init(assessment: TornadoIngredientAssessment) {
+        self.init(
+            overall: assessment.overall,
+            confidence: assessment.confidence,
+            summary: assessment.summary,
+            details: TornadoViabilityDetails(
+                instability: assessment.instability,
+                moisture: assessment.moisture,
+                cloudBase: assessment.cloudBase,
+                capInhibition: assessment.capInhibition,
+                deepShear: assessment.deepShear,
+                lowLevelRotation: assessment.lowLevelRotation,
+                stormMode: assessment.stormMode,
+                compositeSignal: assessment.compositeSignal
+            ),
+            limitingFactors: assessment.limitingFactors
+        )
+    }
 }

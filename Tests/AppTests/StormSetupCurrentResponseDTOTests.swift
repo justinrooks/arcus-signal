@@ -10,7 +10,7 @@ struct StormSetupCurrentResponseDTOTests {
         let encoded = try encoder().encode(response)
 
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        #expect(object?.keys.sorted() == ["assessment", "ingredients", "profileAnalysis", "setup"])
+        #expect(object?.keys.sorted() == ["ingredients", "profileAnalysis", "setup", "tornadoViability"])
 
         let ingredientsObject = object?["ingredients"] as? [String: Any]
         #expect(ingredientsObject?.keys.sorted() == ["canonical", "diagnostics"])
@@ -25,7 +25,7 @@ struct StormSetupCurrentResponseDTOTests {
         #expect(canonicalObject?["mllclM"] as? Double == 1179.4)
         #expect(canonicalObject?["effectiveBulkShearMs"] as? Double == 30.1)
         #expect(canonicalObject?["effectiveSrhM2s2"] as? Double == 29.4)
-        #expect(canonicalObject?["ship"] as? Double == 0.02)
+        #expect(canonicalObject?["significantHail"] as? Double == 0.8)
         #expect(canonicalObject?["effectiveLayer"] != nil)
         #expect(canonicalObject?["stormMotion"] != nil)
 
@@ -39,6 +39,13 @@ struct StormSetupCurrentResponseDTOTests {
         let profileAnalysisObject = object?["profileAnalysis"] as? [String: Any]
         #expect(profileAnalysisObject?["request"] == nil)
         #expect(profileAnalysisObject?["debug"] == nil)
+        #expect(profileAnalysisObject?["ship"] as? Double == 0.02)
+
+        let viabilityObject = object?["tornadoViability"] as? [String: Any]
+        #expect(viabilityObject?.keys.sorted() == ["confidence", "details", "limitingFactors", "overall", "summary"])
+
+        let viabilityDetailsObject = viabilityObject?["details"] as? [String: Any]
+        #expect(viabilityDetailsObject?.keys.sorted() == ["capInhibition", "cloudBase", "compositeSignal", "deepShear", "instability", "lowLevelRotation", "moisture", "stormMode"])
 
         let decoded = try decoder().decode(StormSetupCurrentResponse.self, from: encoded)
         #expect(decoded.setup.h3Cell == response.setup.h3Cell)
@@ -54,11 +61,7 @@ struct StormSetupCurrentResponseDTOTests {
         #expect(decoded.setup.freshness.isDegraded == response.setup.freshness.isDegraded)
         #expect(decoded.ingredients == response.ingredients)
         #expect(decoded.profileAnalysis == response.profileAnalysis)
-        #expect(decoded.assessment.overall == response.assessment.overall)
-        #expect(decoded.assessment.confidence == response.assessment.confidence)
-        #expect(decoded.assessment.summary == response.assessment.summary)
-        #expect(decoded.assessment.primaryDrivers == response.assessment.primaryDrivers)
-        #expect(decoded.assessment.limitingFactors == response.assessment.limitingFactors)
+        #expect(decoded.tornadoViability == response.tornadoViability)
     }
 
     @Test("response DTO allows a missing profile analysis")
@@ -68,7 +71,7 @@ struct StormSetupCurrentResponseDTOTests {
 
         #expect(decoded.profileAnalysis == nil)
         #expect(decoded.setup.h3Cell == response.setup.h3Cell)
-        #expect(decoded.assessment.summary == response.assessment.summary)
+        #expect(decoded.tornadoViability.summary == response.tornadoViability.summary)
         #expect(decoded.ingredients == response.ingredients)
     }
 
@@ -104,27 +107,26 @@ struct StormSetupCurrentResponseDTOTests {
                 diagnostics: makeDiagnosticsIngredients()
             ),
             profileAnalysis: profileAnalysis,
-            assessment: makeAssessment()
+            tornadoViability: makeViabilityReport()
         )
     }
 
-    private func makeAssessment() -> TornadoIngredientAssessment {
-        TornadoIngredientAssessment(
+    private func makeViabilityReport() -> TornadoViabilityReport {
+        TornadoViabilityReport(
             overall: .conditional,
-            instability: .supportive,
-            moisture: .strong,
-            cloudBase: .conditional,
-            capInhibition: .weak,
-            deepShear: .supportive,
-            lowLevelRotation: .supportive,
-            stormMode: .conditional,
-            compositeSignal: .supportive,
             confidence: .moderate,
-            trend: .steady,
-            stormModeHint: .mixedMode,
-            primaryDrivers: ["Instability is adequate.", "Shear remains organized."],
+            summary: "Conditions remain conditionally supportive.",
+            details: TornadoViabilityDetails(
+                instability: .supportive,
+                moisture: .strong,
+                cloudBase: .conditional,
+                capInhibition: .weak,
+                deepShear: .supportive,
+                lowLevelRotation: .supportive,
+                stormMode: .conditional,
+                compositeSignal: .supportive
+            ),
             limitingFactors: [.weakLift],
-            summary: "Conditions remain conditionally supportive."
         )
     }
 

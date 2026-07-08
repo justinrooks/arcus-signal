@@ -23,7 +23,7 @@ extension StormSetupProviding {
                 diagnostics: snapshot.raw
             ),
             profileAnalysis: nil,
-            assessment: snapshot.assessment
+            tornadoViability: TornadoViabilityReport(assessment: snapshot.assessment)
         )
     }
 }
@@ -834,7 +834,7 @@ private struct StormSetupCurrentComposition: Sendable {
                 diagnostics: snapshot.raw
             ),
             profileAnalysis: profileAnalysis,
-            assessment: snapshot.assessment
+            tornadoViability: TornadoViabilityReport(assessment: snapshot.assessment)
         )
     }
 }

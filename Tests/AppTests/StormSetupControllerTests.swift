@@ -51,9 +51,9 @@ struct StormSetupControllerTests {
                 #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
                 #expect(response.ingredients.diagnostics.temperature2mK == 295.15)
                 #expect(response.profileAnalysis == expectedAnalysis)
-                #expect(response.assessment.overall == .conditional)
-                #expect(response.assessment.confidence == .moderate)
-                #expect(response.assessment.summary.contains("conditionally supportive"))
+                #expect(response.tornadoViability.overall == .conditional)
+                #expect(response.tornadoViability.confidence == .moderate)
+                #expect(response.tornadoViability.summary.contains("conditionally supportive"))
             })
         }
     }
@@ -133,8 +133,8 @@ struct StormSetupControllerTests {
                 #expect(response.ingredients.canonical.mucapeJkg == 362.1018454649957)
                 #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
                 #expect(response.profileAnalysis != nil)
-                #expect(response.assessment.overall == .conditional)
-                #expect(response.assessment.confidence == .moderate)
+                #expect(response.tornadoViability.overall == .conditional)
+                #expect(response.tornadoViability.confidence == .moderate)
                 #expect(response.setup.freshness.isStale == false)
             })
         }

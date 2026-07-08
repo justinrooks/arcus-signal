@@ -156,8 +156,8 @@ struct StormSetupProviderTests {
         #expect(response.ingredients.diagnostics.dewpoint2mK == 289.15)
         #expect(response.ingredients.diagnostics.surfacePressurePa == 94_000)
         #expect(response.profileAnalysis == expectedAnalysis)
-        #expect(response.assessment.overall == .weak)
-        #expect(response.assessment.confidence == .high)
+        #expect(response.tornadoViability.overall == .weak)
+        #expect(response.tornadoViability.confidence == .high)
         #expect(await anvilProvider.requestCount == 1)
     }
 
@@ -222,9 +222,9 @@ struct StormSetupProviderTests {
 
         #expect(response.profileAnalysis == nil)
         #expect(response.ingredients.canonical == response.ingredients.diagnostics)
-        #expect(response.assessment.overall == .conditional)
-        #expect(response.assessment.confidence == .low)
-        #expect(response.assessment.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
+        #expect(response.tornadoViability.overall == .conditional)
+        #expect(response.tornadoViability.confidence == .low)
+        #expect(response.tornadoViability.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
     }
 
     @Test("cache hits refresh Anvil evidence when the provider is configured")
@@ -290,7 +290,7 @@ struct StormSetupProviderTests {
 
         #expect(snapshot.anvilEvidence?.status == .available)
         #expect(snapshot.anvilEvidence?.reason == nil)
-        #expect(snapshot.assessment.overall == .conditional)
+        #expect(snapshot.assessment.overall == .weak)
         #expect(snapshot.assessment.confidence == .high)
         #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
         #expect(loadCount == 1)
@@ -581,7 +581,7 @@ struct StormSetupProviderTests {
 
         #expect(snapshot.anvilEvidence?.status == .unavailable)
         #expect(snapshot.anvilEvidence?.reason?.contains("selected surface HRRR valid time") == true)
-        #expect(snapshot.assessment.overall == .conditional)
+        #expect(snapshot.assessment.overall == .weak)
         #expect(snapshot.assessment.confidence == .low)
         #expect(anvilRequestCount == 1)
     }
