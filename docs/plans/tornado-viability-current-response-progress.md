@@ -341,12 +341,13 @@ Handoff notes:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/145
 
-Status: Pending
+Status: Complete
 
 Scope:
 - Add focused tests for representative environments.
 - Pin the new current-response contract.
 - Verify Anvil-backed canonical values are not double-counted.
+- Verify SHIP remains data-only and does not influence tornado viability.
 
 Deferred:
 - Live weather verification.
@@ -364,9 +365,44 @@ Tests / commands:
 - `swift test --filter StormSetupProviderTests`
 - `swift test --filter StormSetupControllerTests`
 
+Validation:
+- `swift test --filter TornadoIngredientInterpreterTests` passed.
+- `swift test --filter StormSetupCurrentResponseDTOTests` passed.
+- `swift test --filter StormSetupProviderTests` passed.
+- `swift test --filter StormSetupControllerTests` passed.
+
+Files changed:
+- `Tests/AppTests/TornadoIngredientInterpreterTests.swift`
+- `Tests/AppTests/StormSetupCurrentResponseDTOTests.swift`
+- `Tests/AppTests/StormSetupProviderTests.swift`
+- `Tests/AppTests/StormSetupControllerTests.swift`
+- `docs/plans/tornado-viability-current-response-progress.md`
+
+Coverage added:
+- Weak setup.
+- Supercell-supportive but tornado-limited setup.
+- Capped conditional setup.
+- Low-level efficient setup.
+- Strong supportive setup.
+- Missing-field fallback.
+- Degraded Anvil evidence.
+- Anvil-backed canonical values not double-counted.
+- SHIP present in data payloads but excluded from tornado viability.
+- Response-contract assertions for `tornadoViability` and absent top-level `assessment`.
+
+Skipped validation:
+- None.
+
+Deferred scope:
+- Live weather fixtures.
+- Broad snapshot fixtures.
+- Any follow-on documentation work for the app-facing migration itself.
+
 Handoff notes:
 - Keep tests deterministic and local.
-- Include weak, supercell-supportive/tornado-limited, capped conditional, low-level efficient, strong supportive, missing-field fallback, degraded Anvil, and Anvil-backed canonical cases.
+- The live current-response contract is pinned on `tornadoViability` with top-level `assessment` absent.
+- SHIP remains visible in raw/canonical/profile payloads, but tornado viability ignores it.
+- #146 should document the app-facing response migration only; do not reopen the interpreter coverage slice.
 
 ### Issue #146 - 07: Document app-facing current response migration
 

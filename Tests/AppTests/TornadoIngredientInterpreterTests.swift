@@ -19,8 +19,11 @@ struct TornadoIngredientInterpreterTests {
                 srh03kmM2s2: 55
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .weak)
+        #expect(report.details.stormViability == .weak)
+        #expect(report.details.tornadoEfficiency == .weak)
         #expect(assessment.summary.contains("main limiting factor"))
     }
 
@@ -39,8 +42,11 @@ struct TornadoIngredientInterpreterTests {
                 srh03kmM2s2: 140
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .conditional)
+        #expect(report.details.stormViability == .conditional)
+        #expect(report.details.tornadoEfficiency == .weak)
         #expect(assessment.summary.contains("some ingredients for tornado-capable storms"))
         #expect(assessment.summary.contains("realization is conditional"))
     }
@@ -65,6 +71,7 @@ struct TornadoIngredientInterpreterTests {
                 significantTornadoEffective: 0.9
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.instability == .supportive)
         #expect(assessment.cloudBase == .supportive)
@@ -73,6 +80,9 @@ struct TornadoIngredientInterpreterTests {
         #expect(assessment.compositeSignal == .conditional)
         #expect(assessment.capInhibition == .conditional)
         #expect(assessment.overall == .conditional)
+        #expect(report.realization == .conditional)
+        #expect(report.details.supercellComposite == .supportive)
+        #expect(report.details.tornadoComposite == .conditional)
         #expect(assessment.summary.contains("some ingredients for tornado-capable storms"))
         #expect(assessment.summary.contains("The fixed-layer signal is stronger than the effective-layer signal"))
         #expect(assessment.summary.contains("the setup remains conditional"))
@@ -90,12 +100,16 @@ struct TornadoIngredientInterpreterTests {
                 srh03kmM2s2: 160
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.instability == .conditional)
         #expect(assessment.cloudBase == .strong)
         #expect(assessment.deepShear == .supportive)
         #expect(assessment.lowLevelRotation == .weak)
         #expect(assessment.overall == .conditional)
+        #expect(report.details.lowLevelRotation == .weak)
+        #expect(report.details.lowLevelStretching == .unknown)
+        #expect(report.details.tornadoEfficiency == .weak)
         #expect(assessment.summary.contains("some ingredients for tornado-capable storms"))
     }
 
@@ -114,8 +128,11 @@ struct TornadoIngredientInterpreterTests {
                 srh03kmM2s2: 300
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .supportive)
+        #expect(report.details.stormViability >= .supportive)
+        #expect(report.details.tornadoEfficiency >= .supportive)
         #expect(assessment.summary.contains("can support organized rotating storms"))
         #expect(assessment.summary.contains("Stay weather-aware"))
     }
@@ -138,20 +155,85 @@ struct TornadoIngredientInterpreterTests {
                 significantTornadoEffective: 4.2
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .strong)
         #expect(assessment.compositeSignal == .strong)
         #expect(assessment.confidence == .high)
+        #expect(report.realization == .realized)
+        #expect(report.details.stormViability == .strong)
+        #expect(report.details.supercellViability == .strong)
+        #expect(report.details.tornadoEfficiency == .strong)
         #expect(assessment.summary.contains("strongly supports organized rotating storms"))
         #expect(assessment.summary.contains("not a guarantee storms will occur"))
+    }
+
+    @Test("low-level efficient setup keeps tornado efficiency strong even when the environment remains only supportive overall")
+    func lowLevelEfficientSetupKeepsTornadoEfficiencyStrong() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2100,
+                mlcapeJkg: 2300,
+                mucapeJkg: 2400,
+                mlcinJkg: -30,
+                mllclM: 720,
+                tempDewPtDeltaF: 8,
+                shear06kmKt: 46,
+                srh01kmM2s2: 225,
+                threeCapeJkg: 165,
+                supercellComposite: 2.1,
+                significantTornadoFixed: 1.9,
+                significantTornadoEffective: 2.2
+            )
+        )
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.details.lowLevelRotation == .strong)
+        #expect(report.details.lowLevelStretching == .strong)
+        #expect(report.details.cloudBaseEfficiency == .strong)
+        #expect(report.details.tornadoEfficiency == .strong)
+        #expect(assessment.overall == .supportive)
+        #expect(assessment.summary.contains("Stay weather-aware"))
+    }
+
+    @Test("capped conditional setup stays conditional when fixed-layer STP outpaces effective-layer STP")
+    func cappedConditionalSetupStaysConditional() {
+        let assessment = interpret(
+            raw: makeRaw(
+                sbcapeJkg: 2500,
+                mlcapeJkg: 2700,
+                mucapeJkg: 2800,
+                mlcinJkg: -40,
+                mllclM: 860,
+                tempDewPtDeltaF: 9,
+                shear06kmKt: 52,
+                srh01kmM2s2: 190,
+                threeCapeJkg: 120,
+                supercellComposite: 3.1,
+                significantTornadoFixed: 3.6,
+                significantTornadoEffective: 1.0
+            )
+        )
+        let report = TornadoViabilityReport(assessment: assessment)
+
+        #expect(report.primaryFailureMode == .fixedEffectiveStpDisagreement)
+        #expect(report.realization == .conditional)
+        #expect(report.details.supercellComposite == .strong)
+        #expect(report.details.tornadoComposite == .conditional)
+        #expect(assessment.overall == .conditional)
+        #expect(assessment.summary.contains("The fixed-layer signal is stronger than the effective-layer signal"))
     }
 
     @Test("missing core fields yields unknown and degraded confidence")
     func missingCoreFieldsYieldUnknownAndDegradedConfidence() {
         let assessment = interpret(raw: .empty)
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .unknown)
         #expect(assessment.confidence == .degraded)
+        #expect(report.realization == .unknown)
+        #expect(report.details.stormViability == .unknown)
+        #expect(report.details.tornadoEfficiency == .unknown)
         #expect(assessment.summary.contains("not enough current ingredient data"))
     }
 
@@ -170,8 +252,10 @@ struct TornadoIngredientInterpreterTests {
                 srh03kmM2s2: 60
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .conditional)
+        #expect(report.details.tornadoEfficiency == .weak)
         #expect(assessment.limitingFactors.contains(.weakLowLevelRotation))
     }
 
@@ -360,9 +444,12 @@ struct TornadoIngredientInterpreterTests {
                 significantTornadoEffective: 2.8
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.lowLevelRotation == .weak)
         #expect(assessment.overall == .conditional)
+        #expect(report.details.supercellComposite == .strong)
+        #expect(report.details.tornadoComposite == .strong)
         #expect(assessment.summary.contains("organized rotating storms"))
         #expect(assessment.summary.contains("tornado-specific low-level ingredients are limited"))
     }
@@ -490,9 +577,12 @@ struct TornadoIngredientInterpreterTests {
                 significantTornadoEffective: 0.9
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.compositeSignal == .conditional)
         #expect(assessment.overall != .strong)
+        #expect(report.details.supercellComposite == .strong)
+        #expect(report.details.tornadoComposite == .conditional)
         #expect(assessment.summary.contains("The environment can support organized rotating storms, but tornado-specific low-level ingredients are limited."))
     }
 
@@ -514,9 +604,11 @@ struct TornadoIngredientInterpreterTests {
                 significantTornadoEffective: 0.9
             )
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .conditional)
         #expect(assessment.capInhibition == .conditional)
+        #expect(report.primaryFailureMode == .fixedEffectiveStpDisagreement)
         #expect(assessment.summary.contains("The fixed-layer signal is stronger than the effective-layer signal"))
         #expect(assessment.summary.contains("the setup remains conditional"))
     }
@@ -585,6 +677,7 @@ struct TornadoIngredientInterpreterTests {
                 threeCapeJkg: 105
             )
         )
+        let report = TornadoViabilityReport(assessment: onlyThreeCape)
 
         #expect(onlySrh.lowLevelRotation != .unknown)
         #expect(onlySrh.lowLevelStretching == .unknown)
@@ -592,6 +685,9 @@ struct TornadoIngredientInterpreterTests {
         #expect(onlyThreeCape.lowLevelRotationSupport == .unknown)
         #expect(onlyThreeCape.lowLevelStretching == .supportive)
         #expect(onlyThreeCape.tornadoEfficiency == .unknown)
+        #expect(report.details.lowLevelRotation == .unknown)
+        #expect(report.details.lowLevelStretching == .supportive)
+        #expect(report.details.tornadoEfficiency == .unknown)
     }
 
     @Test("strong cap limiting factor only appears at -150 CIN or weaker")
@@ -812,9 +908,10 @@ struct TornadoIngredientInterpreterTests {
             ),
             evidence: makeDegradedEvidence()
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .supportive)
-        #expect(assessment.confidence == .low)
+        #expect(report.confidence == .low)
         #expect(assessment.summary.contains("Anvil analysis is degraded, so confidence is limited."))
     }
 
@@ -834,9 +931,10 @@ struct TornadoIngredientInterpreterTests {
             ),
             evidence: .unavailable(reason: "Anvil analysis provider is not configured.")
         )
+        let report = TornadoViabilityReport(assessment: assessment)
 
         #expect(assessment.overall == .supportive)
-        #expect(assessment.confidence == .low)
+        #expect(report.confidence == .low)
         #expect(assessment.summary.contains("Anvil analysis is unavailable, so confidence is limited."))
     }
 

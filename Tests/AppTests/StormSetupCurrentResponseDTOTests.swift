@@ -11,6 +11,7 @@ struct StormSetupCurrentResponseDTOTests {
 
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         #expect(object?.keys.sorted() == ["ingredients", "profileAnalysis", "setup", "tornadoViability"])
+        #expect(object?["assessment"] == nil)
 
         let ingredientsObject = object?["ingredients"] as? [String: Any]
         #expect(ingredientsObject?.keys.sorted() == ["canonical", "diagnostics"])
@@ -43,6 +44,7 @@ struct StormSetupCurrentResponseDTOTests {
 
         let viabilityObject = object?["tornadoViability"] as? [String: Any]
         #expect(viabilityObject?.keys.sorted() == ["confidence", "details", "limitingFactors", "overall", "primaryFailureMode", "realization", "summary"])
+        #expect(viabilityObject?["assessment"] == nil)
 
         let viabilityDetailsObject = viabilityObject?["details"] as? [String: Any]
         #expect(viabilityDetailsObject?.keys.sorted() == ["cloudBase", "cloudBaseEfficiency", "deepShear", "inhibition", "instability", "lowLevelRotation", "lowLevelStretching", "moisture", "stormMode", "stormViability", "supercellComposite", "supercellViability", "tornadoComposite", "tornadoEfficiency"])

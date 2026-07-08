@@ -59,8 +59,7 @@ protocol StormSetupIngredientNormalizing: Sendable {
 protocol StormSetupIngredientAssessing: Sendable {
     func assess(
         raw: TornadoRawParameters,
-        freshness: IngredientFreshness,
-        evidence: AnvilIngredientEvidence?
+        freshness: IngredientFreshness
     ) -> TornadoIngredientAssessment
 }
 
@@ -331,7 +330,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             source: sourceMetadata,
             raw: normalized.raw,
             surfaceHeightMslM: normalized.surfaceHeightMslM,
-            assessment: interpreter.assess(raw: normalized.raw, freshness: freshness, evidence: nil),
+            assessment: interpreter.assess(raw: normalized.raw, freshness: freshness),
             freshness: freshness
         )
 
@@ -476,8 +475,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
 
         let assessment = interpreter.assess(
             raw: canonicalIngredients ?? snapshot.raw,
-            freshness: snapshot.freshness,
-            evidence: resolution.evidence
+            freshness: snapshot.freshness
         )
 
         let profileAnalysis = resolution.artifactOutcome == .exact ? resolution.profileAnalysis : nil

@@ -30,6 +30,11 @@ struct StormSetupControllerTests {
             try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=\(inputH3)", afterResponse: { res async throws in
                 #expect(res.status == .ok)
 
+                let bodyData = Data(res.body.string.utf8)
+                let object = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+                #expect(object?.keys.sorted() == ["ingredients", "profileAnalysis", "setup", "tornadoViability"])
+                #expect(object?["assessment"] == nil)
+
                 let response = try res.content.decode(StormSetupCurrentResponse.self)
                 #expect(response.setup.source.model == .hrrr)
                 #expect(response.setup.source.product == .wrfsfc)

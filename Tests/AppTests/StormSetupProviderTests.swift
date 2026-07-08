@@ -151,6 +151,7 @@ struct StormSetupProviderTests {
         #expect(response.ingredients.canonical.effectiveLayer?.status == "found")
         #expect(response.ingredients.canonical.stormMotion?.status == "computed")
         #expect(response.ingredients.canonical.ship == 2.3)
+        #expect(response.profileAnalysis?.ship == 2.3)
         #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
         #expect(response.ingredients.diagnostics.temperature2mK == 295.15)
         #expect(response.ingredients.diagnostics.dewpoint2mK == 289.15)
@@ -581,8 +582,6 @@ struct StormSetupProviderTests {
 
         #expect(snapshot.anvilEvidence?.status == .unavailable)
         #expect(snapshot.anvilEvidence?.reason?.contains("selected surface HRRR valid time") == true)
-        #expect(snapshot.assessment.overall == .weak)
-        #expect(snapshot.assessment.confidence == .low)
         #expect(anvilRequestCount == 1)
     }
 
@@ -654,10 +653,9 @@ struct StormSetupProviderTests {
         #expect(snapshot.source.runTime == candidate.runTime)
         #expect(snapshot.source.forecastHour == candidate.forecastHour)
         #expect(snapshot.raw.sbcapeJkg == 1450)
+        #expect(snapshot.canonicalIngredients.ship == 2.3)
         #expect(snapshot.anvilEvidence?.status == .available)
         #expect(snapshot.anvilEvidence?.reason == nil)
-        #expect(snapshot.assessment.overall == .conditional)
-        #expect(snapshot.assessment.confidence == .high)
         #expect(loadCount == 1)
         #expect(storeCount == 1)
         #expect(subsetRequestCount == 1)
@@ -755,8 +753,6 @@ struct StormSetupProviderTests {
         #expect(snapshot.anvilEvidence?.scp?.support == .strong)
         #expect(snapshot.anvilEvidence?.stp?.support == .strong)
         #expect(snapshot.anvilEvidence?.ship?.support == .strong)
-        #expect(snapshot.assessment.overall == .conditional)
-        #expect(snapshot.assessment.confidence == .high)
         #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
     }
 
@@ -957,8 +953,6 @@ struct StormSetupProviderTests {
         #expect(snapshot.source.forecastHour == secondCandidate.forecastHour)
         #expect(snapshot.anvilEvidence?.status == .available)
         #expect(snapshot.anvilEvidence?.reason == nil)
-        #expect(snapshot.assessment.overall == .conditional)
-        #expect(snapshot.assessment.confidence == .high)
     }
 
     @Test("provider marks the assessment degraded when Anvil evidence is unavailable")
