@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import ArcusCore
 
 struct TornadoIngredientInterpreter: Sendable {
     private let rulesVersion: StormSetupRulesVersion
@@ -218,7 +219,7 @@ struct TornadoIngredientInterpreter: Sendable {
                 return diagnosis.adjusted(
                     overall: diagnosis.overall,
                     confidence: diagnosis.confidence,
-                    summarySuffix: "Anvil analysis is not reinforcing the setup."
+                    summarySuffix: nil
                 )
             }
 
@@ -243,7 +244,7 @@ struct TornadoIngredientInterpreter: Sendable {
             return diagnosis.adjusted(
                 overall: adjustedOverall,
                 confidence: adjustedConfidence,
-                summarySuffix: summarySuffix
+                summarySuffix: nil
             )
         }
     }
