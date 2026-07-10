@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 enum StormSetupSnapshotCacheKeyError: Error, Sendable, Equatable, CustomStringConvertible {
     case missingRequiredSourceMetadata(String)

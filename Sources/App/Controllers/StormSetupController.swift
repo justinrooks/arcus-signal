@@ -7,6 +7,7 @@
 
 import Foundation
 import Vapor
+import ArcusCore
 
 struct StormSetupController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {

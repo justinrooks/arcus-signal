@@ -2,6 +2,7 @@ import Fluent
 import FluentSQL
 import Foundation
 import Vapor
+import ArcusCore
 
 protocol PressureArtifactWarming: Sendable {
     func warm(

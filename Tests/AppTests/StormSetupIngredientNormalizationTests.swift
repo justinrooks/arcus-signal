@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import ArcusCore
 
 @Suite("Storm setup ingredient normalization", .serialized)
 struct StormSetupIngredientNormalizationTests {

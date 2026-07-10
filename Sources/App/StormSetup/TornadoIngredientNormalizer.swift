@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 struct TornadoIngredientNormalizationResult: Sendable {
     let raw: TornadoRawParameters

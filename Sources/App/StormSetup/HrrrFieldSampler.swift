@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 struct HrrrFieldSample: Sendable, Codable, Equatable {
     let requestedLongitude: Double

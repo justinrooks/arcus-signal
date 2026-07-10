@@ -1,52 +1,5 @@
 import Foundation
-import Vapor
-
-struct StormSetupCurrentResponse: Content, Sendable {
-    let setup: StormSetupCurrentSetupResponse
-    let ingredients: StormSetupTornadoIngredientsResponse
-    let profileAnalysis: AnvilAnalyzeProfileResponse?
-    let tornadoViability: TornadoViabilityReport
-}
-
-struct StormSetupCurrentSetupResponse: Content, Sendable {
-    let h3Cell: Int64
-    let centroid: StormSetupCentroid
-    let source: StormSetupSourceMetadata
-    let surfaceHeightMslM: Double?
-    let freshness: IngredientFreshness
-}
-
-struct StormSetupTornadoIngredientsResponse: Content, Sendable, Equatable {
-    let canonical: TornadoRawParameters
-    let diagnostics: TornadoRawParameters
-}
-
-struct TornadoViabilityReport: Content, Sendable, Equatable {
-    let overall: IngredientSupport
-    let realization: TornadoViabilityRealization
-    let primaryFailureMode: TornadoViabilityFailureMode
-    let confidence: SnapshotConfidence
-    let summary: String
-    let details: TornadoViabilityDetails
-    let limitingFactors: [TornadoViabilityLimiter]
-}
-
-struct TornadoViabilityDetails: Content, Sendable, Equatable {
-    let stormViability: IngredientSupport
-    let supercellViability: IngredientSupport
-    let tornadoEfficiency: IngredientSupport
-    let inhibition: IngredientSupport
-    let instability: IngredientSupport
-    let moisture: IngredientSupport
-    let cloudBase: IngredientSupport
-    let deepShear: IngredientSupport
-    let lowLevelRotation: IngredientSupport
-    let lowLevelStretching: IngredientSupport
-    let cloudBaseEfficiency: IngredientSupport
-    let supercellComposite: IngredientSupport
-    let tornadoComposite: IngredientSupport
-    let stormMode: IngredientSupport
-}
+import ArcusCore
 
 extension TornadoViabilityReport {
     init(diagnosis: TornadoViabilityDiagnosis) {
@@ -98,7 +51,7 @@ extension TornadoViabilityReport {
                 cloudBaseEfficiency: assessment.cloudBaseEfficiency ?? .unknown,
                 supercellComposite: assessment.supercellComposite ?? assessment.compositeSignal,
                 tornadoComposite: assessment.compositeSignal,
-                stormMode: assessment.stormMode,
+                stormMode: assessment.stormMode
             ),
             limitingFactors: limitingFactors
         )

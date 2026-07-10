@@ -3,6 +3,7 @@ import FluentSQL
 import Foundation
 import Queues
 import Vapor
+import ArcusCore
 
 protocol HRRRPressureArtifactProbing: Sendable {
     func probe(on application: Application, logger: Logger) async throws

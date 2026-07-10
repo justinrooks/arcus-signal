@@ -14,6 +14,10 @@ public enum AppRuntimeMode: String, Sendable {
 }
 
 public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
+    if mode == .worker {
+        try await configureAPNs(on: app)
+    }
+
     try configureDatabases(on: app)
     configureMigrations(on: app)
     try configureQueues(on: app)
@@ -42,7 +46,6 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     case .api:
         try configureAPIRoutes(app)
     case .worker:
-        try await configureAPNs(on: app)
         configureWorkerQueueSettings(on: app)
         configureWorkerRuntime(on: app)
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)

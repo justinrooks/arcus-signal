@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import ArcusCore
 
 @Suite("HRRR Anvil surface profile loading", .serialized)
 struct HrrrAnvilSurfaceProfileLoadingTests {

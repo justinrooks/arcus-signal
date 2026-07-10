@@ -3,6 +3,7 @@ import FluentSQL
 import Foundation
 import Queues
 import Vapor
+import ArcusCore
 
 struct RefreshOperatorDashboardSnapshotScheduledJob: AsyncScheduledJob {
     func run(context: QueueContext) async throws {

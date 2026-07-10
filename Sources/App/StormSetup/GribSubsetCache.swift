@@ -4,6 +4,7 @@ import CryptoKit
 #elseif canImport(Crypto)
 import Crypto
 #endif
+import ArcusCore
 
 struct GribSubsetCacheResult: Sendable {
     let source: StormSetupSourceMetadata

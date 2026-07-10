@@ -6,6 +6,7 @@ import Logging
 import Queues
 import Testing
 import Vapor
+import ArcusCore
 
 @Suite("Pressure artifact diagnostics", .serialized)
 struct PressureArtifactDiagnosticsTests {

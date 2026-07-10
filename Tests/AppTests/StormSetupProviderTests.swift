@@ -2,6 +2,7 @@
 import Foundation
 import Logging
 import Testing
+import ArcusCore
 
 @Suite("Storm setup provider orchestration", .serialized)
 struct StormSetupProviderTests {

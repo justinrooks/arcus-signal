@@ -4,6 +4,7 @@ import CryptoKit
 #elseif canImport(Crypto)
 import Crypto
 #endif
+import ArcusCore
 
 enum StormSetupCacheKeyError: Error, Sendable, Equatable, CustomStringConvertible {
     case missingRequiredSourceMetadata(String)

@@ -1,6 +1,7 @@
 import Foundation
 import Logging
 import Vapor
+import ArcusCore
 
 protocol StormSetupProviding: Sendable {
     func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot

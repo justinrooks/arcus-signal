@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import ArcusCore
 
 @Suite("Anvil profile analysis provider", .serialized)
 struct AnvilProfileAnalysisProviderTests {

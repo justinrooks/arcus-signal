@@ -6,11 +6,42 @@ import Darwin
 import Glibc
 #endif
 import Vapor
+import ArcusCore
 
-func previewWithEnvironment(
+private actor ProcessEnvironmentOverrideGate {
+    static let shared = ProcessEnvironmentOverrideGate()
+
+    private var isLocked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        guard isLocked else {
+            isLocked = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        guard let waiter = waiters.first else {
+            isLocked = false
+            return
+        }
+
+        waiters.removeFirst()
+        waiter.resume()
+    }
+}
+
+func withProcessEnvironment<T>(
     _ overrides: [String: String?],
-    test: () async throws -> Void
-) async throws {
+    test: () async throws -> T
+) async rethrows -> T {
+    await ProcessEnvironmentOverrideGate.shared.acquire()
+
     let previousValues = overrides.keys.reduce(into: [String: String?]()) { partialResult, key in
         partialResult[key] = Environment.get(key)
     }
@@ -27,12 +58,22 @@ func previewWithEnvironment(
 
     apply(overrides)
     do {
-        try await test()
+        let result = try await test()
+        apply(previousValues)
+        await ProcessEnvironmentOverrideGate.shared.release()
+        return result
     } catch {
         apply(previousValues)
+        await ProcessEnvironmentOverrideGate.shared.release()
         throw error
     }
-    apply(previousValues)
+}
+
+func previewWithEnvironment(
+    _ overrides: [String: String?],
+    test: () async throws -> Void
+) async throws {
+    try await withProcessEnvironment(overrides, test: test)
 }
 
 func previewMakeUTCDate(

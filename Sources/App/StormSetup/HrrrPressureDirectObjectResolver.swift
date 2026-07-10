@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 struct HrrrPressureDirectObjectURLBuilder: Sendable {
     private static let baseHost = "noaa-hrrr-bdp-pds.s3.amazonaws.com"

@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import ArcusCore
 
 @Suite("HRRR pressure subset GRIB cache", .serialized)
 struct HrrrPressureSubsetGribCacheTests {

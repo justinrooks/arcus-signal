@@ -4,6 +4,7 @@ import Foundation
 import Queues
 import Testing
 import Vapor
+import ArcusCore
 
 @Suite("Pressure artifact warm job", .serialized)
 struct PressureArtifactWarmJobTests {

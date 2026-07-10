@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 struct GribInventoryFieldMap: Sendable {
     func match(for sample: Wgrib2PointSample) -> GribInventoryFieldMatch? {

@@ -1,6 +1,7 @@
 import Foundation
 import SwiftyH3
 import Vapor
+import ArcusCore
 
 protocol StormSetupH3Resolving: Sendable {
     func resolve(h3Cell: Int64) throws -> StormSetupResolvedH3Cell

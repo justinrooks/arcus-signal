@@ -1067,32 +1067,6 @@ struct TornadoViabilityDiagnosis: Sendable {
     let stormMode: IngredientSupport
     let compositeSignal: IngredientSupport
 }
-
-enum TornadoViabilityRealization: Content, Sendable, Hashable {
-    case unknown
-    case blocked
-    case conditional
-    case realized
-}
-
-enum TornadoViabilityFailureMode: Content, Sendable, Hashable {
-    case none
-    case weakInstability
-    case weakDeepShear
-    case weakLowLevelRotation
-    case weakLowLevelStretching
-    case elevatedCloudBases
-    case strongCap
-    case conditionalInitiation
-    case weakStormOrganization
-    case weakLift
-    case messyStormMode
-    case poorMoisture
-    case fixedEffectiveStpDisagreement
-    case missingStormMode
-    case compositeMismatch
-}
-
 private extension TornadoViabilityDiagnosis {
     func adjusted(
         overall: IngredientSupport,

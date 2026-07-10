@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import ArcusCore
 
 enum AnvilIngredientEvidenceStatus: String, Content, Sendable, Equatable {
     case available

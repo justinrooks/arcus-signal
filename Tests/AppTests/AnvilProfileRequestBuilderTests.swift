@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import Vapor
 import SwiftyH3
+import ArcusCore
 
 @Suite("Anvil profile request builder", .serialized)
 struct AnvilProfileRequestBuilderTests {
