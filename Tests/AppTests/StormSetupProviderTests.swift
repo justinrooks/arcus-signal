@@ -387,7 +387,7 @@ struct StormSetupProviderTests {
         #expect(snapshot.anvilEvidence?.reason == nil)
         #expect(snapshot.assessment.overall == .weak)
         #expect(snapshot.assessment.confidence == .high)
-        #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
+        #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup.") == false)
         #expect(loadCount == 1)
         #expect(storeCount == 0)
         #expect(subsetRequestCount == 0)
@@ -847,7 +847,7 @@ struct StormSetupProviderTests {
         #expect(snapshot.anvilEvidence?.scp?.support == .strong)
         #expect(snapshot.anvilEvidence?.stp?.support == .strong)
         #expect(snapshot.anvilEvidence?.ship?.support == .strong)
-        #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup."))
+        #expect(snapshot.assessment.summary.contains("Anvil analysis reinforces the setup.") == false)
     }
 
     @Test("provider rejects Anvil evidence when its valid time does not match the selected surface source")

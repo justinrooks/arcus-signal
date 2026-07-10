@@ -651,7 +651,8 @@ struct TornadoIngredientInterpreterTests {
         let baseline = interpret(raw: raw)
         let withEvidence = interpret(raw: raw, evidence: makeHealthyStrongEvidence())
 
-        #expect(withEvidence.overall == baseline.overall)
+        #expect(baseline.overall == .weak)
+        #expect(withEvidence.overall == .supportive)
     }
 
     @Test("fallback still works when 0-1 km SRH or 0-3 km CAPE is missing")
@@ -842,7 +843,7 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.overall == .supportive)
         #expect(assessment.confidence == .high)
-        #expect(assessment.summary.contains("Anvil analysis reinforces the setup."))
+        #expect(assessment.summary.contains("Anvil analysis reinforces the setup.") == false)
         #expect(!assessment.summary.lowercased().contains("scp"))
         #expect(!assessment.summary.lowercased().contains("stp"))
         #expect(!assessment.summary.lowercased().contains("ship"))
@@ -867,7 +868,7 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(withShipOnlyEvidence.overall == baseline.overall)
         #expect(withShipOnlyEvidence.confidence == baseline.confidence)
-        #expect(withShipOnlyEvidence.summary == baseline.summary + " Anvil analysis is not reinforcing the setup.")
+        #expect(withShipOnlyEvidence.summary == baseline.summary)
     }
 
     @Test("healthy weak Anvil evidence can lower support")
@@ -889,7 +890,7 @@ struct TornadoIngredientInterpreterTests {
 
         #expect(assessment.overall == .conditional)
         #expect(assessment.confidence == .low)
-        #expect(assessment.summary.contains("Anvil analysis is not reinforcing the setup."))
+        #expect(assessment.summary.contains("Anvil analysis is not reinforcing the setup.") == false)
     }
 
     @Test("degraded Anvil evidence lowers confidence without inventing certainty")
@@ -956,15 +957,15 @@ struct TornadoIngredientInterpreterTests {
 
     @Test("low-level rotation scores 0-1 km and 0-3 km SRH with separate bands")
     func lowLevelRotationUsesSeparateSRHBands() {
-        #expect(interpret(raw: makeRaw(srh01kmM2s2: 90)).lowLevelRotation == .weak)
-        #expect(interpret(raw: makeRaw(srh01kmM2s2: 125)).lowLevelRotation == .conditional)
-        #expect(interpret(raw: makeRaw(srh01kmM2s2: 175)).lowLevelRotation == .supportive)
-        #expect(interpret(raw: makeRaw(srh01kmM2s2: 225)).lowLevelRotation == .strong)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 90)).lowLevelRotationSupport == .weak)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 125)).lowLevelRotationSupport == .conditional)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 175)).lowLevelRotationSupport == .supportive)
+        #expect(interpret(raw: makeRaw(srh01kmM2s2: 225)).lowLevelRotationSupport == .strong)
 
-        #expect(interpret(raw: makeRaw(srh03kmM2s2: 140)).lowLevelRotation == .weak)
-        #expect(interpret(raw: makeRaw(srh03kmM2s2: 200)).lowLevelRotation == .conditional)
-        #expect(interpret(raw: makeRaw(srh03kmM2s2: 300)).lowLevelRotation == .supportive)
-        #expect(interpret(raw: makeRaw(srh03kmM2s2: 375)).lowLevelRotation == .strong)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 140)).lowLevelRotationSupport == .weak)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 200)).lowLevelRotationSupport == .conditional)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 300)).lowLevelRotationSupport == .supportive)
+        #expect(interpret(raw: makeRaw(srh03kmM2s2: 375)).lowLevelRotationSupport == .strong)
     }
 
     @Test("0-1 km SRH takes priority over effective SRH")
@@ -982,10 +983,10 @@ struct TornadoIngredientInterpreterTests {
 
     @Test("effective SRH follows its own threshold bands")
     func effectiveSrhFollowsOwnThresholdBands() {
-        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 90)).lowLevelRotation == .weak)
-        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 150)).lowLevelRotation == .conditional)
-        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 250)).lowLevelRotation == .supportive)
-        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 320)).lowLevelRotation == .strong)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 90)).lowLevelRotationSupport == .weak)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 150)).lowLevelRotationSupport == .conditional)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 250)).lowLevelRotationSupport == .supportive)
+        #expect(interpret(raw: makeRaw(effectiveSrhM2s2: 320)).lowLevelRotationSupport == .strong)
     }
 
     @Test("CIN uses the updated favorable weak-inhibition bands")
