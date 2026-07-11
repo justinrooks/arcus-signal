@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/justinrooks/ArcusCore.git",
       "state" : {
-        "revision" : "08e2580e2b9271549a788878252486d262f95583",
-        "version" : "0.4.1"
+        "revision" : "145cdd44468b0ec6c96c4147ab3290b6b2e1a24f",
+        "version" : "0.4.2"
       }
     },
     {
