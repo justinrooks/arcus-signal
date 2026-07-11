@@ -5,6 +5,7 @@ import Foundation
 import Testing
 import Vapor
 import VaporTesting
+import ArcusCore
 
 @Suite("Operator dashboard pressure artifacts", .serialized)
 struct OperatorDashboardPressureArtifactTests {

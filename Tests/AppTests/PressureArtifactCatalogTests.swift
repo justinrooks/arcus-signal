@@ -4,6 +4,7 @@ import FluentSQL
 import Foundation
 import Testing
 import Vapor
+import ArcusCore
 
 @Suite("Pressure artifact catalog persistence", .serialized)
 struct PressureArtifactCatalogTests {

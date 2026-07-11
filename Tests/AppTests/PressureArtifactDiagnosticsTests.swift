@@ -6,6 +6,7 @@ import Logging
 import Queues
 import Testing
 import Vapor
+import ArcusCore
 
 @Suite("Pressure artifact diagnostics", .serialized)
 struct PressureArtifactDiagnosticsTests {
@@ -1234,6 +1235,13 @@ private extension PressureArtifactDiagnosticsTests {
             stpCin: 1.1,
             stpFixed: 0.9,
             ship: 1.3,
+            srh01km: nil,
+            srh03km: nil,
+            sbcape: nil,
+            sbcin: nil,
+            bulkShear06kmMs: nil,
+            lapserate03km: nil,
+            threeCapeJkg: nil,
             quality: AnvilQualityDTO(profileLevelCount: 37, warnings: warnings)
         )
 

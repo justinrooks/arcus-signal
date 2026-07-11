@@ -34,28 +34,7 @@ struct AppTests {
         _ overrides: [String: String?],
         test: () async throws -> Void
     ) async throws {
-        let previousValues = overrides.keys.reduce(into: [String: String?]()) { partialResult, key in
-            partialResult[key] = Environment.get(key)
-        }
-
-        func apply(_ values: [String: String?]) {
-            for (key, value) in values {
-                if let value {
-                    setenv(key, value, 1)
-                } else {
-                    unsetenv(key)
-                }
-            }
-        }
-
-        apply(overrides)
-        do {
-            try await test()
-        } catch {
-            apply(previousValues)
-            throw error
-        }
-        apply(previousValues)
+        try await withProcessEnvironment(overrides, test: test)
     }
 
     private func isoDate(_ value: String) -> Date {

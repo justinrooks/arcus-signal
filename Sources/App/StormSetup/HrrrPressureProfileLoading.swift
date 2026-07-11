@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 protocol HrrrPressureProfileLoading: Sendable {
     func loadPressureProfile(

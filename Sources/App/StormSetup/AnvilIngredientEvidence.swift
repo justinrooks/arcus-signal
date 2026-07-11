@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import ArcusCore
 
 enum AnvilIngredientEvidenceStatus: String, Content, Sendable, Equatable {
     case available
@@ -85,6 +86,10 @@ struct AnvilIngredientEvidence: Content, Sendable, Equatable {
 
     var strongestSupport: IngredientSupport? {
         [scp?.support, stp?.support, ship?.support].compactMap { $0 }.max()
+    }
+
+    var tornadoStrongestSupport: IngredientSupport? {
+        [scp?.support, stp?.support].compactMap { $0 }.max()
     }
 
     var isDegraded: Bool {

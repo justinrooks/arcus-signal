@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import Vapor
 import VaporTesting
+import ArcusCore
 
 @Suite("Storm setup controller", .serialized)
 struct StormSetupControllerTests {
@@ -23,36 +24,42 @@ struct StormSetupControllerTests {
         try await withApp { app in
             let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
             app.stormSetupProvider = makeStormSetupRouteProvider(now: fixedNow)
+            let expectedAnalysis = makeStormSetupRouteAnalysisResponse(validTime: fixedNow).response
 
             let inputH3: Int64 = 617700169958293503
 
             try await app.testing().test(.GET, "api/v1/storm-setup/current?h3=\(inputH3)", afterResponse: { res async throws in
                 #expect(res.status == .ok)
 
-                let snapshot = try res.content.decode(TornadoIngredientSnapshot.self)
-                #expect(snapshot.source.model == .hrrr)
-                #expect(snapshot.source.product == .wrfsfc)
-                #expect(snapshot.source.domain == .conus)
-                #expect(snapshot.source.fieldSetVersion == .tornadoV1)
-                #expect(snapshot.source.runTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-                #expect(snapshot.source.forecastHour == 0)
-                #expect(snapshot.source.validTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-                #expect(snapshot.source.bbox != nil)
-                #expect(snapshot.source.nomadsURL?.absoluteString.contains("filter_hrrr_2d.pl") == true)
-                #expect(snapshot.freshness.modelRunTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-                #expect(snapshot.freshness.sourceValidTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
-                #expect(snapshot.freshness.expiresAt == makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 30))
-                #expect(snapshot.freshness.isStale == false)
-                #expect(snapshot.freshness.isDegraded == false)
-                #expect(snapshot.raw.sbcapeJkg == 1450)
-                #expect(snapshot.raw.mlcinJkg == -35)
-                #expect(snapshot.anvilEvidence?.status == .available)
-                #expect(snapshot.anvilEvidence?.scp?.support == .strong)
-                #expect(snapshot.anvilEvidence?.stp?.support == .strong)
-                #expect(snapshot.anvilEvidence?.ship?.support == .strong)
-                #expect(snapshot.assessment.overall == .conditional)
-                #expect(snapshot.assessment.confidence == .moderate)
-                #expect(snapshot.assessment.summary.contains("conditionally supportive"))
+                let bodyData = Data(res.body.string.utf8)
+                let object = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+                #expect(object?.keys.sorted() == ["ingredients", "profileAnalysis", "setup", "tornadoViability"])
+                #expect(object?["assessment"] == nil)
+
+                let response = try res.content.decode(StormSetupCurrentResponse.self)
+                #expect(response.setup.source.model == .hrrr)
+                #expect(response.setup.source.product == .wrfsfc)
+                #expect(response.setup.source.domain == .conus)
+                #expect(response.setup.source.fieldSetVersion == .tornadoV1)
+                #expect(response.setup.source.runTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(response.setup.source.forecastHour == 0)
+                #expect(response.setup.source.validTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(response.setup.source.bbox != nil)
+                #expect(response.setup.source.nomadsURL?.absoluteString.contains("filter_hrrr_2d.pl") == true)
+                #expect(response.setup.freshness.modelRunTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(response.setup.freshness.sourceValidTime == makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+                #expect(response.setup.freshness.expiresAt == makeUTCDate(year: 2026, month: 6, day: 3, hour: 23, minute: 30))
+                #expect(response.setup.freshness.isStale == false)
+                #expect(response.setup.freshness.isDegraded == false)
+                #expect(response.ingredients.canonical.mucapeJkg == 362.1018454649957)
+                #expect(response.ingredients.canonical.mlcapeJkg == 191.7304143918497)
+                #expect(response.ingredients.canonical.effectiveLayer?.status == "found")
+                #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
+                #expect(response.ingredients.diagnostics.temperature2mK == 295.15)
+                #expect(response.profileAnalysis == expectedAnalysis)
+                #expect(response.tornadoViability.overall == .conditional)
+                #expect(response.tornadoViability.confidence == .moderate)
+                #expect(response.tornadoViability.summary.contains("conditionally supportive"))
             })
         }
     }
@@ -106,10 +113,10 @@ struct StormSetupControllerTests {
                 #expect(res.status == .ok)
                 #expect(res.headers.contentType == .json)
 
-                let snapshot = try res.content.decode(TornadoIngredientSnapshot.self)
-                #expect(snapshot.h3Cell == expected.h3Cell)
-                #expect(snapshot.centroid.latitude.isApproximatelyEqual(to: expected.centroid.latitude))
-                #expect(snapshot.centroid.longitude.isApproximatelyEqual(to: expected.centroid.longitude))
+                let response = try res.content.decode(StormSetupCurrentResponse.self)
+                #expect(response.setup.h3Cell == expected.h3Cell)
+                #expect(response.setup.centroid.latitude.isApproximatelyEqual(to: expected.centroid.latitude))
+                #expect(response.setup.centroid.longitude.isApproximatelyEqual(to: expected.centroid.longitude))
             })
         }
     }
@@ -125,16 +132,16 @@ struct StormSetupControllerTests {
                 #expect(res.status == .ok)
                 #expect(res.headers.contentType == .json)
 
-                let snapshot = try res.content.decode(TornadoIngredientSnapshot.self)
-                #expect(snapshot.h3Cell == inputH3)
-                #expect(snapshot.source.model == .hrrr)
-                #expect(snapshot.source.nomadsURL != nil)
-                #expect(snapshot.raw.sbcapeJkg == 1450)
-                #expect(snapshot.raw.mlcinJkg == -35)
-                #expect(snapshot.anvilEvidence?.status == .available)
-                #expect(snapshot.assessment.overall == .conditional)
-                #expect(snapshot.assessment.confidence == .moderate)
-                #expect(snapshot.freshness.isStale == false)
+                let response = try res.content.decode(StormSetupCurrentResponse.self)
+                #expect(response.setup.h3Cell == inputH3)
+                #expect(response.setup.source.model == .hrrr)
+                #expect(response.setup.source.nomadsURL != nil)
+                #expect(response.ingredients.canonical.mucapeJkg == 362.1018454649957)
+                #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
+                #expect(response.profileAnalysis != nil)
+                #expect(response.tornadoViability.overall == .conditional)
+                #expect(response.tornadoViability.confidence == .moderate)
+                #expect(response.setup.freshness.isStale == false)
             })
         }
     }

@@ -1,6 +1,7 @@
 import Foundation
 import Queues
 import Vapor
+import ArcusCore
 
 struct PressureArtifactWarmJobPayload: Codable, Sendable {
     let runTime: Date

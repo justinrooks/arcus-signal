@@ -7,6 +7,7 @@
 
 import Foundation
 import Vapor
+import ArcusCore
 
 struct StormSetupController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
@@ -14,12 +15,12 @@ struct StormSetupController: RouteCollection {
         stormSetup.get("current", use: current)
     }
 
-    func current(req: Request) async throws -> TornadoIngredientSnapshot {
+    func current(req: Request) async throws -> StormSetupCurrentResponse {
         let query = try req.query.decode(CurrentQuery.self)
         let h3Cell = try normalizedH3Cell(from: query.h3)
 
         do {
-            return try await req.application.stormSetupProvider.currentSnapshot(for: h3Cell)
+            return try await req.application.stormSetupProvider.currentResponse(for: h3Cell)
         } catch let error as StormSetupCurrentSnapshotError {
             throw error.asAbort()
         } catch {

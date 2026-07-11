@@ -4,6 +4,7 @@ import CryptoKit
 #elseif canImport(Crypto)
 import Crypto
 #endif
+import ArcusCore
 
 struct HrrrPressureByteRangeDownloadResult: Sendable {
     let source: StormSetupSourceMetadata

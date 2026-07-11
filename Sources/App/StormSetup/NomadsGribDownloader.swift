@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 struct NomadsGribCandidateFailure: Sendable {
     let source: StormSetupSourceMetadata

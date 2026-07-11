@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import Vapor
 import VaporTesting
+import ArcusCore
 
 @Suite("Anvil profile preview controller", .serialized)
 struct AnvilProfilePreviewControllerTests {

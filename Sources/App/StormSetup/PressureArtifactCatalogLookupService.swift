@@ -1,6 +1,7 @@
 import Fluent
 import Foundation
 import Logging
+import ArcusCore
 
 enum PressureArtifactCatalogReadyArtifactFreshness: Sendable, Equatable {
     case exact

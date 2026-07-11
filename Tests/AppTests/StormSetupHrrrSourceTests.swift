@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import ArcusCore
 
 @Suite("Storm setup HRRR source selection", .serialized)
 struct StormSetupHrrrSourceTests {

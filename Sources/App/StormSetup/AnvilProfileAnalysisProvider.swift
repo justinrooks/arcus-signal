@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import ArcusCore
 
 protocol AnvilProfileAnalysisProviding: Sendable {
     func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse

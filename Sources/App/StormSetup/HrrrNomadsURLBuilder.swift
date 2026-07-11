@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 struct HrrrNomadsURLBuilder: Sendable {
     private let halfWidthDegrees: Double

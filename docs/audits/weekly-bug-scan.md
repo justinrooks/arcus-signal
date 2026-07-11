@@ -190,3 +190,47 @@
 - Top finding: unchanged H3 geometry short-circuits notification enqueueing in `TargetEventRevisionJob`.
 - Best next fix: enqueue notification outbox before the unchanged-geometry early return.
 - Implementation recommended: `yes`
+
+## 2026-07-02
+
+### 1. Repos scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Last automation run marker: `2026-06-04T16:06:26.231Z`
+- Window used: commits after `2026-06-04T16:06:26Z` through `2026-07-01`
+- Commits inspected:
+  - `49ece86b45f76c6b00a95a63d9c9281b9767f635` (`Fix expanded device presence sources and H3 dispatch regression`)
+  - `dd6e7438b90f5cf401a41fd8bb593d36b7e96097` (`Add Storm Setup tornado ingredient snapshots`)
+  - `ba97707e1f3bf8223413a86a8b9918b4d6a1c626` (`Add HRRR pressure artifact pipeline and Anvil pressure-profile support`)
+  - `852d7f1c1ea36076773b5bcdf04b8cb182be623c` (`Add exact-cycle surface loading for Anvil profile requests`)
+
+### 3. Highest-risk changed areas
+- notification delivery and outbox dispatch (`Sources/App/Jobs/TargetEventRevisionJob.swift`, `Sources/App/lib/DispatchAgent.swift`)
+- alert ingestion/update lifecycle (`Sources/App/Jobs/IngestNWSAlertsJob.swift`, `Sources/App/Jobs/NotificationSendJob.swift`)
+- Storm Setup surface/pressure profile assembly and exact-cycle loading (`Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`, `Sources/App/StormSetup/AnvilProfileRequestBuilder.swift`, `Sources/App/StormSetup/HrrrAnvilSurfaceProfileLoading.swift`)
+- pressure-artifact catalog and stale fallback lookup (`Sources/App/StormSetup/PressureArtifactCatalogLookupService.swift`)
+
+### 4. Findings table
+
+| Bug | Repo | Evidence | Impact | Confidence | Minimal fix | Validation |
+|---|---|---|---|---|---|---|
+| No credible bug found in the inspected window | `arcus-signal` | Reviewed the four commits above plus the changed preview/request-builder/load-path files and their focused tests. I also ran `swift test --filter HrrrAnvilSurfaceProfileLoadingTests`, which passed. | No confirmed defect to fix. | High | None. | No implementation required; continue with the next weekly scan. |
+
+### 5. Top recommended fix
+- No fix recommended.
+- Why it matters: the inspected changes were internally consistent, and the focused surface-loader test passed.
+- Expected files touched: none.
+- Estimated churn: none.
+- Regression risk: none.
+
+### 6. Watchlist
+- `Sources/App/StormSetup/PressureArtifactCatalogLookupService.swift`: stale lookup only considers the first candidate in a resolution. That is documented behavior today, but it should be rechecked if candidate ordering or multi-product resolutions change.
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`: exact-cycle surface loading now fails the preview when the surface row is missing or incomplete. I did not find evidence that this is unintended, but it is the main place to revisit if users report lost preview availability.
+
+### 7. Out-of-scope notes
+- Sibling repository `project-arcus` was intentionally not scanned in this run.
+
+### 8. No fix recommended
+- Evidence inspected: the four commits in the window above, plus the direct code paths for Anvil preview/analysis, surface loading, request assembly, pressure-artifact lookup, and the focused `HrrrAnvilSurfaceProfileLoadingTests` test suite.
+- Implementation recommended: `no`

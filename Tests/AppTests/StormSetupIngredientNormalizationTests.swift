@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import ArcusCore
 
 @Suite("Storm setup ingredient normalization", .serialized)
 struct StormSetupIngredientNormalizationTests {
@@ -26,8 +27,26 @@ struct StormSetupIngredientNormalizationTests {
         )
 
         #expect(result.raw.tempDewPtDeltaF?.isApproximatelyEqual(to: 10.8) == true)
+        #expect(result.raw.temperature2mK == 295.15)
+        #expect(result.raw.dewpoint2mK == 289.15)
         #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .temperature2mK)
         #expect(result.raw.diagnostics?.last?.matchedRawParameterKey == .dewpoint2mK)
+    }
+
+    @Test("surface pressure and 10m wind are preserved as diagnostics")
+    func surfacePressureAndTenMeterWindArePreserved() {
+        let result = normalize(
+            [
+                "1:0:d=2026060313:PRES:surface:9 hour fcst:lon=-104.47,lat=39.79,val=94000",
+                "2:0:d=2026060313:UGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-4.25",
+                "3:0:d=2026060313:VGRD:10 m above ground:9 hour fcst:lon=-104.47,lat=39.79,val=6.5"
+            ]
+        )
+
+        #expect(result.raw.surfacePressurePa == 94_000)
+        #expect(result.raw.wind10m?.speedKt.isApproximatelyEqual(to: 15.1, tolerance: 0.05) == true)
+        #expect(result.raw.wind10m != nil)
+        #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .surfacePressurePa)
     }
 
     @Test("representative 0-3 km CAPE inventory maps to threeCape")

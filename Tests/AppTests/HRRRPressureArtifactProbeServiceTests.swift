@@ -171,7 +171,7 @@ struct HRRRPressureArtifactProbeServiceTests {
     func expiredWarmingLeasesAreReclaimedAndRedispatchedOnceWhileActiveLeasesStaySkipped() async throws {
         try await withApp { app, _ in
             let statuses: [(status: PressureArtifactCatalogStatus, leaseExpiresAt: Date?, expectedDispatches: Int)] = [
-                (.warming, makeUTCDate(year: 2026, month: 6, day: 30, hour: 13, minute: 15), 0),
+                (.warming, makeUTCDate(year: 2030, month: 6, day: 30, hour: 13, minute: 15), 0),
                 (.warming, makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 30), 1)
             ]
 
@@ -391,7 +391,7 @@ struct HRRRPressureArtifactProbeServiceTests {
                         status: .warming,
                         payload: payload,
                         lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12, minute: 0),
-                        leaseExpiresAt: makeUTCDate(year: 2026, month: 6, day: 30, hour: 13, minute: 30),
+                        leaseExpiresAt: makeUTCDate(year: 2030, month: 6, day: 30, hour: 13, minute: 30),
                         on: app.db
                     )
                 case .ready:

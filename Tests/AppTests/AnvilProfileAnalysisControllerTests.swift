@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import Vapor
 import VaporTesting
+import ArcusCore
 
 @Suite("Anvil profile analysis controller", .serialized)
 struct AnvilProfileAnalysisControllerTests {
@@ -143,6 +144,13 @@ struct AnvilProfileAnalysisControllerTests {
                 stpCin: 0.0,
                 stpFixed: 2.4,
                 ship: 0.6,
+                srh01km: nil,
+                srh03km: nil,
+                sbcape: nil,
+                sbcin: nil,
+                bulkShear06kmMs: nil,
+                lapserate03km: nil,
+                threeCapeJkg: nil,
                 quality: AnvilQualityDTO(
                     profileLevelCount: 3,
                     warnings: []

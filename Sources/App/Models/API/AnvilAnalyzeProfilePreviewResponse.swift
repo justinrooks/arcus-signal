@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import ArcusCore
 
 struct AnvilAnalyzeProfilePreviewResponse: Content, Sendable, Equatable {
     let request: AnvilAnalyzeProfileRequest

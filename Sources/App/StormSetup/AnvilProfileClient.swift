@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 protocol AnvilProfileClient: Sendable {
     func analyzeProfile(_ request: AnvilAnalyzeProfileRequest) async throws -> AnvilAnalyzeProfileResponse

@@ -118,7 +118,7 @@ struct PressureArtifactCleanupServiceTests {
             try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
 
             let deletionCutoff = now.addingTimeInterval(-60 * 60)
-            let cleanupLeaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 30, hour: 22)
+            let cleanupLeaseExpiresAt = makeUTCDate(year: 2030, month: 6, day: 30, hour: 22)
             let firstClaim = try #require(try await service.claimDeletionCandidate(
                 for: row,
                 olderThan: deletionCutoff,

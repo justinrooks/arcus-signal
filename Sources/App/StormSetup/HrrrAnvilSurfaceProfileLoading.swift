@@ -1,4 +1,5 @@
 import Foundation
+import ArcusCore
 
 protocol HrrrAnvilSurfaceProfileLoading: Sendable {
     func loadSurfaceProfile(

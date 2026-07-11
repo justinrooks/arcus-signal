@@ -1,5 +1,6 @@
 import Fluent
 import Foundation
+import ArcusCore
 
 enum PressureArtifactCatalogStatus: String, Codable, Sendable {
     case pending
