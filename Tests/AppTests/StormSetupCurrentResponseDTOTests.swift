@@ -46,13 +46,10 @@ struct StormSetupCurrentResponseDTOTests {
         let viabilityObject = object?["tornadoViability"] as? [String: Any]
         #expect(viabilityObject?.keys.sorted() == ["confidence", "details", "limitingFactors", "overall", "primaryFailureMode", "realization", "summary"])
         #expect(viabilityObject?["assessment"] == nil)
-        let realizationObject = viabilityObject?["realization"] as? [String: Any]
-        #expect(realizationObject?.keys.sorted() == ["conditional"])
-        #expect((realizationObject?["conditional"] as? [String: Any])?.isEmpty == true)
+        #expect(viabilityObject?["realization"] as? String == "conditional")
 
-        let primaryFailureModeObject = viabilityObject?["primaryFailureMode"] as? [String: Any]
-        #expect(primaryFailureModeObject?.keys.sorted() == ["conditionalInitiation"])
-        #expect((primaryFailureModeObject?["conditionalInitiation"] as? [String: Any])?.isEmpty == true)
+        #expect(viabilityObject?["primaryFailureMode"] as? String == "conditionalInitiation")
+        #expect(viabilityObject?["limitingFactors"] as? [String] == ["conditionalInitiation"])
 
         let viabilityDetailsObject = viabilityObject?["details"] as? [String: Any]
         #expect(viabilityDetailsObject?.keys.sorted() == ["cloudBase", "cloudBaseEfficiency", "deepShear", "inhibition", "instability", "lowLevelRotation", "lowLevelStretching", "moisture", "stormMode", "stormViability", "supercellComposite", "supercellViability", "tornadoComposite", "tornadoEfficiency"])
