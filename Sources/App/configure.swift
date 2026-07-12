@@ -22,6 +22,17 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     configureMigrations(on: app)
     try configureQueues(on: app)
 
+    let airQualityConfiguration = AirQualityConfiguration.resolved()
+    if let airNowAPIKey = airQualityConfiguration.airNowAPIKey {
+        app.airQualityProvider = DefaultAirQualityProvider(
+            configuration: airQualityConfiguration,
+            client: DefaultAirNowClient(apiKey: airNowAPIKey, http: VaporApplicationHTTPClient(application: app))
+        )
+    } else {
+        app.airQualityProvider = UnavailableAirQualityProvider()
+        app.logger.warning("AirNow AQI is disabled because AIRNOW_API_KEY is not configured.")
+    }
+
     if app.environment == .testing {
         app.nwsIngestService = StubNWSIngestService()
     } else {

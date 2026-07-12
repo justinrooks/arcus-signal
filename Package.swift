@@ -56,6 +56,7 @@ let package = Package(
                 "Infrastructure/Cancellation.swift",
                 "Services",
                 "StormSetup",
+                "AirQuality",
                 "Worker",
                 "lib",
                 "apiRoutes.swift",

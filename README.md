@@ -36,6 +36,10 @@ Optional tuning:
 - `REDIS_POOL_CONNECTION_TIMEOUT_SECONDS` (default `30`)
 - `WORKER_STARTUP_GRACE_SECONDS` (default `5`)
 
+Current AQI endpoint configuration:
+
+- `AIRNOW_API_KEY` (EPA AirNow API key; required on the API service to enable `GET /api/v1/air-quality/current`)
+
 Worker APNs configuration:
 
 - `APNS_TEAM_ID` (Apple Team ID)
