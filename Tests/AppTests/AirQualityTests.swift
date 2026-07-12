@@ -44,7 +44,40 @@ struct AirQualityTests {
         #expect(response == nil)
     }
 
+    @Test("upstream AirNow failures normalize to unavailable")
+    func upstreamAirNowFailuresNormalizeToUnavailable() async throws {
+        let provider = DefaultAirQualityProvider(
+            configuration: AirQualityConfiguration(airNowAPIKey: "test", cacheLifetime: 60),
+            client: ThrowingAirNowClient(),
+            h3Resolver: StubStormSetupH3Resolver(),
+            cache: AirQualityCurrentCache(),
+            now: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+
+        let response = try await provider.currentResponse(for: 617_700_169_958_293_503)
+
+        #expect(response == nil)
+    }
+
     private func observations(from json: String) throws -> [AirNowObservation] {
         try JSONDecoder().decode([AirNowObservation].self, from: Data(json.utf8))
+    }
+}
+
+private struct ThrowingAirNowClient: AirNowClient {
+    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> [AirNowObservation] {
+        _ = latitude
+        _ = longitude
+        throw AirNowClientError.upstreamFailure(status: 429)
+    }
+}
+
+private struct StubStormSetupH3Resolver: StormSetupH3Resolving {
+    func resolve(h3Cell: Int64) throws -> StormSetupResolvedH3Cell {
+        _ = h3Cell
+        return StormSetupResolvedH3Cell(
+            h3Cell: 617_700_169_958_293_503,
+            centroid: StormSetupCentroid(latitude: 39.7392, longitude: -104.9903)
+        )
     }
 }

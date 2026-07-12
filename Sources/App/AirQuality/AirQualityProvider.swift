@@ -58,13 +58,19 @@ struct DefaultAirQualityProvider: AirQualityCurrentProviding {
         }
 
         let centroid = try h3Resolver.resolve(h3Cell: h3Cell).centroid
-        let observations = try await client.fetchCurrentObservations(
-            latitude: centroid.latitude,
-            longitude: centroid.longitude
-        )
-        let response = AirNowNormalizer.normalize(observations: observations)
-        await cache.store(response, for: h3Cell, expiresAt: requestDate.addingTimeInterval(configuration.cacheLifetime))
-        return response
+        do {
+            let observations = try await client.fetchCurrentObservations(
+                latitude: centroid.latitude,
+                longitude: centroid.longitude
+            )
+            let response = AirNowNormalizer.normalize(observations: observations)
+            await cache.store(response, for: h3Cell, expiresAt: requestDate.addingTimeInterval(configuration.cacheLifetime))
+            return response
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
     }
 }
 
