@@ -27,3 +27,5 @@ extension AnvilEffectiveLayerDTO: @retroactive Content {}
 extension AnvilQualityDTO: @retroactive Content {}
 extension AnvilStormMotionDTO: @retroactive Content {}
 extension AnvilBunkersRightStormMotionDTO: @retroactive Content {}
+extension AirQualityCurrentResponse: @retroactive Content {}
+extension AirQualityCategory: @retroactive Content {}

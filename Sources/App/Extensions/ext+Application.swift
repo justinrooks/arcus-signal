@@ -29,8 +29,17 @@ extension Application {
     func recordWorkerScheduledJob(_ jobName: String) {
         workerScheduledJobNames.append(jobName)
     }
+
+    var airQualityProvider: any AirQualityCurrentProviding {
+        get { storage[AirQualityProviderKey.self]! }
+        set { storage[AirQualityProviderKey.self] = newValue }
+    }
 }
 
 private struct WorkerScheduledJobNamesKey: StorageKey {
     typealias Value = [String]
+}
+
+private struct AirQualityProviderKey: StorageKey {
+    typealias Value = any AirQualityCurrentProviding
 }

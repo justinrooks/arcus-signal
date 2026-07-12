@@ -27,6 +27,7 @@ services:
       ARCUS_DEBUG_ENDPOINTS_ENABLED: "true"
       ANVIL_PROFILE_ANALYSIS_BASE_URL: ${ANVIL_PROFILE_ANALYSIS_BASE_URL:-http://host.docker.internal:8089/api}
       ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS: "10"
+      AIRNOW_API_KEY: ${AIRNOW_API_KEY:-}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

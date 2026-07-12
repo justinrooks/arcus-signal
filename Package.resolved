@@ -1,5 +1,5 @@
 {
-  "originHash" : "5f5cae60650e47925200216b748041ebd824b0f02e4f029ea613e112ae307903",
+  "originHash" : "aa315d5dbc5ab681fe849bedd73f1275bfd5c635a9f82d03732c86407ee7e1dc",
   "pins" : [
     {
       "identity" : "apns",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/justinrooks/ArcusCore.git",
       "state" : {
-        "revision" : "145cdd44468b0ec6c96c4147ab3290b6b2e1a24f",
-        "version" : "0.4.2"
+        "revision" : "977945d87d6c54b6c4a861da3fc2d1cb66b0aaac",
+        "version" : "0.4.4"
       }
     },
     {
