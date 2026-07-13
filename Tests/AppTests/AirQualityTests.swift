@@ -5,29 +5,46 @@ import Testing
 
 @Suite("AirNow AQI normalization")
 struct AirQualityTests {
-    @Test("provider observations decode AirNow wire keys")
+    @Test("provider observations decode the live AirNow payload")
     func observationsDecode() throws {
         let observations = try JSONDecoder().decode([AirNowObservation].self, from: Data("""
-        [{"DateObserved":"2026-07-12","HourObserved":14,"LocalTimeZone":"America/Denver","ParameterName":"PM2.5","AQI":87,"Category":{"Number":2,"Name":"Moderate"}}]
+        [
+          {
+            "dateObserved":"2026-07-12",
+            "hourObserved":"20:00",
+            "localTimeZone":"MDT",
+            "reportingAreaName":null,
+            "siteID":"080310013",
+            "siteName":"Denver - NJH - 14th Ave. & Albion St.",
+            "parameterName":"PM2.5",
+            "nowcastAQI":20,
+            "aqiCategoryName":"Good",
+            "reportingAgency":"Colorado Department of Public Health and Environment",
+            "lookupBehavior":"Closest Reading By Pollutant",
+            "consideredMonitors":"All",
+            "lookupBoundary":"50 Miles"
+          }
+        ]
         """.utf8))
 
         #expect(observations.count == 1)
-        #expect(observations[0].aqi == 87)
-        #expect(observations[0].category?.name == "Moderate")
+        #expect(observations[0].hourObserved == 20)
+        #expect(observations[0].aqi == 20)
+        #expect(observations[0].aqiCategoryName == "Good")
     }
 
     @Test("highest valid pollutant AQI becomes the normalized current value")
     func highestAQIWins() throws {
         let response = AirNowNormalizer.normalize(observations: try observations(from: """
         [
-          {"DateObserved":"2026-07-12","HourObserved":14,"LocalTimeZone":"America/Denver","ParameterName":"OZONE","AQI":72,"Category":{"Number":2,"Name":"Moderate"}},
-          {"DateObserved":"2026-07-12","HourObserved":15,"LocalTimeZone":"America/Denver","ParameterName":"PM2.5","AQI":121,"Category":{"Number":3,"Name":"Unhealthy for Sensitive Groups"}}
+          {"dateObserved":"2026-07-12","hourObserved":"14:00","localTimeZone":"MDT","parameterName":"OZONE","nowcastAQI":72,"aqiCategoryName":"Moderate"},
+          {"dateObserved":"2026-07-12","hourObserved":"15:00","localTimeZone":"MDT","parameterName":"PM2.5","nowcastAQI":121,"aqiCategoryName":"Unhealthy for Sensitive Groups"}
         ]
         """))
 
         #expect(response?.aqi == 121)
         #expect(response?.primaryPollutant == "PM2.5")
-        #expect(response?.category?.identifier == 3)
+        #expect(response?.category?.name == "Unhealthy for Sensitive Groups")
         #expect(response?.sourceIdentifier == "airnow")
     }
 
@@ -35,9 +52,9 @@ struct AirQualityTests {
     func invalidObservationsAreDiscarded() throws {
         let response = AirNowNormalizer.normalize(observations: try observations(from: """
         [
-          {"DateObserved":"2026-07-12","HourObserved":14,"AQI":-1},
-          {"DateObserved":"2026-07-12","HourObserved":25,"AQI":41},
-          {"DateObserved":"2026-07-12","HourObserved":14,"ParameterName":"OZONE"}
+          {"dateObserved":"2026-07-12","hourObserved":"14:00","nowcastAQI":-1},
+          {"dateObserved":"2026-07-12","hourObserved":"25:00","nowcastAQI":41},
+          {"dateObserved":"2026-07-12","hourObserved":"14:00","parameterName":"OZONE"}
         ]
         """))
 

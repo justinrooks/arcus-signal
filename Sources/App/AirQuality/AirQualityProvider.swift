@@ -84,6 +84,8 @@ enum AirNowNormalizer {
                     aqi: aqi,
                     category: observation.category.map {
                         AirQualityCategory(identifier: $0.number, name: $0.name)
+                    } ?? observation.aqiCategoryName.map {
+                        AirQualityCategory(identifier: nil, name: $0)
                     },
                     primaryPollutant: observation.parameterName?.trimmingCharacters(in: .whitespacesAndNewlines),
                     observedAt: observedAt,
@@ -101,7 +103,7 @@ private extension AirNowObservation {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd H"
-        formatter.timeZone = localTimeZone.flatMap(TimeZone.init(identifier:)) ?? .gmt
+        formatter.timeZone = localTimeZone.flatMap { TimeZone(identifier: $0) ?? TimeZone(abbreviation: $0) } ?? .gmt
         return formatter.date(from: "\(dateObserved) \(hourObserved)")
     }
 }
