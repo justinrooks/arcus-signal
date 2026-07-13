@@ -33,7 +33,8 @@ struct DefaultAirNowClient: AirNowClient {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw AirNowClientError.invalidURL
         }
-        components.path = "/aq/observation/latLong/current/"
+//        https://www.airnowapi.org/aq/observation/current/ziplatlong/?format=application/json&latitude=39.753&longitude=-104.44991&API_KEY=70D98E07-5A66-4B59-8A83-529D198B4E72
+        components.path = "/aq/observation/current/ziplatlong/"
         components.queryItems = [
             .init(name: "format", value: "application/json"),
             .init(name: "latitude", value: String(latitude)),

@@ -1,0 +1,11 @@
+$kind: http-request
+name: AirQuality
+url: "{{apiBaseUrl}}/api/v1/air-quality/current?h3=613167714648719359"
+method: GET
+queryParams:
+  - key: h3
+    value: "613160066540896255"
+    disabled: true
+  - key: h3
+    value: "613167714648719359"
+order: 3362338698860170

@@ -1,14 +1,14 @@
 $kind: http-request
-name: Anvil Profile Analysis - Complete Pipeline
-url: "{{apiBaseUrl}}/api/v1/dev/anvil/profile-analysis?h3=613160066540896255"
+name: StormSetup
+url: "{{apiBaseUrl}}/api/v1/storm-setup/current?h3=613160066540896255"
 method: GET
 queryParams:
   - key: h3
     value: "613167714648719359"
     disabled: true
   - key: h3
-    value: "613159748958683135"
+    value: "613185042002214911"
     disabled: true
   - key: h3
     value: "613160066540896255"
-order: 2360961485744677
+order: 1868345170435077
