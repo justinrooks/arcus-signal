@@ -260,7 +260,12 @@ public extension NwsEventFeatureDTO {
             sourceURL: id,
             vtec: vtecP ?? nil, // We are specifically only grabbing the first. Its a business decision, we can adjust later
             messageType: NWSAlertMessageType.fromNws(properties.messageType),
-            state: ArcusEvent.status(now: now, messageType: messageType, endsAt: endsAt),
+            state: ArcusEvent.lifecycleState(
+                now: now,
+                messageType: messageType,
+                expiresAt: properties.expires,
+                endsAt: endsAt
+            ),
             references: refs ?? [],
             sent: properties.sent,
             effective: properties.effective,
@@ -304,14 +309,19 @@ public extension NwsEventFeatureDTO {
     }
 }
 
-private extension ArcusEvent {
-    static func status(now: Date, messageType: NWSAlertMessageType, endsAt: Date?) -> EventState {
+extension ArcusEvent {
+    static func lifecycleState(
+        now: Date,
+        messageType: NWSAlertMessageType,
+        expiresAt: Date?,
+        endsAt: Date?
+    ) -> EventState {
         if messageType == .cancel {
             return .cancelled_in_error
         }
 
-        guard let endsAt else { return .active }
-        return endsAt <= now ? .expired : .active
+        let terminalAt = [expiresAt, endsAt].compactMap { $0 }.min()
+        return terminalAt.map { $0 <= now ? .expired : .active } ?? .active
     }
 }
     

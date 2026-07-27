@@ -9,3 +9,4 @@
 - If the warmed pressure-key mapping changes in one consumer, audit the other consumer paths that use `PressureArtifactCatalogLookupProviding` immediately. Preview and dashboard code can drift independently even when they share the same catalog service.
 - For Docker cache storage, keep the host bind-source path separate from the container runtime path. Verify the resolved environment and mount first; prefer matching ownership and `0770` over using `0777` to mask a path that was never mounted.
 - For the production Storm Setup contract, preserve `AnvilAnalyzeProfileResponse` only; keep Anvil request/profile-preview debug envelopes on the dev diagnostics endpoint unless a story explicitly promotes them.
+- When reading an audit, treat its implementation-status annotations as historical evidence, not proof that adjacent current-state defects are resolved; re-check every claimed open or closed mechanism directly in current code.
