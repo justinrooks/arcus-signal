@@ -1,5 +1,4 @@
 $kind: http-request
-name: Anvil Profile Analysis - Complete Pipeline
 url: "{{apiBaseUrl}}/api/v1/dev/anvil/profile-analysis?h3=613160066540896255"
 method: GET
 queryParams:

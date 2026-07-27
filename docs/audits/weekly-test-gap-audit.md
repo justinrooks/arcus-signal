@@ -112,3 +112,47 @@
 - Implementation recommended: no
 - Implementation status: implemented on 2026-07-07 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/NwsClientTests.swift)
 - Out-of-scope repositories intentionally not scanned: none
+
+## 2026-07-14
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-07-07T15:01:53.356Z` through `2026-07-14T15:02:31Z`); commits `a7b277d`, `5514f5a`, `ffa751e`, and `139f10b`
+- High-risk areas inspected:
+  - `Sources/App/AirQuality/AirNowClient.swift` AirNow request URL construction and upstream error handling
+  - `Sources/App/AirQuality/AirNowObservation.swift` live AirNow payload decoding
+  - `Sources/App/AirQuality/AirQualityProvider.swift` AQI normalization, H3 resolution, and short-lived cache behavior
+  - `Sources/App/Controllers/AirQualityController.swift` `GET /api/v1/air-quality/current` request validation and status mapping
+  - `Tests/AppTests/AirQualityTests.swift` existing decoding/normalization coverage
+- Files inspected:
+  - `Sources/App/AirQuality/AirNowClient.swift`
+  - `Sources/App/AirQuality/AirNowObservation.swift`
+  - `Sources/App/AirQuality/AirQualityProvider.swift`
+  - `Sources/App/Controllers/AirQualityController.swift`
+  - `Sources/App/AirQuality/AirQualityConfiguration.swift`
+  - `Tests/AppTests/AirQualityTests.swift`
+  - `Tests/AppTests/NwsClientTests.swift`
+- Existing relevant tests found:
+  - `Tests/AppTests/AirQualityTests.swift` covers live payload decoding, highest-AQI normalization, invalid observation filtering, and provider failure fallback
+  - No test was found for `DefaultAirNowClient` URL/path/query construction or for the `AirQualityController` route contract
+- Top recommended test: add a unit test for `DefaultAirNowClient.fetchCurrentObservations` that asserts the request uses `/aq/observation/latLong/current/` with `format=application/json`, the supplied latitude/longitude, `distance=25`, and `API_KEY`
+- Confidence: Medium
+- Estimated size: XS
+- Watchlist items: none
+- Implementation recommended: no - covered by the broader High-confidence AirNow HTTP-boundary test implemented on 2026-07-26
+- Implementation status: implemented on 2026-07-26 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/AirQualityTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/AirQualityTests.swift)
+- Out-of-scope repositories intentionally not scanned: none
+
+## 2026-07-21
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: no commits after the reliable marker (`2026-07-14T15:02:31Z` through `2026-07-21`); inspected the current `main` branch's three highest-risk areas
+- High-risk areas inspected: AirNow HTTP request/route contracts; notification freshness, dedupe, delivery, and copy; active-revision dispatch gating
+- Files inspected: `Sources/App/AirQuality/AirNowClient.swift`, `Sources/App/Controllers/AirQualityController.swift`, `Sources/App/Jobs/NotificationSendJob.swift`, `Sources/App/Infrastructure/Notifications/NotificationEngine.swift`, `Sources/App/Jobs/TargetEventRevisionDispatchPolicy.swift`, `Tests/AppTests/AirQualityTests.swift`, `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`, `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`, `Tests/AppTests/NotificationEngineTests.swift`, `Tests/AppTests/AppTests.swift`
+- Existing relevant tests found: AirNow decoding/normalization/provider fallback; notification freshness classification, stale suppression, idempotent missed-decision persistence, delivery boundaries, copy, and changed/active revision dispatch gating. No AirNow HTTP-boundary test exists.
+- Recommended test gap: `DefaultAirNowClient.fetchCurrentObservations` must preserve `/aq/observation/current/ziplatlong/`, required query items and JSON header, decode success, and surface non-2xx status. The prior entry's `/aq/observation/latLong/current/` expectation is unsupported by repository-local evidence.
+- Evidence: `Sources/App/AirQuality/AirNowClient.swift` request construction and local API example; missing adjacent coverage in `Tests/AppTests/AirQualityTests.swift`
+- Risk reduced: prevents a silent upstream contract regression that makes current AQI unavailable for every request
+- Test type: unit; suggested name: `fetchCurrentObservationsBuildsAirNowRequestAndHandlesResponseContract`; minimal setup: recording `HTTPClient` with success and non-2xx responses; expected assertion: exact request contract, decoded observation, and typed upstream error; size: S; confidence: High
+- Top recommended test: the AirNow HTTP request-contract test in `Tests/AppTests/AirQualityTests.swift`; one test file, roughly 40-70 lines, low regression risk
+- Watchlist items: `AirQualityController` lacks a direct route-contract test; promote if provider injection is possible without broad infrastructure or its status mapping changes
+- Implementation recommended: no - implemented on 2026-07-26
+- Implementation status: implemented on 2026-07-26 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/AirQualityTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/AirQualityTests.swift)
+- Out-of-scope repositories intentionally not scanned: all sibling repositories and external AirNow implementation details
