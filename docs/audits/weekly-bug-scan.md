@@ -350,3 +350,4 @@
 - Added `inactive_or_expired_series` send-attempt observability and focused unit coverage for inactive states and elapsed/future lifecycle timestamps.
 - Validation: `swift test --filter NotificationSendJobFreshnessDecisionTests` passed (7 tests).
 - Follow-up fixed on `2026-07-26`: NWS lifecycle classification and cleanup now expire alerts with an elapsed `expires` timestamp when `ends` is absent. Regression coverage verifies both canonical state derivation and persisted-series cleanup.
+- Roadmap: APNs failure retry/backoff remains unresolved and is tracked in [GitHub issue #13](https://github.com/justinrooks/arcus-signal/issues/13). The planned slice adds bounded queue retries, exponential backoff, retryable ledger reclaim, and terminal handling for permanent token failures.
