@@ -25,7 +25,7 @@ public struct LocationFreshnessDecision: Sendable, Equatable {
 
 public struct LocationFreshnessPolicy: Sendable {
     private static let hour: TimeInterval = 60 * 60
-    private static let staleThreshold: TimeInterval = 24 * hour
+    public static let hardStaleThreshold: TimeInterval = 24 * hour
     private static let whenInUseFreshThreshold: TimeInterval = 2 * hour
     private static let alwaysFreshThreshold: TimeInterval = 6 * hour
 
@@ -38,7 +38,7 @@ public struct LocationFreshnessPolicy: Sendable {
     ) -> LocationFreshnessDecision {
         let age = max(0, now.timeIntervalSince(capturedAt))
 
-        guard age <= Self.staleThreshold else {
+        guard age <= Self.hardStaleThreshold else {
             return .init(state: .stale, age: age)
         }
 
