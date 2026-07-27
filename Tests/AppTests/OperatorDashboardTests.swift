@@ -102,8 +102,11 @@ struct OperatorDashboardTests {
             targetableCoverage: .init(
                 installationFreshnessSeconds: 86_400,
                 presenceFreshnessSeconds: 21_600,
+                hardStalePresenceThresholdSeconds: 86_400,
                 activeSubscribedInstallationCount: 100,
                 targetableInstallationCount: 61,
+                candidateQueryEligibleInstallationCount: 74,
+                hardStalePresenceCount: 13,
                 lossBreakdown: .init(
                     missingDeviceTokenCount: 3,
                     staleInstallationHeartbeatCount: 12,
@@ -188,6 +191,7 @@ struct OperatorDashboardTests {
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.targetableRate ?? 0) - 0.61) < 0.0001)
+        #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
         #expect(abs((response.audienceTargeting.alertsWithGeographyAndH3Success.successRate ?? 0) - 0.8333333333) < 0.0001)
     }
 
@@ -285,6 +289,9 @@ struct OperatorDashboardTests {
         let snapshot = try decoder.decode(OperatorDashboardStoredSnapshot.self, from: Data(json.utf8))
         #expect(snapshot.schemaVersion == 0)
         #expect(snapshot.touchedSeries.first?.ugcCodes == [])
+        #expect(snapshot.targetableCoverage.hardStalePresenceThresholdSeconds == Int(LocationFreshnessPolicy.hardStaleThreshold))
+        #expect(snapshot.targetableCoverage.candidateQueryEligibleInstallationCount == 0)
+        #expect(snapshot.targetableCoverage.hardStalePresenceCount == 0)
     }
 
     @Test("legacy snapshot backfills touched-series fields")
@@ -327,6 +334,11 @@ struct OperatorDashboardTests {
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.ugcCodes == ["COC005", "COC013"])
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDetection == "OBSERVED")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDamageThreat == "CONSIDERABLE")
+                let coverage = payload.audienceTargeting.freshTargetableInstallationCoverage
+                #expect(coverage.hardStalePresenceThresholdSeconds == 86_400)
+                #expect(coverage.candidateQueryEligibleInstallationCount == 74)
+                #expect(coverage.hardStalePresenceCount == 13)
+                #expect(abs((coverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
             })
         }
     }
@@ -355,6 +367,14 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("fetch('/v1/metrics'"))
                 #expect(res.body.string.contains("window.setTimeout(fetchSnapshot, nextDelay)"))
                 #expect(res.body.string.contains("The page polls the canonical"))
+                #expect(res.body.string.components(separatedBy: "Eligible ≤24h").count == 3)
+                #expect(res.body.string.contains("Excluded &gt;24h"))
+                #expect(res.body.string.contains("Excluded >24h"))
+                #expect(res.body.string.contains("74 / 100"))
+                #expect(res.body.string.contains(">13<"))
+                #expect(res.body.string.contains("candidateQueryEligibilityRate"))
+                #expect(res.body.string.contains("candidateQueryEligibleInstallationCount"))
+                #expect(res.body.string.contains("hardStalePresenceCount"))
                 #expect(res.body.string.contains("hero-rendered-at"))
                 #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
             })
