@@ -121,6 +121,27 @@ public struct NotificationSendJob: AsyncJob {
             return .deliver(freshness)
         }
     }
+
+    func deliveryNoOpReason(
+        for series: ArcusSeriesModel,
+        reason: NotificationReason,
+        evaluatedAt: Date
+    ) -> NotificationSendNoOpReason? {
+        switch reason {
+        case .endedAllClear, .cancelInError:
+            return nil
+        case .new, .update:
+            break
+        }
+
+        guard series.state == EventState.active.rawValue,
+              series.expires.map({ $0 > evaluatedAt }) ?? true,
+              series.ends.map({ $0 > evaluatedAt }) ?? true else {
+            return .inactiveOrExpiredSeries
+        }
+
+        return nil
+    }
     
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
         context.logger.info(
@@ -167,6 +188,39 @@ public struct NotificationSendJob: AsyncJob {
                     sentCount: 0,
                     failedCount: 0,
                     noOpReason: .staleRevisionMismatch
+                )
+            )
+            return
+        }
+
+        if let noOpReason = deliveryNoOpReason(
+            for: series,
+            reason: payload.reason,
+            evaluatedAt: Date()
+        ) {
+            context.logger.info(
+                "Series is no longer eligible for notification delivery. No notification sent",
+                metadata: [
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn),
+                    "state": .string(series.state),
+                    "expires": .string(series.expires?.description ?? "none"),
+                    "ends": .string(series.ends?.description ?? "none"),
+                    "reason": .string(payload.reason.rawValue)
+                ]
+            )
+            await recordAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: .init(
+                    candidateResolutionReached: false,
+                    candidateCount: 0,
+                    staleMissedCount: 0,
+                    claimedCount: 0,
+                    sentCount: 0,
+                    failedCount: 0,
+                    noOpReason: noOpReason
                 )
             )
             return

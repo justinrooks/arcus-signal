@@ -23,6 +23,31 @@ struct NotificationSendJobFreshnessDecisionTests {
         )
     }
 
+    private func makeSeries(
+        state: EventState = .active,
+        expires: Date? = nil,
+        ends: Date? = nil
+    ) -> ArcusSeriesModel {
+        .init(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            source: "nws",
+            event: "Tornado Warning",
+            sourceURL: "https://api.weather.gov/alerts/test",
+            currentRevisionUrn: "urn:oid:delivery-eligibility",
+            currentRevisionSent: now,
+            messageType: NWSAlertMessageType.alert.rawValue,
+            contentFingerprint: String(repeating: "a", count: 64),
+            state: state.rawValue,
+            expires: expires,
+            ends: ends,
+            lastSeenActive: now,
+            severity: EventSeverity.severe.rawValue,
+            urgency: EventUrgency.immediate.rawValue,
+            certainty: EventCertainty.observed.rawValue,
+            ugcCodes: []
+        )
+    }
+
     @Test("stale candidates are skipped")
     func staleCandidatesAreSkipped() {
         let candidate = makeCandidate(
@@ -96,5 +121,50 @@ struct NotificationSendJobFreshnessDecisionTests {
         } else {
             Issue.record("Expected degraded always candidate to continue")
         }
+    }
+
+    @Test("new and update notifications stop at inactive or expired series")
+    func normalNotificationsStopAtInactiveOrExpiredSeries() {
+        let inactiveStates: [EventState] = [.expired, .ended, .cancelled, .cancelled_in_error]
+
+        for state in inactiveStates {
+            #expect(
+                job.deliveryNoOpReason(
+                    for: makeSeries(state: state),
+                    reason: .new,
+                    evaluatedAt: now
+                ) == .inactiveOrExpiredSeries
+            )
+        }
+
+        #expect(
+            job.deliveryNoOpReason(
+                for: makeSeries(expires: now),
+                reason: .update,
+                evaluatedAt: now
+            ) == .inactiveOrExpiredSeries
+        )
+        #expect(
+            job.deliveryNoOpReason(
+                for: makeSeries(ends: now),
+                reason: .update,
+                evaluatedAt: now
+            ) == .inactiveOrExpiredSeries
+        )
+        #expect(
+            job.deliveryNoOpReason(
+                for: makeSeries(expires: now.addingTimeInterval(1), ends: now.addingTimeInterval(1)),
+                reason: .new,
+                evaluatedAt: now
+            ) == nil
+        )
+    }
+
+    @Test("explicit terminal notifications remain eligible")
+    func explicitTerminalNotificationsRemainEligible() {
+        let series = makeSeries(state: .cancelled, expires: now, ends: now)
+
+        #expect(job.deliveryNoOpReason(for: series, reason: .cancelInError, evaluatedAt: now) == nil)
+        #expect(job.deliveryNoOpReason(for: series, reason: .endedAllClear, evaluatedAt: now) == nil)
     }
 }
