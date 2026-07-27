@@ -247,9 +247,10 @@ struct OperatorDashboardSnapshotRefresher {
         )
     }
 
-    private func loadTargetableCoverage(on sql: any SQLDatabase, now: Date) async throws -> StoredTargetableCoverageMetric {
+    func loadTargetableCoverage(on sql: any SQLDatabase, now: Date) async throws -> StoredTargetableCoverageMetric {
         let installationCutoff = now.addingTimeInterval(-Double(OperatorDashboardConfig.installationFreshnessThresholdSeconds))
         let presenceCutoff = now.addingTimeInterval(-Double(OperatorDashboardConfig.presenceFreshnessThresholdSeconds))
+        let hardStalePresenceCutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
         let row = try await sql.raw("""
             SELECT
                 COUNT(*) FILTER (
@@ -303,7 +304,33 @@ struct OperatorDashboardSnapshotRefresher {
                           OR COALESCE(BTRIM(p.zone), '') <> ''
                           OR COALESCE(BTRIM(p.fire_zone), '') <> ''
                       )
-                ) AS "missingTargetingDataCount"
+                ) AS "missingTargetingDataCount",
+                COUNT(*) FILTER (
+                    WHERE i.is_active = TRUE
+                      AND i.is_subscribed = TRUE
+                      AND i.apns_device_token <> ''
+                      AND p.installation_id IS NOT NULL
+                      AND p.captured_at >= \(bind: hardStalePresenceCutoff)
+                      AND (
+                          p.h3_cell IS NOT NULL
+                          OR COALESCE(BTRIM(p.county), '') <> ''
+                          OR COALESCE(BTRIM(p.zone), '') <> ''
+                          OR COALESCE(BTRIM(p.fire_zone), '') <> ''
+                      )
+                ) AS "candidateQueryEligibleInstallationCount",
+                COUNT(*) FILTER (
+                    WHERE i.is_active = TRUE
+                      AND i.is_subscribed = TRUE
+                      AND i.apns_device_token <> ''
+                      AND p.installation_id IS NOT NULL
+                      AND p.captured_at < \(bind: hardStalePresenceCutoff)
+                      AND (
+                          p.h3_cell IS NOT NULL
+                          OR COALESCE(BTRIM(p.county), '') <> ''
+                          OR COALESCE(BTRIM(p.zone), '') <> ''
+                          OR COALESCE(BTRIM(p.fire_zone), '') <> ''
+                      )
+                ) AS "hardStalePresenceCount"
             FROM device_installations i
             LEFT JOIN device_presence p
               ON p.installation_id = i.installation_id
@@ -312,8 +339,11 @@ struct OperatorDashboardSnapshotRefresher {
         return .init(
             installationFreshnessSeconds: OperatorDashboardConfig.installationFreshnessThresholdSeconds,
             presenceFreshnessSeconds: OperatorDashboardConfig.presenceFreshnessThresholdSeconds,
+            hardStalePresenceThresholdSeconds: Int(LocationFreshnessPolicy.hardStaleThreshold),
             activeSubscribedInstallationCount: row.map { Int($0.activeSubscribedInstallationCount) } ?? 0,
             targetableInstallationCount: row.map { Int($0.targetableInstallationCount) } ?? 0,
+            candidateQueryEligibleInstallationCount: row.map { Int($0.candidateQueryEligibleInstallationCount) } ?? 0,
+            hardStalePresenceCount: row.map { Int($0.hardStalePresenceCount) } ?? 0,
             lossBreakdown: .init(
                 missingDeviceTokenCount: row.map { Int($0.missingDeviceTokenCount) } ?? 0,
                 staleInstallationHeartbeatCount: row.map { Int($0.staleInstallationHeartbeatCount) } ?? 0,
@@ -776,6 +806,8 @@ private struct TargetableCoverageRow: Decodable {
     let staleInstallationHeartbeatCount: Int64
     let stalePresenceCount: Int64
     let missingTargetingDataCount: Int64
+    let candidateQueryEligibleInstallationCount: Int64
+    let hardStalePresenceCount: Int64
 }
 
 private struct H3AggregateRow: Decodable {

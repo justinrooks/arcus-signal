@@ -11,6 +11,11 @@ struct LocationFreshnessPolicyTests {
         now.addingTimeInterval(-(hoursAgo * 60 * 60) - secondsAgo)
     }
 
+    @Test("hard stale threshold remains 24 hours")
+    func hardStaleThresholdIsTwentyFourHours() {
+        #expect(LocationFreshnessPolicy.hardStaleThreshold == 24 * 60 * 60)
+    }
+
     @Test("When In Use: now is fresh")
     func whenInUseNowFresh() {
         let decision = policy.decide(

@@ -225,6 +225,8 @@ public struct NotificationSendJob: AsyncJob {
             )
             return
         }
+
+        let presenceCutoff = attemptedAt.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
         
         // if mode is h3 and we have cells
         // right now we aren't falling back to zones... but maybe we should?
@@ -256,6 +258,7 @@ public struct NotificationSendJob: AsyncJob {
             // Get our list of candidates
             let h3Candidates = try await loadH3Candidates(
                 cells: geo.h3Cells,
+                capturedAtOrAfter: presenceCutoff,
                 on: context.application.db
             )
             
@@ -275,6 +278,7 @@ public struct NotificationSendJob: AsyncJob {
             // we only have 2 modes right now, so its ugc
             let ugcCandidates = try await loadUGCCandidates(
                 ugcCodes: series.ugcCodes,
+                capturedAtOrAfter: presenceCutoff,
                 on: context.application.db
             )
 
@@ -316,6 +320,7 @@ public struct NotificationSendJob: AsyncJob {
 extension NotificationSendJob {
     func loadUGCCandidates(
         ugcCodes: [String],
+        capturedAtOrAfter cutoff: Date,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
@@ -337,6 +342,7 @@ extension NotificationSendJob {
             WHERE i.is_active = TRUE
               AND i.is_subscribed = TRUE
               AND i.apns_device_token <> ''
+              AND p.captured_at >= \(bind: cutoff)
               AND (
                   p.county  = ANY(\(bind: ugcCodes)::text[])
                 OR p.zone  = ANY(\(bind: ugcCodes)::text[])
@@ -348,6 +354,7 @@ extension NotificationSendJob {
     
     func loadH3Candidates(
         cells: [Int64],
+        capturedAtOrAfter cutoff: Date,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
@@ -373,6 +380,7 @@ extension NotificationSendJob {
               AND i.apns_device_token <> ''
               AND p.h3_cell IS NOT NULL
               AND p.h3_cell = ANY(\(bind: cells)::bigint[])
+              AND p.captured_at >= \(bind: cutoff)
             """)
             .all(decoding: NotificationCandidate.self)
     }

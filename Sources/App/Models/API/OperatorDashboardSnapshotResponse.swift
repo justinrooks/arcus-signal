@@ -299,22 +299,57 @@ public struct StoredTargetableCoverageBreakdown: Codable, Sendable {
 public struct StoredTargetableCoverageMetric: Codable, Sendable {
     public var installationFreshnessSeconds: Int
     public var presenceFreshnessSeconds: Int
+    public var hardStalePresenceThresholdSeconds: Int
     public var activeSubscribedInstallationCount: Int
     public var targetableInstallationCount: Int
+    public var candidateQueryEligibleInstallationCount: Int
+    public var hardStalePresenceCount: Int
     public var lossBreakdown: StoredTargetableCoverageBreakdown
 
     public init(
         installationFreshnessSeconds: Int = OperatorDashboardConfig.installationFreshnessThresholdSeconds,
         presenceFreshnessSeconds: Int = OperatorDashboardConfig.presenceFreshnessThresholdSeconds,
+        hardStalePresenceThresholdSeconds: Int = Int(LocationFreshnessPolicy.hardStaleThreshold),
         activeSubscribedInstallationCount: Int = 0,
         targetableInstallationCount: Int = 0,
+        candidateQueryEligibleInstallationCount: Int = 0,
+        hardStalePresenceCount: Int = 0,
         lossBreakdown: StoredTargetableCoverageBreakdown = .init()
     ) {
         self.installationFreshnessSeconds = installationFreshnessSeconds
         self.presenceFreshnessSeconds = presenceFreshnessSeconds
+        self.hardStalePresenceThresholdSeconds = hardStalePresenceThresholdSeconds
         self.activeSubscribedInstallationCount = activeSubscribedInstallationCount
         self.targetableInstallationCount = targetableInstallationCount
+        self.candidateQueryEligibleInstallationCount = candidateQueryEligibleInstallationCount
+        self.hardStalePresenceCount = hardStalePresenceCount
         self.lossBreakdown = lossBreakdown
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case installationFreshnessSeconds
+        case presenceFreshnessSeconds
+        case hardStalePresenceThresholdSeconds
+        case activeSubscribedInstallationCount
+        case targetableInstallationCount
+        case candidateQueryEligibleInstallationCount
+        case hardStalePresenceCount
+        case lossBreakdown
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.installationFreshnessSeconds = try container.decodeIfPresent(Int.self, forKey: .installationFreshnessSeconds)
+            ?? OperatorDashboardConfig.installationFreshnessThresholdSeconds
+        self.presenceFreshnessSeconds = try container.decodeIfPresent(Int.self, forKey: .presenceFreshnessSeconds)
+            ?? OperatorDashboardConfig.presenceFreshnessThresholdSeconds
+        self.hardStalePresenceThresholdSeconds = try container.decodeIfPresent(Int.self, forKey: .hardStalePresenceThresholdSeconds)
+            ?? Int(LocationFreshnessPolicy.hardStaleThreshold)
+        self.activeSubscribedInstallationCount = try container.decodeIfPresent(Int.self, forKey: .activeSubscribedInstallationCount) ?? 0
+        self.targetableInstallationCount = try container.decodeIfPresent(Int.self, forKey: .targetableInstallationCount) ?? 0
+        self.candidateQueryEligibleInstallationCount = try container.decodeIfPresent(Int.self, forKey: .candidateQueryEligibleInstallationCount) ?? 0
+        self.hardStalePresenceCount = try container.decodeIfPresent(Int.self, forKey: .hardStalePresenceCount) ?? 0
+        self.lossBreakdown = try container.decodeIfPresent(StoredTargetableCoverageBreakdown.self, forKey: .lossBreakdown) ?? .init()
     }
 }
 
@@ -1013,19 +1048,30 @@ public struct TargetableCoverageMetricResponse: Content, Sendable {
     public var refreshedAt: Date?
     public var installationFreshnessSeconds: Int
     public var presenceFreshnessSeconds: Int
+    public var hardStalePresenceThresholdSeconds: Int
     public var activeSubscribedInstallationCount: Int
     public var targetableInstallationCount: Int
     public var targetableRate: Double?
+    public var candidateQueryEligibleInstallationCount: Int
+    public var hardStalePresenceCount: Int
+    public var candidateQueryEligibilityRate: Double?
     public var lossBreakdown: TargetableCoverageBreakdownResponse
 
     init(refreshedAt: Date?, metric: StoredTargetableCoverageMetric) {
         self.refreshedAt = refreshedAt
         self.installationFreshnessSeconds = metric.installationFreshnessSeconds
         self.presenceFreshnessSeconds = metric.presenceFreshnessSeconds
+        self.hardStalePresenceThresholdSeconds = metric.hardStalePresenceThresholdSeconds
         self.activeSubscribedInstallationCount = metric.activeSubscribedInstallationCount
         self.targetableInstallationCount = metric.targetableInstallationCount
         self.targetableRate = OperatorDashboardCalculations.rate(
             numerator: metric.targetableInstallationCount,
+            denominator: metric.activeSubscribedInstallationCount
+        )
+        self.candidateQueryEligibleInstallationCount = metric.candidateQueryEligibleInstallationCount
+        self.hardStalePresenceCount = metric.hardStalePresenceCount
+        self.candidateQueryEligibilityRate = OperatorDashboardCalculations.rate(
+            numerator: metric.candidateQueryEligibleInstallationCount,
             denominator: metric.activeSubscribedInstallationCount
         )
         self.lossBreakdown = .init(

@@ -742,8 +742,10 @@ enum OperatorDashboardPageRenderer {
           }
 
           function renderCoverageCard(metric) {
-            return renderCard('Fresh targetable coverage', formatPercent(metric.targetableRate), metric.refreshedAt, [
-              { label: 'Targetable', value: `${metric.targetableInstallationCount} / ${metric.activeSubscribedInstallationCount}` },
+            return renderCard('Candidate-query eligibility', formatPercent(metric.candidateQueryEligibilityRate), metric.refreshedAt, [
+              { label: 'Eligible ≤24h', value: `${metric.candidateQueryEligibleInstallationCount} / ${metric.activeSubscribedInstallationCount}` },
+              { label: 'Excluded >24h', value: String(metric.hardStalePresenceCount) },
+              { label: 'Fresh targetable (≤6h)', value: `${metric.targetableInstallationCount} / ${metric.activeSubscribedInstallationCount}` },
               { label: 'Missing token', value: String(metric.lossBreakdown.missingDeviceTokenCount) },
               { label: 'Stale install', value: String(metric.lossBreakdown.staleInstallationHeartbeatCount) },
               { label: 'Stale presence', value: String(metric.lossBreakdown.stalePresenceCount) },
@@ -1278,11 +1280,13 @@ enum OperatorDashboardPageRenderer {
 
     private static func coverageCard(_ metric: TargetableCoverageMetricResponse) -> String {
         card(
-            title: "Fresh targetable coverage",
-            primary: maybePercent(metric.targetableRate),
+            title: "Candidate-query eligibility",
+            primary: maybePercent(metric.candidateQueryEligibilityRate),
             refreshedAt: metric.refreshedAt,
             lines: [
-                ("Targetable", "\(metric.targetableInstallationCount) / \(metric.activeSubscribedInstallationCount)"),
+                ("Eligible ≤24h", "\(metric.candidateQueryEligibleInstallationCount) / \(metric.activeSubscribedInstallationCount)"),
+                ("Excluded >24h", "\(metric.hardStalePresenceCount)"),
+                ("Fresh targetable (≤6h)", "\(metric.targetableInstallationCount) / \(metric.activeSubscribedInstallationCount)"),
                 ("Missing token", "\(metric.lossBreakdown.missingDeviceTokenCount)"),
                 ("Stale install", "\(metric.lossBreakdown.staleInstallationHeartbeatCount)"),
                 ("Stale presence", "\(metric.lossBreakdown.stalePresenceCount)"),
