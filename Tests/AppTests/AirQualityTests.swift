@@ -5,6 +5,73 @@ import Testing
 
 @Suite("AirNow AQI normalization")
 struct AirQualityTests {
+    @Test("AirNow client preserves the request and response contract")
+    func airNowClientPreservesRequestAndResponseContract() async throws {
+        let responseData = Data("""
+        [{
+          "dateObserved":"2026-07-12",
+          "hourObserved":"20:00",
+          "localTimeZone":"MDT",
+          "parameterName":"PM2.5",
+          "nowcastAQI":20,
+          "aqiCategoryName":"Good"
+        }]
+        """.utf8)
+        let httpClient = AirNowHTTPClientStub(
+            plannedResponse: HTTPResponse(status: 200, headers: [:], data: responseData)
+        )
+        let client = DefaultAirNowClient(
+            apiKey: "test-api-key",
+            http: httpClient,
+            baseURL: URL(string: "https://airnow.example.test")!
+        )
+
+        let observations = try await client.fetchCurrentObservations(
+            latitude: 39.7392,
+            longitude: -104.9903
+        )
+
+        #expect(observations.count == 1)
+        #expect(observations[0].aqi == 20)
+        #expect(httpClient.requests.count == 1)
+
+        guard let request = httpClient.requests.first else {
+            Issue.record("Expected one recorded AirNow request.")
+            return
+        }
+
+        #expect(request.url.path == "/aq/observation/current/ziplatlong")
+        #expect(request.headers["Accept"] == "application/json")
+
+        let queryItems = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value) })
+        #expect(query["format"] == "application/json")
+        #expect(query["latitude"] == "39.7392")
+        #expect(query["longitude"] == "-104.9903")
+        #expect(query["distance"] == "25")
+        #expect(query["API_KEY"] == "test-api-key")
+
+        let failingClient = AirNowHTTPClientStub(
+            plannedResponse: HTTPResponse(status: 503, headers: [:], data: nil)
+        )
+        let failingAirNowClient = DefaultAirNowClient(
+            apiKey: "test-api-key",
+            http: failingClient,
+            baseURL: URL(string: "https://airnow.example.test")!
+        )
+
+        do {
+            _ = try await failingAirNowClient.fetchCurrentObservations(latitude: 39.7392, longitude: -104.9903)
+            Issue.record("Expected a non-2xx AirNow response to throw.")
+        } catch let error as AirNowClientError {
+            guard case .upstreamFailure(let status) = error else {
+                Issue.record("Expected upstreamFailure, got \(error).")
+                return
+            }
+            #expect(status == 503)
+        }
+    }
+
     @Test("provider observations decode the live AirNow payload")
     func observationsDecode() throws {
         let observations = try JSONDecoder().decode([AirNowObservation].self, from: Data("""
@@ -97,4 +164,47 @@ private struct StubStormSetupH3Resolver: StormSetupH3Resolving {
             centroid: StormSetupCentroid(latitude: 39.7392, longitude: -104.9903)
         )
     }
+}
+
+private final class AirNowHTTPClientStub: HTTPClient, @unchecked Sendable {
+    struct Request: Sendable {
+        let url: URL
+        let headers: [String: String]
+    }
+
+    private let plannedResponse: HTTPResponse
+    private(set) var requests: [Request] = []
+
+    init(plannedResponse: HTTPResponse) {
+        self.plannedResponse = plannedResponse
+    }
+
+    func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
+        requests.append(Request(url: url, headers: headers))
+        return plannedResponse
+    }
+
+    func head(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func post(
+        _ url: URL,
+        headers: [String: String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String: String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await get(url, headers: headers)
+    }
+
+    func clearCache() {}
 }

@@ -234,3 +234,120 @@
 ### 8. No fix recommended
 - Evidence inspected: the four commits in the window above, plus the direct code paths for Anvil preview/analysis, surface loading, request assembly, pressure-artifact lookup, and the focused `HrrrAnvilSurfaceProfileLoadingTests` test suite.
 - Implementation recommended: `no`
+
+## 2026-07-16
+
+### 1. Repos scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Last automation run marker: `2026-07-09T16:07:08.815Z`
+- Window used: commits after `2026-07-09T16:07:08Z`
+- Commits inspected:
+  - `a7b277d` (`Separate tornado viability from the Storm Setup current response`)
+  - `5514f5a` (`update pkgs and test`)
+  - `ffa751e` (`Add current AirNow AQI endpoint`)
+  - `139f10b` (`Fix airnow payload parsing, fix airnow api url`)
+
+### 3. Highest-risk changed areas
+- AirNow client request construction and payload decoding (`Sources/App/AirQuality/AirNowClient.swift`, `Sources/App/AirQuality/AirNowObservation.swift`)
+- Air quality provider normalization and short-lived cache behavior (`Sources/App/AirQuality/AirQualityProvider.swift`)
+- Storm Setup current-response contract and tornado-viability response mapping (`Sources/App/StormSetup/StormSetupCurrentResponse.swift`, `Sources/App/StormSetup/StormSetupProvider.swift`)
+- Storm Setup controller request validation and response contract (`Sources/App/Controllers/StormSetupController.swift`)
+
+### 4. Findings table
+
+| Bug | Repo | Evidence | Impact | Confidence | Minimal fix | Validation |
+|---|---|---|---|---|---|---|
+| No credible bug found | `arcus-signal` | Reviewed the four commits above, the changed AirNow and Storm Setup source paths, and the focused tests `AirQualityTests`, `StormSetupCurrentResponseDTOTests`, `StormSetupProviderTests`, and `StormSetupControllerTests`. All targeted tests passed. | No confirmed defect to fix. | High | None. | No implementation required; continue with the next weekly scan. |
+
+### 5. Top recommended fix
+- No fix recommended.
+- Why it matters: the inspected commit window and the affected request/response paths were internally consistent, and the focused tests passed.
+- Expected files touched: none.
+- Estimated churn: none.
+- Regression risk: none.
+
+### 6. Watchlist
+- No low-confidence bug candidates were promoted. The only remaining concern was contract drift risk at the AirNow boundary, but the local tests now cover the current payload shape and the provider/controller behavior.
+
+### 7. Out-of-scope notes
+- No sibling repositories were scanned in this run.
+
+### 8. No fix recommended
+- Evidence inspected: the four commits in the window above, direct inspection of the AirNow and Storm Setup source paths, and focused `swift test` runs for `AirQualityTests`, `StormSetupCurrentResponseDTOTests`, `StormSetupProviderTests`, and `StormSetupControllerTests`.
+- Implementation recommended: `no`
+
+## 2026-07-23
+
+### 1. Repository scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Last automation run marker: `2026-07-16T16:10:29Z`
+- Window used: commits after `2026-07-16T16:10:29Z` through `2026-07-23`
+- Commits found: none
+- Fallback strategy: current-state inspection on the default branch (`main`) of the three highest-risk areas: notification/outbox delivery, NWS alert lifecycle, and device presence/H3 targeting.
+
+### 3. Highest-risk changed areas
+- Notification delivery and exactly-once boundary (`Sources/App/Jobs/NotificationSendJob.swift`, `Sources/App/lib/DispatchAgent.swift`)
+- NWS alert expiry/cancellation lifecycle (`Sources/App/Jobs/IngestNWSAlertsJob.swift`, `Sources/App/Models/NWS/ArcusEvent.swift`, `Sources/App/Models/NWS/ArcusSeriesModel.swift`)
+- Device presence and H3/UGC targeting (`Sources/App/Jobs/TargetEventRevisionJob.swift`, `Sources/App/Models/Device/DevicePresenceModel.swift`)
+
+### 4. Findings table
+
+| Bug | Repo | Evidence | Impact | Confidence | Minimal fix | Validation |
+|---|---|---|---|---|---|---|
+| Queued notification jobs can send after an alert ends or is cancelled | `arcus-signal` | `Sources/App/Jobs/NotificationSendJob.swift:138-174` loads the current series and gates only on `currentRevisionUrn`; the end-time filter at line 143 is commented out and no `state` check exists before candidate resolution and APNs delivery. `Sources/App/Models/NWS/ArcusEvent.swift:308-314` derives expired state from `ends`, while `Sources/App/Jobs/IngestNWSAlertsJob.swift:203-228` and `:467-495` persist expired, ended, and cancelled lifecycle states. `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift` covers stale presence and ledger behavior but has no ended/cancelled alert case. | A delayed or retried send-lane job can deliver an obsolete severe-weather warning after it is no longer active, creating a false user-visible awareness signal. | High | Add a single delivery-boundary guard after loading the series that no-ops unless the current series is active and has not passed its authoritative end time. Record a distinct no-op reason for observability. Do not change targeting or outbox architecture. | Unit/integration: seed current-revision series rows in `ended`, `expired`, and `cancelled` states and an active row with `ends <= now`; assert zero sender calls and no ledger claim. Add an active future-ending control that still sends. |
+
+### 5. Top recommended fix
+- Highest-priority bug: block APNs delivery for ended, expired, or cancelled current series.
+- Why it matters: revision freshness alone does not prove that a severe-weather alert remains active when a queued job finally runs.
+- Expected files touched:
+  - `Sources/App/Jobs/NotificationSendJob.swift`
+  - `Sources/App/Models/Notification/NotificationSendAttemptModel.swift` if a dedicated no-op reason is added
+  - `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`
+- Estimated churn: small, approximately 25-60 LOC.
+- Regression risk: low; the change narrows delivery at the final boundary without altering ingestion, targeting, or idempotency.
+
+### 6. Watchlist
+- `Sources/App/lib/DispatchAgent.swift`: rows are marked `done` only after queue dispatch returns. A database update failure after successful dispatch can enqueue the job more than once, but the notification ledger should prevent duplicate APNs effects. Promote only if logs or a fault-injection test show duplicate sends or a ledger bypass.
+
+### 7. Out-of-scope notes
+- Sibling repositories and external client implementations were intentionally not scanned. No cross-repository findings were included.
+
+### 8. Implementation recommendation
+- Implementation is recommended for the final delivery-boundary lifecycle guard.
+- Focused tests were attempted but SwiftPM manifest evaluation was blocked by the automation sandbox (`sandbox_apply: Operation not permitted`); no test result is claimed.
+
+### Audit entry (short)
+- Date: `2026-07-23`
+- Repository reviewed: `arcus-signal`
+- Workflow reviewed: weekly bug scan (audit-only, high-risk current-state fallback)
+- Commit window inspected: after `2026-07-16T16:10:29Z` through `2026-07-23`; no commits found
+- Files inspected:
+  - `Sources/App/Jobs/NotificationSendJob.swift`
+  - `Sources/App/lib/DispatchAgent.swift`
+  - `Sources/App/Jobs/IngestNWSAlertsJob.swift`
+  - `Sources/App/Jobs/TargetEventRevisionJob.swift`
+  - `Sources/App/Models/NWS/ArcusEvent.swift`
+  - `Sources/App/Models/NWS/ArcusSeriesModel.swift`
+  - `Sources/App/Models/Device/DevicePresenceModel.swift`
+  - `Sources/App/Migrations/CreateNotificationOutbox.swift`
+  - `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`
+  - `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`
+  - `Tests/AppTests/IngestNWSAlertsJobTargetingDecisionTests.swift`
+  - `Tests/AppTests/TargetEventRevisionJobFallbackTests.swift`
+- Top finding: queued notification jobs can send after the current alert has ended, expired, or been cancelled.
+- Best next fix: add an active-lifecycle guard at the start of `NotificationSendJob` delivery and cover it with boundary tests.
+- Implementation recommended: `yes`
+- Out-of-scope repositories intentionally not scanned: all sibling repositories
+
+### 9. Implementation status
+- Fixed on `2026-07-26`.
+- `NotificationSendJob` now blocks `.new` and `.update` deliveries before candidate resolution, ledger claiming, and APNs when the series is inactive or its `expires` or `ends` timestamp has elapsed.
+- Explicit `.cancelInError` and `.endedAllClear` notifications remain eligible for future intentional terminal-alert workflows.
+- Added `inactive_or_expired_series` send-attempt observability and focused unit coverage for inactive states and elapsed/future lifecycle timestamps.
+- Validation: `swift test --filter NotificationSendJobFreshnessDecisionTests` passed (7 tests).
+- Follow-up fixed on `2026-07-26`: NWS lifecycle classification and cleanup now expire alerts with an elapsed `expires` timestamp when `ends` is absent. Regression coverage verifies both canonical state derivation and persisted-series cleanup.
+- Roadmap: APNs failure retry/backoff remains unresolved and is tracked in [GitHub issue #13](https://github.com/justinrooks/arcus-signal/issues/13). The planned slice adds bounded queue retries, exponential backoff, retryable ledger reclaim, and terminal handling for permanent token failures.

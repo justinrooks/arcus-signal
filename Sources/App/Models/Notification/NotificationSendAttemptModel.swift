@@ -13,6 +13,7 @@ public enum NotificationSendNoOpReason: String, Codable, Sendable {
     case zeroCandidates = "zero_candidates"
     case allCandidatesStaleLocation = "all_candidates_stale_location"
     case allCandidatesPreviouslyClaimed = "all_candidates_previously_claimed"
+    case inactiveOrExpiredSeries = "inactive_or_expired_series"
 }
 
 public final class NotificationSendAttemptModel: Model, @unchecked Sendable {
