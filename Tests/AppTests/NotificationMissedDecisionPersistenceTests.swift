@@ -177,9 +177,10 @@ struct NotificationMissedDecisionPersistenceTests {
             #expect(result.inserted)
             #expect(result.id != nil)
 
-            let row = try await NotificationMissedDecisionModel.query(on: app.db)
-                .filter(\.$revisionUrn == revisionUrn)
-                .first()
+            let row = try await NotificationMissedDecisionModel.find(
+                result.id,
+                on: app.db
+            )
             #expect(row != nil)
             #expect(row?.freshnessState == .stale)
             #expect(row?.permissionMode == .whenInUse)

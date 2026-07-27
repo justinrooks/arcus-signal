@@ -7,15 +7,33 @@ import Vapor
 
 @Suite("Operator dashboard targetable coverage", .serialized)
 struct OperatorDashboardTargetableCoverageTests {
+    private enum Rollback: Error {
+        case afterAssertions
+    }
+
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    private func withApp(test: (Application) async throws -> Void) async throws {
+    private func withApp(test: @escaping @Sendable (any Database) async throws -> Void) async throws {
         let app = try await Application.make(.testing)
         do {
             try await configure(app, mode: .api)
             try await app.autoMigrate()
-            try await clearDeviceData(on: app.db)
-            try await test(app)
+            do {
+                try await app.db.transaction { database in
+                    guard let sql = database as? any SQLDatabase else {
+                        throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+                    }
+
+                    try await sql.raw(
+                        "LOCK TABLE device_installations, device_presence IN ACCESS EXCLUSIVE MODE"
+                    ).run()
+                    try await clearDeviceData(on: database)
+                    try await test(database)
+                    throw Rollback.afterAssertions
+                }
+            } catch Rollback.afterAssertions {
+                // Expected: keep shared integration-test tables unchanged.
+            }
         } catch {
             try? await app.asyncShutdown()
             throw error
@@ -78,7 +96,7 @@ struct OperatorDashboardTargetableCoverageTests {
 
     @Test("coverage aggregate uses the shared hard-stale cutoff without legacy heartbeat or authorization filters")
     func coverageAggregateUsesHardStaleCutoff() async throws {
-        try await withApp { app in
+        try await withApp { database in
             let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
             let staleHeartbeat = now.addingTimeInterval(-48 * 60 * 60)
 
@@ -86,38 +104,40 @@ struct OperatorDashboardTargetableCoverageTests {
                 locationAuth: .denied,
                 lastSeenAt: staleHeartbeat,
                 capturedAt: cutoff,
-                on: app.db
+                on: database
             )
             try await seedInstallation(
                 lastSeenAt: now,
                 capturedAt: cutoff.addingTimeInterval(1),
-                on: app.db
+                on: database
             )
             try await seedInstallation(
                 lastSeenAt: staleHeartbeat,
                 capturedAt: cutoff.addingTimeInterval(-1),
-                on: app.db
+                on: database
             )
             try await seedInstallation(
                 token: "",
                 lastSeenAt: now,
                 capturedAt: now,
-                on: app.db
+                on: database
             )
             try await seedInstallation(
                 lastSeenAt: now,
                 capturedAt: now,
                 hasTargetingData: false,
-                on: app.db
+                on: database
             )
-            try await seedInstallation(lastSeenAt: now, capturedAt: nil, on: app.db)
-            try await seedInstallation(isActive: false, lastSeenAt: now, capturedAt: now, on: app.db)
-            try await seedInstallation(isSubscribed: false, lastSeenAt: now, capturedAt: now, on: app.db)
+            try await seedInstallation(lastSeenAt: now, capturedAt: nil, on: database)
+            try await seedInstallation(isActive: false, lastSeenAt: now, capturedAt: now, on: database)
+            try await seedInstallation(isSubscribed: false, lastSeenAt: now, capturedAt: now, on: database)
 
-            try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
 
-            let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
-            let coverage = snapshot.targetableCoverage
+            let coverage = try await OperatorDashboardSnapshotRefresher()
+                .loadTargetableCoverage(on: sql, now: now)
             #expect(coverage.hardStalePresenceThresholdSeconds == Int(LocationFreshnessPolicy.hardStaleThreshold))
             #expect(coverage.activeSubscribedInstallationCount == 6)
             #expect(coverage.candidateQueryEligibleInstallationCount == 2)

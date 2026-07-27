@@ -247,7 +247,7 @@ struct OperatorDashboardSnapshotRefresher {
         )
     }
 
-    private func loadTargetableCoverage(on sql: any SQLDatabase, now: Date) async throws -> StoredTargetableCoverageMetric {
+    func loadTargetableCoverage(on sql: any SQLDatabase, now: Date) async throws -> StoredTargetableCoverageMetric {
         let installationCutoff = now.addingTimeInterval(-Double(OperatorDashboardConfig.installationFreshnessThresholdSeconds))
         let presenceCutoff = now.addingTimeInterval(-Double(OperatorDashboardConfig.presenceFreshnessThresholdSeconds))
         let hardStalePresenceCutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)

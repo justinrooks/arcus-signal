@@ -8,16 +8,27 @@ import Vapor
 
 @Suite("Notification send job candidate queries", .serialized)
 struct NotificationSendJobCandidateQueryTests {
+    private enum Rollback: Error {
+        case afterAssertions
+    }
+
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    private func withApp(test: (Application) async throws -> Void) async throws {
+    private func withApp(test: @escaping @Sendable (any Database) async throws -> Void) async throws {
         let app = try await Application.make(.testing)
         do {
             let databaseURL = Environment.get("DATABASE_URL")
                 ?? "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable"
             app.databases.use(try .postgres(url: databaseURL), as: .psql)
             try await bootstrapTables(on: app.db)
-            try await test(app)
+            do {
+                try await app.db.transaction { database in
+                    try await test(database)
+                    throw Rollback.afterAssertions
+                }
+            } catch Rollback.afterAssertions {
+                // Expected: keep shared integration-test tables unchanged.
+            }
         } catch {
             try? await app.asyncShutdown()
             throw error
@@ -135,18 +146,18 @@ struct NotificationSendJobCandidateQueryTests {
 
     @Test("H3 candidates include fresh and cutoff presence while preserving installation exclusions")
     func h3CandidatesFilterHardStalePresence() async throws {
-        try await withApp { app in
+        try await withApp { database in
             let h3Cell = Int64(
                 UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(15),
                 radix: 16
             )!
-            let expected = try await seedCandidates(h3Cell: h3Cell, county: nil, on: app.db)
+            let expected = try await seedCandidates(h3Cell: h3Cell, county: nil, on: database)
             let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
 
             let candidates = try await NotificationSendJob().loadH3Candidates(
                 cells: [h3Cell],
                 capturedAtOrAfter: cutoff,
-                on: app.db
+                on: database
             )
             let actual = Set(candidates.map(\.id))
 
@@ -157,15 +168,15 @@ struct NotificationSendJobCandidateQueryTests {
 
     @Test("UGC candidates include fresh and cutoff presence while preserving installation exclusions")
     func ugcCandidatesFilterHardStalePresence() async throws {
-        try await withApp { app in
+        try await withApp { database in
             let county = "test-\(UUID().uuidString)"
-            let expected = try await seedCandidates(h3Cell: nil, county: county, on: app.db)
+            let expected = try await seedCandidates(h3Cell: nil, county: county, on: database)
             let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
 
             let candidates = try await NotificationSendJob().loadUGCCandidates(
                 ugcCodes: [county],
                 capturedAtOrAfter: cutoff,
-                on: app.db
+                on: database
             )
             let actual = Set(candidates.map(\.id))
 
