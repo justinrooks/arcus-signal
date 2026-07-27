@@ -754,8 +754,8 @@ struct AppTests {
         }
     }
 
-    @Test("NWS mapper keeps event active when only expires is in past")
-    func nwsMapperDoesNotEndWhenOnlyExpiresPassed() throws {
+    @Test("NWS mapper marks event expired when only expires is in past")
+    func nwsMapperMarksExpiredWhenOnlyExpiresPassed() throws {
         let json = """
         {
           "type": "FeatureCollection",
@@ -784,7 +784,7 @@ struct AppTests {
         let events = decoded.toArcusEvents(now: isoDate("2026-02-21T16:30:00Z"))
 
         #expect(events.count == 1)
-        #expect(events.first?.state == .active)
+        #expect(events.first?.state == .expired)
     }
 
     @Test("NWS mapper preserves reference identifiers on ArcusEvent")
