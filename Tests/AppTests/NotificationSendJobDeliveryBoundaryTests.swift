@@ -76,6 +76,60 @@ struct NotificationSendJobDeliveryBoundaryTests {
             """).run()
 
         try await sql.raw("""
+            ALTER TABLE arcus_series
+              ADD COLUMN IF NOT EXISTS sent TIMESTAMP,
+              ADD COLUMN IF NOT EXISTS effective TIMESTAMP,
+              ADD COLUMN IF NOT EXISTS onset TIMESTAMP,
+              ADD COLUMN IF NOT EXISTS expires TIMESTAMP,
+              ADD COLUMN IF NOT EXISTS ends TIMESTAMP,
+              ADD COLUMN IF NOT EXISTS geometry JSONB,
+              ADD COLUMN IF NOT EXISTS title TEXT,
+              ADD COLUMN IF NOT EXISTS area_desc TEXT,
+              ADD COLUMN IF NOT EXISTS category TEXT,
+              ADD COLUMN IF NOT EXISTS sender_name TEXT,
+              ADD COLUMN IF NOT EXISTS headline TEXT,
+              ADD COLUMN IF NOT EXISTS description TEXT,
+              ADD COLUMN IF NOT EXISTS instructions TEXT,
+              ADD COLUMN IF NOT EXISTS response TEXT,
+              ADD COLUMN IF NOT EXISTS status TEXT,
+              ADD COLUMN IF NOT EXISTS tornado_detection TEXT,
+              ADD COLUMN IF NOT EXISTS tornado_damage_threat TEXT,
+              ADD COLUMN IF NOT EXISTS max_wind_gust TEXT,
+              ADD COLUMN IF NOT EXISTS max_hail_size TEXT,
+              ADD COLUMN IF NOT EXISTS wind_threat TEXT,
+              ADD COLUMN IF NOT EXISTS hail_threat TEXT,
+              ADD COLUMN IF NOT EXISTS thunderstorm_damage_threat TEXT,
+              ADD COLUMN IF NOT EXISTS flash_flood_detection TEXT,
+              ADD COLUMN IF NOT EXISTS flash_flood_damage_threat TEXT;
+            """).run()
+
+        try await sql.raw("""
+            CREATE TABLE IF NOT EXISTS alert_revisions (
+                id UUID PRIMARY KEY,
+                series_id UUID NOT NULL REFERENCES arcus_series(id) ON DELETE CASCADE,
+                revision_urn TEXT NOT NULL,
+                message_type TEXT NOT NULL,
+                sent TIMESTAMP NOT NULL,
+                received TIMESTAMP NOT NULL,
+                referenced_urns TEXT[] NOT NULL
+            );
+            """).run()
+
+        try await sql.raw("""
+            CREATE TABLE IF NOT EXISTS arcus_geolocation (
+                id UUID PRIMARY KEY,
+                series_id UUID NOT NULL REFERENCES arcus_series(id) ON DELETE CASCADE,
+                geometry JSONB NOT NULL,
+                geometry_hash TEXT NOT NULL,
+                h3_cells BIGINT[] NOT NULL,
+                h3_resolution SMALLINT NOT NULL,
+                h3_hash TEXT NOT NULL,
+                created TIMESTAMP NOT NULL,
+                updated TIMESTAMP NOT NULL
+            );
+            """).run()
+
+        try await sql.raw("""
             CREATE TABLE IF NOT EXISTS notification_ledger (
                 id UUID PRIMARY KEY,
                 installation_id UUID NOT NULL REFERENCES device_installations(installation_id) ON DELETE CASCADE,
@@ -136,6 +190,24 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 created TIMESTAMP NOT NULL
             );
             """).run()
+
+        try await sql.raw("""
+            CREATE TABLE IF NOT EXISTS notification_send_attempts (
+                id UUID PRIMARY KEY,
+                series_id UUID NOT NULL REFERENCES arcus_series(id) ON DELETE CASCADE,
+                revision_urn TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                no_op_reason TEXT,
+                candidate_resolution_reached BOOLEAN NOT NULL,
+                candidate_count INTEGER NOT NULL,
+                claimed_count INTEGER NOT NULL,
+                sent_count INTEGER NOT NULL,
+                failed_count INTEGER NOT NULL,
+                attempted_at TIMESTAMP NOT NULL
+            );
+            """).run()
     }
 
     private func makeQueueContext(app: Application) -> QueueContext {
@@ -165,7 +237,12 @@ struct NotificationSendJobDeliveryBoundaryTests {
             """).run()
     }
 
-    private func seedSeries(id: UUID, revisionUrn: String, on db: any Database) async throws {
+    private func seedSeries(
+        id: UUID,
+        revisionUrn: String,
+        state: String = EventState.active.rawValue,
+        on db: any Database
+    ) async throws {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
@@ -177,9 +254,23 @@ struct NotificationSendJobDeliveryBoundaryTests {
             VALUES
                 (\(bind: id), 'nws', 'Tornado Warning', 'https://api.weather.gov/alerts/test', \(bind: revisionUrn),
                  NOW(), 'alert', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                 'active', 'severe', 'immediate', 'observed', ARRAY[]::text[], NOW(), NOW(), NOW())
+                 \(bind: state), 'severe', 'immediate', 'observed', ARRAY[]::text[], NOW(), NOW(), NOW())
             ON CONFLICT (id) DO UPDATE
-            SET current_revision_urn = EXCLUDED.current_revision_urn
+            SET current_revision_urn = EXCLUDED.current_revision_urn,
+                state = EXCLUDED.state
+            """).run()
+    }
+
+    private func seedRevision(seriesID: UUID, revisionUrn: String, on db: any Database) async throws {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        try await sql.raw("""
+            INSERT INTO alert_revisions
+                (id, series_id, revision_urn, message_type, sent, received, referenced_urns)
+            VALUES
+                (\(bind: UUID()), \(bind: seriesID), \(bind: revisionUrn), 'alert', NOW(), NOW(), ARRAY[]::text[])
             """).run()
     }
 
@@ -354,6 +445,51 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 .first()
             #expect(ledger != nil)
             #expect(ledger?.freshnessState == .fresh)
+        }
+    }
+
+    @Test("dequeue persists inactive series no-op without resolving candidates or sending")
+    func dequeuePersistsInactiveSeriesNoOpWithoutResolvingCandidatesOrSending() async throws {
+        try await withApp { app in
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:inactive-dequeue-\(UUID().uuidString.lowercased())"
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+
+            try await seedSeries(
+                id: seriesID,
+                revisionUrn: revisionUrn,
+                state: EventState.expired.rawValue,
+                on: app.db
+            )
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            try await job.dequeue(context, payload)
+
+            let attempts = try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .all()
+            #expect(attempts.count == 1)
+
+            let attempt = try #require(attempts.first)
+            #expect(attempt.outcome == NotificationSendAttemptOutcome.noOp.rawValue)
+            #expect(attempt.noOpReason == NotificationSendNoOpReason.inactiveOrExpiredSeries.rawValue)
+            #expect(attempt.mode == NotificationTargetMode.h3.rawValue)
+            #expect(attempt.reason == NotificationReason.new.rawValue)
+            #expect(attempt.candidateResolutionReached == false)
+            #expect(attempt.candidateCount == 0)
+            #expect(attempt.claimedCount == 0)
+            #expect(attempt.sentCount == 0)
+            #expect(attempt.failedCount == 0)
+            #expect(await sender.sendCount == 0)
         }
     }
 }
