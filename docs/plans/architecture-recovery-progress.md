@@ -34,7 +34,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 01 | [#154](https://github.com/justinrooks/arcus-signal/issues/154) | 1 | Characterize notification dequeue lifecycle | None | `gpt-5.6-terra`, medium | Pending |
 | 02 | [#155](https://github.com/justinrooks/arcus-signal/issues/155) | 2 | Centralize HRRR surface-to-pressure identity | None | `gpt-5.6-terra`, high | Complete |
 | 03 | [#156](https://github.com/justinrooks/arcus-signal/issues/156) | 3 | Extract pure H3 coverage result | None | `gpt-5.6-terra`, high | Pending |
-| 04 | [#157](https://github.com/justinrooks/arcus-signal/issues/157) | 4 | Move H3 work before transaction | 03 | `gpt-5.6-sol`, high | Pending |
+| 04 | [#157](https://github.com/justinrooks/arcus-signal/issues/157) | 4 | Move H3 work before transaction | 03 | `gpt-5.6-sol`, high | Complete |
 | 05 | [#158](https://github.com/justinrooks/arcus-signal/issues/158) | 5 | Isolate notification candidate selection | 01 | `gpt-5.6-sol`, high | Pending |
 | 06 | [#159](https://github.com/justinrooks/arcus-signal/issues/159) | 6 | Isolate notification ledger persistence | 01, 05 | `gpt-5.6-sol`, high + senior review | Pending |
 | 07 | [#160](https://github.com/justinrooks/arcus-signal/issues/160) | 7 | Characterize NWS persistence flow | None | `gpt-5.6-sol`, high | Pending |
@@ -106,11 +106,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #157 - 04: Move H3 work before transaction
 
-- **Status:** Pending
+- **Status:** Complete
 - **Roadmap:** Slice 4
 - **Execution profile:** `gpt-5.6-sol`, high reasoning
 - **Dependencies:** 03
 - **Stop condition:** Transaction contains persistence only; output unchanged.
+- **Files changed:** `Sources/App/Jobs/TargetEventRevisionJob.swift`, `Tests/AppTests/TargetEventRevisionJobFallbackTests.swift`, and `docs/plans/architecture-recovery-progress.md`.
+- **Behavior:** H3 coverage and hashing now execute once before transaction creation. Supported coverage enters the unchanged geolocation/outbox transaction; unsupported-point and cover-failure results bypass it and retain the existing completion and UGC drain flow.
+- **Validation:** `swift test --filter TargetEventRevisionJobFallbackTests` passed (5 tests); `swift test --filter H3` passed (19 tests); `swift test --no-parallel` passed (437 tests). The scoped whitespace check passed; unscoped `git diff --check` remains blocked only by pre-existing trailing whitespace in `docs/Sql/Device.sql:48`.
+- **Residual risk / handoff:** No known behavior change beyond transaction placement. The internal `@Sendable` builder seam proves supported coverage reaches persistence without recomputation or normalization and cover failure creates no H3 persistence effects.
 
 ### Issue #158 - 05: Isolate notification candidate selection
 

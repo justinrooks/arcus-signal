@@ -40,7 +40,15 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
 public struct TargetEventRevisionJob: AsyncJob {
     public typealias Payload = TargetEventRevisionPayload
 
-    public init() {}
+    private let buildCoverage: @Sendable (GeoShape) throws -> H3CoverageResult
+
+    public init() {
+        self.buildCoverage = { try H3CoverageBuilder.build(for: $0) }
+    }
+
+    init(buildCoverage: @escaping @Sendable (GeoShape) throws -> H3CoverageResult) {
+        self.buildCoverage = buildCoverage
+    }
 
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
         context.logger.info(
@@ -53,8 +61,43 @@ public struct TargetEventRevisionJob: AsyncJob {
         )
 
         do {
-            let result = try await context.application.db.transaction { database in
-                try await persistGeolocation(payload, on: database, logger: context.logger)
+            let coverage = try buildCoverage(payload.geometry)
+            let result: TargetDispatchCompletionResult
+            switch coverage {
+            case .supported(let supportedCoverage):
+                context.logger.info(
+                    "Computed H3 cover",
+                    metadata: [
+                        "seriesId": .string(payload.seriesId.uuidString),
+                        "h3Count": .stringConvertible(supportedCoverage.cells.count),
+                        "h3Hash": .string(supportedCoverage.h3Hash),
+                        "geometryHash": .string(supportedCoverage.geometryHash)
+                    ]
+                )
+                result = try await context.application.db.transaction { database in
+                    try await persistGeolocation(
+                        payload,
+                        coverage: supportedCoverage,
+                        on: database,
+                        logger: context.logger
+                    )
+                }
+            case .unsupportedPoint:
+                context.logger.debug(
+                    "No polygon geometry available; skipping H3 persistence",
+                    metadata: ["seriesId": .string(payload.seriesId.uuidString)]
+                )
+                result = .unsupportedGeometry
+            case .coverFailure(let errorDescription):
+                context.logger.warning(
+                    "H3 cover computation failed; falling back to UGC notification dispatch.",
+                    metadata: [
+                        "seriesId": .string(payload.seriesId.uuidString),
+                        "revisionUrn": .string(payload.revisionUrn),
+                        "error": .string(errorDescription)
+                    ]
+                )
+                result = .unsupportedGeometry
             }
 
             try await markDispatchResult(
@@ -134,59 +177,27 @@ private extension TargetEventRevisionJob {
 
     func persistGeolocation(
         _ payload: TargetEventRevisionPayload,
+        coverage: H3Coverage,
         on database: any Database,
         logger: Logger
     ) async throws -> TargetDispatchCompletionResult {
-        let coverage = try H3CoverageBuilder.build(for: payload.geometry)
-        let cover: H3Coverage
-        switch coverage {
-        case .supported(let supportedCoverage):
-            cover = supportedCoverage
-        case .unsupportedPoint:
-            logger.debug(
-                "No polygon geometry available; skipping H3 persistence",
-                metadata: ["seriesId": .string(payload.seriesId.uuidString)]
-            )
-            return .unsupportedGeometry
-        case .coverFailure(let errorDescription):
-            logger.warning(
-                "H3 cover computation failed; falling back to UGC notification dispatch.",
-                metadata: [
-                    "seriesId": .string(payload.seriesId.uuidString),
-                    "revisionUrn": .string(payload.revisionUrn),
-                    "error": .string(errorDescription)
-                ]
-            )
-            return .unsupportedGeometry
-        }
-
-        logger.info(
-            "Computed H3 cover",
-            metadata: [
-                "seriesId": .string(payload.seriesId.uuidString),
-                "h3Count": .stringConvertible(cover.cells.count),
-                "h3Hash": .string(cover.h3Hash),
-                "geometryHash": .string(cover.geometryHash)
-            ]
-        )
-
         if let existing = try await ArcusGeolocationModel.query(on: database)
             .filter(\.$series.$id == payload.seriesId)
             .first() {
-            if existing.geometryHash == cover.geometryHash
-                && existing.h3Hash == cover.h3Hash
-                && existing.h3Resolution == cover.resolution
-                && existing.h3Cells == cover.cells {
+            if existing.geometryHash == coverage.geometryHash
+                && existing.h3Hash == coverage.h3Hash
+                && existing.h3Resolution == coverage.resolution
+                && existing.h3Cells == coverage.cells {
                 logger.debug(
                     "Geolocation unchanged; skipping update.",
                     metadata: ["seriesId": .string(payload.seriesId.uuidString)]
                 )
             } else {
                 existing.geometry = payload.geometry
-                existing.geometryHash = cover.geometryHash
-                existing.h3Cells = cover.cells
-                existing.h3Resolution = cover.resolution
-                existing.h3Hash = cover.h3Hash
+                existing.geometryHash = coverage.geometryHash
+                existing.h3Cells = coverage.cells
+                existing.h3Resolution = coverage.resolution
+                existing.h3Hash = coverage.h3Hash
                 try await existing.update(on: database)
                 logger.info("Updated geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
             }
@@ -194,10 +205,10 @@ private extension TargetEventRevisionJob {
             let geoRecord = ArcusGeolocationModel(
                 series: payload.seriesId,
                 geometry: payload.geometry,
-                geometryHash: cover.geometryHash,
-                h3Cells: cover.cells,
-                h3Resolution: cover.resolution,
-                h3Hash: cover.h3Hash
+                geometryHash: coverage.geometryHash,
+                h3Cells: coverage.cells,
+                h3Resolution: coverage.resolution,
+                h3Hash: coverage.h3Hash
             )
             try await geoRecord.create(on: database)
             logger.info("Created geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
