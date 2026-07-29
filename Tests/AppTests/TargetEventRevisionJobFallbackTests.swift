@@ -2,7 +2,6 @@
 import Fluent
 import Foundation
 import Queues
-import SwiftyH3
 import Testing
 import Vapor
 
@@ -72,42 +71,10 @@ struct TargetEventRevisionJobFallbackTests {
     }
 
     private func h3Cover(for geometry: GeoShape) throws -> (geometryHash: String, h3Cells: [Int64], h3Hash: String) {
-        let geometryHash = try StableContentHasher.sha256Hex(of: geometry, dateEncodingStrategy: .deferredToDate)
-
-        switch geometry {
-        case .point:
-            throw Abort(.badRequest, reason: "Test fixture requires polygon geometry.")
-        case .polygon(let rings):
-            let cells = try h3Cells(for: rings)
-            let sorted = Array(Set(cells)).sorted()
-            return (geometryHash, sorted, h3Hash(for: sorted))
-        case .multiPolygon:
+        guard case .supported(let coverage) = try H3CoverageBuilder.build(for: geometry) else {
             throw Abort(.badRequest, reason: "Test fixture requires polygon geometry.")
         }
-    }
-
-    private func h3Cells(for rings: [[GeoShape.GeoCoordinate]]) throws -> [Int64] {
-        guard let boundaryRing = rings.first, !boundaryRing.isEmpty else {
-            throw SwiftyH3Error.invalidInput
-        }
-
-        let boundary: H3Loop = boundaryRing.map { coordinate in
-            H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
-        }
-
-        let polygon = H3Polygon(boundary, holes: [])
-        let resolution = H3Cell.Resolution(rawValue: Int32(8)) ?? .res8
-        let cells = try polygon.cells(at: resolution)
-        return cells.map { Int64(bitPattern: $0.id) }
-    }
-
-    private func h3Hash(for sortedCells: [Int64]) -> String {
-        var data = Data(capacity: sortedCells.count * MemoryLayout<UInt64>.size)
-        for value in sortedCells {
-            var bigEndian = UInt64(bitPattern: value).bigEndian
-            withUnsafeBytes(of: &bigEndian) { data.append(contentsOf: $0) }
-        }
-        return StableContentHasher.sha256Hex(of: data)
+        return (coverage.geometryHash, coverage.cells, coverage.h3Hash)
     }
 
     @Test("unsupported geometry enqueues and drains ugc fallback without draining h3")

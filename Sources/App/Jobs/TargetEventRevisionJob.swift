@@ -1,7 +1,6 @@
 import Fluent
 import Foundation
 import Queues
-import SwiftyH3
 import Vapor
 
 public struct TargetEventRevisionPayload: Codable, Sendable {
@@ -39,7 +38,6 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
 }
 
 public struct TargetEventRevisionJob: AsyncJob {
-    private let h3Resolution: Int16 = 8
     public typealias Payload = TargetEventRevisionPayload
 
     public init() {}
@@ -139,47 +137,45 @@ private extension TargetEventRevisionJob {
         on database: any Database,
         logger: Logger
     ) async throws -> TargetDispatchCompletionResult {
-        let cover: (cells: [Int64], hash: String)?
-        do {
-            cover = try buildH3Cover(for: payload.geometry)
-        } catch {
-            logger.warning(
-                "H3 cover computation failed; falling back to UGC notification dispatch.",
-                metadata: [
-                    "seriesId": .string(payload.seriesId.uuidString),
-                    "revisionUrn": .string(payload.revisionUrn),
-                    "error": .string(String(reflecting: error))
-                ]
-            )
-            return .unsupportedGeometry
-        }
-
-        guard let cover else {
+        let coverage = try H3CoverageBuilder.build(for: payload.geometry)
+        let cover: H3Coverage
+        switch coverage {
+        case .supported(let supportedCoverage):
+            cover = supportedCoverage
+        case .unsupportedPoint:
             logger.debug(
                 "No polygon geometry available; skipping H3 persistence",
                 metadata: ["seriesId": .string(payload.seriesId.uuidString)]
             )
             return .unsupportedGeometry
+        case .coverFailure(let errorDescription):
+            logger.warning(
+                "H3 cover computation failed; falling back to UGC notification dispatch.",
+                metadata: [
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn),
+                    "error": .string(errorDescription)
+                ]
+            )
+            return .unsupportedGeometry
         }
-
-        let geometryHash = try hashGeometry(payload.geometry)
 
         logger.info(
             "Computed H3 cover",
             metadata: [
                 "seriesId": .string(payload.seriesId.uuidString),
                 "h3Count": .stringConvertible(cover.cells.count),
-                "h3Hash": .string(cover.hash),
-                "geometryHash": .string(geometryHash)
+                "h3Hash": .string(cover.h3Hash),
+                "geometryHash": .string(cover.geometryHash)
             ]
         )
 
         if let existing = try await ArcusGeolocationModel.query(on: database)
             .filter(\.$series.$id == payload.seriesId)
             .first() {
-            if existing.geometryHash == geometryHash
-                && existing.h3Hash == cover.hash
-                && existing.h3Resolution == h3Resolution
+            if existing.geometryHash == cover.geometryHash
+                && existing.h3Hash == cover.h3Hash
+                && existing.h3Resolution == cover.resolution
                 && existing.h3Cells == cover.cells {
                 logger.debug(
                     "Geolocation unchanged; skipping update.",
@@ -187,10 +183,10 @@ private extension TargetEventRevisionJob {
                 )
             } else {
                 existing.geometry = payload.geometry
-                existing.geometryHash = geometryHash
+                existing.geometryHash = cover.geometryHash
                 existing.h3Cells = cover.cells
-                existing.h3Resolution = h3Resolution
-                existing.h3Hash = cover.hash
+                existing.h3Resolution = cover.resolution
+                existing.h3Hash = cover.h3Hash
                 try await existing.update(on: database)
                 logger.info("Updated geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
             }
@@ -198,10 +194,10 @@ private extension TargetEventRevisionJob {
             let geoRecord = ArcusGeolocationModel(
                 series: payload.seriesId,
                 geometry: payload.geometry,
-                geometryHash: geometryHash,
+                geometryHash: cover.geometryHash,
                 h3Cells: cover.cells,
-                h3Resolution: h3Resolution,
-                h3Hash: cover.hash
+                h3Resolution: cover.resolution,
+                h3Hash: cover.h3Hash
             )
             try await geoRecord.create(on: database)
             logger.info("Created geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
@@ -238,64 +234,6 @@ private extension TargetEventRevisionJob {
         row.lastError = errorMessage
         try await row.update(on: database)
     }
-    
-    // MARK: H3 HASHING
-    private func buildH3Cover(
-        for geometry: GeoShape
-    ) throws -> (cells: [Int64], hash: String)? {
-        switch geometry {
-        case .point:
-            return nil
-        case .polygon(let rings):
-            let cells = try h3Cells(for: rings)
-            let sorted = Array(Set(cells)).sorted()
-            return (sorted, hashCells(sorted))
-        case .multiPolygon(let polygons):
-            var mergedCells: Set<Int64> = []
-            for polygon in polygons {
-                let polygonCells = try h3Cells(for: polygon)
-                mergedCells.formUnion(polygonCells)
-            }
-            let sorted = Array(mergedCells).sorted()
-            return (sorted, hashCells(sorted))
-        }
-    }
-
-    private func h3Cells(
-        for rings: [[GeoShape.GeoCoordinate]]
-    ) throws -> [Int64] {
-        guard let boundaryRing = rings.first, !boundaryRing.isEmpty else {
-            throw SwiftyH3Error.invalidInput
-        }
-        let boundary: H3Loop = boundaryRing.map { coordinate in
-            H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
-        }
-        
-        let holes: [H3Loop] = rings.dropFirst().map { holeRing in
-            holeRing.map { coordinate in
-                H3LatLng(latitudeDegs: coordinate.lat, longitudeDegs: coordinate.lon)
-            }
-        }
-        
-        let polygon = H3Polygon(boundary, holes: holes)
-        let resolution = H3Cell.Resolution(rawValue: Int32(h3Resolution)) ?? .res8
-        let cells = try polygon.cells(at: resolution)
-        return cells.map { Int64(bitPattern: $0.id) }
-    }
-
-    private func hashCells(_ sortedCells: [Int64]) -> String {
-        var data = Data(capacity: sortedCells.count * MemoryLayout<UInt64>.size)
-        for v in sortedCells {
-            var u = UInt64(bitPattern: v).bigEndian
-            withUnsafeBytes(of: &u) { data.append(contentsOf: $0) }
-        }
-        return StableContentHasher.sha256Hex(of: data)
-    }
-
-    private func hashGeometry(_ geometry: GeoShape) throws -> String {
-        try StableContentHasher.sha256Hex(of: geometry, dateEncodingStrategy: .deferredToDate)
-    }
-
     private func geometryType(_ geometry: GeoShape) -> String {
         switch geometry {
         case .point:
