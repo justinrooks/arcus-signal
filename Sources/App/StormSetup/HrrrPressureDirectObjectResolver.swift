@@ -144,7 +144,7 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
 
         for candidate in resolution.candidates {
             try Task.checkCancellation()
-            let pressureCandidate = makePressureCandidate(from: candidate)
+            let pressureCandidate = HrrrSurfaceToPressureCandidatePolicy.makePressureCandidate(from: candidate)
             let source = urlBuilder.makeSourceMetadata(for: pressureCandidate)
 
             let idxProbe = try await remoteObjectChecker.probe(url: source.idxURL ?? urlBuilder.makeIdxURL(for: pressureCandidate))
@@ -172,18 +172,6 @@ struct DefaultHrrrPressureDirectObjectResolver: HrrrPressureDirectObjectResolvin
         }
 
         throw HrrrPressureDirectObjectResolverError.noAvailableCandidate(failures)
-    }
-
-    private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
-        return HrrrRunCandidate(
-            model: candidate.model,
-            product: .wrfprsf,
-            domain: candidate.domain,
-            runTime: runTime,
-            forecastHour: candidate.forecastHour + 1,
-            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
-        )
     }
 
     private func probeSummary(for probe: HrrrRemoteObjectProbeResult) -> String {

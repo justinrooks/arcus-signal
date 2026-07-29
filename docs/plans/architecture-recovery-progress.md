@@ -32,7 +32,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | Seq. | GitHub issue | Roadmap | Title | Dependencies | Execution profile | Status |
 |---:|---|---|---|---|---|---|
 | 01 | [#154](https://github.com/justinrooks/arcus-signal/issues/154) | 1 | Characterize notification dequeue lifecycle | None | `gpt-5.6-terra`, medium | Pending |
-| 02 | [#155](https://github.com/justinrooks/arcus-signal/issues/155) | 2 | Centralize HRRR surface-to-pressure identity | None | `gpt-5.6-terra`, high | Pending |
+| 02 | [#155](https://github.com/justinrooks/arcus-signal/issues/155) | 2 | Centralize HRRR surface-to-pressure identity | None | `gpt-5.6-terra`, high | Complete |
 | 03 | [#156](https://github.com/justinrooks/arcus-signal/issues/156) | 3 | Extract pure H3 coverage result | None | `gpt-5.6-terra`, high | Pending |
 | 04 | [#157](https://github.com/justinrooks/arcus-signal/issues/157) | 4 | Move H3 work before transaction | 03 | `gpt-5.6-sol`, high | Pending |
 | 05 | [#158](https://github.com/justinrooks/arcus-signal/issues/158) | 5 | Isolate notification candidate selection | 01 | `gpt-5.6-sol`, high | Pending |
@@ -82,11 +82,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #155 - 02: Centralize HRRR surface-to-pressure identity
 
-- **Status:** Pending
+- **Status:** Complete
 - **Roadmap:** Slice 2
 - **Execution profile:** `gpt-5.6-terra`, high reasoning
 - **Dependencies:** None
 - **Stop condition:** One production mapping owner; ordering and identities unchanged.
+- **Files changed:** `Sources/App/StormSetup/HrrrSourceModels.swift`, `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`, `Sources/App/StormSetup/HrrrPressureDirectObjectResolver.swift`, `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`, `Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`, and `Tests/AppTests/StormSetupHrrrSourceTests.swift`.
+- **Behavior:** `HrrrSurfaceToPressureCandidatePolicy` is the sole owner of the existing prior-hour run, next forecast-hour, `wrfprsf`, default pressure field-set conversion. Probe, direct-object resolution, preview, and dashboard readiness use it without changing iteration, lookup, cancellation, or fallback flow.
+- **Validation:** `swift test --filter StormSetupHrrrSourceTests` passed (16 tests); `swift test --filter AnvilProfilePreviewProviderTests` passed (17 tests); `swift test --filter HRRRPressureArtifactProbeServiceTests` passed (10 tests); `swift test --filter OperatorDashboardPressureArtifactTests` passed (9 tests). `git diff --check` is blocked by pre-existing trailing whitespace in `docs/Sql/Device.sql`.
+- **Residual risk / handoff:** No slice-owned residual risk. Re-run `git diff --check` after the unrelated `docs/Sql/Device.sql` whitespace is resolved.
 
 ### Issue #156 - 03: Extract pure H3 coverage result
 

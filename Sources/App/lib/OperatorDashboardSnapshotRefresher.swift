@@ -507,7 +507,9 @@ struct OperatorDashboardSnapshotRefresher {
         let runResolution = hrrrRunResolver.resolveRunCandidates()
         let pressureResolution = HrrrRunResolution(
             targetValidTime: runResolution.targetValidTime,
-            candidates: runResolution.candidates.map(makePressureCandidate(from:))
+            candidates: runResolution.candidates.map {
+                HrrrSurfaceToPressureCandidatePolicy.makePressureCandidate(from: $0)
+            }
         )
         let staleCutoff = pressureResolution.targetValidTime.addingTimeInterval(
             -app.stormSetupConfiguration.pressureArtifactMaxStaleAgeSeconds
@@ -649,18 +651,6 @@ struct OperatorDashboardSnapshotRefresher {
         default:
             return "Newest catalog row is \(row.status)."
         }
-    }
-
-    private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
-        return HrrrRunCandidate(
-            model: candidate.model,
-            product: .wrfprsf,
-            domain: candidate.domain,
-            runTime: runTime,
-            forecastHour: candidate.forecastHour + 1,
-            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
-        )
     }
 
     private func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
