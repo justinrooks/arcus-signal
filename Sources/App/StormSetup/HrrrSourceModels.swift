@@ -95,6 +95,20 @@ struct HrrrRunCandidate: Content, Sendable, Equatable {
     }
 }
 
+enum HrrrSurfaceToPressureCandidatePolicy {
+    static func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
+        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
+        return HrrrRunCandidate(
+            model: candidate.model,
+            product: .wrfprsf,
+            domain: candidate.domain,
+            runTime: runTime,
+            forecastHour: candidate.forecastHour + 1,
+            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
+        )
+    }
+}
+
 struct HrrrRunResolution: Sendable, Equatable {
     let targetValidTime: Date
     let candidates: [HrrrRunCandidate]

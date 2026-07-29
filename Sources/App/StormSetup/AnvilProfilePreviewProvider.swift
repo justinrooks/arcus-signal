@@ -140,12 +140,14 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         if let pressureArtifactCatalogLookupService {
             let pressureResolution = HrrrRunResolution(
                 targetValidTime: runResolution.targetValidTime,
-                candidates: runResolution.candidates.map(makePressureCandidate(from:))
+                candidates: runResolution.candidates.map {
+                    HrrrSurfaceToPressureCandidatePolicy.makePressureCandidate(from: $0)
+                }
             )
 
             for candidate in runResolution.candidates {
                 try Task.checkCancellation()
-                let pressureCandidate = makePressureCandidate(from: candidate)
+                let pressureCandidate = HrrrSurfaceToPressureCandidatePolicy.makePressureCandidate(from: candidate)
                 var readyArtifact: PressureArtifactCatalogReadyArtifact?
                 do {
                     readyArtifact = try await pressureArtifactCatalogLookupService.readyArtifact(
@@ -232,7 +234,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
 
         for candidate in runResolution.candidates {
             try Task.checkCancellation()
-            let pressureCandidate = makePressureCandidate(from: candidate)
+            let pressureCandidate = HrrrSurfaceToPressureCandidatePolicy.makePressureCandidate(from: candidate)
             do {
                 let preview = try await previewPressureCandidate(
                     pressureCandidate,
@@ -601,18 +603,6 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         return SurfaceLevelLoadResult(
             level: surfaceLevel,
             subsetCacheHit: loadResult.subsetCacheResult.cacheHit
-        )
-    }
-
-    private func makePressureCandidate(from candidate: HrrrRunCandidate) -> HrrrRunCandidate {
-        let runTime = StormSetupUTC.calendar.date(byAdding: .hour, value: -1, to: candidate.runTime) ?? candidate.runTime
-        return HrrrRunCandidate(
-            model: candidate.model,
-            product: .wrfprsf,
-            domain: candidate.domain,
-            runTime: runTime,
-            forecastHour: candidate.forecastHour + 1,
-            fieldSetVersion: HrrrProduct.wrfprsf.defaultFieldSetVersion
         )
     }
 

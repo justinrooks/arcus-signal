@@ -30,6 +30,63 @@ struct StormSetupHrrrSourceTests {
         #expect(HrrrProduct.wrfprsf.defaultFieldSetVersion == .tornadoPressureV2)
     }
 
+    @Test("surface-to-pressure policy preserves pressure artifact identity")
+    func surfaceToPressurePolicyPreservesPressureArtifactIdentity() throws {
+        let cases: [(surface: HrrrRunCandidate, expected: HrrrRunCandidate)] = [
+            (
+                HrrrRunCandidate(
+                    runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+                    forecastHour: 0
+                ),
+                HrrrRunCandidate(
+                    product: .wrfprsf,
+                    runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+                    forecastHour: 1,
+                    fieldSetVersion: .tornadoPressureV2
+                )
+            ),
+            (
+                HrrrRunCandidate(
+                    runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 21),
+                    forecastHour: 9
+                ),
+                HrrrRunCandidate(
+                    product: .wrfprsf,
+                    runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 20),
+                    forecastHour: 10,
+                    fieldSetVersion: .tornadoPressureV2
+                )
+            ),
+            (
+                HrrrRunCandidate(
+                    product: .wrfprsf,
+                    runTime: makeUTCDate(year: 2026, month: 6, day: 20, hour: 0),
+                    forecastHour: 12,
+                    fieldSetVersion: .tornadoPressureV1
+                ),
+                HrrrRunCandidate(
+                    product: .wrfprsf,
+                    runTime: makeUTCDate(year: 2026, month: 6, day: 19, hour: 23),
+                    forecastHour: 13,
+                    fieldSetVersion: .tornadoPressureV2
+                )
+            )
+        ]
+
+        for testCase in cases {
+            let pressure = HrrrSurfaceToPressureCandidatePolicy.makePressureCandidate(from: testCase.surface)
+
+            #expect(pressure.model == testCase.expected.model)
+            #expect(pressure.domain == testCase.expected.domain)
+            #expect(pressure.runTime == testCase.expected.runTime)
+            #expect(pressure.forecastHour == testCase.expected.forecastHour)
+            #expect(pressure.validTime == testCase.expected.validTime)
+            #expect(pressure.validTime == testCase.surface.validTime)
+            #expect(pressure.product == testCase.expected.product)
+            #expect(pressure.fieldSetVersion == testCase.expected.fieldSetVersion)
+        }
+    }
+
     @Test("fixed clock produces ordered HRRR candidates and valid times")
     func resolverProducesOrderedCandidates() throws {
         let fixedNow = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
