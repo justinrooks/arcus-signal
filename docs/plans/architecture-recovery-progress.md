@@ -94,11 +94,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #156 - 03: Extract pure H3 coverage result
 
-- **Status:** Pending
+- **Status:** Complete
 - **Roadmap:** Slice 3
 - **Execution profile:** `gpt-5.6-terra`, high reasoning
 - **Dependencies:** None
 - **Stop condition:** Pure result extracted at the same transaction point.
+- **Files changed:** `Sources/App/Jobs/H3CoverageBuilder.swift`, `Sources/App/Jobs/TargetEventRevisionJob.swift`, `Tests/AppTests/H3CoverageBuilderTests.swift`, and `Tests/AppTests/TargetEventRevisionJobFallbackTests.swift`.
+- **Behavior:** `H3CoverageBuilder` now owns deterministic polygon/multipolygon cover construction, signed-cell ordering, H3 hashing, and geometry hashing. `TargetEventRevisionJob` retains the same in-transaction invocation, point and cover-failure fallback logs, persistence, outbox insertion, completion, and drain ordering.
+- **Validation:** `swift test --filter TargetEventRevisionJobFallbackTests` passed (3 tests); `swift test --filter H3` passed (18 tests); `swift build` passed. Scoped whitespace checks passed; unscoped `git diff --check` remains blocked only by pre-existing trailing whitespace in `docs/Sql/Device.sql:48`.
+- **Residual risk / handoff:** Geometry-hash errors still propagate as failed jobs, while H3 cover errors retain UGC fallback. Slice #157 may move this now-characterized builder invocation before the transaction; do not alter persistence or fallback behavior.
 
 ### Issue #157 - 04: Move H3 work before transaction
 
