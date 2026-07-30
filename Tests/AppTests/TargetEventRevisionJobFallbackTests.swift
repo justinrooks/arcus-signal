@@ -133,6 +133,98 @@ struct TargetEventRevisionJobFallbackTests {
         }
     }
 
+    @Test("precomputed supported coverage is persisted unchanged")
+    func precomputedSupportedCoverageIsPersistedUnchanged() async throws {
+        try await withWorkerApp { app in
+            let now = Date()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:test-precomputed-coverage-\(UUID().uuidString.lowercased())"
+            let geometry = makePolygonGeometry()
+            let coverage = H3Coverage(
+                cells: [617_700_169_958_293_503, -617_700_170_495_164_415],
+                h3Hash: "injected-h3-hash",
+                geometryHash: "injected-geometry-hash",
+                resolution: 7
+            )
+            let payload = TargetEventRevisionPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                geometry: geometry,
+                reason: .new
+            )
+
+            try await makeSeries(id: seriesID, revisionUrn: revisionUrn, now: now).create(on: app.db)
+            try await ArcusTargetDispatchOutboxModel(
+                revisionUrn: revisionUrn,
+                seriesId: seriesID,
+                payload: payload
+            ).create(on: app.db)
+
+            let job = TargetEventRevisionJob(buildCoverage: { _ in .supported(coverage) })
+            try await job.dequeue(makeQueueContext(app: app), payload)
+
+            let geolocation = try await ArcusGeolocationModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .first()
+            #expect(geolocation?.h3Cells == coverage.cells)
+            #expect(geolocation?.h3Resolution == coverage.resolution)
+            #expect(geolocation?.geometryHash == coverage.geometryHash)
+            #expect(geolocation?.h3Hash == coverage.h3Hash)
+        }
+    }
+
+    @Test("precomputed cover failure uses ugc without h3 persistence")
+    func precomputedCoverFailureUsesUGCWithoutH3Persistence() async throws {
+        try await withWorkerApp { app in
+            let now = Date()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:test-cover-failure-\(UUID().uuidString.lowercased())"
+            let payload = TargetEventRevisionPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                geometry: makePolygonGeometry(),
+                reason: .new
+            )
+
+            try await makeSeries(id: seriesID, revisionUrn: revisionUrn, now: now).create(on: app.db)
+            try await ArcusTargetDispatchOutboxModel(
+                revisionUrn: revisionUrn,
+                seriesId: seriesID,
+                payload: payload
+            ).create(on: app.db)
+
+            let job = TargetEventRevisionJob(
+                buildCoverage: { _ in .coverFailure(errorDescription: "injected cover failure") }
+            )
+            try await job.dequeue(makeQueueContext(app: app), payload)
+
+            let targetDispatchRow = try await ArcusTargetDispatchOutboxModel.query(on: app.db)
+                .filter(\.$revisionUrn, .equal, revisionUrn)
+                .first()
+            #expect(targetDispatchRow?.result == "unsupported_geometry")
+            #expect(targetDispatchRow?.completed != nil)
+
+            let geolocation = try await ArcusGeolocationModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .first()
+            #expect(geolocation == nil)
+
+            let ugcRows = try await ArcusNotificationOutboxModel.query(on: app.db)
+                .filter(\.$revisionUrn, .equal, revisionUrn)
+                .filter(\.$mode, .equal, NotificationTargetMode.ugc.rawValue)
+                .all()
+            #expect(ugcRows.count == 1)
+            #expect(ugcRows.first?.state == "done")
+            #expect(ugcRows.first?.attempts == 1)
+
+            let h3Rows = try await ArcusNotificationOutboxModel.query(on: app.db)
+                .filter(\.$revisionUrn, .equal, revisionUrn)
+                .filter(\.$mode, .equal, NotificationTargetMode.h3.rawValue)
+                .all()
+            #expect(h3Rows.isEmpty)
+        }
+    }
+
     @Test("unchanged polygon geometry still enqueues h3 notification dispatch")
     func unchangedPolygonGeometryStillQueuesH3Notification() async throws {
         try await withWorkerApp { app in
