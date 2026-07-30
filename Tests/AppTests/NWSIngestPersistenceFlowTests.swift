@@ -158,7 +158,7 @@ struct NWSIngestPersistenceFlowTests {
                 let events = [polygonEvent, pointEvent, nilEvent]
                 let urns = events.map(\.id)
 
-                let result = try await IngestNWSAlertsJob().persistArcusEvents(
+                let result = try await NWSIngestPersistence().persistArcusEvents(
                     events,
                     on: database,
                     asOf: now,
@@ -225,13 +225,13 @@ struct NWSIngestPersistenceFlowTests {
                     geometry: .point(lon: -104.99, lat: 39.73)
                 )
 
-                let first = try await IngestNWSAlertsJob().persistArcusEvents(
+                let first = try await NWSIngestPersistence().persistArcusEvents(
                     [event],
                     on: database,
                     asOf: now,
                     logger: app.logger
                 )
-                let duplicate = try await IngestNWSAlertsJob().persistArcusEvents(
+                let duplicate = try await NWSIngestPersistence().persistArcusEvents(
                     [event],
                     on: database,
                     asOf: now,
@@ -281,7 +281,7 @@ struct NWSIngestPersistenceFlowTests {
                 )
                 let urns = [base.id, newer.id, older.id]
 
-                let result = try await IngestNWSAlertsJob().persistArcusEvents(
+                let result = try await NWSIngestPersistence().persistArcusEvents(
                     [base, newer, older],
                     on: database,
                     asOf: now,
@@ -334,7 +334,7 @@ struct NWSIngestPersistenceFlowTests {
                     geometry: polygon(offset: 0.2)
                 )
                 let bases = [older, tiedNewerA, tiedNewerB]
-                _ = try await IngestNWSAlertsJob().persistArcusEvents(
+                _ = try await NWSIngestPersistence().persistArcusEvents(
                     bases,
                     on: database,
                     asOf: now,
@@ -391,7 +391,7 @@ struct NWSIngestPersistenceFlowTests {
                     sent: now.addingTimeInterval(240),
                     geometry: polygon(offset: 0.3)
                 )
-                let mergeResult = try await IngestNWSAlertsJob().persistArcusEvents(
+                let mergeResult = try await NWSIngestPersistence().persistArcusEvents(
                     [merge],
                     on: database,
                     asOf: now,
@@ -462,7 +462,7 @@ struct NWSIngestPersistenceFlowTests {
 
             do {
                 try await app.db.transaction { database in
-                    let result = try await IngestNWSAlertsJob().persistArcusEvents(
+                    let result = try await NWSIngestPersistence().persistArcusEvents(
                         events,
                         on: database,
                         asOf: now,

@@ -2,9 +2,9 @@
 import Foundation
 import Testing
 
-@Suite("Ingest NWS alerts targeting decision tests")
-struct IngestNWSAlertsJobTargetingDecisionTests {
-    private let job = IngestNWSAlertsJob()
+@Suite("NWS ingest persistence targeting decision tests")
+struct NWSIngestPersistenceTargetingDecisionTests {
+    private let persistence = NWSIngestPersistence()
 
     private func makeEvent(geometry: GeoShape?) -> ArcusEvent {
         ArcusEvent(
@@ -54,7 +54,7 @@ struct IngestNWSAlertsJobTargetingDecisionTests {
     func nilGeometryQueuesUGC() {
         let event = makeEvent(geometry: nil)
 
-        #expect(job.shouldQueueUGCNotificationDispatch(for: event))
+        #expect(persistence.shouldQueueUGCNotificationDispatch(for: event))
     }
 
     @Test("polygon geometry suppresses UGC fallback")
@@ -67,7 +67,7 @@ struct IngestNWSAlertsJobTargetingDecisionTests {
             ]])
         )
 
-        #expect(job.shouldQueueUGCNotificationDispatch(for: event) == false)
+        #expect(persistence.shouldQueueUGCNotificationDispatch(for: event) == false)
     }
 
     @Test("multipolygon geometry suppresses UGC fallback")
@@ -80,13 +80,13 @@ struct IngestNWSAlertsJobTargetingDecisionTests {
             ]]])
         )
 
-        #expect(job.shouldQueueUGCNotificationDispatch(for: event) == false)
+        #expect(persistence.shouldQueueUGCNotificationDispatch(for: event) == false)
     }
 
     @Test("point geometry keeps UGC fallback")
     func pointGeometryKeepsUGC() {
         let event = makeEvent(geometry: .point(lon: -104.99, lat: 39.73))
 
-        #expect(job.shouldQueueUGCNotificationDispatch(for: event))
+        #expect(persistence.shouldQueueUGCNotificationDispatch(for: event))
     }
 }

@@ -155,11 +155,16 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #161 - 08: Extract NWS transaction script
 
-- **Status:** Pending
+- **Status:** Ready for commit
 - **Roadmap:** Slice 8
 - **Execution profile:** `gpt-5.6-sol`, high reasoning with senior human review
 - **Dependencies:** 07
 - **Stop condition:** One named persistence operation preserves the batch transaction.
+- **Files changed:** `Sources/App/Services/NWSIngestPersistence.swift`, `Sources/App/Jobs/IngestNWSAlertsJob.swift`, `Tests/AppTests/NWSIngestPersistenceFlowTests.swift`, `Tests/AppTests/IngestNWSAlertsJobTargetingDecisionTests.swift`, and this progress entry.
+- **Behavior:** `NWSIngestPersistence` now owns the unchanged canonical event persistence, lineage resolution and merge reconciliation, snapshot mutation, and target/UGC outbox insertion script. `IngestNWSAlertsJob.dequeue` still resolves the complete batch first, opens the single full-batch transaction around that operation, drains target then UGC outboxes post-commit, runs cleanup in a separate transaction, and records best-effort sweep telemetry with the same `PersistResult` counters.
+- **Coverage:** The five PostgreSQL persistence-flow scenarios and four geometry targeting-decision cases now exercise `NWSIngestPersistence` directly. Their persisted-state assertions, forced late-failure rollback sentinel, and decision inputs are unchanged.
+- **Validation:** Pre-change `swift test --filter NWSIngestPersistenceFlowTests` passed (5 tests). Post-change `swift test --filter NWSIngestPersistenceFlowTests` passed (5 tests); `swift test --filter NWS` passed (11 tests); `swift test --filter TargetEventRevisionJobFallbackTests` passed (5 tests); and `swift test --no-parallel` passed (445 tests across 58 suites). Human review completed with no suggested changes. The independent defect reviewer and test auditor reported no actionable findings; their focused reruns passed the 5 persistence-flow, 4 targeting-decision, 11 NWS, and 5 target-fallback tests. The issue-scoped whitespace check and separate untracked new-file check passed; unscoped `git diff --check` remains blocked only by the pre-existing `docs/Sql/Device.sql:48` trailing whitespace.
+- **Residual risk / handoff:** This is a structural ownership move with no transaction, Fluent operation-order, lifecycle, dispatcher, schema, or runtime-role change. Complete `dequeue` orchestration, queue drains, cleanup, and telemetry still lack one deterministic end-to-end test; that documented #160 limitation predates this slice and remains out of scope.
 
 ### Issue #162 - 09: Recover explicit API dependency ownership
 
