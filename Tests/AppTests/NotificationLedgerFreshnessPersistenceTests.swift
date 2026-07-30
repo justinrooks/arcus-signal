@@ -141,96 +141,173 @@ struct NotificationLedgerFreshnessPersistenceTests {
             """).run()
     }
 
-    @Test("fresh candidate claim persists fresh freshness_state")
-    func freshClaimPersistsFreshness() async throws {
+    private func seedAndClaim(
+        revisionUrn: String,
+        mode: NotificationTargetMode,
+        reason: NotificationReason,
+        freshnessState: LocationFreshnessState,
+        using store: NotificationDeliveryStore,
+        on db: any Database
+    ) async throws -> (result: LedgerClaimResult, installationID: UUID, seriesID: UUID) {
+        let installationID = UUID()
+        let seriesID = UUID()
+        try await seedInstallation(id: installationID, on: db)
+        try await seedSeries(id: seriesID, on: db)
+
+        let result = try await store.claim(
+            installationID: installationID,
+            seriesID: seriesID,
+            revisionUrn: revisionUrn,
+            mode: mode,
+            reason: reason,
+            freshnessState: freshnessState,
+            on: db
+        )
+        return (result, installationID, seriesID)
+    }
+
+    @Test("fresh, degraded, and duplicate claims preserve exact original fields")
+    func claimSemanticsArePreserved() async throws {
         try await withApp { app in
-            let job = NotificationSendJob()
-            let installationID = UUID()
-            let seriesID = UUID()
-            let revisionUrn = "urn:oid:fresh-claim"
-
-            try await seedInstallation(id: installationID, on: app.db)
-            try await seedSeries(id: seriesID, on: app.db)
-
-            let claim = try await job.claimNotificationLedger(
-                installationID: installationID,
-                seriesID: seriesID,
-                revisionUrn: revisionUrn,
+            let store = NotificationDeliveryStore()
+            let fresh = try await seedAndClaim(
+                revisionUrn: "urn:oid:fresh-claim",
                 mode: .h3,
                 reason: .new,
                 freshnessState: .fresh,
+                using: store,
                 on: app.db
             )
-
-            #expect(claim.inserted)
-            let ledger = try await NotificationLedgerModel.find(claim.id, on: app.db)
-            #expect(ledger?.freshnessState == .fresh)
-            #expect(ledger?.status == "claimed")
-        }
-    }
-
-    @Test("degraded candidate claim persists degraded freshness_state")
-    func degradedClaimPersistsFreshness() async throws {
-        try await withApp { app in
-            let job = NotificationSendJob()
-            let installationID = UUID()
-            let seriesID = UUID()
-            let revisionUrn = "urn:oid:degraded-claim"
-
-            try await seedInstallation(id: installationID, on: app.db)
-            try await seedSeries(id: seriesID, on: app.db)
-
-            let claim = try await job.claimNotificationLedger(
-                installationID: installationID,
-                seriesID: seriesID,
-                revisionUrn: revisionUrn,
+            let degraded = try await seedAndClaim(
+                revisionUrn: "urn:oid:degraded-claim",
+                mode: .ugc,
+                reason: .update,
+                freshnessState: .degraded,
+                using: store,
+                on: app.db
+            )
+            let duplicate = try await store.claim(
+                installationID: fresh.installationID,
+                seriesID: fresh.seriesID,
+                revisionUrn: "urn:oid:fresh-claim",
                 mode: .ugc,
                 reason: .update,
                 freshnessState: .degraded,
                 on: app.db
             )
 
-            #expect(claim.inserted)
-            let ledger = try await NotificationLedgerModel.find(claim.id, on: app.db)
-            #expect(ledger?.freshnessState == .degraded)
-            #expect(ledger?.status == "claimed")
+            #expect(fresh.result.inserted)
+            #expect(degraded.result.inserted)
+            #expect(duplicate.inserted == false)
+            #expect(duplicate.id == nil)
+
+            let freshRows = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == fresh.installationID)
+                .filter(\.$series.$id == fresh.seriesID)
+                .filter(\.$revisionUrn == "urn:oid:fresh-claim")
+                .all()
+            let freshLedger = try #require(freshRows.first)
+            let degradedLedger = try #require(
+                try await NotificationLedgerModel.find(degraded.result.id, on: app.db)
+            )
+
+            #expect(freshRows.count == 1)
+            #expect(freshLedger.mode == NotificationTargetMode.h3.rawValue)
+            #expect(freshLedger.reason == NotificationReason.new.rawValue)
+            #expect(freshLedger.freshnessState == .fresh)
+            #expect(freshLedger.status == "claimed")
+            #expect(degradedLedger.mode == NotificationTargetMode.ugc.rawValue)
+            #expect(degradedLedger.reason == NotificationReason.update.rawValue)
+            #expect(degradedLedger.freshnessState == .degraded)
+            #expect(degradedLedger.status == "claimed")
         }
     }
 
-    @Test("failed claimed send keeps original persisted freshness_state")
-    func failedClaimKeepsOriginalFreshness() async throws {
+    @Test("sent, APNs-failed, and generic-failed completions preserve terminal semantics")
+    func completionSemanticsArePreserved() async throws {
         try await withApp { app in
-            let job = NotificationSendJob()
-            let installationID = UUID()
-            let seriesID = UUID()
-            let revisionUrn = "urn:oid:failed-claim"
-
-            try await seedInstallation(id: installationID, on: app.db)
-            try await seedSeries(id: seriesID, on: app.db)
-
-            let claim = try await job.claimNotificationLedger(
-                installationID: installationID,
-                seriesID: seriesID,
-                revisionUrn: revisionUrn,
+            let store = NotificationDeliveryStore()
+            let sent = try await seedAndClaim(
+                revisionUrn: "urn:oid:sent-completion",
+                mode: .ugc,
+                reason: .update,
+                freshnessState: .degraded,
+                using: store,
+                on: app.db
+            ).result
+            let failed = try await seedAndClaim(
+                revisionUrn: "urn:oid:failed-completion",
                 mode: .h3,
                 reason: .new,
                 freshnessState: .degraded,
+                using: store,
+                on: app.db
+            ).result
+            let genericFailed = try await seedAndClaim(
+                revisionUrn: "urn:oid:generic-failed-completion",
+                mode: .h3,
+                reason: .new,
+                freshnessState: .fresh,
+                using: store,
+                on: app.db
+            ).result
+            let existing = try #require(
+                try await NotificationLedgerModel.find(genericFailed.id, on: app.db)
+            )
+            existing.apnsErrorCode = "existing-code"
+            try await existing.save(on: app.db)
+
+            try await store.completeSent(claimID: sent.id, on: app.db)
+            try await store.completeFailed(
+                claimID: failed.id,
+                apnsErrorCode: "BadDeviceToken",
+                on: app.db
+            )
+            try await store.completeFailed(
+                claimID: genericFailed.id,
+                apnsErrorCode: nil,
                 on: app.db
             )
 
-            #expect(claim.inserted)
+            let sentLedger = try #require(try await NotificationLedgerModel.find(sent.id, on: app.db))
+            let failedLedger = try #require(try await NotificationLedgerModel.find(failed.id, on: app.db))
+            let genericLedger = try #require(
+                try await NotificationLedgerModel.find(genericFailed.id, on: app.db)
+            )
 
-            guard let existing = try await NotificationLedgerModel.find(claim.id, on: app.db) else {
-                Issue.record("Missing claimed ledger row")
-                return
+            #expect(sentLedger.status == "sent")
+            #expect(sentLedger.completedAt != nil)
+            #expect(sentLedger.mode == NotificationTargetMode.ugc.rawValue)
+            #expect(sentLedger.reason == NotificationReason.update.rawValue)
+            #expect(sentLedger.freshnessState == .degraded)
+            #expect(sentLedger.apnsErrorCode == nil)
+            #expect(failedLedger.status == "failed")
+            #expect(failedLedger.completedAt != nil)
+            #expect(failedLedger.apnsErrorCode == "BadDeviceToken")
+            #expect(failedLedger.freshnessState == .degraded)
+            #expect(genericLedger.status == "failed")
+            #expect(genericLedger.completedAt != nil)
+            #expect(genericLedger.apnsErrorCode == "existing-code")
+        }
+    }
+
+    @Test("missing sent completion is a no-op and missing failed completion remains not found")
+    func missingCompletionSemanticsArePreserved() async throws {
+        try await withApp { app in
+            let store = NotificationDeliveryStore()
+
+            try await store.completeSent(claimID: UUID(), on: app.db)
+
+            do {
+                try await store.completeFailed(
+                    claimID: UUID(),
+                    apnsErrorCode: nil,
+                    on: app.db
+                )
+                Issue.record("Expected missing failed completion to throw")
+            } catch let error as Abort {
+                #expect(error.status == .notFound)
             }
-            existing.status = "failed"
-            existing.completedAt = Date()
-            try await existing.save(on: app.db)
-
-            let refreshed = try await NotificationLedgerModel.find(claim.id, on: app.db)
-            #expect(refreshed?.status == "failed")
-            #expect(refreshed?.freshnessState == .degraded)
         }
     }
 }

@@ -36,7 +36,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 03 | [#156](https://github.com/justinrooks/arcus-signal/issues/156) | 3 | Extract pure H3 coverage result | None | `gpt-5.6-terra`, high | Pending |
 | 04 | [#157](https://github.com/justinrooks/arcus-signal/issues/157) | 4 | Move H3 work before transaction | 03 | `gpt-5.6-sol`, high | Complete |
 | 05 | [#158](https://github.com/justinrooks/arcus-signal/issues/158) | 5 | Isolate notification candidate selection | 01 | `gpt-5.6-sol`, high | Complete |
-| 06 | [#159](https://github.com/justinrooks/arcus-signal/issues/159) | 6 | Isolate notification ledger persistence | 01, 05 | `gpt-5.6-sol`, high + senior review | Pending |
+| 06 | [#159](https://github.com/justinrooks/arcus-signal/issues/159) | 6 | Isolate notification ledger persistence | 01, 05 | `gpt-5.6-sol`, high + senior review | Ready for commit |
 | 07 | [#160](https://github.com/justinrooks/arcus-signal/issues/160) | 7 | Characterize NWS persistence flow | None | `gpt-5.6-sol`, high | Pending |
 | 08 | [#161](https://github.com/justinrooks/arcus-signal/issues/161) | 8 | Extract NWS transaction script | 07 | `gpt-5.6-sol`, high + senior review | Pending |
 | 09 | [#162](https://github.com/justinrooks/arcus-signal/issues/162) | 9 | Recover explicit API dependency ownership | 02 | `gpt-5.6-sol`, high | Pending |
@@ -130,11 +130,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #159 - 06: Isolate notification ledger persistence
 
-- **Status:** Pending
+- **Status:** Ready for commit
 - **Roadmap:** Slice 6
 - **Execution profile:** `gpt-5.6-sol`, high reasoning with senior human review
 - **Dependencies:** 01, 05
 - **Stop condition:** Claim/completion persistence is isolated without retry or delivery changes.
+- **Files changed:** `Sources/App/Models/Notification/NotificationDeliveryStore.swift`, `Sources/App/Jobs/NotificationSendJob.swift`, `Tests/AppTests/NotificationLedgerFreshnessPersistenceTests.swift`, `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`, and `docs/plans/architecture-recovery-progress.md`.
+- **Behavior:** `NotificationDeliveryStore` now solely owns the unchanged atomic ledger claim SQL and sent/failed completion mutation. `NotificationSendJob` retains sequential candidate orchestration, copy/debug/APNs work, APNs error interpretation, logging, and metrics through a trailing defaulted store dependency. Duplicate, missing-row, and generic-failure behavior remain unchanged.
+- **Validation:** `swift test --filter NotificationLedgerFreshnessPersistenceTests` passed (3 tests); `swift test --filter NotificationSendJobDeliveryBoundaryTests` passed (6 tests); `swift test --filter NotificationMissedDecisionPersistenceTests` passed (2 tests); `swift test --filter NotificationEngineTests` passed (8 tests). Independent defect review found one low-severity job-boundary duplicate-claim test gap; the test auditor reported no findings. The gap was accepted, fixed, and confirmed resolved by focused re-review with no new defect.
+- **Residual risk / handoff:** Claim-before-APNs remains intentionally at-most-once: abandoned or failed claims are not reclaimed. Independent review confirmed exact claim SQL preservation, sent missing-row no-op behavior, failed missing-row `404`, and generic failure leaving `apns_error_code` unchanged.
 
 ### Issue #160 - 07: Characterize NWS persistence flow
 

@@ -403,6 +403,8 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 .first()
             #expect(ledger != nil)
             #expect(ledger?.freshnessState == .degraded)
+            #expect(ledger?.status == "sent")
+            #expect(ledger?.completedAt != nil)
         }
     }
 
@@ -445,6 +447,109 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 .first()
             #expect(ledger != nil)
             #expect(ledger?.freshnessState == .fresh)
+            #expect(ledger?.status == "sent")
+            #expect(ledger?.completedAt != nil)
+        }
+    }
+
+    @Test("duplicate claims skip all downstream delivery side effects")
+    func duplicateClaimsSkipDownstreamDeliverySideEffects() async throws {
+        try await withApp { app in
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:duplicate-boundary"
+            let now = Date()
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: now.addingTimeInterval(-(60 * 60))
+            )
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+
+            try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            let first = try await job.dispatchNotifications(
+                to: [candidate],
+                with: payload,
+                and: series,
+                using: context
+            )
+            let duplicate = try await job.dispatchNotifications(
+                to: [candidate],
+                with: payload,
+                and: series,
+                using: context
+            )
+
+            #expect(first.claimedCount == 1)
+            #expect(first.sentCount == 1)
+            #expect(duplicate.claimedCount == 0)
+            #expect(duplicate.sentCount == 0)
+            #expect(duplicate.failedCount == 0)
+            #expect(duplicate.noOpReason == .allCandidatesPreviouslyClaimed)
+            #expect(await sender.sendCount == 1)
+
+            let debugCount = try await NotificationDebugModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$installationID == installationID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .filter(\.$recordKind == NotificationDebugRecordKind.candidate.rawValue)
+                .count()
+            #expect(debugCount == 1)
+        }
+    }
+
+    @Test("generic sender failure persists one failed claimed delivery")
+    func genericSenderFailurePersistsFailedClaim() async throws {
+        try await withApp { app in
+            let job = NotificationSendJob(sender: ThrowingNotificationSender())
+            let context = makeQueueContext(app: app)
+
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:failed-boundary"
+            let now = Date()
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: now.addingTimeInterval(-(60 * 60))
+            )
+
+            try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            let summary = try await job.dispatchNotifications(
+                to: [candidate],
+                with: .init(seriesId: seriesID, revisionUrn: revisionUrn, mode: .h3, reason: .new),
+                and: series,
+                using: context
+            )
+
+            #expect(summary.claimedCount == 1)
+            #expect(summary.sentCount == 0)
+            #expect(summary.failedCount == 1)
+            #expect(summary.noOpReason == nil)
+
+            let ledger = try #require(try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == installationID)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .first())
+            #expect(ledger.status == "failed")
+            #expect(ledger.completedAt != nil)
+            #expect(ledger.apnsErrorCode == nil)
         }
     }
 
@@ -505,5 +610,19 @@ private actor RecordingNotificationSender: NotificationSender {
         environment _: APNsEnvironment
     ) async throws {
         sendCount += 1
+    }
+}
+
+private struct ThrowingNotificationSender: NotificationSender {
+    private struct DeterministicFailure: Error {}
+
+    func sendNotification(
+        app _: Application,
+        with _: AlertDetails,
+        hotAlertPayload _: HotAlertAPNsPayload,
+        to _: String,
+        environment _: APNsEnvironment
+    ) async throws {
+        throw DeterministicFailure()
     }
 }
