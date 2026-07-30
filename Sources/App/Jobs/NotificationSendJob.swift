@@ -5,28 +5,13 @@
 //  Created by Justin Rooks on 3/3/26.
 //
 
+import ArcusCore
 import APNSCore
 import Fluent
 import FluentSQL
 import Foundation
 import Queues
 import Vapor
-import ArcusCore
-
-struct NotificationCandidate: Decodable {
-    let id: UUID
-    let apnsToken: String
-    let apnsEnvironment: String
-    let locationAuthRaw: String
-    let capturedAt: Date
-    let receivedAt: Date
-    let countyLabel: String?
-    let fireZoneLabel: String?
-
-    var locationAuth: LocationAuth {
-        LocationAuth(rawValue: locationAuthRaw) ?? .unknown
-    }
-}
 
 struct LedgerClaimResult {
     let inserted: Bool
@@ -85,24 +70,28 @@ public struct NotificationSendJob: AsyncJob {
     private let engine: NotificationEngine
     private let freshnessPolicy: LocationFreshnessPolicy
     private let missedDecisionStore: NotificationMissedDecisionStore
+    private let candidateStore: NotificationCandidateStore
 
     public init() {
         self.sender = APNsClient()
         self.engine = NotificationEngine()
         self.freshnessPolicy = LocationFreshnessPolicy()
         self.missedDecisionStore = NotificationMissedDecisionStore()
+        self.candidateStore = NotificationCandidateStore()
     }
 
     init(
         sender: any NotificationSender,
         engine: NotificationEngine = NotificationEngine(),
         freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy(),
-        missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore()
+        missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore(),
+        candidateStore: NotificationCandidateStore = NotificationCandidateStore()
     ) {
         self.sender = sender
         self.engine = engine
         self.freshnessPolicy = freshnessPolicy
         self.missedDecisionStore = missedDecisionStore
+        self.candidateStore = candidateStore
     }
 
     func deliveryDisposition(
@@ -256,7 +245,7 @@ public struct NotificationSendJob: AsyncJob {
             }
             
             // Get our list of candidates
-            let h3Candidates = try await loadH3Candidates(
+            let h3Candidates = try await candidateStore.loadH3Candidates(
                 cells: geo.h3Cells,
                 capturedAtOrAfter: presenceCutoff,
                 on: context.application.db
@@ -276,7 +265,7 @@ public struct NotificationSendJob: AsyncJob {
             )
         } else {
             // we only have 2 modes right now, so its ugc
-            let ugcCandidates = try await loadUGCCandidates(
+            let ugcCandidates = try await candidateStore.loadUGCCandidates(
                 ugcCodes: series.ugcCodes,
                 capturedAtOrAfter: presenceCutoff,
                 on: context.application.db
@@ -318,73 +307,6 @@ public struct NotificationSendJob: AsyncJob {
 
 
 extension NotificationSendJob {
-    func loadUGCCandidates(
-        ugcCodes: [String],
-        capturedAtOrAfter cutoff: Date,
-        on db: any Database
-    ) async throws -> [NotificationCandidate] {
-        guard let sql = db as? any SQLDatabase else {
-            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
-        }
-
-        return try await sql.raw("""
-            SELECT
-                i.installation_id AS "id",
-                i.apns_device_token AS "apnsToken",
-                i.apns_environment AS "apnsEnvironment",
-                i.location_auth AS "locationAuthRaw",
-                p.captured_at AS "capturedAt",
-                p.received_at AS "receivedAt",
-                p.county_label as countyLabel,
-                p.fire_zone_label as fireZoneLabel
-            FROM device_installations i
-            JOIN device_presence p on i.installation_id = p.installation_id
-            WHERE i.is_active = TRUE
-              AND i.is_subscribed = TRUE
-              AND i.apns_device_token <> ''
-              AND p.captured_at >= \(bind: cutoff)
-              AND (
-                  p.county  = ANY(\(bind: ugcCodes)::text[])
-                OR p.zone  = ANY(\(bind: ugcCodes)::text[])
-                OR p.fire_zone = ANY(\(bind: ugcCodes)::text[])
-              )
-            """)
-            .all(decoding: NotificationCandidate.self)
-    }
-    
-    func loadH3Candidates(
-        cells: [Int64],
-        capturedAtOrAfter cutoff: Date,
-        on db: any Database
-    ) async throws -> [NotificationCandidate] {
-        guard let sql = db as? any SQLDatabase else {
-            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
-        }
-        guard cells.count > 0 else { return [] }
-
-        return try await sql.raw("""
-            SELECT
-                i.installation_id AS "id",
-                i.apns_device_token AS "apnsToken",
-                i.apns_environment AS "apnsEnvironment",
-                i.location_auth AS "locationAuthRaw",
-                p.captured_at AS "capturedAt",
-                p.received_at AS "receivedAt",
-                p.county_label as countyLabel,
-                p.fire_zone_label as fireZoneLabel
-            FROM device_installations i
-            JOIN device_presence p
-              ON i.installation_id = p.installation_id
-            WHERE i.is_active = TRUE
-              AND i.is_subscribed = TRUE
-              AND i.apns_device_token <> ''
-              AND p.h3_cell IS NOT NULL
-              AND p.h3_cell = ANY(\(bind: cells)::bigint[])
-              AND p.captured_at >= \(bind: cutoff)
-            """)
-            .all(decoding: NotificationCandidate.self)
-    }
-    
     func claimNotificationLedger(
         installationID: UUID,
         seriesID: UUID,
