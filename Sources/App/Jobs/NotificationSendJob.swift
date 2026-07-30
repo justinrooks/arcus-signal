@@ -8,15 +8,9 @@
 import ArcusCore
 import APNSCore
 import Fluent
-import FluentSQL
 import Foundation
 import Queues
 import Vapor
-
-struct LedgerClaimResult {
-    let inserted: Bool
-    let id: UUID?
-}
 
 struct DispatchNotificationsResult {
     let candidateResolutionReached: Bool
@@ -71,6 +65,7 @@ public struct NotificationSendJob: AsyncJob {
     private let freshnessPolicy: LocationFreshnessPolicy
     private let missedDecisionStore: NotificationMissedDecisionStore
     private let candidateStore: NotificationCandidateStore
+    private let deliveryStore: NotificationDeliveryStore
 
     public init() {
         self.sender = APNsClient()
@@ -78,6 +73,7 @@ public struct NotificationSendJob: AsyncJob {
         self.freshnessPolicy = LocationFreshnessPolicy()
         self.missedDecisionStore = NotificationMissedDecisionStore()
         self.candidateStore = NotificationCandidateStore()
+        self.deliveryStore = NotificationDeliveryStore()
     }
 
     init(
@@ -85,13 +81,15 @@ public struct NotificationSendJob: AsyncJob {
         engine: NotificationEngine = NotificationEngine(),
         freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy(),
         missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore(),
-        candidateStore: NotificationCandidateStore = NotificationCandidateStore()
+        candidateStore: NotificationCandidateStore = NotificationCandidateStore(),
+        deliveryStore: NotificationDeliveryStore = NotificationDeliveryStore()
     ) {
         self.sender = sender
         self.engine = engine
         self.freshnessPolicy = freshnessPolicy
         self.missedDecisionStore = missedDecisionStore
         self.candidateStore = candidateStore
+        self.deliveryStore = deliveryStore
     }
 
     func deliveryDisposition(
@@ -307,48 +305,6 @@ public struct NotificationSendJob: AsyncJob {
 
 
 extension NotificationSendJob {
-    func claimNotificationLedger(
-        installationID: UUID,
-        seriesID: UUID,
-        revisionUrn: String,
-        mode: NotificationTargetMode,
-        reason: NotificationReason,
-        freshnessState: LocationFreshnessState,
-        on db: any Database
-    ) async throws -> LedgerClaimResult {
-        guard let sql = db as? any SQLDatabase else {
-            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
-        }
-
-        let newID = UUID()
-
-        let row = try await sql.raw("""
-            INSERT INTO notification_ledger
-                (id, installation_id, series_id, revision_urn, mode, reason, freshness_state, created, status)
-            VALUES
-                (\(bind: newID),
-                 \(bind: installationID),
-                 \(bind: seriesID),
-                 \(bind: revisionUrn),
-                 \(bind: mode),
-                 \(bind: reason),
-                 \(bind: freshnessState),
-                 NOW(),
-                'claimed')
-            ON CONFLICT (installation_id, series_id, revision_urn)
-            DO NOTHING
-            RETURNING id
-            """)
-            .first()
-
-        if let row {
-            let returnedID = try row.decode(column: "id", as: UUID.self)
-            return LedgerClaimResult(inserted: true, id: returnedID)
-        } else {
-            return LedgerClaimResult(inserted: false, id: nil)
-        }
-    }
-    
     func dispatchNotifications(
         to candidates: [NotificationCandidate],
         with payload: NotificationSendJobPayload,
@@ -442,7 +398,7 @@ extension NotificationSendJob {
                 freshnessDecision = deliveryDecision
             }
 
-            let claim = try await claimNotificationLedger(
+            let claim = try await deliveryStore.claim(
                 installationID: candidate.id,
                 seriesID: payload.seriesId,
                 revisionUrn: payload.revisionUrn,
@@ -490,11 +446,10 @@ extension NotificationSendJob {
                     environment: apnsEnvironment
                 )
 
-                if let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) {
-                    existingClaim.status = "sent"
-                    existingClaim.completedAt = .now
-                    try await existingClaim.save(on: context.application.db)
-                }
+                try await deliveryStore.completeSent(
+                    claimID: claim.id,
+                    on: context.application.db
+                )
                 sentCount += 1
                 
                 context.logger.info(
@@ -521,21 +476,20 @@ extension NotificationSendJob {
                 context.logger.error("APNS rejected request: \(error.reason.debugDescription)")
 //                }
                 
-                guard let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) else {
-                    throw Abort(.notFound)
-                }
-                
                 // TODO: figure out retries
                 // At least we aren't dropping them now
+                let apnsErrorCode: String
                 if let reason = error.reason {
-                    existingClaim.apnsErrorCode = reason.errorDescription
+                    apnsErrorCode = reason.errorDescription
                 } else {
-                    existingClaim.apnsErrorCode = error.reason.debugDescription
+                    apnsErrorCode = error.reason.debugDescription
                 }
 
-                existingClaim.status = "failed"
-                existingClaim.completedAt = .now
-                try await existingClaim.save(on: context.application.db)
+                try await deliveryStore.completeFailed(
+                    claimID: claim.id,
+                    apnsErrorCode: apnsErrorCode,
+                    on: context.application.db
+                )
                 failedCount += 1
                 
 //
@@ -573,14 +527,13 @@ extension NotificationSendJob {
                         "error": .string(String(describing: error))
                     ]
                 )
-                guard let existingClaim = try await NotificationLedgerModel.find(claim.id, on: context.application.db) else {
-                    throw Abort(.notFound)
-                }
                 // TODO: figure out retries
                 // At least we aren't dropping them now
-                existingClaim.status = "failed"
-                existingClaim.completedAt = .now
-                try await existingClaim.save(on: context.application.db)
+                try await deliveryStore.completeFailed(
+                    claimID: claim.id,
+                    apnsErrorCode: nil,
+                    on: context.application.db
+                )
                 failedCount += 1
             }
         }
