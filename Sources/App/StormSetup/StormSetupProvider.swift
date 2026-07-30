@@ -125,7 +125,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     private let fieldSampler: any StormSetupFieldSampling
     private let normalizer: any StormSetupIngredientNormalizing
     private let interpreter: any StormSetupIngredientAssessing
-    private let anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)?
+    let anvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)?
     private let logger: Logger
 
     init(
@@ -855,6 +855,7 @@ private struct StormSetupCurrentComposition: Sendable {
 extension DefaultStormSetupProvider {
     init(
         application: Application,
+        anvilProfileAnalysisProvider: any AnvilProfileAnalysisProviding,
         h3Resolver: any StormSetupH3Resolving = DefaultStormSetupH3Resolver(),
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         hrrrRunResolver: (any HrrrRunResolving)? = nil,
@@ -887,16 +888,20 @@ extension DefaultStormSetupProvider {
             fieldSampler: sampler,
             normalizer: TornadoIngredientNormalizer(),
             interpreter: TornadoIngredientInterpreter(),
-            anvilProfileAnalysisProvider: application.anvilProfileAnalysisProvider,
+            anvilProfileAnalysisProvider: anvilProfileAnalysisProvider,
             logger: logger ?? application.logger
         )
     }
 }
 
 extension Application {
+    var configuredStormSetupProvider: (any StormSetupProviding)? {
+        storage[StormSetupProviderKey.self]
+    }
+
     var stormSetupProvider: any StormSetupProviding {
         get {
-            storage[StormSetupProviderKey.self] ?? DefaultStormSetupProvider(application: self)
+            configuredStormSetupProvider ?? UnavailableStormSetupProvider()
         }
         set {
             storage[StormSetupProviderKey.self] = newValue
@@ -906,6 +911,16 @@ extension Application {
 
 private struct StormSetupProviderKey: StorageKey {
     typealias Value = any StormSetupProviding
+}
+
+private struct UnavailableStormSetupProvider: StormSetupProviding {
+    func currentSnapshot(for h3Cell: Int64) async throws -> TornadoIngredientSnapshot {
+        _ = h3Cell
+        throw Abort(
+            .internalServerError,
+            reason: "Storm Setup provider is not configured. Install API request dependencies during API bootstrap."
+        )
+    }
 }
 
 extension StormSetupSnapshotCache: StormSetupSnapshotCaching {}

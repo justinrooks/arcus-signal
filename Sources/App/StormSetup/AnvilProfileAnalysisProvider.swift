@@ -76,9 +76,12 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
         self.directClient = anvilClient
     }
 
-    init(application: Application) {
+    init(
+        application: Application,
+        previewProvider: any AnvilProfilePreviewProviding
+    ) {
         self.init(
-            previewProvider: application.anvilProfilePreviewProvider,
+            previewProvider: previewProvider,
             configuration: application.stormSetupConfiguration,
             httpClient: VaporApplicationHTTPClient(application: application)
         )
@@ -162,9 +165,13 @@ struct DefaultAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
 }
 
 extension Application {
+    var configuredAnvilProfileAnalysisProvider: (any AnvilProfileAnalysisProviding)? {
+        storage[AnvilProfileAnalysisProviderKey.self]
+    }
+
     var anvilProfileAnalysisProvider: any AnvilProfileAnalysisProviding {
         get {
-            storage[AnvilProfileAnalysisProviderKey.self] ?? DefaultAnvilProfileAnalysisProvider(application: self)
+            configuredAnvilProfileAnalysisProvider ?? UnavailableAnvilProfileAnalysisProvider()
         }
         set {
             storage[AnvilProfileAnalysisProviderKey.self] = newValue
@@ -174,4 +181,13 @@ extension Application {
 
 private struct AnvilProfileAnalysisProviderKey: StorageKey {
     typealias Value = any AnvilProfileAnalysisProviding
+}
+
+private struct UnavailableAnvilProfileAnalysisProvider: AnvilProfileAnalysisProviding {
+    func analyzeProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfileAnalysisResponse {
+        _ = h3Cell
+        throw AnvilProfileAnalysisError.internalExecutionFailure(
+            reason: "Anvil analysis provider is not configured. Install API request dependencies during API bootstrap."
+        )
+    }
 }

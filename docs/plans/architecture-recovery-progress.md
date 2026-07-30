@@ -39,7 +39,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 06 | [#159](https://github.com/justinrooks/arcus-signal/issues/159) | 6 | Isolate notification ledger persistence | 01, 05 | `gpt-5.6-sol`, high + senior review | Ready for commit |
 | 07 | [#160](https://github.com/justinrooks/arcus-signal/issues/160) | 7 | Characterize NWS persistence flow | None | `gpt-5.6-sol`, high | Ready for commit |
 | 08 | [#161](https://github.com/justinrooks/arcus-signal/issues/161) | 8 | Extract NWS transaction script | 07 | `gpt-5.6-sol`, high + senior review | Pending |
-| 09 | [#162](https://github.com/justinrooks/arcus-signal/issues/162) | 9 | Recover explicit API dependency ownership | 02 | `gpt-5.6-sol`, high | Pending |
+| 09 | [#162](https://github.com/justinrooks/arcus-signal/issues/162) | 9 | Recover explicit API dependency ownership | 02 | `gpt-5.6-sol`, high | READY FOR COMMIT |
 | 10 | [#163](https://github.com/justinrooks/arcus-signal/issues/163) | 10 | Own warm claim/completion SQL | 02 | `gpt-5.6-sol`, high | Pending |
 | 11 | [#164](https://github.com/justinrooks/arcus-signal/issues/164) | 11A | Own probe catalog transitions | 10 | `gpt-5.6-sol`, high | Pending |
 | 12 | [#165](https://github.com/justinrooks/arcus-signal/issues/165) | 11B | Own cleanup catalog transitions | 10, 11 | `gpt-5.6-sol`, high + persistence/filesystem review | Pending |
@@ -168,11 +168,16 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #162 - 09: Recover explicit API dependency ownership
 
-- **Status:** Pending
+- **Status:** READY FOR COMMIT
 - **Roadmap:** Slice 9
 - **Execution profile:** `gpt-5.6-sol`, high reasoning
 - **Dependencies:** 02
 - **Stop condition:** API graph is installed once with stable lifetime; worker ownership unchanged.
+- **Files changed:** `Sources/App/configure.swift`, `Sources/App/StormSetup/APIDependencyComposition.swift`, the three Storm Setup/Anvil provider files, `Tests/AppTests/APIDependencyCompositionTests.swift`, and this progress entry.
+- **Behavior:** `installAPIRequestDependencies(on:)` now installs the API request-provider graph once in preview → analysis → Storm Setup order before route registration. Existing providers survive configuration and feed downstream defaults. Worker bootstrap leaves all three providers unconfigured. Provider getters no longer construct defaults; unconfigured access returns provider-specific configuration failures without mutating storage.
+- **Coverage:** Added six deterministic composition tests covering default API installation and retained storage, all three preconfigure overrides, preview-only and analysis-only overrides participating in downstream default construction, worker non-installation, and explicit missing-provider failures.
+- **Validation:** `swift test --filter AppTests.AppTests` passed (29 tests); `swift test --filter AppTests.APIDependencyCompositionTests` passed (6 tests); the requested Storm Setup controller, Anvil preview controller, Anvil analysis controller, and Storm Setup provider filters passed (6, 9, 5, and 18 tests). The exact broad `swift test --filter AppTests` command selected the full package and failed one unrelated parallel PostgreSQL migration test; the same command already failed once before this slice, and `swift test --filter DevicePresenceMigrationTests` passed alone (1 test). The strict-concurrency build passed with one pre-existing deprecation warning. The issue-scoped tracked diff check and new-file whitespace scan passed; unscoped `git diff --check` remains blocked only by the pre-existing `docs/Sql/Device.sql:48` trailing whitespace. Human review completed with no suggested changes. The independent defect reviewer reported no actionable defects; the test auditor identified the missing analysis-only override coverage and stale summary status, both were accepted and resolved, and both focused re-reviews reported no actionable findings.
+- **Residual risk / handoff:** Default providers remain value-type wrappers around their existing actor/service dependencies, so stable lifetime is established through `Application.storage`, not reference identity of the wrapper itself. The default Storm Setup provider exposes its immutable analysis dependency only at module-internal visibility for deterministic composition testing. No provider contract, route, cache, environment, worker schedule, or external response behavior changed. Ready for commit.
 
 ### Issue #163 - 10: Own warm claim/completion SQL
 

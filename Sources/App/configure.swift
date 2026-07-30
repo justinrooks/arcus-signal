@@ -55,6 +55,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
 
     switch mode {
     case .api:
+        installAPIRequestDependencies(on: app)
         try configureAPIRoutes(app)
     case .worker:
         configureWorkerQueueSettings(on: app)
