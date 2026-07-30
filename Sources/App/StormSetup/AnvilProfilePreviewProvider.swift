@@ -815,9 +815,13 @@ private enum SurfaceDiagnosticsStage: String, Sendable {
 }
 
 extension Application {
+    var configuredAnvilProfilePreviewProvider: (any AnvilProfilePreviewProviding)? {
+        storage[AnvilProfilePreviewProviderKey.self]
+    }
+
     var anvilProfilePreviewProvider: any AnvilProfilePreviewProviding {
         get {
-            storage[AnvilProfilePreviewProviderKey.self] ?? DefaultAnvilProfilePreviewProvider(application: self)
+            configuredAnvilProfilePreviewProvider ?? UnavailableAnvilProfilePreviewProvider()
         }
         set {
             storage[AnvilProfilePreviewProviderKey.self] = newValue
@@ -827,6 +831,15 @@ extension Application {
 
 private struct AnvilProfilePreviewProviderKey: StorageKey {
     typealias Value = any AnvilProfilePreviewProviding
+}
+
+private struct UnavailableAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
+    func previewProfile(for h3Cell: Int64) async throws -> AnvilAnalyzeProfilePreviewResponse {
+        _ = h3Cell
+        throw AnvilProfilePreviewError.internalExecutionFailure(
+            reason: "Anvil preview provider is not configured. Install API request dependencies during API bootstrap."
+        )
+    }
 }
 
 private struct DefaultUnavailableAnvilSurfaceProfileLoader: HrrrAnvilSurfaceProfileLoading {
