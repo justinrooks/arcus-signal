@@ -6,7 +6,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Notification send job candidate queries", .serialized)
+@Suite("Notification candidate store queries", .serialized)
 struct NotificationSendJobCandidateQueryTests {
     private enum Rollback: Error {
         case afterAssertions
@@ -91,6 +91,8 @@ struct NotificationSendJobCandidateQueryTests {
         capturedAt: Date,
         h3Cell: Int64?,
         county: String?,
+        zone: String? = nil,
+        fireZone: String? = nil,
         isActive: Bool = true,
         isSubscribed: Bool = true,
         token: String = "token",
@@ -115,9 +117,10 @@ struct NotificationSendJobCandidateQueryTests {
                  cell_scheme, h3_cell, h3_resolution, county, zone, fire_zone, source, created_at, updated_at,
                  county_label, fire_zone_label)
             VALUES
-                (\(bind: id), \(bind: capturedAt), \(bind: capturedAt), 0, 0,
+                (\(bind: id), \(bind: capturedAt), \(bind: capturedAt.addingTimeInterval(30)), 0, 0,
                  \(bind: h3Cell == nil ? "ugc-only" : "h3"), \(bind: h3Cell), \(bind: h3Cell == nil ? nil : 8),
-                 \(bind: county), NULL, NULL, 'foreground', \(bind: now), \(bind: now), \(bind: county), NULL);
+                 \(bind: county), \(bind: zone), \(bind: fireZone), 'foreground', \(bind: now), \(bind: now),
+                 \(bind: county), 'Test Fire Zone');
             """).run()
     }
 
@@ -125,7 +128,7 @@ struct NotificationSendJobCandidateQueryTests {
         h3Cell: Int64?,
         county: String?,
         on db: any Database
-    ) async throws -> (included: Set<UUID>, excluded: Set<UUID>) {
+    ) async throws -> (atCutoff: UUID, included: Set<UUID>, excluded: Set<UUID>) {
         let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
         let newer = UUID()
         let exactlyAtCutoff = UUID()
@@ -141,7 +144,24 @@ struct NotificationSendJobCandidateQueryTests {
         try await seedCandidate(id: unsubscribed, capturedAt: now, h3Cell: h3Cell, county: county, isSubscribed: false, on: db)
         try await seedCandidate(id: tokenless, capturedAt: now, h3Cell: h3Cell, county: county, token: "", on: db)
 
-        return ([newer, exactlyAtCutoff], [older, inactive, unsubscribed, tokenless])
+        return (exactlyAtCutoff, [newer, exactlyAtCutoff], [older, inactive, unsubscribed, tokenless])
+    }
+
+    private func assertDecodedFields(
+        for candidate: NotificationCandidate,
+        id: UUID,
+        capturedAt: Date,
+        countyLabel: String?
+    ) {
+        #expect(candidate.id == id)
+        #expect(candidate.apnsToken == "token")
+        #expect(candidate.apnsEnvironment == "sandbox")
+        #expect(candidate.locationAuthRaw == "always")
+        #expect(candidate.locationAuth == .always)
+        #expect(candidate.capturedAt == capturedAt)
+        #expect(candidate.receivedAt == capturedAt.addingTimeInterval(30))
+        #expect(candidate.countyLabel == countyLabel)
+        #expect(candidate.fireZoneLabel == "Test Fire Zone")
     }
 
     @Test("H3 candidates include fresh and cutoff presence while preserving installation exclusions")
@@ -154,7 +174,7 @@ struct NotificationSendJobCandidateQueryTests {
             let expected = try await seedCandidates(h3Cell: h3Cell, county: nil, on: database)
             let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
 
-            let candidates = try await NotificationSendJob().loadH3Candidates(
+            let candidates = try await NotificationCandidateStore().loadH3Candidates(
                 cells: [h3Cell],
                 capturedAtOrAfter: cutoff,
                 on: database
@@ -163,6 +183,21 @@ struct NotificationSendJobCandidateQueryTests {
 
             #expect(actual == expected.included)
             #expect(actual.isDisjoint(with: expected.excluded))
+            let cutoffCandidate = try #require(candidates.first { $0.id == expected.atCutoff })
+            assertDecodedFields(for: cutoffCandidate, id: expected.atCutoff, capturedAt: cutoff, countyLabel: nil)
+        }
+    }
+
+    @Test("H3 candidates return empty for empty cells")
+    func h3CandidatesReturnEmptyForEmptyCells() async throws {
+        try await withApp { database in
+            let candidates = try await NotificationCandidateStore().loadH3Candidates(
+                cells: [],
+                capturedAtOrAfter: now,
+                on: database
+            )
+
+            #expect(candidates.isEmpty)
         }
     }
 
@@ -172,16 +207,36 @@ struct NotificationSendJobCandidateQueryTests {
             let county = "test-\(UUID().uuidString)"
             let expected = try await seedCandidates(h3Cell: nil, county: county, on: database)
             let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+            let zoneOnly = UUID()
+            let fireZoneOnly = UUID()
+            try await seedCandidate(
+                id: zoneOnly,
+                capturedAt: cutoff,
+                h3Cell: nil,
+                county: nil,
+                zone: county,
+                on: database
+            )
+            try await seedCandidate(
+                id: fireZoneOnly,
+                capturedAt: cutoff,
+                h3Cell: nil,
+                county: nil,
+                fireZone: county,
+                on: database
+            )
 
-            let candidates = try await NotificationSendJob().loadUGCCandidates(
+            let candidates = try await NotificationCandidateStore().loadUGCCandidates(
                 ugcCodes: [county],
                 capturedAtOrAfter: cutoff,
                 on: database
             )
             let actual = Set(candidates.map(\.id))
 
-            #expect(actual == expected.included)
+            #expect(actual == expected.included.union([zoneOnly, fireZoneOnly]))
             #expect(actual.isDisjoint(with: expected.excluded))
+            let cutoffCandidate = try #require(candidates.first { $0.id == expected.atCutoff })
+            assertDecodedFields(for: cutoffCandidate, id: expected.atCutoff, capturedAt: cutoff, countyLabel: county)
         }
     }
 }

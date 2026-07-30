@@ -10,3 +10,4 @@
 - For Docker cache storage, keep the host bind-source path separate from the container runtime path. Verify the resolved environment and mount first; prefer matching ownership and `0770` over using `0777` to mask a path that was never mounted.
 - For the production Storm Setup contract, preserve `AnvilAnalyzeProfileResponse` only; keep Anvil request/profile-preview debug envelopes on the dev diagnostics endpoint unless a story explicitly promotes them.
 - When reading an audit, treat its implementation-status annotations as historical evidence, not proof that adjacent current-state defects are resolved; re-check every claimed open or closed mechanism directly in current code.
+- When a discovered defect is a tiny, understood correction inside the active review unit, present the scope exception clearly but do not force a separate issue/session workflow unless the behavioral risk actually warrants that overhead.

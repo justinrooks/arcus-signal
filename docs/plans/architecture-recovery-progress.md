@@ -35,7 +35,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 02 | [#155](https://github.com/justinrooks/arcus-signal/issues/155) | 2 | Centralize HRRR surface-to-pressure identity | None | `gpt-5.6-terra`, high | Complete |
 | 03 | [#156](https://github.com/justinrooks/arcus-signal/issues/156) | 3 | Extract pure H3 coverage result | None | `gpt-5.6-terra`, high | Pending |
 | 04 | [#157](https://github.com/justinrooks/arcus-signal/issues/157) | 4 | Move H3 work before transaction | 03 | `gpt-5.6-sol`, high | Complete |
-| 05 | [#158](https://github.com/justinrooks/arcus-signal/issues/158) | 5 | Isolate notification candidate selection | 01 | `gpt-5.6-sol`, high | Pending |
+| 05 | [#158](https://github.com/justinrooks/arcus-signal/issues/158) | 5 | Isolate notification candidate selection | 01 | `gpt-5.6-sol`, high | Complete |
 | 06 | [#159](https://github.com/justinrooks/arcus-signal/issues/159) | 6 | Isolate notification ledger persistence | 01, 05 | `gpt-5.6-sol`, high + senior review | Pending |
 | 07 | [#160](https://github.com/justinrooks/arcus-signal/issues/160) | 7 | Characterize NWS persistence flow | None | `gpt-5.6-sol`, high | Pending |
 | 08 | [#161](https://github.com/justinrooks/arcus-signal/issues/161) | 8 | Extract NWS transaction script | 07 | `gpt-5.6-sol`, high + senior review | Pending |
@@ -118,11 +118,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #158 - 05: Isolate notification candidate selection
 
-- **Status:** Pending
+- **Status:** Complete
 - **Roadmap:** Slice 5
 - **Execution profile:** `gpt-5.6-sol`, high reasoning
 - **Dependencies:** 01
 - **Stop condition:** Candidate SQL has one owner; send orchestration unchanged.
+- **Files changed:** `Sources/App/Models/Notification/NotificationCandidateStore.swift`, `Sources/App/Jobs/NotificationSendJob.swift`, `Tests/AppTests/NotificationSendJobCandidateQueryTests.swift`, and `docs/plans/architecture-recovery-progress.md`.
+- **Behavior:** `NotificationCandidateStore` now solely owns the H3/UGC candidate row and queries. `NotificationSendJob` retains lifecycle and target-mode orchestration through a trailing defaulted store dependency. Candidate selection, cutoff, exclusions, matching, and sequential delivery are unchanged; quoted label aliases repair previously silent `nil` decoding without changing current notification copy.
+- **Validation:** `swift test --filter NotificationSendJobCandidateQueryTests` passed (3 tests); `swift test --filter NotificationSendJobDeliveryBoundaryTests` passed (4 tests); `swift test --filter LocationFreshnessPolicyTests` passed (13 tests). The scoped whitespace check passed; unscoped `git diff --check` remains blocked only by pre-existing trailing whitespace in `docs/Sql/Device.sql:48`.
+- **Residual risk / handoff:** County and fire-zone labels now decode from populated presence rows, but `NotificationEngine` currently uses generic area wording and ignores them. Issue #159 retains ownership of all ledger claim/completion extraction; no ledger, delivery, retry, queue, schema, or contract behavior moved here.
 
 ### Issue #159 - 06: Isolate notification ledger persistence
 
