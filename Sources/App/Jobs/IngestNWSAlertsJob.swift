@@ -24,7 +24,7 @@ public struct IngestNWSAlertsPayload: Codable, Sendable {
     }
 }
 
-private struct PersistResult {
+struct PersistResult {
     let newRevisionsCreated: Int
     let newSeriesCreated: Int
     let targetOutboxQueued: Int
@@ -262,7 +262,9 @@ private extension IngestNWSAlertsJob {
             }
         }
     }
-    
+}
+
+extension IngestNWSAlertsJob {
     func persistArcusEvents(
         _ events: [ArcusEvent],
         on database: any Database,
@@ -399,7 +401,9 @@ private extension IngestNWSAlertsJob {
             notificationOutboxQueued: notificationOutboxQueued
         )
     }
-    
+}
+
+private extension IngestNWSAlertsJob {
     private func queueDispatchMessages(
         event: ArcusEvent,
         seriesId: UUID,

@@ -37,7 +37,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 04 | [#157](https://github.com/justinrooks/arcus-signal/issues/157) | 4 | Move H3 work before transaction | 03 | `gpt-5.6-sol`, high | Complete |
 | 05 | [#158](https://github.com/justinrooks/arcus-signal/issues/158) | 5 | Isolate notification candidate selection | 01 | `gpt-5.6-sol`, high | Complete |
 | 06 | [#159](https://github.com/justinrooks/arcus-signal/issues/159) | 6 | Isolate notification ledger persistence | 01, 05 | `gpt-5.6-sol`, high + senior review | Ready for commit |
-| 07 | [#160](https://github.com/justinrooks/arcus-signal/issues/160) | 7 | Characterize NWS persistence flow | None | `gpt-5.6-sol`, high | Pending |
+| 07 | [#160](https://github.com/justinrooks/arcus-signal/issues/160) | 7 | Characterize NWS persistence flow | None | `gpt-5.6-sol`, high | Ready for commit |
 | 08 | [#161](https://github.com/justinrooks/arcus-signal/issues/161) | 8 | Extract NWS transaction script | 07 | `gpt-5.6-sol`, high + senior review | Pending |
 | 09 | [#162](https://github.com/justinrooks/arcus-signal/issues/162) | 9 | Recover explicit API dependency ownership | 02 | `gpt-5.6-sol`, high | Pending |
 | 10 | [#163](https://github.com/justinrooks/arcus-signal/issues/163) | 10 | Own warm claim/completion SQL | 02 | `gpt-5.6-sol`, high | Pending |
@@ -142,11 +142,16 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #160 - 07: Characterize NWS persistence flow
 
-- **Status:** Pending
+- **Status:** Ready for commit
 - **Roadmap:** Slice 7
 - **Execution profile:** `gpt-5.6-sol`, high reasoning
 - **Dependencies:** None
 - **Stop condition:** Lineage, outbox, duplicate, merge, and rollback paths are pinned.
+- **Files changed:** `Sources/App/Jobs/IngestNWSAlertsJob.swift`, `Tests/AppTests/NWSIngestPersistenceFlowTests.swift`, and this progress entry.
+- **Behavior:** Production persistence behavior is unchanged. `PersistResult` and `persistArcusEvents` now have module-internal visibility for `@testable` access; the method body, helper visibility, transaction ownership, post-commit drains, and cleanup remain in place.
+- **Coverage:** Five serialized PostgreSQL tests pin new polygon/point/nil dispatch combinations, duplicate-revision idempotency, newer/older snapshot ordering, deterministic referenced-series merge including the UUID tie-break, lineage/outbox/geolocation reconciliation, loser tombstoning, and complete late-failure batch rollback.
+- **Validation:** `swift test --filter NWSIngestPersistenceFlowTests` passed (5 tests); `swift test --filter NWSAlertLifecycleTests` passed (2 tests); `swift test --filter ArcusEventFingerprintTests` passed (2 tests). Independent review accepted and resolved two missing series-state assertions and one deterministic merge setup defect; focused re-review found no remaining affected-area finding. Human review completed with no suggested changes, and the final independent reviewer and test auditor reported no actionable findings. A proposed `dequeue`-owned rollback test was rejected because Slice 7 explicitly prescribes the callable persistence seam and sentinel transaction shape. The scoped whitespace check passed; unscoped `git diff --check` remains blocked only by pre-existing trailing whitespace in `docs/Sql/Device.sql:48`.
+- **Residual risk / handoff:** The suite requires the existing local PostgreSQL integration-test service and intentionally excludes queue drains, Redis, APNs, live NWS, lifecycle cleanup, and fixture replay. Issue #161 may extract the now-characterized transaction script but must preserve the tested operation order and full-batch transaction.
 
 ### Issue #161 - 08: Extract NWS transaction script
 
