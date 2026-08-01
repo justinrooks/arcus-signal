@@ -8,14 +8,17 @@ import Vapor
 
 @Suite("HRRR pressure artifact probe service", .serialized)
 struct HRRRPressureArtifactProbeServiceTests {
-    @Test("probe does not enqueue when idx is unavailable and updates lastCheckedAt")
-    func probeDoesNotEnqueueWhenIdxIsUnavailableAndUpdatesLastCheckedAt() async throws {
+    @Test("unavailable idx conflicts update only lastCheckedAt")
+    func unavailableIdxConflictsUpdateOnlyLastCheckedAt() async throws {
         try await withApp { app, _ in
             let surfaceCandidate = makeSurfaceCandidate()
             let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
             let payload = makePayload(from: pressureCandidate)
             let remoteChecker = ProbeStubHrrrRemoteObjectChecking()
             let dispatcher = WarmJobDispatcherRecorder()
+            let originalLastCheckedAt = makeUTCDate(year: 2026, month: 6, day: 3, hour: 12)
+            let originalLeaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 3, hour: 14)
+            let originalClaimToken = UUID()
             let service = makeService(
                 remoteChecker: remoteChecker,
                 dispatcher: dispatcher,
@@ -24,7 +27,17 @@ struct HRRRPressureArtifactProbeServiceTests {
                 now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
             )
 
-            try await seedCatalogRow(status: .failed, payload: payload, lastCheckedAt: nil, on: app.db)
+            try await seedCatalogRow(
+                status: .warming,
+                payload: payload,
+                lastCheckedAt: originalLastCheckedAt,
+                leaseExpiresAt: originalLeaseExpiresAt,
+                claimToken: originalClaimToken,
+                localPath: "/tmp/preserved.grib2",
+                byteSize: 42,
+                errorSummary: "preserved error",
+                on: app.db
+            )
 
             try await service.probe(on: app, logger: app.logger)
 
@@ -37,9 +50,65 @@ struct HRRRPressureArtifactProbeServiceTests {
             ))
 
             #expect(dispatcher.dispatches.isEmpty)
-            #expect(row.status == .failed)
-            #expect(row.lastCheckedAt != nil)
+            #expect(row.status == .warming)
+            #expect(row.source == .unknown)
+            #expect(row.errorSummary == "preserved error")
+            #expect(row.localPath == "/tmp/preserved.grib2")
+            #expect(row.byteSize == 42)
+            #expect(row.claimToken == originalClaimToken)
+            #expect(row.leaseExpiresAt == originalLeaseExpiresAt)
+            #expect(try #require(row.lastCheckedAt) > originalLastCheckedAt)
             #expect(remoteChecker.requestedURLs == [makeIdxURL(for: pressureCandidate).absoluteString])
+        }
+    }
+
+    @Test("dispatch failure marks the row failed and rethrows the original error")
+    func dispatchFailureMarksRowFailedAndRethrowsOriginalError() async throws {
+        try await withApp { app, _ in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let idxURL = makeIdxURL(for: pressureCandidate)
+            let dispatchError = ProbeWarmJobDispatcherError.dispatchFailed
+            let service = makeService(
+                remoteChecker: ProbeStubHrrrRemoteObjectChecking(availableURLs: [idxURL.absoluteString: true]),
+                dispatcher: ThrowingWarmJobDispatcher(error: dispatchError),
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            )
+
+            try await seedCatalogRow(
+                status: .failed,
+                payload: payload,
+                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 12),
+                leaseExpiresAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 14),
+                claimToken: UUID(),
+                localPath: "/tmp/stale.grib2",
+                byteSize: 42,
+                errorSummary: "stale error",
+                on: app.db
+            )
+
+            await #expect(throws: ProbeWarmJobDispatcherError.self) {
+                try await service.probe(on: app, logger: app.logger)
+            }
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(row.status == .failed)
+            #expect(row.source == .aws)
+            #expect(row.errorSummary == String(reflecting: dispatchError))
+            #expect(row.localPath == nil)
+            #expect(row.byteSize == nil)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
         }
     }
 
@@ -552,6 +621,7 @@ private extension HRRRPressureArtifactProbeServiceTests {
         claimToken: UUID? = nil,
         localPath: String? = nil,
         byteSize: Int64? = nil,
+        errorSummary: String? = nil,
         on db: any Database
     ) async throws {
         let row = PressureArtifactCatalogModel(
@@ -564,7 +634,8 @@ private extension HRRRPressureArtifactProbeServiceTests {
             localPath: localPath,
             byteSize: byteSize,
             claimToken: claimToken,
-            lastCheckedAt: lastCheckedAt
+            lastCheckedAt: lastCheckedAt,
+            errorSummary: errorSummary
         )
         row.leaseExpiresAt = leaseExpiresAt
         try await row.create(on: db)
@@ -661,6 +732,25 @@ private final class CancellingProbeHrrrRemoteObjectChecking: HrrrRemoteObjectChe
         }
 
         throw CancellationError()
+    }
+}
+
+private enum ProbeWarmJobDispatcherError: Error {
+    case dispatchFailed
+}
+
+private struct ThrowingWarmJobDispatcher: PressureArtifactWarmJobDispatching {
+    let error: ProbeWarmJobDispatcherError
+
+    func dispatch(
+        _ payload: PressureArtifactWarmJobPayload,
+        to queueName: QueueName,
+        on application: Application
+    ) async throws {
+        _ = payload
+        _ = queueName
+        _ = application
+        throw error
     }
 }
 

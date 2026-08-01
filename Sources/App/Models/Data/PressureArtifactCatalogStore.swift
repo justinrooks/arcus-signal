@@ -157,4 +157,183 @@ struct PressureArtifactCatalogStore: Sendable {
 
         return updatedRow != nil
     }
+
+    func claimWarmableCatalogRow(
+        for payload: PressureArtifactWarmJobPayload,
+        recoveryCutoff: Date,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let sql = database as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        let row = try await sql.raw("""
+            INSERT INTO pressure_artifact_catalog (
+                id,
+                run_time,
+                forecast_hour,
+                valid_time,
+                product,
+                field_set_version,
+                status,
+                source,
+                last_checked_at,
+                error_summary,
+                local_path,
+                byte_size,
+                claim_token,
+                lease_expires_at
+            ) VALUES (
+                gen_random_uuid(),
+                \(bind: payload.runTime),
+                \(bind: payload.forecastHour),
+                \(bind: payload.validTime),
+                \(bind: payload.product.rawValue),
+                \(bind: payload.fieldSetVersion.rawValue),
+                \(bind: PressureArtifactCatalogStatus.pending.rawValue),
+                \(bind: PressureArtifactCatalogSource.aws.rawValue),
+                NOW(),
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                NULL
+            )
+            ON CONFLICT (run_time, forecast_hour, product, field_set_version)
+            DO UPDATE SET
+                status = \(bind: PressureArtifactCatalogStatus.pending.rawValue),
+                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
+                last_checked_at = NOW(),
+                error_summary = NULL,
+                local_path = NULL,
+                byte_size = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE pressure_artifact_catalog.status IN (
+                \(bind: PressureArtifactCatalogStatus.failed.rawValue)
+            )
+            OR (
+                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.pending.rawValue)
+                AND pressure_artifact_catalog.last_checked_at < \(bind: recoveryCutoff)
+            )
+            OR (
+                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.warming.rawValue)
+                AND (
+                    pressure_artifact_catalog.lease_expires_at IS NULL
+                    OR pressure_artifact_catalog.lease_expires_at <= NOW()
+                )
+            )
+            OR (
+                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+                AND pressure_artifact_catalog.claim_token IS NULL
+                AND (
+                    pressure_artifact_catalog.lease_expires_at IS NULL
+                    OR pressure_artifact_catalog.lease_expires_at <= NOW()
+                )
+            )
+            RETURNING id
+            """)
+            .first()
+
+        return row != nil
+    }
+
+    func recoverUnusableReadyCatalogRow(
+        for payload: PressureArtifactWarmJobPayload,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let sql = database as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET status = \(bind: PressureArtifactCatalogStatus.pending.rawValue),
+                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
+                last_checked_at = NOW(),
+                error_summary = NULL,
+                local_path = NULL,
+                byte_size = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE run_time = \(bind: payload.runTime)
+              AND forecast_hour = \(bind: payload.forecastHour)
+              AND product = \(bind: payload.product.rawValue)
+              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
+              AND status = \(bind: PressureArtifactCatalogStatus.ready.rawValue)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func markUnavailability(
+        payload: PressureArtifactWarmJobPayload,
+        errorSummary: String,
+        on database: any Database
+    ) async throws {
+        guard let sql = database as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        _ = try await sql.raw("""
+            INSERT INTO pressure_artifact_catalog (
+                id,
+                run_time,
+                forecast_hour,
+                valid_time,
+                product,
+                field_set_version,
+                status,
+                source,
+                last_checked_at,
+                error_summary
+            ) VALUES (
+                gen_random_uuid(),
+                \(bind: payload.runTime),
+                \(bind: payload.forecastHour),
+                \(bind: payload.validTime),
+                \(bind: payload.product.rawValue),
+                \(bind: payload.fieldSetVersion.rawValue),
+                \(bind: PressureArtifactCatalogStatus.failed.rawValue),
+                \(bind: PressureArtifactCatalogSource.aws.rawValue),
+                NOW(),
+                \(bind: errorSummary)
+            )
+            ON CONFLICT (run_time, forecast_hour, product, field_set_version)
+            DO UPDATE SET
+                last_checked_at = NOW()
+            RETURNING id
+            """)
+            .first()
+    }
+
+    func markProbeFailure(
+        payload: PressureArtifactWarmJobPayload,
+        errorSummary: String,
+        on database: any Database
+    ) async throws {
+        guard let sql = database as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        _ = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET status = \(bind: PressureArtifactCatalogStatus.failed.rawValue),
+                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
+                last_checked_at = NOW(),
+                error_summary = \(bind: errorSummary),
+                local_path = NULL,
+                byte_size = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE run_time = \(bind: payload.runTime)
+              AND forecast_hour = \(bind: payload.forecastHour)
+              AND product = \(bind: payload.product.rawValue)
+              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
+            RETURNING id
+            """)
+            .first()
+    }
 }

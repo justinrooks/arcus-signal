@@ -41,7 +41,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 08 | [#161](https://github.com/justinrooks/arcus-signal/issues/161) | 8 | Extract NWS transaction script | 07 | `gpt-5.6-sol`, high + senior review | Pending |
 | 09 | [#162](https://github.com/justinrooks/arcus-signal/issues/162) | 9 | Recover explicit API dependency ownership | 02 | `gpt-5.6-sol`, high | READY FOR COMMIT |
 | 10 | [#163](https://github.com/justinrooks/arcus-signal/issues/163) | 10 | Own warm claim/completion SQL | 02 | `gpt-5.6-sol`, high | Pending |
-| 11 | [#164](https://github.com/justinrooks/arcus-signal/issues/164) | 11A | Own probe catalog transitions | 10 | `gpt-5.6-sol`, high | Pending |
+| 11 | [#164](https://github.com/justinrooks/arcus-signal/issues/164) | 11A | Own probe catalog transitions | 10 | `gpt-5.6-sol`, high | READY FOR COMMIT |
 | 12 | [#165](https://github.com/justinrooks/arcus-signal/issues/165) | 11B | Own cleanup catalog transitions | 10, 11 | `gpt-5.6-sol`, high + persistence/filesystem review | Pending |
 | 13 | [#166](https://github.com/justinrooks/arcus-signal/issues/166) | 12 | Move request cache I/O to bounded executor | 09 | `gpt-5.6-sol`, high | Pending |
 | 14 | [#167](https://github.com/justinrooks/arcus-signal/issues/167) | 13 | Clarify Storm Setup candidate attempts | 02, 09, 13 | `gpt-5.6-sol`, high | Pending |
@@ -195,11 +195,17 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #164 - 11: Own probe catalog transitions
 
-- **Status:** Pending
+- **Status:** READY FOR COMMIT
 - **Roadmap:** Slice 11A
 - **Execution profile:** `gpt-5.6-sol`, high reasoning
 - **Dependencies:** 10
 - **Stop condition:** Probe transition SQL has one owner; discovery unchanged.
+- **Files changed:** `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`, `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`, `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`, and this progress entry.
+- **Behavior:** The existing concrete, stateless catalog store now owns warmable-row claim/upsert, unusable-ready recovery, remote-unavailability persistence, and probe-failure persistence. The probe injects that store through a trailing defaulted initializer parameter, passes persistence-ready summaries, and retains candidate discovery and ordering, remote probing, model lookup, ready-file validation, recovery decisions, dispatch gating, cancellation, logging, and the existing `databaseNotSQL` error contract. The moved SQL preserves its predicates, bindings, mutations, `NOW()`, and `RETURNING` behavior.
+- **Coverage:** Strengthened the unavailable-conflict scenario to prove only `last_checked_at` changes while status, source, error, artifact metadata, claim token, and lease remain intact. Added deterministic dispatch-failure coverage proving the row becomes failed, artifact/fencing fields clear, the same reflected error is stored, and the original error is rethrown.
+- **Validation:** Pre-change `swift test --filter HRRRPressureArtifactProbeServiceTests` passed (10 tests), and the characterization-expanded suite passed before the SQL move (11 tests). Post-change probe tests passed (11 tests), `swift test --filter PressureArtifactDiagnosticsTests` passed (9 tests), and `swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warn-concurrency` passed with only the pre-existing `ArcusEvent.title` deprecation warning. Across three `swift test --parallel --num-workers 8` runs, one passed all 453 tests and two reported one issue; the reproducible unrelated failure was `DevicePresenceMigrationTests.rollback keeps expanded source values valid` with a PostgreSQL error, while that suite passed alone (1 test).
+- **Review:** Human review completed with no suggested changes. The independent defect reviewer reported no actionable findings after comparing all four moved transitions and independently reran the probe and diagnostics suites. The independent test auditor reported no actionable findings, mapped every acceptance criterion to sufficient evidence, and independently reran both focused suites. There were no disagreements, accepted findings, fixes, or affected-area re-review requirements. The auditor's two non-blocking test uncertainties were rejected as unsupported because `databaseNotSQL` and first-available control flow remain structurally unchanged; the unrelated parallel migration failure was deferred out of scope. Final full-diff review found no predicate, mutation, dispatch-order, candidate-order, cancellation, logging, concurrency, persistence, or scope drift.
+- **Residual risk / handoff:** Full parallel validation retains a pre-existing database-isolation failure outside pressure artifacts. Cleanup, warming, lookup, dashboard, model, schema, migration, queue, cache, HTTP, filesystem, and diagnostics-copy behavior are unchanged. No #165 work was included. Ready for commit.
 
 ### Issue #165 - 12: Own cleanup catalog transitions
 
