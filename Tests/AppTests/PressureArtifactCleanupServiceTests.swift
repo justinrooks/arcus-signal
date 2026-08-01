@@ -104,9 +104,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("only one cleanup token owns a candidate")
     func onlyOneCleanupTokenOwnsACandidate() async throws {
-        try await withApp { app, rootURL, blockingWorkExecutor in
+        try await withApp { app, rootURL, _ in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
+            let catalogStore = PressureArtifactCatalogStore()
             let fileURL = makeTempRegularFile(in: rootURL, name: "concurrent.grib2", contents: Data("delete-me".utf8))
             let row = try await seedRow(
                 on: app.db,
@@ -119,13 +119,13 @@ struct PressureArtifactCleanupServiceTests {
 
             let deletionCutoff = now.addingTimeInterval(-60 * 60)
             let cleanupLeaseExpiresAt = makeUTCDate(year: 2030, month: 6, day: 30, hour: 22)
-            let firstClaim = try #require(try await service.claimDeletionCandidate(
+            let firstClaim = try #require(try await catalogStore.claimDeletionCandidate(
                 for: row,
                 olderThan: deletionCutoff,
                 cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
                 on: app.db
             ))
-            let secondClaim = try await service.claimDeletionCandidate(
+            let secondClaim = try await catalogStore.claimDeletionCandidate(
                 for: row,
                 olderThan: deletionCutoff,
                 cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
@@ -169,9 +169,9 @@ struct PressureArtifactCleanupServiceTests {
 
     @Test("old cleanup tokens cannot clear metadata after ownership changes")
     func oldCleanupTokensCannotClearMetadataAfterOwnershipChanges() async throws {
-        try await withApp { app, rootURL, blockingWorkExecutor in
+        try await withApp { app, rootURL, _ in
             let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWorkExecutor)
+            let catalogStore = PressureArtifactCatalogStore()
             let fileURL = makeTempRegularFile(in: rootURL, name: "ownership.grib2", contents: Data("ownership".utf8))
             let row = try await seedRow(
                 on: app.db,
@@ -184,7 +184,7 @@ struct PressureArtifactCleanupServiceTests {
 
             let deletionCutoff = now.addingTimeInterval(-60 * 60)
             let cleanupLeaseExpiresAt = now.addingTimeInterval(30 * 60)
-            let claimedRow = try #require(try await service.claimDeletionCandidate(
+            let claimedRow = try #require(try await catalogStore.claimDeletionCandidate(
                 for: row,
                 olderThan: deletionCutoff,
                 cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
@@ -199,7 +199,7 @@ struct PressureArtifactCleanupServiceTests {
                 leaseExpiresAt: makeUTCDate(year: 2026, month: 6, day: 30, hour: 22)
             )
 
-            let didFinish = try await service.completeSuccessfulCleanup(
+            let didFinish = try await catalogStore.completeSuccessfulCleanup(
                 for: claimedRow,
                 claimToken: oldClaimToken,
                 on: app.db
@@ -212,6 +212,109 @@ struct PressureArtifactCleanupServiceTests {
             #expect(refreshed.byteSize == 9)
             #expect(refreshed.claimToken == newClaimToken)
             #expect(refreshed.leaseExpiresAt != nil)
+            #expect(FileManager.default.fileExists(atPath: fileURL.path))
+        }
+    }
+
+    @Test("stale cleanup tokens cannot fail or release a newer claim")
+    func staleCleanupTokensCannotFailOrReleaseANewerClaim() async throws {
+        try await withApp { app, rootURL, _ in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let catalogStore = PressureArtifactCatalogStore()
+            let fileURL = makeTempRegularFile(in: rootURL, name: "stale-claim.grib2", contents: Data("ownership".utf8))
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 9
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            let claimedRow = try #require(try await catalogStore.claimDeletionCandidate(
+                for: row,
+                olderThan: now.addingTimeInterval(-60 * 60),
+                cleanupLeaseExpiresAt: now.addingTimeInterval(30 * 60),
+                on: app.db
+            ))
+            let oldClaimToken = try #require(claimedRow.claimToken)
+            let newClaimToken = UUID()
+            let newLeaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 30, hour: 22)
+            try await reclaimCleanupOwnership(
+                on: app.db,
+                rowID: try #require(row.id),
+                claimToken: newClaimToken,
+                leaseExpiresAt: newLeaseExpiresAt
+            )
+
+            let didFail = try await catalogStore.completeFailedCleanup(
+                for: claimedRow,
+                claimToken: oldClaimToken,
+                reason: "stale cleanup failure",
+                on: app.db
+            )
+            let didRelease = try await catalogStore.releaseCleanupClaim(
+                for: claimedRow,
+                claimToken: oldClaimToken,
+                on: app.db
+            )
+
+            #expect(didFail == false)
+            #expect(didRelease == false)
+
+            let refreshed = try #require(try await PressureArtifactCatalogModel.find(row.id, on: app.db))
+            #expect(refreshed.localPath == fileURL.path)
+            #expect(refreshed.byteSize == 9)
+            #expect(refreshed.errorSummary == nil)
+            #expect(refreshed.claimToken == newClaimToken)
+            #expect(refreshed.leaseExpiresAt == newLeaseExpiresAt)
+            #expect(FileManager.default.fileExists(atPath: fileURL.path))
+        }
+    }
+
+    @Test("ownership change before physical removal preserves the file and newer claim")
+    func ownershipChangeBeforePhysicalRemovalPreservesTheFileAndNewerClaim() async throws {
+        try await withApp { app, rootURL, blockingWorkExecutor in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let fileURL = makeTempRegularFile(in: rootURL, name: "ownership-recheck.grib2", contents: Data("ownership".utf8))
+            let row = try await seedRow(
+                on: app.db,
+                status: .expired,
+                validTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 18),
+                localPath: fileURL.path,
+                byteSize: 9
+            )
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+
+            let rowID = try #require(row.id)
+            let newClaimToken = UUID()
+            let newLeaseExpiresAt = makeUTCDate(year: 2026, month: 6, day: 30, hour: 22)
+            let service = makeService(
+                rootURL: rootURL,
+                now: now,
+                blockingWorkExecutor: blockingWorkExecutor,
+                beforePhysicalRemovalHook: {
+                    do {
+                        try await reclaimCleanupOwnership(
+                            on: app.db,
+                            rowID: rowID,
+                            claimToken: newClaimToken,
+                            leaseExpiresAt: newLeaseExpiresAt
+                        )
+                    } catch {
+                        Issue.record(error)
+                    }
+                }
+            )
+
+            try await service.cleanup(on: app, logger: app.logger)
+
+            let refreshed = try #require(try await PressureArtifactCatalogModel.find(row.id, on: app.db))
+            #expect(refreshed.localPath == fileURL.path)
+            #expect(refreshed.byteSize == 9)
+            #expect(refreshed.errorSummary == nil)
+            #expect(refreshed.claimToken == newClaimToken)
+            #expect(refreshed.leaseExpiresAt == newLeaseExpiresAt)
             #expect(FileManager.default.fileExists(atPath: fileURL.path))
         }
     }

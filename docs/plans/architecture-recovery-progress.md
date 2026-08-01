@@ -42,7 +42,7 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 | 09 | [#162](https://github.com/justinrooks/arcus-signal/issues/162) | 9 | Recover explicit API dependency ownership | 02 | `gpt-5.6-sol`, high | READY FOR COMMIT |
 | 10 | [#163](https://github.com/justinrooks/arcus-signal/issues/163) | 10 | Own warm claim/completion SQL | 02 | `gpt-5.6-sol`, high | Pending |
 | 11 | [#164](https://github.com/justinrooks/arcus-signal/issues/164) | 11A | Own probe catalog transitions | 10 | `gpt-5.6-sol`, high | READY FOR COMMIT |
-| 12 | [#165](https://github.com/justinrooks/arcus-signal/issues/165) | 11B | Own cleanup catalog transitions | 10, 11 | `gpt-5.6-sol`, high + persistence/filesystem review | Pending |
+| 12 | [#165](https://github.com/justinrooks/arcus-signal/issues/165) | 11B | Own cleanup catalog transitions | 10, 11 | `gpt-5.6-sol`, high + persistence/filesystem review | READY FOR COMMIT |
 | 13 | [#166](https://github.com/justinrooks/arcus-signal/issues/166) | 12 | Move request cache I/O to bounded executor | 09 | `gpt-5.6-sol`, high | Pending |
 | 14 | [#167](https://github.com/justinrooks/arcus-signal/issues/167) | 13 | Clarify Storm Setup candidate attempts | 02, 09, 13 | `gpt-5.6-sol`, high | Pending |
 | 15 | [#168](https://github.com/justinrooks/arcus-signal/issues/168) | 14 | Own child-process cancellation | 13 recommended | `gpt-5.6-sol`, high + manual runtime review | Pending |
@@ -209,11 +209,17 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #165 - 12: Own cleanup catalog transitions
 
-- **Status:** Pending
+- **Status:** READY FOR COMMIT
 - **Roadmap:** Slice 11B
 - **Execution profile:** `gpt-5.6-sol`, high reasoning with persistence/filesystem-safety review
 - **Dependencies:** 10, 11
 - **Stop condition:** Cleanup transition SQL has one owner; path safety unchanged.
+- **Files changed:** `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`, `Sources/App/StormSetup/PressureArtifactCleanupService.swift`, `Tests/AppTests/PressureArtifactCleanupServiceTests.swift`, and this progress entry.
+- **Behavior:** The existing concrete, stateless catalog store now owns ready-row expiration, deletion claim, successful and failed cleanup completion, claim release, and ownership recheck. Cleanup injects the store through a trailing defaulted initializer parameter, delegates each transition at its original call position, and retains expiration logging, expired/protected-row reads, canonicalization, root confinement, protected-path rechecks, regular-file validation, bounded filesystem work, deletion, cancellation, and orchestration. Newly expired rows still wait for a later run because the service loads expired rows before delegating ready-row expiration.
+- **Coverage:** Retargeted direct claim and stale-success-token tests to the store. Added store-level fencing coverage proving stale tokens cannot record failure or release a newer claim. Added deterministic `beforePhysicalRemovalHook` coverage proving an ownership change after path validation prevents deletion and preserves the newer token and lease.
+- **Validation:** Pre-change `swift test --filter PressureArtifactCleanupServiceTests` passed (12 tests). Post-change cleanup tests passed (14 tests), `swift test --filter PressureArtifactDiagnosticsTests` passed (9 tests), and `swift test --parallel --num-workers 8` passed all 455 tests across 59 suites; the known unrelated `DevicePresenceMigrationTests` isolation failure did not reproduce. The four-file scoped whitespace check passed. Unscoped `git diff --check` remains blocked only by the pre-existing `docs/Sql/Device.sql:48` trailing whitespace.
+- **Review:** Human review completed with no suggested changes. The independent defect reviewer reported no actionable findings after comparing the moved SQL byte-for-byte and reviewing persistence fencing, filesystem ordering, cancellation, and scope. The independent test auditor reported no actionable findings, mapped every acceptance criterion to deterministic evidence, and independently reran the cleanup and diagnostics suites. There were no disagreements or code fixes. The reviewer's stale lifecycle-metadata uncertainty was accepted and resolved by this update. The auditor's lack of an independent full-suite rerun was already resolved by the primary full run; its non-blocking cancellation-test uncertainty was rejected as unsupported because cancellation code and ordering are unchanged. Final full-diff review found no path-check ordering, ownership-recheck, physical-deletion, successful-completion, cancellation, timing, predicate, token, lease, state, or scope drift.
+- **Residual risk / handoff:** The pre-existing unrelated changes in `docs/Sql/Device.sql`, `docs/audits/weekly-bug-scan.md`, and `docs/audits/weekly-test-gap-audit.md` were preserved and excluded. Warm, probe, lookup, dashboard, model, schema, migration, scheduler, queue, cache, HTTP, and #166 behavior are unchanged. No branch, commit, push, or pull request was created. Ready for commit.
 
 ### Issue #166 - 13: Move request cache I/O to bounded executor
 

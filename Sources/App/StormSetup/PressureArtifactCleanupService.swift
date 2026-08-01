@@ -1,5 +1,4 @@
 import Fluent
-import FluentSQL
 import Foundation
 import Vapor
 
@@ -16,6 +15,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
     private let deleteGraceSeconds: TimeInterval
     private let recoveryTimeoutSeconds: TimeInterval
     private let beforePhysicalRemovalHook: @Sendable () async -> Void
+    private let catalogStore: PressureArtifactCatalogStore
 
     init(
         dateProvider: any StormSetupDateProviding,
@@ -25,7 +25,8 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
         maxStaleAgeSeconds: TimeInterval,
         deleteGraceSeconds: TimeInterval,
         recoveryTimeoutSeconds: TimeInterval,
-        beforePhysicalRemovalHook: @escaping @Sendable () async -> Void = {}
+        beforePhysicalRemovalHook: @escaping @Sendable () async -> Void = {},
+        catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore()
     ) {
         self.dateProvider = dateProvider
         self.blockingWorkExecutor = blockingWorkExecutor
@@ -35,6 +36,7 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
         self.deleteGraceSeconds = max(0, deleteGraceSeconds)
         self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
         self.beforePhysicalRemovalHook = beforePhysicalRemovalHook
+        self.catalogStore = catalogStore
     }
 
     static func makeDefault(application: Application) -> PressureArtifactCleanupService {
@@ -57,7 +59,16 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
         let cleanupLeaseExpiresAt = now.addingTimeInterval(recoveryTimeoutSeconds)
 
         let expiredRowsBeforeExpiration = try await loadExpiredRows(on: application.db)
-        try await expireReadyArtifacts(before: expirationCutoff, on: application.db, logger: logger)
+        let expiredCount = try await catalogStore.expireReadyArtifacts(
+            before: expirationCutoff,
+            on: application.db
+        )
+        if expiredCount > 0 {
+            logger.info(
+                "Pressure artifact cleanup expired ready rows.",
+                metadata: ["count": .stringConvertible(expiredCount)]
+            )
+        }
         let protectedPaths = try await loadProtectedPaths(on: application.db)
         try await deleteExpiredArtifacts(
             rows: expiredRowsBeforeExpiration,
@@ -71,30 +82,6 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
 }
 
 extension PressureArtifactCleanupService {
-    func expireReadyArtifacts(
-        before cutoff: Date,
-        on database: any Database,
-        logger: Logger
-    ) async throws {
-        let readyRows = try await PressureArtifactCatalogModel.query(on: database)
-            .filter(\.$statusRaw == PressureArtifactCatalogStatus.ready.rawValue)
-            .all()
-
-        var expiredCount = 0
-        for row in readyRows where row.validTime < cutoff {
-            row.status = .expired
-            try await row.save(on: database)
-            expiredCount += 1
-        }
-
-        if expiredCount > 0 {
-            logger.info(
-                "Pressure artifact cleanup expired ready rows.",
-                metadata: ["count": .stringConvertible(expiredCount)]
-            )
-        }
-    }
-
     func deleteExpiredArtifacts(
         rows expiredRows: [PressureArtifactCatalogModel],
         olderThan cutoff: Date,
@@ -111,7 +98,7 @@ extension PressureArtifactCleanupService {
                 continue
             }
 
-            guard let claimedRow = try await claimDeletionCandidate(
+            guard let claimedRow = try await catalogStore.claimDeletionCandidate(
                 for: row,
                 olderThan: cutoff,
                 cleanupLeaseExpiresAt: cleanupLeaseExpiresAt,
@@ -122,7 +109,7 @@ extension PressureArtifactCleanupService {
 
             guard let localPath = claimedRow.localPath?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !localPath.isEmpty else {
-                if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
+                if try await catalogStore.completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
                     logger.info(
                         "Pressure artifact cleanup cleared missing file metadata.",
                         metadata: [
@@ -144,7 +131,7 @@ extension PressureArtifactCleanupService {
 
             guard fileExists else {
                 guard localURL.path == canonicalRootPath || localURL.path.hasPrefix(canonicalRootPrefix) else {
-                    if try await completeFailedCleanup(
+                    if try await catalogStore.completeFailedCleanup(
                         for: claimedRow,
                         claimToken: claimedRow.claimToken,
                         reason: "cleanup path outside cache root",
@@ -167,7 +154,7 @@ extension PressureArtifactCleanupService {
                     continue
                 }
 
-                if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
+                if try await catalogStore.completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
                     logger.info(
                         "Pressure artifact cleanup cleared missing file metadata.",
                         metadata: [
@@ -189,7 +176,7 @@ extension PressureArtifactCleanupService {
             let canonicalPath = try await canonicalPath(for: resolvedURL)
 
             guard canonicalPath == canonicalRootPath || canonicalPath.hasPrefix(canonicalRootPrefix) else {
-                if try await completeFailedCleanup(
+                if try await catalogStore.completeFailedCleanup(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,
                     reason: "cleanup path outside cache root",
@@ -213,7 +200,7 @@ extension PressureArtifactCleanupService {
             }
 
             guard !isProtectedPath(canonicalPath, protectedPaths: protectedPaths) else {
-                if try await releaseCleanupClaim(
+                if try await catalogStore.releaseCleanupClaim(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,
                     on: database
@@ -236,7 +223,7 @@ extension PressureArtifactCleanupService {
             }
 
             guard try await isPathCurrentlyProtected(canonicalPath, on: database) == false else {
-                if try await releaseCleanupClaim(
+                if try await catalogStore.releaseCleanupClaim(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,
                     on: database
@@ -259,7 +246,7 @@ extension PressureArtifactCleanupService {
             }
 
             guard try await isRegularFile(at: resolvedURL) else {
-                if try await completeFailedCleanup(
+                if try await catalogStore.completeFailedCleanup(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,
                     reason: "cleanup path is not a regular file",
@@ -284,7 +271,7 @@ extension PressureArtifactCleanupService {
 
             await beforePhysicalRemovalHook()
 
-            guard try await ownsCleanupClaim(for: claimedRow, claimToken: claimedRow.claimToken, on: database) else {
+            guard try await catalogStore.ownsCleanupClaim(for: claimedRow, claimToken: claimedRow.claimToken, on: database) else {
                 logger.info(
                     "Pressure artifact cleanup lost claim ownership.",
                     metadata: cleanupClaimLostMetadata(for: claimedRow)
@@ -294,7 +281,7 @@ extension PressureArtifactCleanupService {
 
             do {
                 try await removeItem(at: resolvedURL)
-                if try await completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
+                if try await catalogStore.completeSuccessfulCleanup(for: claimedRow, claimToken: claimedRow.claimToken, on: database) {
                     logger.info(
                         "Pressure artifact deleted from cache.",
                         metadata: [
@@ -311,7 +298,7 @@ extension PressureArtifactCleanupService {
                 }
             } catch {
                 try rethrowCancellationIfNeeded(error)
-                if try await completeFailedCleanup(
+                if try await catalogStore.completeFailedCleanup(
                     for: claimedRow,
                     claimToken: claimedRow.claimToken,
                     reason: "cleanup delete failed: \(String(describing: error))",
@@ -367,150 +354,6 @@ extension PressureArtifactCleanupService {
         }
 
         return protectedPaths
-    }
-
-    func claimDeletionCandidate(
-        for row: PressureArtifactCatalogModel,
-        olderThan cutoff: Date,
-        cleanupLeaseExpiresAt: Date,
-        on database: any Database
-    ) async throws -> PressureArtifactCatalogModel? {
-        guard let rowID = row.id,
-              let sql = database as? any SQLDatabase else {
-            return nil
-        }
-
-        let claimToken = UUID()
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET claim_token = \(bind: claimToken),
-                lease_expires_at = \(bind: cleanupLeaseExpiresAt)
-            WHERE id = \(bind: rowID)
-              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-              AND updated_at <= \(bind: cutoff)
-              AND (
-                (
-                  claim_token IS NULL
-                  AND (
-                    lease_expires_at IS NULL
-                    OR lease_expires_at <= NOW()
-                  )
-                )
-                OR lease_expires_at <= NOW()
-              )
-            RETURNING id
-            """)
-            .first()
-
-        guard updatedRow != nil else {
-            return nil
-        }
-
-        return try await PressureArtifactCatalogModel.find(rowID, on: database)
-    }
-
-    func completeSuccessfulCleanup(
-        for row: PressureArtifactCatalogModel,
-        claimToken: UUID?,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let claimToken,
-              let rowID = row.id,
-              let sql = database as? any SQLDatabase else {
-            return false
-        }
-
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET local_path = NULL,
-                byte_size = NULL,
-                error_summary = NULL,
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE id = \(bind: rowID)
-              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-              AND claim_token = \(bind: claimToken)
-            RETURNING id
-            """)
-            .first()
-
-        return updatedRow != nil
-    }
-
-    func completeFailedCleanup(
-        for row: PressureArtifactCatalogModel,
-        claimToken: UUID?,
-        reason: String,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let claimToken,
-              let rowID = row.id,
-              let sql = database as? any SQLDatabase else {
-            return false
-        }
-
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET error_summary = \(bind: reason),
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE id = \(bind: rowID)
-              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-              AND claim_token = \(bind: claimToken)
-            RETURNING id
-            """)
-            .first()
-
-        return updatedRow != nil
-    }
-
-    func releaseCleanupClaim(
-        for row: PressureArtifactCatalogModel,
-        claimToken: UUID?,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let claimToken,
-              let rowID = row.id,
-              let sql = database as? any SQLDatabase else {
-            return false
-        }
-
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE id = \(bind: rowID)
-              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-              AND claim_token = \(bind: claimToken)
-            RETURNING id
-            """)
-            .first()
-
-        return updatedRow != nil
-    }
-
-    func ownsCleanupClaim(
-        for row: PressureArtifactCatalogModel,
-        claimToken: UUID?,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let claimToken,
-              let rowID = row.id,
-              let sql = database as? any SQLDatabase else {
-            return false
-        }
-
-        let currentRow = try await sql.raw("""
-            SELECT id
-            FROM pressure_artifact_catalog
-            WHERE id = \(bind: rowID)
-              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-              AND claim_token = \(bind: claimToken)
-            LIMIT 1
-            """)
-            .first()
-
-        return currentRow != nil
     }
 
     func isPathCurrentlyProtected(
