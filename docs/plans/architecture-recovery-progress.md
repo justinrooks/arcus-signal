@@ -181,11 +181,17 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #163 - 10: Own warm claim/completion SQL
 
-- **Status:** Pending
+- **Status:** READY FOR COMMIT
 - **Roadmap:** Slice 10
 - **Execution profile:** `gpt-5.6-sol`, high reasoning
 - **Dependencies:** 02
 - **Stop condition:** Warm transition SQL has one owner with identical predicates.
+- **Files changed:** `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`, `Sources/App/StormSetup/PressureArtifactWarmingService.swift`, `Tests/AppTests/PressureArtifactWarmJobTests.swift`, and this progress entry.
+- **Behavior:** A concrete, stateless `PressureArtifactCatalogStore` now owns ensure-row, conditional warm claim, claim-fenced ready completion, and claim-fenced failed completion. `PressureArtifactWarmingService` computes the same clamped lease expiration, delegates those four transitions at the same orchestration points, and retains current-row skip lookup, acquisition, validation, cancellation, claim-loss logging, and error propagation behavior. The moved SQL preserves its artifact-key predicates, claim eligibility, mutations, fencing, `RETURNING` behavior, and follow-up model lookup.
+- **Coverage:** Retargeted direct warm-claim, exact-key, and stale-token ready-completion tests to the store. Added deterministic coverage proving an old token cannot mark failed or alter the newer owner’s token, lease, status, or error state.
+- **Validation:** Pre-change `swift test --filter PressureArtifactWarmJobTests` passed (17 tests) and `swift test --filter PressureArtifactCatalogTests` passed (9 tests). Post-change `swift test --filter PressureArtifactWarmJobTests` passed (18 tests); `swift test --filter PressureArtifactCatalogTests` passed (9 tests); `swift test --parallel --num-workers 8 --filter PressureArtifactWarmJobTests` passed (18 tests); and `swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warn-concurrency` passed with only the pre-existing `ArcusEvent.title` deprecation warning. The issue-scoped tracked diff check and four-file trailing-whitespace scan passed; unscoped `git diff --check` remains blocked only by the pre-existing `docs/Sql/Device.sql:48` trailing whitespace.
+- **Review:** Human review completed with no suggested changes. The independent defect reviewer reported no actionable findings and independently reran the warm suite (18 tests passed). The independent test auditor reported no actionable findings, mapped every acceptance criterion to coverage, and found the evidence sufficient for commit. There were no disagreements, accepted findings, fixes, or affected-area re-review requirements. Final full-diff review found no SQL, concurrency, cancellation, persistence, or scope drift.
+- **Residual risk / handoff:** The pre-existing claim-update/follow-up-lookup race window is intentionally preserved rather than redesigned. Probe, cleanup, lookup, dashboard, model, schema, migration, warm-job composition, cache, HTTP, validation, scheduler, and queue behavior are unchanged. Ready for commit.
 
 ### Issue #164 - 11: Own probe catalog transitions
 
