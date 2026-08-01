@@ -54,6 +54,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
     private let dateProvider: any StormSetupDateProviding
     private let recoveryTimeoutSeconds: TimeInterval
     private let urlBuilder: HrrrPressureDirectObjectURLBuilder
+    private let catalogStore: PressureArtifactCatalogStore
 
     init(
         runResolver: any HrrrRunResolving = DefaultHrrrRunResolver(),
@@ -62,7 +63,8 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
         blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         recoveryTimeoutSeconds: TimeInterval = 30 * 60,
-        urlBuilder: HrrrPressureDirectObjectURLBuilder = HrrrPressureDirectObjectURLBuilder()
+        urlBuilder: HrrrPressureDirectObjectURLBuilder = HrrrPressureDirectObjectURLBuilder(),
+        catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore()
     ) {
         self.runResolver = runResolver
         self.remoteObjectChecker = remoteObjectChecker
@@ -71,6 +73,7 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
         self.dateProvider = dateProvider
         self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
         self.urlBuilder = urlBuilder
+        self.catalogStore = catalogStore
     }
 
     static func makeDefault(application: Application) -> HRRRPressureArtifactProbeService {
@@ -158,9 +161,9 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                             return
                         }
 
-                        guard try await recoverUnusableReadyCatalogRow(
-                            currentRow,
-                            payload: payload,
+                        try requireSQLDatabase(application.db)
+                        guard try await catalogStore.recoverUnusableReadyCatalogRow(
+                            for: payload,
                             on: application.db
                         ) else {
                             logger.info(
@@ -199,7 +202,8 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                     }
 
                     try Task.checkCancellation()
-                    guard try await claimWarmableCatalogRow(
+                    try requireSQLDatabase(application.db)
+                    guard try await catalogStore.claimWarmableCatalogRow(
                         for: payload,
                         recoveryCutoff: recoveryCutoff,
                         on: application.db
@@ -239,9 +243,10 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
                     return
                 } catch {
                     try rethrowCancellationIfNeeded(error)
-                    try await markProbeFailure(
+                    try requireSQLDatabase(application.db)
+                    try await catalogStore.markProbeFailure(
                         payload: payload,
-                        error: error,
+                        errorSummary: String(reflecting: error),
                         on: application.db
                     )
                     logger.error(
@@ -260,10 +265,10 @@ struct HRRRPressureArtifactProbeService: HRRRPressureArtifactProbing {
             }
 
             try Task.checkCancellation()
-            try await markUnavailability(
+            try requireSQLDatabase(application.db)
+            try await catalogStore.markUnavailability(
                 payload: payload,
-                idxURL: idxURL,
-                idxProbe: idxProbe,
+                errorSummary: makeUnavailableSummary(idxURL: idxURL, idxProbe: idxProbe),
                 on: application.db
             )
             logger.info(
@@ -295,185 +300,10 @@ private extension HRRRPressureArtifactProbeService {
         )
     }
 
-    func claimWarmableCatalogRow(
-        for payload: PressureArtifactWarmJobPayload,
-        recoveryCutoff: Date,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let sql = database as? any SQLDatabase else {
+    func requireSQLDatabase(_ database: any Database) throws {
+        guard database is any SQLDatabase else {
             throw HRRRPressureArtifactProbeError.databaseNotSQL
         }
-
-        let row = try await sql.raw("""
-            INSERT INTO pressure_artifact_catalog (
-                id,
-                run_time,
-                forecast_hour,
-                valid_time,
-                product,
-                field_set_version,
-                status,
-                source,
-                last_checked_at,
-                error_summary,
-                local_path,
-                byte_size,
-                claim_token,
-                lease_expires_at
-            ) VALUES (
-                gen_random_uuid(),
-                \(bind: payload.runTime),
-                \(bind: payload.forecastHour),
-                \(bind: payload.validTime),
-                \(bind: payload.product.rawValue),
-                \(bind: payload.fieldSetVersion.rawValue),
-                \(bind: PressureArtifactCatalogStatus.pending.rawValue),
-                \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                NOW(),
-                NULL,
-                NULL,
-                NULL,
-                NULL,
-                NULL
-            )
-            ON CONFLICT (run_time, forecast_hour, product, field_set_version)
-            DO UPDATE SET
-                status = \(bind: PressureArtifactCatalogStatus.pending.rawValue),
-                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                last_checked_at = NOW(),
-                error_summary = NULL,
-                local_path = NULL,
-                byte_size = NULL,
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE pressure_artifact_catalog.status IN (
-                \(bind: PressureArtifactCatalogStatus.failed.rawValue)
-            )
-            OR (
-                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.pending.rawValue)
-                AND pressure_artifact_catalog.last_checked_at < \(bind: recoveryCutoff)
-            )
-            OR (
-                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.warming.rawValue)
-                AND (
-                    pressure_artifact_catalog.lease_expires_at IS NULL
-                    OR pressure_artifact_catalog.lease_expires_at <= NOW()
-                )
-            )
-            OR (
-                pressure_artifact_catalog.status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-                AND pressure_artifact_catalog.claim_token IS NULL
-                AND (
-                    pressure_artifact_catalog.lease_expires_at IS NULL
-                    OR pressure_artifact_catalog.lease_expires_at <= NOW()
-                )
-            )
-            RETURNING id
-            """)
-            .first()
-
-        return row != nil
-    }
-
-    func recoverUnusableReadyCatalogRow(
-        _ row: PressureArtifactCatalogModel,
-        payload: PressureArtifactWarmJobPayload,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let sql = database as? any SQLDatabase else {
-            throw HRRRPressureArtifactProbeError.databaseNotSQL
-        }
-
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET status = \(bind: PressureArtifactCatalogStatus.pending.rawValue),
-                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                last_checked_at = NOW(),
-                error_summary = NULL,
-                local_path = NULL,
-                byte_size = NULL,
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE run_time = \(bind: payload.runTime)
-              AND forecast_hour = \(bind: payload.forecastHour)
-              AND product = \(bind: payload.product.rawValue)
-              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
-              AND status = \(bind: PressureArtifactCatalogStatus.ready.rawValue)
-            RETURNING id
-            """)
-            .first()
-
-        return updatedRow != nil
-    }
-
-    func markUnavailability(
-        payload: PressureArtifactWarmJobPayload,
-        idxURL: URL,
-        idxProbe: HrrrRemoteObjectProbeResult,
-        on database: any Database
-    ) async throws {
-        guard let sql = database as? any SQLDatabase else {
-            throw HRRRPressureArtifactProbeError.databaseNotSQL
-        }
-
-        _ = try await sql.raw("""
-            INSERT INTO pressure_artifact_catalog (
-                id,
-                run_time,
-                forecast_hour,
-                valid_time,
-                product,
-                field_set_version,
-                status,
-                source,
-                last_checked_at,
-                error_summary
-            ) VALUES (
-                gen_random_uuid(),
-                \(bind: payload.runTime),
-                \(bind: payload.forecastHour),
-                \(bind: payload.validTime),
-                \(bind: payload.product.rawValue),
-                \(bind: payload.fieldSetVersion.rawValue),
-                \(bind: PressureArtifactCatalogStatus.failed.rawValue),
-                \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                NOW(),
-                \(bind: makeUnavailableSummary(idxURL: idxURL, idxProbe: idxProbe))
-            )
-            ON CONFLICT (run_time, forecast_hour, product, field_set_version)
-            DO UPDATE SET
-                last_checked_at = NOW()
-            RETURNING id
-            """)
-            .first()
-    }
-
-    func markProbeFailure(
-        payload: PressureArtifactWarmJobPayload,
-        error: any Error,
-        on database: any Database
-    ) async throws {
-        guard let sql = database as? any SQLDatabase else {
-            throw HRRRPressureArtifactProbeError.databaseNotSQL
-        }
-
-        _ = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET status = \(bind: PressureArtifactCatalogStatus.failed.rawValue),
-                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                last_checked_at = NOW(),
-                error_summary = \(bind: String(reflecting: error)),
-                local_path = NULL,
-                byte_size = NULL,
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE run_time = \(bind: payload.runTime)
-              AND forecast_hour = \(bind: payload.forecastHour)
-              AND product = \(bind: payload.product.rawValue)
-              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
-            RETURNING id
-            """)
-            .first()
     }
 
     func isUsableReadyCatalogRow(_ row: PressureArtifactCatalogModel) async throws -> Bool {
