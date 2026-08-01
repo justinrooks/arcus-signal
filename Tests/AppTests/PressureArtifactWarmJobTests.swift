@@ -343,42 +343,29 @@ struct PressureArtifactWarmJobTests {
 
     @Test("warm claim stores a token and lease")
     func warmClaimStoresATokenAndLease() async throws {
-        try await withApp { app, blockingWorkExecutor in
+        try await withApp { app, _ in
             let payload = makePayload()
-            let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
 
-            let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
-                rangeResponses: makeRangeResponses(for: payload)
-            )
-            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
-            let service = PressureArtifactWarmingService(
-                httpClient: client,
-                blockingWorkExecutor: blockingWorkExecutor,
-                validator: validator,
-                cacheRootURL: testRootURL(),
-                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
-                retentionDuration: serviceRetentionSeconds,
-                maximumByteCount: serviceMaximumByteCount,
-                recoveryTimeoutSeconds: 1_800
-            )
+            let store = PressureArtifactCatalogStore()
             let claimToken = UUID()
-            let row = try #require(try await service.claimCatalogRow(
+            let leaseExpiresAt = makeDate().addingTimeInterval(1_800)
+            let row = try #require(try await store.claimCatalogRow(
                 for: payload,
                 claimToken: claimToken,
+                leaseExpiresAt: leaseExpiresAt,
                 on: app.db
             ))
 
             #expect(row.status == .warming)
-            #expect(row.claimToken != nil)
-            #expect(row.leaseExpiresAt != nil)
+            #expect(row.claimToken == claimToken)
+            #expect(row.leaseExpiresAt == leaseExpiresAt)
         }
     }
 
     @Test("expired claims only match the payload artifact key")
     func expiredClaimsOnlyMatchThePayloadArtifactKey() async throws {
-        try await withApp { app, blockingWorkExecutor in
+        try await withApp { app, _ in
             let payload = makePayload()
             let unrelatedPayload = makeUnrelatedPayload()
             try await seedCatalogRow(status: .expired, payload: payload, on: app.db)
@@ -395,20 +382,14 @@ struct PressureArtifactWarmJobTests {
             unrelatedRow.byteSize = 42
             try await unrelatedRow.update(on: app.db)
 
-            let service = PressureArtifactWarmingService(
-                httpClient: PressureArtifactWarmStubHTTPClient(),
-                blockingWorkExecutor: blockingWorkExecutor,
-                validator: PressureArtifactWarmValidatorStub(lineCount: 0),
-                cacheRootURL: testRootURL(),
-                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
-                retentionDuration: serviceRetentionSeconds,
-                maximumByteCount: serviceMaximumByteCount
-            )
+            let store = PressureArtifactCatalogStore()
             let claimToken = UUID()
+            let leaseExpiresAt = makeDate().addingTimeInterval(1_800)
 
-            let claimedRow = try #require(try await service.claimCatalogRow(
+            let claimedRow = try #require(try await store.claimCatalogRow(
                 for: payload,
                 claimToken: claimToken,
+                leaseExpiresAt: leaseExpiresAt,
                 on: app.db
             ))
 
@@ -530,27 +511,11 @@ struct PressureArtifactWarmJobTests {
 
     @Test("an old token cannot mark ready after a newer claim exists")
     func oldTokenCannotMarkReadyAfterANewerClaimExists() async throws {
-        try await withApp { app, blockingWorkExecutor in
+        try await withApp { app, _ in
             let payload = makePayload()
-            let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
 
-            let client = PressureArtifactWarmStubHTTPClient(
-                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
-                rangeResponses: makeRangeResponses(for: payload)
-            )
-            let validator = PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount())
-            let service = PressureArtifactWarmingService(
-                httpClient: client,
-                blockingWorkExecutor: blockingWorkExecutor,
-                validator: validator,
-                cacheRootURL: testRootURL(),
-                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
-                retentionDuration: serviceRetentionSeconds,
-                maximumByteCount: serviceMaximumByteCount,
-                recoveryTimeoutSeconds: 1_800
-            )
-
+            let store = PressureArtifactCatalogStore()
             let claimToken = UUID()
             let row = try #require(try await PressureArtifactCatalogModel.find(
                 runTime: payload.runTime,
@@ -564,7 +529,7 @@ struct PressureArtifactWarmJobTests {
             row.leaseExpiresAt = makeDate().addingTimeInterval(1_800)
             try await row.update(on: app.db)
 
-            let result = try await service.markReady(
+            let result = try await store.markReady(
                 payload: payload,
                 claimToken: claimToken,
                 localPath: "/tmp/pressure-artifact.grib2",
@@ -584,6 +549,51 @@ struct PressureArtifactWarmJobTests {
             #expect(refetched.status == .warming)
             #expect(refetched.claimToken != nil)
             #expect(refetched.leaseExpiresAt != nil)
+        }
+    }
+
+    @Test("an old token cannot mark failed after a newer claim exists")
+    func oldTokenCannotMarkFailedAfterANewerClaimExists() async throws {
+        try await withApp { app, _ in
+            let payload = makePayload()
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let store = PressureArtifactCatalogStore()
+            let claimToken = UUID()
+            let newerClaimToken = UUID()
+            let leaseExpiresAt = makeDate().addingTimeInterval(1_800)
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+            row.status = .warming
+            row.claimToken = newerClaimToken
+            row.leaseExpiresAt = leaseExpiresAt
+            try await row.update(on: app.db)
+
+            let result = try await store.markFailed(
+                payload: payload,
+                claimToken: claimToken,
+                errorSummary: "stale owner failure",
+                on: app.db
+            )
+
+            #expect(result == false)
+            let refetched = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(refetched.status == .warming)
+            #expect(refetched.claimToken == newerClaimToken)
+            #expect(refetched.leaseExpiresAt == leaseExpiresAt)
+            #expect(refetched.errorSummary == nil)
         }
     }
 

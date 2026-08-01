@@ -1,5 +1,4 @@
 import Fluent
-import FluentSQL
 import Foundation
 import Vapor
 import ArcusCore
@@ -49,6 +48,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
     private let dateProvider: any StormSetupDateProviding
     private let maximumByteCount: Int
     private let recoveryTimeoutSeconds: TimeInterval
+    private let catalogStore: PressureArtifactCatalogStore
 
     init(
         httpClient: any HTTPClient,
@@ -58,7 +58,8 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         dateProvider: any StormSetupDateProviding,
         retentionDuration: TimeInterval,
         maximumByteCount: Int,
-        recoveryTimeoutSeconds: TimeInterval = 30 * 60
+        recoveryTimeoutSeconds: TimeInterval = 30 * 60,
+        catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore()
     ) {
         self.httpClient = httpClient
         self.validator = validator
@@ -73,6 +74,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         self.dateProvider = dateProvider
         self.maximumByteCount = maximumByteCount
         self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
+        self.catalogStore = catalogStore
     }
 
     static func makeDefault(application: Application) -> PressureArtifactWarmingService {
@@ -103,12 +105,14 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             throw PressureArtifactWarmingError.unsupportedProduct(payload.product)
         }
 
-        try await ensureCatalogRowExists(for: payload, on: application.db)
+        try await catalogStore.ensureCatalogRowExists(for: payload, on: application.db)
         let claimToken = UUID()
+        let leaseExpiresAt = dateProvider.now().addingTimeInterval(recoveryTimeoutSeconds)
 
-        guard let claimedRow = try await claimCatalogRow(
+        guard let claimedRow = try await catalogStore.claimCatalogRow(
             for: payload,
             claimToken: claimToken,
+            leaseExpiresAt: leaseExpiresAt,
             on: application.db
         ) else {
             try Task.checkCancellation()
@@ -281,7 +285,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             )
 
             try Task.checkCancellation()
-            guard try await markReady(
+            guard try await catalogStore.markReady(
                 payload: payload,
                 claimToken: claimToken,
                 localPath: subset.localFilePath,
@@ -312,10 +316,10 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             )
         } catch {
             try rethrowCancellationIfNeeded(error)
-            guard try await markFailed(
+            guard try await catalogStore.markFailed(
                 payload: payload,
                 claimToken: claimToken,
-                error: error,
+                errorSummary: String(reflecting: error),
                 on: application.db
             ) else {
                 logger.info(
@@ -414,160 +418,6 @@ extension PressureArtifactWarmingService {
         )
 
         return text
-    }
-
-    func ensureCatalogRowExists(
-        for payload: PressureArtifactWarmJobPayload,
-        on database: any Database
-    ) async throws {
-        if try await PressureArtifactCatalogModel.find(
-            runTime: payload.runTime,
-            forecastHour: payload.forecastHour,
-            product: payload.product,
-            fieldSetVersion: payload.fieldSetVersion,
-            on: database
-        ) != nil {
-            return
-        }
-
-        let row = PressureArtifactCatalogModel(
-            runTime: payload.runTime,
-            forecastHour: payload.forecastHour,
-            validTime: payload.validTime,
-            product: payload.product,
-            fieldSetVersion: payload.fieldSetVersion,
-            status: .pending
-        )
-
-        do {
-            try await row.create(on: database)
-        } catch {
-            if DbUtils.isUniqueConstraintViolation(error) {
-                return
-            }
-
-            throw error
-        }
-    }
-
-    func claimCatalogRow(
-        for payload: PressureArtifactWarmJobPayload,
-        claimToken: UUID,
-        on database: any Database
-    ) async throws -> PressureArtifactCatalogModel? {
-        guard let sql = database as? any SQLDatabase else {
-            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
-        }
-
-        let leaseExpiresAt = dateProvider.now().addingTimeInterval(recoveryTimeoutSeconds)
-        let row = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET status = \(bind: PressureArtifactCatalogStatus.warming.rawValue),
-                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                last_checked_at = NOW(),
-                error_summary = NULL,
-                local_path = NULL,
-                byte_size = NULL,
-                claim_token = \(bind: claimToken),
-                lease_expires_at = \(bind: leaseExpiresAt)
-            WHERE run_time = \(bind: payload.runTime)
-              AND forecast_hour = \(bind: payload.forecastHour)
-              AND product = \(bind: payload.product.rawValue)
-              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
-              AND (
-                status IN (\(bind: PressureArtifactCatalogStatus.pending.rawValue),
-                           \(bind: PressureArtifactCatalogStatus.failed.rawValue))
-                OR (
-                    status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
-                    AND claim_token IS NULL
-                    AND (
-                        lease_expires_at IS NULL
-                        OR lease_expires_at <= NOW()
-                    )
-                )
-              )
-            RETURNING id
-            """)
-            .first()
-
-        guard row != nil else {
-            return nil
-        }
-
-        return try await PressureArtifactCatalogModel.find(
-            runTime: payload.runTime,
-            forecastHour: payload.forecastHour,
-            product: payload.product,
-            fieldSetVersion: payload.fieldSetVersion,
-            on: database
-        )
-    }
-
-    func markReady(
-        payload: PressureArtifactWarmJobPayload,
-        claimToken: UUID,
-        localPath: String,
-        byteSize: Int64,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let sql = database as? any SQLDatabase else {
-            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
-        }
-
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET status = \(bind: PressureArtifactCatalogStatus.ready.rawValue),
-                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                last_checked_at = NOW(),
-                error_summary = NULL,
-                local_path = \(bind: localPath),
-                byte_size = \(bind: byteSize),
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE run_time = \(bind: payload.runTime)
-              AND forecast_hour = \(bind: payload.forecastHour)
-              AND product = \(bind: payload.product.rawValue)
-              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
-              AND status = \(bind: PressureArtifactCatalogStatus.warming.rawValue)
-              AND claim_token = \(bind: claimToken)
-            RETURNING id
-            """)
-            .first()
-
-        return updatedRow != nil
-    }
-
-    func markFailed(
-        payload: PressureArtifactWarmJobPayload,
-        claimToken: UUID,
-        error: any Error,
-        on database: any Database
-    ) async throws -> Bool {
-        guard let sql = database as? any SQLDatabase else {
-            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
-        }
-
-        let updatedRow = try await sql.raw("""
-            UPDATE pressure_artifact_catalog
-            SET status = \(bind: PressureArtifactCatalogStatus.failed.rawValue),
-                source = \(bind: PressureArtifactCatalogSource.aws.rawValue),
-                last_checked_at = NOW(),
-                error_summary = \(bind: String(reflecting: error)),
-                local_path = NULL,
-                byte_size = NULL,
-                claim_token = NULL,
-                lease_expires_at = NULL
-            WHERE run_time = \(bind: payload.runTime)
-              AND forecast_hour = \(bind: payload.forecastHour)
-              AND product = \(bind: payload.product.rawValue)
-              AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
-              AND status = \(bind: PressureArtifactCatalogStatus.warming.rawValue)
-              AND claim_token = \(bind: claimToken)
-            RETURNING id
-            """)
-            .first()
-
-        return updatedRow != nil
     }
 
     func claimLostMetadata(
