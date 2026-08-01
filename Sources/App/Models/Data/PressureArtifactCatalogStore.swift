@@ -4,6 +4,168 @@ import Foundation
 import Vapor
 
 struct PressureArtifactCatalogStore: Sendable {
+    func expireReadyArtifacts(
+        before cutoff: Date,
+        on database: any Database
+    ) async throws -> Int {
+        let readyRows = try await PressureArtifactCatalogModel.query(on: database)
+            .filter(\.$statusRaw == PressureArtifactCatalogStatus.ready.rawValue)
+            .all()
+
+        var expiredCount = 0
+        for row in readyRows where row.validTime < cutoff {
+            row.status = .expired
+            try await row.save(on: database)
+            expiredCount += 1
+        }
+
+        return expiredCount
+    }
+
+    func claimDeletionCandidate(
+        for row: PressureArtifactCatalogModel,
+        olderThan cutoff: Date,
+        cleanupLeaseExpiresAt: Date,
+        on database: any Database
+    ) async throws -> PressureArtifactCatalogModel? {
+        guard let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return nil
+        }
+
+        let claimToken = UUID()
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET claim_token = \(bind: claimToken),
+                lease_expires_at = \(bind: cleanupLeaseExpiresAt)
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND updated_at <= \(bind: cutoff)
+              AND (
+                (
+                  claim_token IS NULL
+                  AND (
+                    lease_expires_at IS NULL
+                    OR lease_expires_at <= NOW()
+                  )
+                )
+                OR lease_expires_at <= NOW()
+              )
+            RETURNING id
+            """)
+            .first()
+
+        guard updatedRow != nil else {
+            return nil
+        }
+
+        return try await PressureArtifactCatalogModel.find(rowID, on: database)
+    }
+
+    func completeSuccessfulCleanup(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET local_path = NULL,
+                byte_size = NULL,
+                error_summary = NULL,
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func completeFailedCleanup(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        reason: String,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET error_summary = \(bind: reason),
+                claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func releaseCleanupClaim(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let updatedRow = try await sql.raw("""
+            UPDATE pressure_artifact_catalog
+            SET claim_token = NULL,
+                lease_expires_at = NULL
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            RETURNING id
+            """)
+            .first()
+
+        return updatedRow != nil
+    }
+
+    func ownsCleanupClaim(
+        for row: PressureArtifactCatalogModel,
+        claimToken: UUID?,
+        on database: any Database
+    ) async throws -> Bool {
+        guard let claimToken,
+              let rowID = row.id,
+              let sql = database as? any SQLDatabase else {
+            return false
+        }
+
+        let currentRow = try await sql.raw("""
+            SELECT id
+            FROM pressure_artifact_catalog
+            WHERE id = \(bind: rowID)
+              AND status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+              AND claim_token = \(bind: claimToken)
+            LIMIT 1
+            """)
+            .first()
+
+        return currentRow != nil
+    }
+
     func ensureCatalogRowExists(
         for payload: PressureArtifactWarmJobPayload,
         on database: any Database
