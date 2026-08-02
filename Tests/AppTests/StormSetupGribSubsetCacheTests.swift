@@ -1,4 +1,5 @@
 @testable import App
+import Dispatch
 import Foundation
 import Testing
 import ArcusCore
@@ -109,9 +110,11 @@ struct StormSetupGribSubsetCacheTests {
                 )
             ]
         )
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWork.executor)
         let cache = GribSubsetCache(
             httpClient: client,
-            fileManager: .default,
+            blockingWorkExecutor: countingExecutor,
             rootURL: rootURL,
             dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
             retentionDuration: 12 * 60 * 60,
@@ -119,7 +122,9 @@ struct StormSetupGribSubsetCacheTests {
         )
 
         let first = try await cache.loadOrFetch(sourceMetadata: source)
+        let missExecutionCount = await countingExecutor.executionCount()
         let second = try await cache.loadOrFetch(sourceMetadata: source)
+        let hitExecutionCount = await countingExecutor.executionCount()
 
         #expect(first.cacheHit == false)
         #expect(second.cacheHit == true)
@@ -127,6 +132,8 @@ struct StormSetupGribSubsetCacheTests {
         #expect(first.byteSize == Int64(responseData.count))
         #expect(second.byteSize == Int64(responseData.count))
         #expect(client.requestCount == 1)
+        #expect(missExecutionCount > 0)
+        #expect(hitExecutionCount > missExecutionCount)
         #expect(FileManager.default.fileExists(atPath: first.localFileURL.path))
 
         let cachedData = try Data(contentsOf: first.localFileURL)
@@ -146,7 +153,8 @@ struct StormSetupGribSubsetCacheTests {
                 )
             ]
         )
-        let cache = makeCache(client: client)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(client: client, blockingWorkExecutor: blockingWork.executor)
 
         do {
             _ = try await cache.loadOrFetch(sourceMetadata: source)
@@ -182,7 +190,8 @@ struct StormSetupGribSubsetCacheTests {
             ),
             nomadsURL: nil
         )
-        let cache = makeCache(client: StubHTTPClient())
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(client: StubHTTPClient(), blockingWorkExecutor: blockingWork.executor)
 
         do {
             _ = try await cache.loadOrFetch(sourceMetadata: source)
@@ -220,7 +229,8 @@ struct StormSetupGribSubsetCacheTests {
                 )
             ]
         )
-        let cache = makeCache(client: client)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(client: client, blockingWorkExecutor: blockingWork.executor)
 
         do {
             _ = try await cache.loadOrFetch(sourceMetadata: source)
@@ -255,8 +265,10 @@ struct StormSetupGribSubsetCacheTests {
                 )
             ]
         )
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
         let cache = GribSubsetCache(
             httpClient: client,
+            blockingWorkExecutor: blockingWork.executor,
             rootURL: testRootURL(),
             dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
             retentionDuration: 12 * 60 * 60,
@@ -300,8 +312,11 @@ struct StormSetupGribSubsetCacheTests {
                 )
             ]
         )
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWork.executor)
         let cache = GribSubsetCache(
             httpClient: client,
+            blockingWorkExecutor: countingExecutor,
             rootURL: rootURL,
             dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
             retentionDuration: 12 * 60 * 60,
@@ -311,13 +326,108 @@ struct StormSetupGribSubsetCacheTests {
         let first = try await cache.loadOrFetch(sourceMetadata: source)
         try replacementData.write(to: first.localFileURL, options: [.atomic])
 
+        let executionCountBeforeInvalidation = await countingExecutor.executionCount()
         let second = try await cache.loadOrFetch(sourceMetadata: source)
+        let executionCountAfterInvalidation = await countingExecutor.executionCount()
 
         #expect(second.cacheHit == false)
         #expect(client.requestCount == 2)
+        #expect(executionCountAfterInvalidation > executionCountBeforeInvalidation)
 
         let cachedData = try Data(contentsOf: second.localFileURL)
         #expect(cachedData == initialData)
+    }
+
+    @Test("metadata write failure removes both cache artifacts")
+    func metadataWriteFailureRemovesBothArtifacts() async throws {
+        let rootURL = testRootURL()
+        let source = makeSourceMetadata(
+            runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
+            forecastHour: 9
+        )
+        let responseData = Data("grib-subset".utf8)
+        let client = StubHTTPClient(
+            plannedResponses: [
+                source.nomadsURL!.absoluteString: .success(
+                    HTTPResponse(status: 200, headers: ["Content-Type": "application/octet-stream"], data: responseData)
+                )
+            ]
+        )
+        let key = try StormSetupCacheKey(sourceMetadata: source)
+        let fileURL = key.subsetFileURL(rootURL: rootURL)
+        let metadataURL = key.metadataFileURL(rootURL: rootURL)
+        try FileManager.default.createDirectory(at: metadataURL, withIntermediateDirectories: true)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWork.executor)
+        let cache = GribSubsetCache(
+            httpClient: client,
+            blockingWorkExecutor: countingExecutor,
+            rootURL: rootURL,
+            dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
+            retentionDuration: 12 * 60 * 60,
+            maximumByteCount: 1024
+        )
+
+        do {
+            _ = try await cache.loadOrFetch(sourceMetadata: source)
+            Issue.record("Expected metadata persistence to fail.")
+        } catch let error as GribSubsetCacheError {
+            guard case .unableToWriteCache(let path, _) = error else {
+                Issue.record("Expected unableToWriteCache, got \(error).")
+                return
+            }
+            #expect(path == fileURL)
+        }
+
+        #expect(await countingExecutor.executionCount() > 0)
+        #expect(client.requestCount == 1)
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(!FileManager.default.fileExists(atPath: metadataURL.path))
+    }
+
+    @Test("blocking critical section serializes multi-threaded work and releases after cancellation")
+    func blockingCriticalSectionSerializesAndReleasesAfterCancellation() async throws {
+        try await withPressureArtifactThreadPoolExecutor(numberOfThreads: 3) { executor in
+            let criticalSection = BlockingWorkCriticalSection()
+            let firstEntered = DispatchSemaphore(value: 0)
+            let releaseFirst = DispatchSemaphore(value: 0)
+            let secondDispatched = DispatchSemaphore(value: 0)
+            let secondEntered = DispatchSemaphore(value: 0)
+
+            let first = Task {
+                try await executor.execute {
+                    criticalSection.withLock {
+                        firstEntered.signal()
+                        releaseFirst.wait()
+                    }
+                }
+            }
+            #expect(try await wait(for: firstEntered, using: executor) == .success)
+
+            let second = Task {
+                try await executor.execute {
+                    secondDispatched.signal()
+                    criticalSection.withLock {
+                        _ = secondEntered.signal()
+                    }
+                }
+            }
+            #expect(try await wait(for: secondDispatched, using: executor) == .success)
+            #expect(try await wait(for: secondEntered, timeout: 0.1, using: executor) == .timedOut)
+
+            second.cancel()
+            releaseFirst.signal()
+            #expect(try await wait(for: secondEntered, using: executor) == .success)
+            try await first.value
+            await #expect(throws: CancellationError.self) {
+                try await second.value
+            }
+
+            let subsequentResult = try await executor.execute {
+                criticalSection.withLock { "acquired" }
+            }
+            #expect(subsequentResult == "acquired")
+        }
     }
 
     @Test("fallback downloader uses the first usable candidate in order")
@@ -345,8 +455,10 @@ struct StormSetupGribSubsetCacheTests {
                 )
             ]
         )
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
         let cache = GribSubsetCache(
             httpClient: client,
+            blockingWorkExecutor: blockingWork.executor,
             rootURL: rootURL,
             dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
             retentionDuration: 12 * 60 * 60,
@@ -365,14 +477,28 @@ struct StormSetupGribSubsetCacheTests {
         #expect(client.requestCount == 2)
     }
 
-    private func makeCache(client: StubHTTPClient) -> GribSubsetCache {
+    private func makeCache(
+        client: StubHTTPClient,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    ) -> GribSubsetCache {
         GribSubsetCache(
             httpClient: client,
+            blockingWorkExecutor: blockingWorkExecutor,
             rootURL: testRootURL(),
             dateProvider: FixedStormSetupDateProvider(nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)),
             retentionDuration: 12 * 60 * 60,
             maximumByteCount: 1024
         )
+    }
+
+    private func wait(
+        for semaphore: DispatchSemaphore,
+        timeout: TimeInterval = 2,
+        using executor: NIOThreadPoolPressureArtifactBlockingWorkExecutor
+    ) async throws -> DispatchTimeoutResult {
+        try await executor.execute {
+            semaphore.wait(timeout: .now() + timeout)
+        }
     }
 
     private func makeSourceMetadata(

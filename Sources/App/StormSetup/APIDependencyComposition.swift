@@ -1,11 +1,17 @@
 import Vapor
 
 func installAPIRequestDependencies(on application: Application) {
+    let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
+        threadPool: application.threadPool
+    )
     let previewProvider: any AnvilProfilePreviewProviding
     if let configuredProvider = application.configuredAnvilProfilePreviewProvider {
         previewProvider = configuredProvider
     } else {
-        let defaultProvider = DefaultAnvilProfilePreviewProvider(application: application)
+        let defaultProvider = DefaultAnvilProfilePreviewProvider(
+            application: application,
+            blockingWorkExecutor: blockingWorkExecutor
+        )
         application.anvilProfilePreviewProvider = defaultProvider
         previewProvider = defaultProvider
     }
@@ -25,6 +31,7 @@ func installAPIRequestDependencies(on application: Application) {
     if application.configuredStormSetupProvider == nil {
         application.stormSetupProvider = DefaultStormSetupProvider(
             application: application,
+            blockingWorkExecutor: blockingWorkExecutor,
             anvilProfileAnalysisProvider: analysisProvider
         )
     }

@@ -32,79 +32,75 @@ enum StormSetupSnapshotCacheError: Error, Sendable, CustomStringConvertible {
 }
 
 actor StormSetupSnapshotCache {
-    private let fileManager: FileManager
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    private let filesystemCriticalSection = BlockingWorkCriticalSection()
     private let rootURL: URL
     private let dateProvider: any StormSetupDateProviding
-    private let jsonEncoder: JSONEncoder
-    private let jsonDecoder: JSONDecoder
 
     init(
-        fileManager: FileManager = .default,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         rootURL: URL = StormSetupConfiguration.localSampledSnapshotCacheRootURL,
-        dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
-        jsonEncoder: JSONEncoder? = nil,
-        jsonDecoder: JSONDecoder? = nil
+        dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider()
     ) {
-        self.fileManager = fileManager
+        self.blockingWorkExecutor = blockingWorkExecutor
         self.rootURL = rootURL
         self.dateProvider = dateProvider
-
-        let encoder = jsonEncoder ?? JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        self.jsonEncoder = encoder
-
-        let decoder = jsonDecoder ?? JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        self.jsonDecoder = decoder
     }
 
     func loadSnapshot(for key: StormSetupSnapshotCacheKey) async -> StormSetupSnapshotCacheResult? {
         let fileURL = key.snapshotFileURL(rootURL: rootURL)
         let now = dateProvider.now()
 
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return nil
-        }
-
         do {
-            let data = try Data(contentsOf: fileURL)
-            let record = try jsonDecoder.decode(StormSetupSnapshotCacheRecord.self, from: data)
+            return try await executeFilesystemWork {
+                guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                    return nil
+                }
 
-            guard record.key == key else {
-                invalidate(fileURL: fileURL)
-                return nil
-            }
+                do {
+                    let data = try Data(contentsOf: fileURL)
+                    let jsonDecoder = Self.makeJSONDecoder()
+                    let record = try jsonDecoder.decode(StormSetupSnapshotCacheRecord.self, from: data)
 
-            guard let derivedKey = try? StormSetupSnapshotCacheKey(
-                h3Cell: record.snapshot.h3Cell,
-                sourceMetadata: record.snapshot.source,
-                rulesVersion: key.rulesVersion
-            ), derivedKey == key else {
-                invalidate(fileURL: fileURL)
-                return nil
-            }
+                    guard record.key == key else {
+                        try? FileManager.default.removeItem(at: fileURL)
+                        return nil
+                    }
 
-            let snapshot = record.snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
-            let freshness = record.snapshot.freshness
-            guard freshness.sourceValidTime == key.validTime else {
-                invalidate(fileURL: fileURL)
-                return nil
-            }
-            guard freshness.expiresAt > now else {
-                invalidate(fileURL: fileURL)
-                return nil
-            }
+                    guard let derivedKey = try? StormSetupSnapshotCacheKey(
+                        h3Cell: record.snapshot.h3Cell,
+                        sourceMetadata: record.snapshot.source,
+                        rulesVersion: key.rulesVersion
+                    ), derivedKey == key else {
+                        try? FileManager.default.removeItem(at: fileURL)
+                        return nil
+                    }
 
-            return StormSetupSnapshotCacheResult(
-                snapshot: snapshot,
-                cacheHit: true,
-                fetchedAt: freshness.fetchedAt,
-                expiresAt: freshness.expiresAt,
-                sourceValidTime: freshness.sourceValidTime,
-                rulesVersion: key.rulesVersion
-            )
+                    let snapshot = record.snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
+                    let freshness = record.snapshot.freshness
+                    guard freshness.sourceValidTime == key.validTime else {
+                        try? FileManager.default.removeItem(at: fileURL)
+                        return nil
+                    }
+                    guard freshness.expiresAt > now else {
+                        try? FileManager.default.removeItem(at: fileURL)
+                        return nil
+                    }
+
+                    return StormSetupSnapshotCacheResult(
+                        snapshot: snapshot,
+                        cacheHit: true,
+                        fetchedAt: freshness.fetchedAt,
+                        expiresAt: freshness.expiresAt,
+                        sourceValidTime: freshness.sourceValidTime,
+                        rulesVersion: key.rulesVersion
+                    )
+                } catch {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    return nil
+                }
+            }
         } catch {
-            invalidate(fileURL: fileURL)
             return nil
         }
     }
@@ -129,38 +125,58 @@ actor StormSetupSnapshotCache {
             throw StormSetupSnapshotCacheError.mismatchedSnapshotKey(expected: key, actual: actualKey)
         }
 
-        do {
-            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        } catch {
-            throw StormSetupSnapshotCacheError.unableToCreateDirectory(
-                path: directoryURL,
-                reason: String(describing: error)
+        return try await executeFilesystemWork {
+            do {
+                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            } catch {
+                throw StormSetupSnapshotCacheError.unableToCreateDirectory(
+                    path: directoryURL,
+                    reason: String(describing: error)
+                )
+            }
+
+            let surfaceSnapshot = snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
+            let record = StormSetupSnapshotCacheRecord(key: key, snapshot: surfaceSnapshot)
+            let jsonEncoder = Self.makeJSONEncoder()
+            let data = try jsonEncoder.encode(record)
+
+            do {
+                try data.write(to: fileURL, options: [.atomic])
+            } catch {
+                throw StormSetupSnapshotCacheError.unableToWriteCache(path: fileURL, reason: String(describing: error))
+            }
+
+            let freshness = snapshot.freshness
+            return StormSetupSnapshotCacheResult(
+                snapshot: surfaceSnapshot,
+                cacheHit: false,
+                fetchedAt: freshness.fetchedAt,
+                expiresAt: freshness.expiresAt,
+                sourceValidTime: freshness.sourceValidTime,
+                rulesVersion: key.rulesVersion
             )
         }
-
-        let surfaceSnapshot = snapshot.surfaceSnapshot(rulesVersion: key.rulesVersion)
-        let record = StormSetupSnapshotCacheRecord(key: key, snapshot: surfaceSnapshot)
-        let data = try jsonEncoder.encode(record)
-
-        do {
-            try data.write(to: fileURL, options: [.atomic])
-        } catch {
-            throw StormSetupSnapshotCacheError.unableToWriteCache(path: fileURL, reason: String(describing: error))
-        }
-
-        let freshness = snapshot.freshness
-        return StormSetupSnapshotCacheResult(
-            snapshot: surfaceSnapshot,
-            cacheHit: false,
-            fetchedAt: freshness.fetchedAt,
-            expiresAt: freshness.expiresAt,
-            sourceValidTime: freshness.sourceValidTime,
-            rulesVersion: key.rulesVersion
-        )
     }
 
-    private func invalidate(fileURL: URL) {
-        try? fileManager.removeItem(at: fileURL)
+    private static func makeJSONEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private static func makeJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+
+    private func executeFilesystemWork<T: Sendable>(
+        _ operation: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        let filesystemCriticalSection = filesystemCriticalSection
+        return try await blockingWorkExecutor.execute {
+            try filesystemCriticalSection.withLock(operation)
+        }
     }
 }
 

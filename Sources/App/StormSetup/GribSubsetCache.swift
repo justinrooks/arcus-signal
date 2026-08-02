@@ -64,36 +64,27 @@ enum GribSubsetCacheError: Error, Sendable, CustomStringConvertible {
 
 actor GribSubsetCache {
     private let httpClient: any HTTPClient
-    private let fileManager: FileManager
+    private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    private let filesystemCriticalSection = BlockingWorkCriticalSection()
     private let rootURL: URL
     private let dateProvider: any StormSetupDateProviding
     private let retentionDuration: TimeInterval
     private let maximumByteCount: Int
-    private let jsonEncoder: JSONEncoder
-    private let jsonDecoder: JSONDecoder
 
     init(
         httpClient: any HTTPClient,
-        fileManager: FileManager = .default,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         rootURL: URL = StormSetupConfiguration.localGribSubsetCacheRootURL,
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         retentionDuration: TimeInterval = StormSetupConfiguration.default.gribSubsetCacheRetentionSeconds,
         maximumByteCount: Int = StormSetupConfiguration.default.gribSubsetMaximumByteCount
     ) {
         self.httpClient = httpClient
-        self.fileManager = fileManager
+        self.blockingWorkExecutor = blockingWorkExecutor
         self.rootURL = rootURL
         self.dateProvider = dateProvider
         self.retentionDuration = retentionDuration
         self.maximumByteCount = maximumByteCount
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        self.jsonEncoder = encoder
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        self.jsonDecoder = decoder
     }
 
     func loadOrFetch(sourceMetadata: StormSetupSourceMetadata) async throws -> GribSubsetCacheResult {
@@ -102,7 +93,7 @@ actor GribSubsetCache {
         let metadataURL = key.metadataFileURL(rootURL: rootURL)
         let now = dateProvider.now()
 
-        if let record = loadValidRecord(
+        if let record = try await loadValidRecord(
             key: key,
             fileURL: fileURL,
             metadataURL: metadataURL,
@@ -118,7 +109,10 @@ actor GribSubsetCache {
             )
         }
 
-        try fileManager.createDirectory(at: key.directoryURL(rootURL: rootURL), withIntermediateDirectories: true)
+        let directoryURL = key.directoryURL(rootURL: rootURL)
+        try await executeFilesystemWork {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        }
 
         guard let sourceURL = sourceMetadata.primaryDownloadURL else {
             throw GribSubsetCacheError.missingNomadsURL(source: sourceMetadata)
@@ -146,23 +140,38 @@ actor GribSubsetCache {
 
         try rejectObviousTextResponses(body: body, response: response, sourceMetadata: sourceMetadata)
 
-        let checksum = Self.sha256Hex(of: body)
         let expiresAt = now.addingTimeInterval(retentionDuration)
-        let record = GribSubsetCacheRecord(
-            source: sourceMetadata,
-            byteSize: Int64(body.count),
-            checksumSHA256: checksum,
-            fetchedAt: now,
-            expiresAt: expiresAt
-        )
 
         do {
-            try body.write(to: fileURL, options: [.atomic])
-            try write(record: record, to: metadataURL)
+            try await executeFilesystemWork {
+                let record = GribSubsetCacheRecord(
+                    source: sourceMetadata,
+                    byteSize: Int64(body.count),
+                    checksumSHA256: Self.sha256Hex(of: body),
+                    fetchedAt: now,
+                    expiresAt: expiresAt
+                )
+
+                do {
+                    try body.write(to: fileURL, options: [.atomic])
+                    let jsonEncoder = Self.makeJSONEncoder()
+                    let metadataData = try jsonEncoder.encode(record)
+                    do {
+                        try metadataData.write(to: metadataURL, options: [.atomic])
+                    } catch {
+                        throw GribSubsetCacheError.unableToWriteCache(
+                            path: metadataURL,
+                            reason: String(describing: error)
+                        )
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    try? FileManager.default.removeItem(at: metadataURL)
+                    throw error
+                }
+            }
         } catch {
             try rethrowCancellationIfNeeded(error)
-            try? fileManager.removeItem(at: fileURL)
-            try? fileManager.removeItem(at: metadataURL)
             throw GribSubsetCacheError.unableToWriteCache(path: fileURL, reason: String(describing: error))
         }
 
@@ -181,63 +190,66 @@ actor GribSubsetCache {
         fileURL: URL,
         metadataURL: URL,
         now: Date
-    ) -> GribSubsetCacheRecord? {
-        guard fileManager.fileExists(atPath: fileURL.path),
-              fileManager.fileExists(atPath: metadataURL.path) else {
-            return nil
-        }
-
-        do {
-            let metadataData = try Data(contentsOf: metadataURL)
-            let record = try jsonDecoder.decode(GribSubsetCacheRecord.self, from: metadataData)
-
-            guard record.expiresAt > now else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
+    ) async throws -> GribSubsetCacheRecord? {
+        return try await executeFilesystemWork {
+            guard FileManager.default.fileExists(atPath: fileURL.path),
+                  FileManager.default.fileExists(atPath: metadataURL.path) else {
                 return nil
             }
 
-            let expectedKey = try StormSetupCacheKey(sourceMetadata: record.source)
-            guard expectedKey == key else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
+            do {
+                let metadataData = try Data(contentsOf: metadataURL)
+                let jsonDecoder = Self.makeJSONDecoder()
+                let record = try jsonDecoder.decode(GribSubsetCacheRecord.self, from: metadataData)
+
+                guard record.expiresAt > now else {
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    return nil
+                }
+
+                let expectedKey = try StormSetupCacheKey(sourceMetadata: record.source)
+                guard expectedKey == key else {
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    return nil
+                }
+
+                let data = try Data(contentsOf: fileURL)
+                guard !data.isEmpty else {
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    return nil
+                }
+
+                guard data.count == Int(record.byteSize) else {
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    return nil
+                }
+
+                let checksum = Self.sha256Hex(of: data)
+                guard checksum == record.checksumSHA256 else {
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    return nil
+                }
+
+                return record
+            } catch {
+                Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
                 return nil
             }
-
-            let data = try Data(contentsOf: fileURL)
-            guard !data.isEmpty else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            guard data.count == Int(record.byteSize) else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            let checksum = Self.sha256Hex(of: data)
-            guard checksum == record.checksumSHA256 else {
-                invalidate(fileURL: fileURL, metadataURL: metadataURL)
-                return nil
-            }
-
-            return record
-        } catch {
-            invalidate(fileURL: fileURL, metadataURL: metadataURL)
-            return nil
-        }
-    }
-
-    private func write(record: GribSubsetCacheRecord, to metadataURL: URL) throws {
-        let data = try jsonEncoder.encode(record)
-        do {
-            try data.write(to: metadataURL, options: [.atomic])
-        } catch {
-            throw GribSubsetCacheError.unableToWriteCache(path: metadataURL, reason: String(describing: error))
         }
     }
 
-    private func invalidate(fileURL: URL, metadataURL: URL) {
-        try? fileManager.removeItem(at: fileURL)
-        try? fileManager.removeItem(at: metadataURL)
+    private static func invalidate(fileURL: URL, metadataURL: URL) {
+        try? FileManager.default.removeItem(at: fileURL)
+        try? FileManager.default.removeItem(at: metadataURL)
+    }
+
+    private func executeFilesystemWork<T: Sendable>(
+        _ operation: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        let filesystemCriticalSection = filesystemCriticalSection
+        return try await blockingWorkExecutor.execute {
+            try filesystemCriticalSection.withLock(operation)
+        }
     }
 
     private func rejectObviousTextResponses(
@@ -297,5 +309,17 @@ actor GribSubsetCache {
     private static func sha256Hex(of data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func makeJSONEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private static func makeJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
