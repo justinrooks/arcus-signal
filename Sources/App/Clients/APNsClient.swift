@@ -12,12 +12,6 @@ import APNSCore
 import Vapor
 import ArcusCore
 
-// Custom Codable Payload
-struct MyPayload: Codable {
-    let acme1: String
-    let acme2: Int
-}
-
 struct AlertDetails: Sendable, Codable {
     let title: String
     let subTitle: String
@@ -43,10 +37,6 @@ struct APNsClient: NotificationSender {
         environment: APNsEnvironment
     ) async throws {
         let topic = app.arcusAPNSConfig.topic
-        // Create push notification Alert
-//        let payload = MyPayload(acme1: "hey", acme2: 2)
-        
-        
         let containerID: APNSContainers.ID = switch environment {
         case .sandbox:
             .development
@@ -73,12 +63,5 @@ struct APNsClient: NotificationSender {
             alert,
             deviceToken: device
         )
-        
-//        // Send the notification
-//        let env: APNSContainers.ID = environment == .sandbox ? .development : .production
-//        try await app.apns.client(env).sendAlertNotification(
-//            alert,
-//            deviceToken: device
-//        )
     }
 }

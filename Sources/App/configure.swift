@@ -107,6 +107,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(RemoveArcusSeriesSenderNameField())
     app.migrations.add(AddCountyLabelFieldsToDevicePresence())
     app.migrations.add(UpdateDevicePresenceSourceConstraintForExpandedLocationUploadSources())
+    app.migrations.add(RepairDevicePresenceSourceConstraintForExpandedLocationUploadSources())
     app.migrations.add(AddStatusToNotificationLedger())
     app.migrations.add(AddFreshnessStateToNotificationLedger())
     app.migrations.add(AddIsSubscribedToDeviceInstallation())
@@ -235,75 +236,6 @@ func makeAPNSRequestEncoder() -> JSONEncoder {
     encoder.dateEncodingStrategy = .iso8601
     return encoder
 }
-
-
-//    let requiredKeys = ["APNS_PRIVATE_KEY_PATH", "APNS_KEY_ID", "APNS_TEAM_ID"]
-//    let values = requiredKeys.reduce(into: [String: String]()) { partialResult, key in
-//        if let rawValue = Environment.get(key)?.trimmingCharacters(in: .whitespacesAndNewlines), !rawValue.isEmpty {
-//            partialResult[key] = rawValue
-//        }
-//    }
-//    let missingKeys = requiredKeys.filter { values[$0] == nil }
-//
-//    guard missingKeys.isEmpty else {
-//        let reason = "APNS configuration is incomplete. Missing: \(missingKeys.joined(separator: ", "))."
-//        if app.environment == .development || app.environment == .testing {
-//            app.logger.warning("\(reason) APNS is disabled for \(app.environment.name).")
-//            return
-//        }
-//        throw Abort(.internalServerError, reason: reason)
-//    }
-//
-//    let privateKeyPath = values["APNS_PRIVATE_KEY_PATH"]!
-//    let privateKeyPEM: String
-//    do {
-//        privateKeyPEM = try String(contentsOfFile: privateKeyPath, encoding: .utf8)
-//    } catch {
-//        let reason = "Failed to read APNS private key from APNS_PRIVATE_KEY_PATH."
-//        if app.environment == .development || app.environment == .testing {
-//            app.logger.warning(
-//                "\(reason) APNS is disabled for \(app.environment.name).",
-//                metadata: [
-//                    "apnsPrivateKeyPath": .string(privateKeyPath),
-//                    "error": .string(String(describing: error))
-//                ]
-//            )
-//            return
-//        }
-//        throw Abort(.internalServerError, reason: reason)
-//    }
-//
-//    let authenticationMethod: APNSClientConfiguration.AuthenticationMethod
-//    do {
-//        authenticationMethod = .jwt(
-//            privateKey: try .loadFrom(string: privateKeyPEM),
-//            keyIdentifier: values["APNS_KEY_ID"]!,
-//            teamIdentifier: values["APNS_TEAM_ID"]!
-//        )
-//    } catch {
-//        let reason = "Failed to load APNS private key from APNS_PRIVATE_KEY_PATH."
-//        if app.environment == .development || app.environment == .testing {
-//            app.logger.warning(
-//                "\(reason) APNS is disabled for \(app.environment.name).",
-//                metadata: [
-//                    "apnsPrivateKeyPath": .string(privateKeyPath),
-//                    "error": .string(String(describing: error))
-//                ]
-//            )
-//            return
-//        }
-//        throw Abort(.internalServerError, reason: reason)
-//    }
-//
-//    await app.apns.configure(authenticationMethod)
-//
-//    app.logger.info(
-//        "APNS configured for worker runtime.",
-//        metadata: [
-//            "apnsConfigSource": .string("environment+mountedFile"),
-//            "apnsPrivateKeyPath": .string(privateKeyPath)
-//        ]
-//    )
 private func loadAuthenticationMethod(
     keyID: String,
     teamID: String,
