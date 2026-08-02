@@ -212,50 +212,25 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                 totalCount: runResolution.candidates.count
             )
 
-            do {
-                let composition = try await loadComposition(
-                    for: sourceMetadata,
-                    around: resolved.centroid,
-                    targetValidTime: runResolution.targetValidTime,
-                    resolvedH3Cell: resolved.h3Cell
+            let attempt = try await loadSurfaceCandidateAttempt(
+                candidate: candidate,
+                source: sourceMetadata,
+                around: resolved.centroid,
+                targetValidTime: runResolution.targetValidTime,
+                resolvedH3Cell: resolved.h3Cell
+            )
+
+            switch attempt.outcome {
+            case .success(let surfaceSnapshot):
+                return try await composeCurrentCompositionWithCurrentAnvilEvidence(
+                    from: surfaceSnapshot
                 )
-                return composition
-            } catch let error as StormSetupCurrentSnapshotError {
-                switch error {
-                case .insufficientNormalizedData(let source, let reason):
-                    let failure = StormSetupCurrentSnapshotFailure(
-                        stage: .insufficientNormalizedData,
-                        source: source,
-                        reason: reason
-                    )
-                    failures.append(failure)
+            case .failure(let recordedFailures, let loggedFailure):
+                failures.append(contentsOf: recordedFailures)
                 logFailure(
-                    failure,
-                    sourceMetadata: sourceMetadata,
-                    candidate: candidate,
-                    fallbackAvailable: index < runResolution.candidates.count - 1
-                )
-                case .noUsableHrrrCandidate(let nestedFailures):
-                    failures.append(contentsOf: nestedFailures)
-                    logFailure(
-                        StormSetupCurrentSnapshotFailure(
-                            stage: .sourceSelection,
-                            source: sourceMetadata,
-                            reason: error.description
-                        ),
-                        sourceMetadata: sourceMetadata,
-                        candidate: candidate,
-                        fallbackAvailable: index < runResolution.candidates.count - 1
-                    )
-                }
-            } catch {
-                try rethrowCancellationIfNeeded(error)
-                let failure = classify(error: error, sourceMetadata: sourceMetadata)
-                failures.append(failure)
-                logFailure(
-                    failure,
-                    sourceMetadata: sourceMetadata,
-                    candidate: candidate,
+                    loggedFailure,
+                    sourceMetadata: attempt.source,
+                    candidate: attempt.candidate,
                     fallbackAvailable: index < runResolution.candidates.count - 1
                 )
             }
@@ -264,12 +239,69 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         throw StormSetupCurrentSnapshotError.noUsableHrrrCandidate(failures)
     }
 
-    private func loadComposition(
+    private func loadSurfaceCandidateAttempt(
+        candidate: HrrrRunCandidate,
+        source: StormSetupSourceMetadata,
+        around centroid: StormSetupCentroid,
+        targetValidTime: Date,
+        resolvedH3Cell: Int64
+    ) async throws -> StormSetupSurfaceCandidateAttempt {
+        do {
+            let snapshot = try await loadSurfaceSnapshot(
+                for: source,
+                around: centroid,
+                targetValidTime: targetValidTime,
+                resolvedH3Cell: resolvedH3Cell
+            )
+            return StormSetupSurfaceCandidateAttempt(
+                candidate: candidate,
+                source: source,
+                outcome: .success(snapshot)
+            )
+        } catch let error as StormSetupCurrentSnapshotError {
+            switch error {
+            case .insufficientNormalizedData(let failedSource, let reason):
+                let failure = StormSetupCurrentSnapshotFailure(
+                    stage: .insufficientNormalizedData,
+                    source: failedSource,
+                    reason: reason
+                )
+                return StormSetupSurfaceCandidateAttempt(
+                    candidate: candidate,
+                    source: source,
+                    outcome: .failure(recordedFailures: [failure], loggedFailure: failure)
+                )
+            case .noUsableHrrrCandidate(let nestedFailures):
+                return StormSetupSurfaceCandidateAttempt(
+                    candidate: candidate,
+                    source: source,
+                    outcome: .failure(
+                        recordedFailures: nestedFailures,
+                        loggedFailure: StormSetupCurrentSnapshotFailure(
+                            stage: .sourceSelection,
+                            source: source,
+                            reason: error.description
+                        )
+                    )
+                )
+            }
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            let failure = classify(error: error, sourceMetadata: source)
+            return StormSetupSurfaceCandidateAttempt(
+                candidate: candidate,
+                source: source,
+                outcome: .failure(recordedFailures: [failure], loggedFailure: failure)
+            )
+        }
+    }
+
+    private func loadSurfaceSnapshot(
         for sourceMetadata: StormSetupSourceMetadata,
         around centroid: StormSetupCentroid,
         targetValidTime: Date,
         resolvedH3Cell: Int64
-    ) async throws -> StormSetupCurrentComposition {
+    ) async throws -> TornadoIngredientSnapshot {
         let cacheKey = try StormSetupSnapshotCacheKey(
             h3Cell: resolvedH3Cell,
             sourceMetadata: sourceMetadata,
@@ -285,7 +317,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
                     "expiresAt": .string("\(cached.expiresAt)")
                 ])
             )
-            return try await composeCurrentCompositionWithCurrentAnvilEvidence(from: cached.snapshot)
+            return cached.snapshot
         }
 
         try Task.checkCancellation()
@@ -362,7 +394,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             )
         }
 
-        return try await composeCurrentCompositionWithCurrentAnvilEvidence(from: surfaceSnapshot)
+        return surfaceSnapshot
     }
 
     private func makeCandidate(from sourceMetadata: StormSetupSourceMetadata) -> HrrrRunCandidate {
@@ -386,7 +418,7 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         guard let selectedSurfaceValidTime = sourceMetadata.validTime else {
-            return .unavailable(reason: "Selected surface HRRR source was missing valid time metadata.")
+            return StormSetupAnvilEvidencePolicy.missingSelectedSurfaceValidTime()
         }
 
         do {
@@ -394,50 +426,9 @@ struct DefaultStormSetupProvider: StormSetupProviding {
             let analysis = try await anvilProfileAnalysisProvider.analyzeProfile(for: h3Cell)
             try Task.checkCancellation()
 
-            guard analysis.request.validTime == analysis.debug.validTime else {
-                return .unavailable(
-                    reason: "Anvil request valid time \(analysis.request.validTime) did not match debug valid time \(analysis.debug.validTime)."
-                )
-            }
-
-            let pressureArtifactRunTime = analysis.debug.runTime
-            let pressureArtifactForecastHour = analysis.debug.forecastHour
-            let pressureArtifactValidTime = analysis.debug.validTime
-            let pressureArtifactProduct = analysis.debug.product
-            let staleWarnings = makeStaleWarnings(from: analysis.debug.warnings)
-
-            if pressureArtifactValidTime == selectedSurfaceValidTime {
-                return .exact(
-                    evidence: AnvilIngredientEvidence(response: analysis.response),
-                    profileAnalysis: analysis.response,
-                    pressureArtifactRunTime: pressureArtifactRunTime,
-                    pressureArtifactForecastHour: pressureArtifactForecastHour,
-                    pressureArtifactValidTime: pressureArtifactValidTime,
-                    pressureArtifactProduct: pressureArtifactProduct
-                )
-            }
-
-            guard pressureArtifactValidTime < selectedSurfaceValidTime,
-                  !staleWarnings.isEmpty else {
-                return .unavailable(
-                    reason: "Anvil evidence valid time \(pressureArtifactValidTime) did not match the selected surface HRRR valid time \(selectedSurfaceValidTime)."
-                )
-            }
-
-            return .stale(
-                evidence: AnvilIngredientEvidence(
-                    response: analysis.response,
-                    additionalWarnings: staleWarnings
-                ),
-                profileAnalysis: analysis.response,
-                pressureArtifactRunTime: pressureArtifactRunTime,
-                pressureArtifactForecastHour: pressureArtifactForecastHour,
-                pressureArtifactValidTime: pressureArtifactValidTime,
-                pressureArtifactProduct: pressureArtifactProduct,
-                staleAgeSeconds: staleAgeSeconds(
-                    selectedSurfaceValidTime: selectedSurfaceValidTime,
-                    pressureArtifactValidTime: pressureArtifactValidTime
-                )
+            return StormSetupAnvilEvidencePolicy.classify(
+                selectedSurfaceValidTime: selectedSurfaceValidTime,
+                analysis: analysis
             )
         } catch {
             try rethrowCancellationIfNeeded(error)
@@ -521,12 +512,6 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         )
     }
 
-    private func makeStaleWarnings(from warnings: [String]) -> [String] {
-        warnings.filter { warning in
-            warning.hasPrefix("Pressure artifact stale fallback selected:")
-        }
-    }
-
     private func anvilEvidenceResolutionMetadata(
         source: StormSetupSourceMetadata,
         resolution: AnvilEvidenceResolution
@@ -559,13 +544,6 @@ struct DefaultStormSetupProvider: StormSetupProviding {
         }
 
         return metadata
-    }
-
-    private func staleAgeSeconds(
-        selectedSurfaceValidTime: Date,
-        pressureArtifactValidTime: Date
-    ) -> Int {
-        max(0, Int(selectedSurfaceValidTime.timeIntervalSince(pressureArtifactValidTime).rounded(.down)))
     }
 
     private func conciseEvidenceReason(for evidence: AnvilIngredientEvidence) -> String? {
@@ -758,7 +736,21 @@ struct DefaultStormSetupProvider: StormSetupProviding {
     }
 }
 
-private struct AnvilEvidenceResolution: Sendable {
+private struct StormSetupSurfaceCandidateAttempt: Sendable {
+    enum Outcome: Sendable {
+        case success(TornadoIngredientSnapshot)
+        case failure(
+            recordedFailures: [StormSetupCurrentSnapshotFailure],
+            loggedFailure: StormSetupCurrentSnapshotFailure
+        )
+    }
+
+    let candidate: HrrrRunCandidate
+    let source: StormSetupSourceMetadata
+    let outcome: Outcome
+}
+
+struct AnvilEvidenceResolution: Sendable {
     let evidence: AnvilIngredientEvidence
     let profileAnalysis: AnvilAnalyzeProfileResponse?
     let artifactOutcome: StormSetupAnvilArtifactOutcome
@@ -823,7 +815,7 @@ private struct AnvilEvidenceResolution: Sendable {
     }
 }
 
-private enum StormSetupAnvilArtifactOutcome: String, Sendable {
+enum StormSetupAnvilArtifactOutcome: String, Sendable {
     case exact
     case stale
     case unavailable

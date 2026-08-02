@@ -758,6 +758,56 @@ struct StormSetupProviderTests {
         #expect(anvilRequestCount == 1)
     }
 
+    @Test("snapshot cache store failure retains the usable surface and Anvil response")
+    func snapshotCacheStoreFailureRetainsUsableResponse() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let candidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: candidate, centroid: expected.centroid)
+        let subset = makeSubsetResult(source: source, fetchedAt: now)
+
+        let snapshotCache = StubStormSetupSnapshotCache(
+            cachedSnapshot: nil,
+            storeError: .unexpectedDownstreamCall("snapshot cache store failed")
+        )
+        let subsetLoader = StubStormSetupSubsetLoader { callIndex, resolution, _ in
+            #expect(callIndex == 0)
+            #expect(resolution.primaryCandidate == candidate)
+            return subset
+        }
+        let fieldSampler = StubStormSetupFieldSampler { _, _ in [] }
+        let anvilProvider = CountingAnvilProfileAnalysisProvider(
+            response: makeStormSetupRouteAnalysisResponse(validTime: candidate.validTime)
+        )
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(
+                result: makeNormalizationResult(raw: makeRaw(sbcapeJkg: 1450))
+            ),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: anvilProvider
+        )
+
+        let response = try await provider.currentResponse(for: fixedH3)
+
+        #expect(response.setup.source.runTime == candidate.runTime)
+        #expect(response.ingredients.diagnostics.sbcapeJkg == 1450)
+        #expect(response.profileAnalysis != nil)
+        #expect(await snapshotCache.loadCount == 1)
+        #expect(await snapshotCache.storeCount == 1)
+        #expect(await subsetLoader.requestCount == 1)
+        #expect(await fieldSampler.requestCount == 1)
+        #expect(await anvilProvider.requestCount == 1)
+    }
+
     @Test("provider augments the snapshot with Anvil evidence and uses it in the assessment")
     func providerAugmentsSnapshotWithAnvilEvidence() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -1305,6 +1355,79 @@ struct StormSetupProviderTests {
         #expect(fieldSampleRequestCount == 2)
     }
 
+    @Test("exhausted candidates preserve ordered failures and HTTP status mapping")
+    func exhaustedCandidatesPreserveOrderedFailuresAndStatus() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let dateProvider = StormSetupRouteDateProvider(nowDate: now)
+        let firstCandidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let secondCandidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 21),
+            forecastHour: 1
+        )
+        let firstSource = makeSourceMetadata(candidate: firstCandidate, centroid: expected.centroid)
+        let secondSource = makeSourceMetadata(candidate: secondCandidate, centroid: expected.centroid)
+        let secondSubset = makeSubsetResult(source: secondSource, fetchedAt: now)
+        let wgrib2URL = URL(fileURLWithPath: "/tmp/does-not-exist-wgrib2")
+
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let subsetLoader = StubStormSetupSubsetLoader { callIndex, resolution, _ in
+            switch callIndex {
+            case 0:
+                #expect(resolution.primaryCandidate == firstCandidate)
+                throw GribSubsetCacheError.unexpectedHTTPStatus(source: firstSource, status: 503)
+            case 1:
+                #expect(resolution.primaryCandidate == secondCandidate)
+                return secondSubset
+            default:
+                throw TestFailure.unexpectedDownstreamCall("unexpected extra subset-loader call")
+            }
+        }
+        let fieldSampler = StubStormSetupFieldSampler { subset, _ in
+            #expect(subset.localFileURL == secondSubset.localFileURL)
+            throw Wgrib2ClientError.executableMissing(wgrib2URL)
+        }
+        let provider = makeProvider(
+            dateProvider: dateProvider,
+            hrrrRunResolver: DefaultHrrrRunResolver(
+                dateProvider: dateProvider,
+                lookbackHours: 1
+            ),
+            snapshotCache: snapshotCache,
+            subsetLoader: subsetLoader,
+            fieldSampler: fieldSampler,
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: .empty)),
+            interpreter: StubStormSetupAssessor(assessment: makeAssessment())
+        )
+
+        do {
+            _ = try await provider.currentSnapshot(for: fixedH3)
+            Issue.record("Expected a no-usable-candidate failure.")
+        } catch let error as StormSetupCurrentSnapshotError {
+            guard case .noUsableHrrrCandidate(let failures) = error else {
+                Issue.record("Expected noUsableHrrrCandidate, got \(error).")
+                return
+            }
+
+            try #require(failures.count == 2)
+            #expect(failures[0].stage == .gribSubsetCache)
+            #expect(failures[0].source?.runTime == firstCandidate.runTime)
+            #expect(failures[0].reason.contains("503"))
+            #expect(failures[1].stage == .wgrib2Sampling)
+            #expect(failures[1].source?.runTime == secondCandidate.runTime)
+            #expect(failures[1].reason.contains("does not exist"))
+            #expect(error.asAbort().status == .internalServerError)
+        }
+
+        #expect(await snapshotCache.loadCount == 2)
+        #expect(await subsetLoader.requestCount == 2)
+        #expect(await fieldSampler.requestCount == 1)
+    }
+
     @Test("known failure modes map to useful HTTP aborts")
     func knownFailuresMapToUsefulAborts() {
         let source = makeSourceMetadata(
@@ -1382,6 +1505,7 @@ struct StormSetupProviderTests {
 
     private func makeProvider(
         dateProvider: any StormSetupDateProviding,
+        hrrrRunResolver: (any HrrrRunResolving)? = nil,
         snapshotCache: any StormSetupSnapshotCaching,
         subsetLoader: any StormSetupSubsetLoading,
         fieldSampler: any StormSetupFieldSampling,
@@ -1391,6 +1515,7 @@ struct StormSetupProviderTests {
     ) -> DefaultStormSetupProvider {
         DefaultStormSetupProvider(
             dateProvider: dateProvider,
+            hrrrRunResolver: hrrrRunResolver,
             snapshotCache: snapshotCache,
             subsetLoader: subsetLoader,
             fieldSampler: fieldSampler,
@@ -1535,11 +1660,16 @@ private enum TestFailure: Error, Sendable {
 
 private actor StubStormSetupSnapshotCache: StormSetupSnapshotCaching {
     var cachedSnapshot: TornadoIngredientSnapshot?
+    private let storeError: TestFailure?
     private(set) var loadCount = 0
     private(set) var storeCount = 0
 
-    init(cachedSnapshot: TornadoIngredientSnapshot?) {
+    init(
+        cachedSnapshot: TornadoIngredientSnapshot?,
+        storeError: TestFailure? = nil
+    ) {
         self.cachedSnapshot = cachedSnapshot
+        self.storeError = storeError
     }
 
     func loadSnapshot(for key: StormSetupSnapshotCacheKey) async -> StormSetupSnapshotCacheResult? {
@@ -1560,6 +1690,9 @@ private actor StubStormSetupSnapshotCache: StormSetupSnapshotCaching {
 
     func store(snapshot: TornadoIngredientSnapshot, for key: StormSetupSnapshotCacheKey) async throws -> StormSetupSnapshotCacheResult {
         storeCount += 1
+        if let storeError {
+            throw storeError
+        }
         cachedSnapshot = snapshot
         return StormSetupSnapshotCacheResult(
             snapshot: snapshot,
@@ -1824,6 +1957,7 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
 
     func makeStormSetupRouteAnalysisResponse(
         validTime: Date = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+        debugValidTime: Date? = nil,
         warnings: [String] = []
     ) -> AnvilAnalyzeProfileAnalysisResponse {
         AnvilAnalyzeProfileAnalysisResponse(
@@ -1850,7 +1984,7 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
                 product: .wrfprsf,
                 runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
                 forecastHour: 0,
-                validTime: validTime,
+                validTime: debugValidTime ?? validTime,
                 h3: "617700169958293503",
                 centroid: StormSetupCentroid(latitude: 39.7825, longitude: -104.4661),
                 selectedMessageCount: 5,
