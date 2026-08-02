@@ -43,6 +43,8 @@ Related local docs:
 
 ## Current State Summary
 
+> **Historical status snapshot.** This section predates the completed response-contract work and intentionally preserves its planning record. It is not the current Storm Setup architecture; consult [architecture.md](../architecture.md) and current source for live behavior.
+
 Production endpoint:
 - `GET /api/v1/storm-setup/current?h3=<cell>`
 - Defined in `Sources/App/Controllers/StormSetupController.swift`

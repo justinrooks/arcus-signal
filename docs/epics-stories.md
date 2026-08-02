@@ -1,5 +1,7 @@
 # Arcus Signal — Epics & Stories (Server Notifications Pipeline)
 
+> **Historical planning artifact (not the living architecture).** These stories preserve the original intended design and acceptance language. Several notification-outbox, stored-payload, retry, and exactly-once claims below were not implemented as described. For current runtime ownership and delivery guarantees, see [architecture.md](architecture.md); do not treat this document as a production contract.
+
 > Goal: deliver **reliable, timely** APNs notifications based on **event revisions** and **device overlap**, with **exactly-once effects** per `(device_id, event_key, revision)`.
 
 ---
