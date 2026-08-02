@@ -37,10 +37,9 @@ struct NWSAlertLifecycleTests {
 
     @Test("cleanup expires active series when ends is absent")
     func cleanupExpiresSeriesWithoutEnds() async throws {
-        let app = try await Application.make(.testing)
-        do {
-            try await configure(app, mode: .api)
-            try await app.autoMigrate()
+        try await withIntegrationTestApplication(
+            setup: .configured(mode: .api, migrate: true)
+        ) { app in
 
             let series = ArcusSeriesModel(
                 source: "nws",
@@ -69,10 +68,6 @@ struct NWSAlertLifecycleTests {
 
             let stored = try await ArcusSeriesModel.find(series.id, on: app.db)
             #expect(stored?.state == EventState.expired.rawValue)
-        } catch {
-            try? await app.asyncShutdown()
-            throw error
         }
-        try await app.asyncShutdown()
     }
 }

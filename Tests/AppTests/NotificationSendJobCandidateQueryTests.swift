@@ -1,6 +1,5 @@
 @testable import App
 import Fluent
-import FluentPostgresDriver
 import FluentSQL
 import Foundation
 import Testing
@@ -8,33 +7,7 @@ import Vapor
 
 @Suite("Notification candidate store queries", .serialized)
 struct NotificationSendJobCandidateQueryTests {
-    private enum Rollback: Error {
-        case afterAssertions
-    }
-
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
-
-    private func withApp(test: @escaping @Sendable (any Database) async throws -> Void) async throws {
-        let app = try await Application.make(.testing)
-        do {
-            let databaseURL = Environment.get("DATABASE_URL")
-                ?? "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable"
-            app.databases.use(try .postgres(url: databaseURL), as: .psql)
-            try await bootstrapTables(on: app.db)
-            do {
-                try await app.db.transaction { database in
-                    try await test(database)
-                    throw Rollback.afterAssertions
-                }
-            } catch Rollback.afterAssertions {
-                // Expected: keep shared integration-test tables unchanged.
-            }
-        } catch {
-            try? await app.asyncShutdown()
-            throw error
-        }
-        try await app.asyncShutdown()
-    }
 
     private func bootstrapTables(on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {
@@ -166,77 +139,92 @@ struct NotificationSendJobCandidateQueryTests {
 
     @Test("H3 candidates include fresh and cutoff presence while preserving installation exclusions")
     func h3CandidatesFilterHardStalePresence() async throws {
-        try await withApp { database in
-            let h3Cell = Int64(
-                UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(15),
-                radix: 16
-            )!
-            let expected = try await seedCandidates(h3Cell: h3Cell, county: nil, on: database)
-            let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            try await withRollbackTransaction(on: app) { database in
+                let h3Cell = Int64(
+                    UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(15),
+                    radix: 16
+                )!
+                let expected = try await seedCandidates(h3Cell: h3Cell, county: nil, on: database)
+                let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
 
-            let candidates = try await NotificationCandidateStore().loadH3Candidates(
-                cells: [h3Cell],
-                capturedAtOrAfter: cutoff,
-                on: database
-            )
-            let actual = Set(candidates.map(\.id))
+                let candidates = try await NotificationCandidateStore().loadH3Candidates(
+                    cells: [h3Cell],
+                    capturedAtOrAfter: cutoff,
+                    on: database
+                )
+                let actual = Set(candidates.map(\.id))
 
-            #expect(actual == expected.included)
-            #expect(actual.isDisjoint(with: expected.excluded))
-            let cutoffCandidate = try #require(candidates.first { $0.id == expected.atCutoff })
-            assertDecodedFields(for: cutoffCandidate, id: expected.atCutoff, capturedAt: cutoff, countyLabel: nil)
+                #expect(actual == expected.included)
+                #expect(actual.isDisjoint(with: expected.excluded))
+                let cutoffCandidate = try #require(candidates.first { $0.id == expected.atCutoff })
+                assertDecodedFields(for: cutoffCandidate, id: expected.atCutoff, capturedAt: cutoff, countyLabel: nil)
+            }
         }
     }
 
     @Test("H3 candidates return empty for empty cells")
     func h3CandidatesReturnEmptyForEmptyCells() async throws {
-        try await withApp { database in
-            let candidates = try await NotificationCandidateStore().loadH3Candidates(
-                cells: [],
-                capturedAtOrAfter: now,
-                on: database
-            )
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            try await withRollbackTransaction(on: app) { database in
+                let candidates = try await NotificationCandidateStore().loadH3Candidates(
+                    cells: [],
+                    capturedAtOrAfter: now,
+                    on: database
+                )
 
-            #expect(candidates.isEmpty)
+                #expect(candidates.isEmpty)
+            }
         }
     }
 
     @Test("UGC candidates include fresh and cutoff presence while preserving installation exclusions")
     func ugcCandidatesFilterHardStalePresence() async throws {
-        try await withApp { database in
-            let county = "test-\(UUID().uuidString)"
-            let expected = try await seedCandidates(h3Cell: nil, county: county, on: database)
-            let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
-            let zoneOnly = UUID()
-            let fireZoneOnly = UUID()
-            try await seedCandidate(
-                id: zoneOnly,
-                capturedAt: cutoff,
-                h3Cell: nil,
-                county: nil,
-                zone: county,
-                on: database
-            )
-            try await seedCandidate(
-                id: fireZoneOnly,
-                capturedAt: cutoff,
-                h3Cell: nil,
-                county: nil,
-                fireZone: county,
-                on: database
-            )
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            try await withRollbackTransaction(on: app) { database in
+                let county = "test-\(UUID().uuidString)"
+                let expected = try await seedCandidates(h3Cell: nil, county: county, on: database)
+                let cutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+                let zoneOnly = UUID()
+                let fireZoneOnly = UUID()
+                try await seedCandidate(
+                    id: zoneOnly,
+                    capturedAt: cutoff,
+                    h3Cell: nil,
+                    county: nil,
+                    zone: county,
+                    on: database
+                )
+                try await seedCandidate(
+                    id: fireZoneOnly,
+                    capturedAt: cutoff,
+                    h3Cell: nil,
+                    county: nil,
+                    fireZone: county,
+                    on: database
+                )
 
-            let candidates = try await NotificationCandidateStore().loadUGCCandidates(
-                ugcCodes: [county],
-                capturedAtOrAfter: cutoff,
-                on: database
-            )
-            let actual = Set(candidates.map(\.id))
+                let candidates = try await NotificationCandidateStore().loadUGCCandidates(
+                    ugcCodes: [county],
+                    capturedAtOrAfter: cutoff,
+                    on: database
+                )
+                let actual = Set(candidates.map(\.id))
 
-            #expect(actual == expected.included.union([zoneOnly, fireZoneOnly]))
-            #expect(actual.isDisjoint(with: expected.excluded))
-            let cutoffCandidate = try #require(candidates.first { $0.id == expected.atCutoff })
-            assertDecodedFields(for: cutoffCandidate, id: expected.atCutoff, capturedAt: cutoff, countyLabel: county)
+                #expect(actual == expected.included.union([zoneOnly, fireZoneOnly]))
+                #expect(actual.isDisjoint(with: expected.excluded))
+                let cutoffCandidate = try #require(candidates.first { $0.id == expected.atCutoff })
+                assertDecodedFields(for: cutoffCandidate, id: expected.atCutoff, capturedAt: cutoff, countyLabel: county)
+            }
         }
     }
 }

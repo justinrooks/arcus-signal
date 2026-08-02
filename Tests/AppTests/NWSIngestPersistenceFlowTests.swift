@@ -7,38 +7,10 @@ import Vapor
 @Suite("NWS ingest persistence flow", .serialized)
 struct NWSIngestPersistenceFlowTests {
     private enum Rollback: Error {
-        case afterAssertions
         case forcedLateFailure
     }
 
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
-
-    private func withApp(test: (Application) async throws -> Void) async throws {
-        let app = try await Application.make(.testing)
-        do {
-            try await configure(app, mode: .api)
-            try await app.autoMigrate()
-            try await test(app)
-        } catch {
-            try? await app.asyncShutdown()
-            throw error
-        }
-        try await app.asyncShutdown()
-    }
-
-    private func withRollbackTransaction(
-        on app: Application,
-        test: @escaping @Sendable (any Database) async throws -> Void
-    ) async throws {
-        do {
-            try await app.db.transaction { database in
-                try await test(database)
-                throw Rollback.afterAssertions
-            }
-        } catch Rollback.afterAssertions {
-            // Expected: keep the shared integration database unchanged.
-        }
-    }
 
     private func makeEvent(
         urn: String,
@@ -137,7 +109,9 @@ struct NWSIngestPersistenceFlowTests {
 
     @Test("new polygon, point, and nil geometry persist exact dispatch intents")
     func newEventsPersistExpectedTargetingState() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .configured(mode: .api, migrate: true)
+        ) { app in
             try await withRollbackTransaction(on: app) { database in
                 let prefix = UUID().uuidString.lowercased()
                 let polygonEvent = makeEvent(
@@ -216,7 +190,9 @@ struct NWSIngestPersistenceFlowTests {
 
     @Test("duplicate revision is a complete persistence no-op")
     func duplicateRevisionIsNoOp() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .configured(mode: .api, migrate: true)
+        ) { app in
             try await withRollbackTransaction(on: app) { database in
                 let prefix = UUID().uuidString.lowercased()
                 let event = makeEvent(
@@ -259,7 +235,9 @@ struct NWSIngestPersistenceFlowTests {
 
     @Test("newer revision advances snapshot while older revision remains lineage-only")
     func revisionOrderingPreservesNewestSnapshot() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .configured(mode: .api, migrate: true)
+        ) { app in
             try await withRollbackTransaction(on: app) { database in
                 let prefix = UUID().uuidString.lowercased()
                 let base = makeEvent(
@@ -315,7 +293,9 @@ struct NWSIngestPersistenceFlowTests {
 
     @Test("referenced series merge chooses newest deterministic winner and reconciles lineage")
     func referencedSeriesMergeReconcilesDatabaseState() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .configured(mode: .api, migrate: true)
+        ) { app in
             try await withRollbackTransaction(on: app) { database in
                 let prefix = UUID().uuidString.lowercased()
                 let older = makeEvent(
@@ -444,7 +424,9 @@ struct NWSIngestPersistenceFlowTests {
 
     @Test("late transaction failure rolls back the complete event batch")
     func lateFailureRollsBackCompleteBatch() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .configured(mode: .api, migrate: true)
+        ) { app in
             let prefix = UUID().uuidString.lowercased()
             let point = makeEvent(
                 urn: "urn:oid:\(prefix)-rollback-point",

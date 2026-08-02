@@ -1,29 +1,12 @@
 @testable import App
 import Foundation
 import Fluent
-import FluentPostgresDriver
 import FluentSQL
 import Testing
 import Vapor
 
 @Suite("Notification ledger freshness persistence", .serialized)
 struct NotificationLedgerFreshnessPersistenceTests {
-    private func withApp(test: (Application) async throws -> Void) async throws {
-        let app = try await Application.make(.testing)
-        do {
-            let databaseURL = Environment.get("DATABASE_URL")
-                ?? "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable"
-            app.databases.use(try .postgres(url: databaseURL), as: .psql)
-            try await bootstrapTables(on: app.db)
-            try await test(app)
-        } catch {
-            Issue.record("Test DB error: \(String(reflecting: error))")
-            try? await app.asyncShutdown()
-            throw error
-        }
-        try await app.asyncShutdown()
-    }
-
     private func bootstrapTables(on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
@@ -168,7 +151,10 @@ struct NotificationLedgerFreshnessPersistenceTests {
 
     @Test("fresh, degraded, and duplicate claims preserve exact original fields")
     func claimSemanticsArePreserved() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
             let store = NotificationDeliveryStore()
             let fresh = try await seedAndClaim(
                 revisionUrn: "urn:oid:fresh-claim",
@@ -225,7 +211,10 @@ struct NotificationLedgerFreshnessPersistenceTests {
 
     @Test("sent, APNs-failed, and generic-failed completions preserve terminal semantics")
     func completionSemanticsArePreserved() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
             let store = NotificationDeliveryStore()
             let sent = try await seedAndClaim(
                 revisionUrn: "urn:oid:sent-completion",
@@ -293,7 +282,10 @@ struct NotificationLedgerFreshnessPersistenceTests {
 
     @Test("missing sent completion is a no-op and missing failed completion remains not found")
     func missingCompletionSemanticsArePreserved() async throws {
-        try await withApp { app in
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
             let store = NotificationDeliveryStore()
 
             try await store.completeSent(claimID: UUID(), on: app.db)
