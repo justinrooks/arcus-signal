@@ -20,6 +20,8 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ## Current state summary
 
+> **Historical status snapshot.** This section records the campaign-planning state on 2026-07-28; its current-tense statements and issue table are not a live implementation status. The status ledger remains a historical record. For the implemented runtime and delivery guarantees, see [architecture.md](../architecture.md).
+
 - Architecture audit complete at `main` commit `254728f`.
 - Recovery roadmap complete with 18 single-purpose slices.
 - GitHub epic #153 and child issues #154–#171 are created and linked as sub-issues.
@@ -290,11 +292,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #171 - 18: Align living architecture docs
 
-- **Status:** Pending
+- **Status:** READY FOR COMMIT
 - **Roadmap:** Slice 16B
 - **Execution profile:** `gpt-5.6-terra`, medium reasoning
 - **Dependencies:** 05, 08, 09, 14, 17
 - **Stop condition:** Living docs describe implemented guarantees without claiming deferred fixes.
+- **Files changed:** `AGENTS.md`, `docs/architecture.md`, `docs/epics-stories.md`, `docs/plans/architecture-recovery-progress.md`, and `docs/plans/storm-setup-current-response-progress.md`.
+- **Behavior:** Documentation now distinguishes target and notification dispatch intent, queue handoff, per-installation ledger claim, send-time candidate copy, debug/attempt telemetry, API/worker ownership, and Vapor Queues’ zero-retry default. No runtime behavior changed.
+- **Validation:** Focused source/test searches confirmed the outbox identities, claim order, send-time composition, composition roots, worker lifecycle, and `maxRetryCount: Int = 0` default. Documentation searches and issue-scoped whitespace validation passed; repository-wide documentation whitespace remains blocked only by the pre-existing `docs/Sql/Device.sql:48` trailing whitespace.
+- **Residual risk / handoff:** APNs retry/backoff and failure classification, queue replay after consumer failure, abandoned-claim recovery, and stored-payload redesign remain deferred. Human review completed with no suggested changes; independent defect and validation audits completed, with three supported documentation corrections resolved in focused re-review. Ready for commit; no commit, push, or pull request was created.
 
 ## Verification ledger
 

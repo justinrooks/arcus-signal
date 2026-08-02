@@ -19,10 +19,12 @@ Before making changes, read:
 - docs/architecture.md
 - docs/epics-stories.md
 
-Treat these as the source of truth for:
+Treat `docs/architecture.md` as the living source of truth. `docs/epics-stories.md` is a historical planning artifact; preserve it as a record, but do not treat its stored-payload, retry, or exactly-once language as the production contract.
+
+Use the living architecture document for:
 - pipeline flow (ingest → target → outbox → send)
-- DB invariants (exactly-once via unique constraints)
-- notification content composition (compose at outbox insert time)
+- DB invariants (including the per-installation, at-most-one ledger claim boundary)
+- notification content composition (compose candidate-specific copy after a successful ledger claim, at send time)
 - queue lanes and concurrency caps
 
 ## Working agreements
