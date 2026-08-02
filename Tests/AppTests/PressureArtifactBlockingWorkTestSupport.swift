@@ -10,9 +10,10 @@ func makePressureArtifactBlockingWorkExecutor(
 }
 
 func withPressureArtifactThreadPoolExecutor<T>(
+    numberOfThreads: Int = 1,
     _ operation: (NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> T
 ) async throws -> T {
-    let threadPool = NIOThreadPool(numberOfThreads: 1)
+    let threadPool = NIOThreadPool(numberOfThreads: numberOfThreads)
     threadPool.start()
     do {
         let result = try await operation(
@@ -23,6 +24,22 @@ func withPressureArtifactThreadPoolExecutor<T>(
     } catch {
         try? await threadPool.shutdownGracefully()
         throw error
+    }
+}
+
+final class PressureArtifactBlockingWorkTestContext {
+    private let threadPool: NIOThreadPool
+    let executor: NIOThreadPoolPressureArtifactBlockingWorkExecutor
+
+    init() {
+        let threadPool = NIOThreadPool(numberOfThreads: 1)
+        threadPool.start()
+        self.threadPool = threadPool
+        self.executor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(threadPool: threadPool)
+    }
+
+    deinit {
+        try? threadPool.syncShutdownGracefully()
     }
 }
 

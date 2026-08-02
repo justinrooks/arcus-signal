@@ -177,7 +177,12 @@ struct StormSetupSnapshotCacheTests {
     @Test("different rules versions miss the cache")
     func differentRulesVersionsMissTheCache() async throws {
         let rootURL = testRootURL()
-        let cache = makeCache(rootURL: rootURL, now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(
+            rootURL: rootURL,
+            now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            blockingWorkExecutor: blockingWork.executor
+        )
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -230,7 +235,9 @@ struct StormSetupSnapshotCacheTests {
     func freshCacheEntryReadsSuccessfully() async throws {
         let rootURL = testRootURL()
         let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-        let cache = makeCache(rootURL: rootURL, now: now)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWork.executor)
+        let cache = makeCache(rootURL: rootURL, now: now, blockingWorkExecutor: countingExecutor)
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -249,7 +256,9 @@ struct StormSetupSnapshotCacheTests {
         )
 
         let stored = try await cache.store(snapshot: snapshot, for: key)
+        let storeExecutionCount = await countingExecutor.executionCount()
         let loaded = await cache.loadSnapshot(for: key)
+        let loadExecutionCount = await countingExecutor.executionCount()
 
         #expect(stored.cacheHit == false)
         #expect(stored.fetchedAt == now)
@@ -272,13 +281,16 @@ struct StormSetupSnapshotCacheTests {
         #expect(loaded?.snapshot.freshness.sourceValidTime == snapshot.freshness.sourceValidTime)
         #expect(loaded?.snapshot.raw.sbcapeJkg == snapshot.raw.sbcapeJkg)
         #expect(loaded?.snapshot.assessment.overall == snapshot.assessment.overall)
+        #expect(storeExecutionCount > 0)
+        #expect(loadExecutionCount > storeExecutionCount)
     }
 
     @Test("stored snapshots round-trip as surface-only records")
     func storedSnapshotsRoundTripAsSurfaceOnlyRecords() async throws {
         let rootURL = testRootURL()
         let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-        let cache = makeCache(rootURL: rootURL, now: now)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWork.executor)
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -307,7 +319,8 @@ struct StormSetupSnapshotCacheTests {
     func cachedSnapshotsWithStrippedAnvilEvidenceRecomputeBaselineAssessment() async throws {
         let rootURL = testRootURL()
         let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-        let cache = makeCache(rootURL: rootURL, now: now)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWork.executor)
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -364,7 +377,9 @@ struct StormSetupSnapshotCacheTests {
     func expiredCacheEntriesAreIgnored() async throws {
         let rootURL = testRootURL()
         let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)
-        let cache = makeCache(rootURL: rootURL, now: now)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let countingExecutor = CountingPressureArtifactBlockingWorkExecutor(wrapping: blockingWork.executor)
+        let cache = makeCache(rootURL: rootURL, now: now, blockingWorkExecutor: countingExecutor)
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -383,17 +398,21 @@ struct StormSetupSnapshotCacheTests {
         )
 
         _ = try await cache.store(snapshot: snapshot, for: key)
+        let executionCountBeforeInvalidation = await countingExecutor.executionCount()
         let loaded = await cache.loadSnapshot(for: key)
+        let executionCountAfterInvalidation = await countingExecutor.executionCount()
 
         #expect(loaded == nil)
         #expect(!fileExists(at: key.snapshotFileURL(rootURL: rootURL)))
+        #expect(executionCountAfterInvalidation > executionCountBeforeInvalidation)
     }
 
     @Test("corrupt cache JSON is ignored safely")
     func corruptCacheJSONIsIgnoredSafely() async throws {
         let rootURL = testRootURL()
         let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-        let cache = makeCache(rootURL: rootURL, now: now)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWork.executor)
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -418,7 +437,8 @@ struct StormSetupSnapshotCacheTests {
     func truncatedCacheFilesAreIgnored() async throws {
         let rootURL = testRootURL()
         let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
-        let cache = makeCache(rootURL: rootURL, now: now)
+        let blockingWork = PressureArtifactBlockingWorkTestContext()
+        let cache = makeCache(rootURL: rootURL, now: now, blockingWorkExecutor: blockingWork.executor)
         let source = makeSourceMetadata(
             runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13),
             forecastHour: 9
@@ -439,8 +459,13 @@ struct StormSetupSnapshotCacheTests {
         #expect(!fileExists(at: fileURL))
     }
 
-    private func makeCache(rootURL: URL, now: Date) -> StormSetupSnapshotCache {
+    private func makeCache(
+        rootURL: URL,
+        now: Date,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    ) -> StormSetupSnapshotCache {
         StormSetupSnapshotCache(
+            blockingWorkExecutor: blockingWorkExecutor,
             rootURL: rootURL,
             dateProvider: FixedStormSetupDateProvider(nowDate: now)
         )

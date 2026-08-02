@@ -1,3 +1,4 @@
+import NIOConcurrencyHelpers
 import NIOPosix
 
 protocol PressureArtifactBlockingWorkExecuting: Sendable {
@@ -20,5 +21,15 @@ struct NIOThreadPoolPressureArtifactBlockingWorkExecutor: PressureArtifactBlocki
         let result = try await threadPool.runIfActive(operation)
         try Task.checkCancellation()
         return result
+    }
+}
+
+final class BlockingWorkCriticalSection: Sendable {
+    private let lock = NIOLock()
+
+    func withLock<T>(
+        _ operation: @Sendable () throws -> T
+    ) rethrows -> T {
+        try lock.withLock(operation)
     }
 }

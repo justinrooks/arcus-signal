@@ -855,6 +855,7 @@ private struct StormSetupCurrentComposition: Sendable {
 extension DefaultStormSetupProvider {
     init(
         application: Application,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
         anvilProfileAnalysisProvider: any AnvilProfileAnalysisProviding,
         h3Resolver: any StormSetupH3Resolving = DefaultStormSetupH3Resolver(),
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
@@ -866,6 +867,7 @@ extension DefaultStormSetupProvider {
         let httpClient = VaporApplicationHTTPClient(application: application)
         let subsetCache = GribSubsetCache(
             httpClient: httpClient,
+            blockingWorkExecutor: blockingWorkExecutor,
             rootURL: configuration.gribSubsetCacheRootURL,
             dateProvider: dateProvider,
             retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
@@ -874,6 +876,7 @@ extension DefaultStormSetupProvider {
         let downloader = NomadsGribDownloader(cache: subsetCache, hrrrNomadsURLBuilder: hrrrNomadsURLBuilder)
         let sampler = HrrrFieldSampler(client: configuration.makeWgrib2Client())
         let snapshotCache = StormSetupSnapshotCache(
+            blockingWorkExecutor: blockingWorkExecutor,
             rootURL: configuration.sampledSnapshotCacheRootURL,
             dateProvider: dateProvider
         )

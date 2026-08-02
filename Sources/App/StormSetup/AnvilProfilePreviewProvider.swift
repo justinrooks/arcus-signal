@@ -70,13 +70,13 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         self.logger = logger
     }
 
-    init(application: Application) {
+    init(
+        application: Application,
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    ) {
         let configuration = application.stormSetupConfiguration
         let dateProvider = SystemStormSetupDateProvider()
         let httpClient = VaporApplicationHTTPClient(application: application)
-        let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
-            threadPool: application.threadPool
-        )
         let pressureArtifactCatalogLookupService = DefaultPressureArtifactCatalogLookupService(
             database: application.db,
             blockingWorkExecutor: blockingWorkExecutor,
@@ -86,6 +86,7 @@ struct DefaultAnvilProfilePreviewProvider: AnvilProfilePreviewProviding {
         let surfaceSubsetLoader = NomadsGribDownloader(
             cache: GribSubsetCache(
                 httpClient: httpClient,
+                blockingWorkExecutor: blockingWorkExecutor,
                 rootURL: configuration.gribSubsetCacheRootURL,
                 dateProvider: dateProvider,
                 retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
