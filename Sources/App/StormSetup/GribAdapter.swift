@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import NIOConcurrencyHelpers
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -25,77 +26,85 @@ enum ProcessRunnerError: Error, Sendable, Equatable {
 }
 
 struct ProcessRunner: Sendable {
+    private enum WaitOutcome {
+        case exited
+        case timedOut
+    }
+
     func run(
         executableURL: URL,
         arguments: [String],
         timeoutSeconds: TimeInterval = 10
     ) async throws -> ProcessResult {
-        try await Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = executableURL
-            process.arguments = arguments
+        try Task.checkCancellation()
 
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
 
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        let exitObservation = ProcessExitObservation()
+        process.terminationHandler = { _ in
+            exitObservation.processDidExit()
+        }
+
+        do {
+            try process.run()
+        } catch {
+            try Task.checkCancellation()
+            throw ProcessRunnerError.launchFailed(
+                "Failed to launch \(executableURL.path): \(error.localizedDescription)"
+            )
+        }
+
+        return try await withTaskCancellationHandler {
+            let stdoutReader = ProcessPipeReader(fileHandle: stdoutPipe.fileHandleForReading)
+            let stderrReader = ProcessPipeReader(fileHandle: stderrPipe.fileHandleForReading)
+            async let stdoutData = stdoutReader.readToEnd()
+            async let stderrData = stderrReader.readToEnd()
+
+            let waitOutcome: WaitOutcome
             do {
-                try process.run()
-            } catch {
-                throw ProcessRunnerError.launchFailed(
-                    "Failed to launch \(executableURL.path): \(error.localizedDescription)"
+                waitOutcome = try await Self.waitForExit(
+                    process,
+                    timeoutSeconds: timeoutSeconds
+                )
+            } catch is CancellationError {
+                await Self.terminateAndReap(
+                    process,
+                    exitObservation: exitObservation,
+                    sendTerminationSignal: false
+                )
+                _ = await (stdoutData, stderrData)
+                throw CancellationError()
+            }
+
+            switch waitOutcome {
+            case .exited:
+                await exitObservation.waitForExit()
+            case .timedOut:
+                await Self.terminateAndReap(
+                    process,
+                    exitObservation: exitObservation,
+                    sendTerminationSignal: true
                 )
             }
 
-            let stdoutTask = Task.detached(priority: .utility) {
-                Self.readPipeToEnd(stdoutPipe.fileHandleForReading)
-            }
-            let stderrTask = Task.detached(priority: .utility) {
-                Self.readPipeToEnd(stderrPipe.fileHandleForReading)
-            }
-
-            let deadline = Date().addingTimeInterval(timeoutSeconds)
-            var timedOut = false
-
-            while process.isRunning {
-                if Date() > deadline {
-                    timedOut = true
-                    process.terminate()
-                    let graceDeadline = Date().addingTimeInterval(0.5)
-
-                    while process.isRunning && Date() < graceDeadline {
-                        try await Task.sleep(for: .milliseconds(50))
-                    }
-
-                    if process.isRunning {
-                        kill(process.processIdentifier, SIGKILL)
-                        process.waitUntilExit()
-                    }
-
-                    break
-                }
-
-                try await Task.sleep(for: .milliseconds(50))
-            }
-
-            if process.isRunning {
-                process.waitUntilExit()
-            }
-
-            let stdoutData = await stdoutTask.value
-            let stderrData = await stderrTask.value
-
-            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
+            let (capturedStdout, capturedStderr) = await (stdoutData, stderrData)
             let result = ProcessResult(
-                stdout: stdout,
-                stderr: stderr,
+                stdout: String(data: capturedStdout, encoding: .utf8) ?? "",
+                stderr: String(data: capturedStderr, encoding: .utf8) ?? "",
                 exitCode: process.terminationStatus
             )
 
-            if timedOut {
+            // Cancellation wins while lifecycle cleanup is still in flight.
+            try Task.checkCancellation()
+
+            if waitOutcome == .timedOut {
                 throw ProcessRunnerError.timedOut(
                     timeoutSeconds: timeoutSeconds,
                     stderr: result.stderr
@@ -110,10 +119,148 @@ struct ProcessRunner: Sendable {
             }
 
             return result
-        }.value
+        } onCancel: {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
     }
 
-    private static func readPipeToEnd(_ fileHandle: FileHandle) -> Data {
-        fileHandle.readDataToEndOfFile()
+    private static func waitForExit(
+        _ process: Process,
+        timeoutSeconds: TimeInterval
+    ) async throws -> WaitOutcome {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+
+        while process.isRunning {
+            if Date() > deadline {
+                return .timedOut
+            }
+
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        return .exited
+    }
+
+    private static func terminateAndReap(
+        _ process: Process,
+        exitObservation: ProcessExitObservation,
+        sendTerminationSignal: Bool
+    ) async {
+        if sendTerminationSignal, process.isRunning {
+            process.terminate()
+        }
+
+        let graceDeadline = Date().addingTimeInterval(0.5)
+        while process.isRunning && Date() < graceDeadline {
+            await sleepIgnoringCancellation(for: 0.05)
+        }
+
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+        }
+
+        await exitObservation.waitForExit()
+    }
+
+    private static func sleepIgnoringCancellation(for interval: TimeInterval) async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + interval
+            ) {
+                continuation.resume()
+            }
+        }
+    }
+}
+
+private final class ProcessExitObservation: Sendable {
+    private struct State: Sendable {
+        var didExit = false
+        var continuation: CheckedContinuation<Void, Never>?
+    }
+
+    private let state = NIOLockedValueBox(State())
+
+    func processDidExit() {
+        let continuation = state.withLockedValue { state in
+            state.didExit = true
+            defer { state.continuation = nil }
+            return state.continuation
+        }
+        continuation?.resume()
+    }
+
+    func waitForExit() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = state.withLockedValue { state in
+                if state.didExit {
+                    return true
+                }
+
+                state.continuation = continuation
+                return false
+            }
+
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+}
+
+private final class ProcessPipeReader: Sendable {
+    private struct State: Sendable {
+        var data = Data()
+        var continuation: CheckedContinuation<Data, Never>?
+        var isFinished = false
+    }
+
+    private let fileHandle: FileHandle
+    private let state = NIOLockedValueBox(State())
+
+    init(fileHandle: FileHandle) {
+        self.fileHandle = fileHandle
+    }
+
+    func readToEnd() async -> Data {
+        await withCheckedContinuation { continuation in
+            state.withLockedValue { state in
+                state.continuation = continuation
+            }
+
+            fileHandle.readabilityHandler = { [self] readableHandle in
+                consumeAvailableData(from: readableHandle)
+            }
+        }
+    }
+
+    private func consumeAvailableData(from readableHandle: FileHandle) {
+        let completion: (CheckedContinuation<Data, Never>, Data)? = state.withLockedValue { state in
+            guard !state.isFinished else {
+                return nil
+            }
+
+            let data = readableHandle.availableData
+            guard data.isEmpty else {
+                state.data.append(data)
+                return nil
+            }
+
+            state.isFinished = true
+            guard let continuation = state.continuation else {
+                return nil
+            }
+            state.continuation = nil
+            return (continuation, state.data)
+        }
+
+        guard let completion else {
+            return
+        }
+
+        fileHandle.readabilityHandler = nil
+        completion.0.resume(returning: completion.1)
     }
 }
