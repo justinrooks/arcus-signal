@@ -969,14 +969,6 @@ struct AppTests {
         }
     }
 
-    @Test("TargetEventRevision dispatch policy gates to changed and active revisions")
-    func targetDispatchPolicyGatesChangedAndActive() {
-        #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: false))
-        #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnCreate(isExpired: true))
-        #expect(TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: false))
-        #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: false, isExpired: false))
-        #expect(!TargetEventRevisionDispatchPolicy.shouldDispatchOnUpdate(contentChanged: true, isExpired: true))
-    }
 }
 
 private final class SentinelStormSetupProvider: StormSetupProviding, @unchecked Sendable {

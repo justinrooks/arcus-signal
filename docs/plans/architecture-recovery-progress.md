@@ -278,11 +278,15 @@ This ledger tracks the sequential, behavior-preserving architecture recovery cam
 
 ### Issue #170 - 17: Remove verified dead code
 
-- **Status:** Pending
+- **Status:** READY FOR COMMIT
 - **Roadmap:** Slice 16A
 - **Execution profile:** `gpt-5.6-terra`, medium reasoning
 - **Dependencies:** 05, 08, 09, 14
 - **Stop condition:** Only proven-unused code/comments are removed.
+- **Files changed:** Deleted `Sources/App/Jobs/TargetEventRevisionDispatchPolicy.swift`; removed its sole-purpose test from `Tests/AppTests/AppTests.swift`; removed obsolete APNs examples/configuration from `Sources/App/Clients/APNsClient.swift` and `Sources/App/configure.swift`; removed obsolete ingest and notification-send alternatives from `Sources/App/Jobs/IngestNWSAlertsJob.swift` and `Sources/App/Jobs/NotificationSendJob.swift`; added the user-authorized `Sources/App/Migrations/RepairDevicePresenceSourceConstraintForExpandedLocationUploadSources.swift`, its registration, and historic-state coverage in `Tests/AppTests/DevicePresenceMigrationTests.swift`; and updated this entry only.
+- **Behavior:** The #170 deletion work is behavior-neutral. The separately requested forward repair re-applies the intended expanded `device_presence.source` constraint to databases that recorded the earlier migration before its rollback contract was corrected. NWS persistence/outbox decisions, notification lifecycle/ledger behavior, sandbox/production APNs container selection, APNs error persistence/logging, and active retry TODOs are unchanged.
+- **Validation:** Pre-change `swift build` passed; `swift test --filter NWSIngestPersistenceTargetingDecisionTests` passed 4 tests; and `swift test --filter NotificationSendJobDeliveryBoundaryTests` passed 6 tests. Post-change no-match searches passed for `TargetEventRevisionDispatchPolicy`, `MyPayload`, and every enumerated obsolete comment symbol; `swift build`; `swift test --filter AppTests.AppTests`; `swift test --filter NWS`; and `swift test --filter Notification` passed. `swift test --filter DevicePresenceMigrationTests` passed 1 test that recreates the historical narrow constraint, applies the repair, and rolls back its schema/data setup. Both `swift test --no-parallel` and `swift test --parallel --num-workers 8` passed 469 tests in 61 suites, one fewer than the 470-test pre-change baseline. Scoped `git diff --check` passes.
+- **Review:** Human review completed with no changes. Implementation self-review and independent defect/test audits returned GO with no disagreements or outstanding findings. The independently reviewed migration repair is included by explicit user authorization; its rollback restores the preceding expanded contract. The protected unrelated documentation edits remain untouched. Ready for commit; no commit, push, or pull request was created.
 
 ### Issue #171 - 18: Align living architecture docs
 

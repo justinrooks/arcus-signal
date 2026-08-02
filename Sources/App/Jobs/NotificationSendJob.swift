@@ -148,7 +148,6 @@ public struct NotificationSendJob: AsyncJob {
             .with(\.$revisions)
             .group(.and) { group in
                 group.filter(\.$id == payload.seriesId)
-//                    .filter(\.$ends < .now)
             }
             .first()
         
@@ -461,20 +460,7 @@ extension NotificationSendJob {
                     ]
                 )
             } catch let error as APNSError {
-                // Handle specific Apple response codes
-//                switch error.reason {
-//                case .badDeviceToken:
-//                    context.logger.error("Token is invalid. Remove from DB.")
-//                case .unregistered:
-//                    context.logger.error("User deleted app. Delete token.")
-//                case .tooManyRequests:
-//                    context.logger.error("Rate limited. Slow down!")
-//                case .expiredProviderToken:
-//                    context.logger.critical("Check your .p8 file or Team ID settings.")
-//                
-//                default:
                 context.logger.error("APNS rejected request: \(error.reason.debugDescription)")
-//                }
                 
                 // TODO: figure out retries
                 // At least we aren't dropping them now
@@ -491,32 +477,6 @@ extension NotificationSendJob {
                     on: context.application.db
                 )
                 failedCount += 1
-                
-//
-//                200
-//                Success.
-//                400
-//                Bad request.
-//                403
-//                There was an error with the certificate or with the provider’s authentication token.
-//                404
-//                The request contained an invalid :path value.
-//                405
-//                The request used an invalid :method value. Only POST requests are supported.
-//                410
-//                The device token is no longer active for the topic.
-//                413
-//                The notification payload was too large.
-//                429
-//                The server received too many requests for the same device token.
-//                500
-//                Internal server error.
-//                503
-//                The server is shutting down and unavailable.
-                
-                // You can also check by HTTP status code if preferred
-                // if error.status == .gone { ... }
-                
             } catch {
                 context.logger.error(
                     "APNs send failed",
