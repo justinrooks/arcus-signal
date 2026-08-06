@@ -240,11 +240,13 @@ actor HrrrPressureSubsetGribCache {
         rootURL: URL = StormSetupConfiguration.localPressureGribSubsetCacheRootURL,
         dateProvider: any StormSetupDateProviding = SystemStormSetupDateProvider(),
         retentionDuration: TimeInterval = StormSetupConfiguration.default.gribSubsetCacheRetentionSeconds,
-        maximumByteCount: Int = StormSetupConfiguration.default.gribSubsetMaximumByteCount
+        maximumByteCount: Int = StormSetupConfiguration.default.gribSubsetMaximumByteCount,
+        requestTimeoutSeconds: TimeInterval = StormSetupConfiguration.default.pressureArtifactHTTPTimeoutSeconds
     ) {
         self.downloader = HrrrPressureByteRangeDownloader(
             httpClient: httpClient,
-            blockingWorkExecutor: blockingWorkExecutor
+            blockingWorkExecutor: blockingWorkExecutor,
+            requestTimeoutSeconds: requestTimeoutSeconds
         )
         self.blockingWorkExecutor = blockingWorkExecutor
         self.rootURL = rootURL

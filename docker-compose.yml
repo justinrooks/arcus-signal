@@ -52,6 +52,7 @@ services:
     environment:
       <<: *shared_environment
       STORM_SETUP_CACHE_ROOT: ${STORM_SETUP_CACHE_ROOT:-/app/storage/storm-setup}
+      STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS: ${STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS:-30}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-com.skyaware.app}
       APNS_SANDBOX_KEY_ID: ${APNS_SANDBOX_KEY_ID:-}

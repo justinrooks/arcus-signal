@@ -42,6 +42,7 @@ struct AirQualityTests {
 
         #expect(request.url.path == "/aq/observation/current/ziplatlong")
         #expect(request.headers["Accept"] == "application/json")
+        #expect(request.timeoutSeconds == nil)
 
         let queryItems = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value) })
@@ -170,6 +171,7 @@ private final class AirNowHTTPClientStub: HTTPClient, @unchecked Sendable {
     struct Request: Sendable {
         let url: URL
         let headers: [String: String]
+        let timeoutSeconds: TimeInterval?
     }
 
     private let plannedResponse: HTTPResponse
@@ -179,13 +181,13 @@ private final class AirNowHTTPClientStub: HTTPClient, @unchecked Sendable {
         self.plannedResponse = plannedResponse
     }
 
-    func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
-        requests.append(Request(url: url, headers: headers))
+    func get(_ url: URL, headers: [String: String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        requests.append(Request(url: url, headers: headers, timeoutSeconds: timeoutSeconds))
         return plannedResponse
     }
 
     func head(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(
@@ -194,7 +196,7 @@ private final class AirNowHTTPClientStub: HTTPClient, @unchecked Sendable {
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func postWithoutRetry(
@@ -203,7 +205,7 @@ private final class AirNowHTTPClientStub: HTTPClient, @unchecked Sendable {
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func clearCache() {}

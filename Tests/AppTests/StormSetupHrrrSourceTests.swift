@@ -644,8 +644,9 @@ private enum PlannedHrrrRemoteObjectOutcome: Sendable {
 private final class CancellingHTTPClient: HTTPClient, @unchecked Sendable {
     private(set) var headRequestCount = 0
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await head(url, headers: headers)
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
+        return try await head(url, headers: headers)
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {

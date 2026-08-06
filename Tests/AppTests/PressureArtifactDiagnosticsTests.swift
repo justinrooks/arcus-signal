@@ -1384,7 +1384,8 @@ private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked S
         self.rangeResponses = rangeResponses
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
         if headers["Range"] == nil {
             guard let data = idxResponses[url.absoluteString] else {
                 throw URLError(.badServerResponse)
@@ -1405,7 +1406,7 @@ private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked S
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(
@@ -1414,7 +1415,7 @@ private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked S
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func postWithoutRetry(

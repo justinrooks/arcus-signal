@@ -75,6 +75,12 @@ struct StormSetupConfiguration: Sendable, Equatable {
             in: environment
         )
 
+        let pressureArtifactHTTPTimeoutSeconds = Self.environmentPositiveTimeIntervalOrDefault(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS",
+            defaultValue: 30,
+            in: environment
+        )
+
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
@@ -109,6 +115,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
             pressureArtifactDeleteGraceSeconds: pressureArtifactDeleteGraceSeconds,
             pressureArtifactCleanupIntervalSeconds: pressureArtifactCleanupIntervalSeconds,
             pressureArtifactRecoveryTimeoutSeconds: pressureArtifactRecoveryTimeoutSeconds,
+            pressureArtifactHTTPTimeoutSeconds: pressureArtifactHTTPTimeoutSeconds,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
             anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
@@ -127,6 +134,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureArtifactDeleteGraceSeconds: 60 * 60,
         pressureArtifactCleanupIntervalSeconds: 15 * 60,
         pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
+        pressureArtifactHTTPTimeoutSeconds: 30,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
         anvilProfileAnalysisBaseURL: nil,
@@ -143,6 +151,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let pressureArtifactDeleteGraceSeconds: TimeInterval
     let pressureArtifactCleanupIntervalSeconds: TimeInterval
     let pressureArtifactRecoveryTimeoutSeconds: TimeInterval
+    let pressureArtifactHTTPTimeoutSeconds: TimeInterval
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
     let anvilProfileAnalysisBaseURL: URL?
@@ -159,6 +168,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureArtifactDeleteGraceSeconds: TimeInterval,
         pressureArtifactCleanupIntervalSeconds: TimeInterval,
         pressureArtifactRecoveryTimeoutSeconds: TimeInterval,
+        pressureArtifactHTTPTimeoutSeconds: TimeInterval = 30,
         wgrib2ExecutableURL: URL,
         wgrib2TimeoutSeconds: TimeInterval,
         anvilProfileAnalysisBaseURL: URL? = nil,
@@ -174,6 +184,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         self.pressureArtifactDeleteGraceSeconds = pressureArtifactDeleteGraceSeconds
         self.pressureArtifactCleanupIntervalSeconds = pressureArtifactCleanupIntervalSeconds
         self.pressureArtifactRecoveryTimeoutSeconds = pressureArtifactRecoveryTimeoutSeconds
+        self.pressureArtifactHTTPTimeoutSeconds = pressureArtifactHTTPTimeoutSeconds
         self.wgrib2ExecutableURL = wgrib2ExecutableURL
         self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
         self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL
@@ -264,6 +275,28 @@ struct StormSetupConfiguration: Sendable, Equatable {
         }
 
         return parsed
+    }
+
+    private static func environmentPositiveTimeIntervalOrDefault(
+        for key: String,
+        defaultValue: TimeInterval,
+        in environment: [String: String]
+    ) -> TimeInterval {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty,
+              let parsed = TimeInterval(rawValue),
+              parsed.isFinite,
+              parsed > 0,
+              isRequestTimeoutRepresentable(parsed) else {
+            return defaultValue
+        }
+
+        return parsed
+    }
+
+    private static func isRequestTimeoutRepresentable(_ timeoutSeconds: TimeInterval) -> Bool {
+        let nanoseconds = timeoutSeconds * 1_000_000_000
+        return nanoseconds.isFinite && nanoseconds >= 1 && nanoseconds < Double(Int64.max)
     }
 
     private static func environmentURL(

@@ -1,6 +1,7 @@
 @testable import App
 import Foundation
 import Testing
+import Vapor
 import ArcusCore
 
 @Suite("HRRR pressure byte-range downloader", .serialized)
@@ -34,13 +35,15 @@ struct HrrrPressureByteRangeDownloaderTests {
             )
             let downloader = HrrrPressureByteRangeDownloader(
                 httpClient: client,
-                blockingWorkExecutor: blockingWorkExecutor
+                blockingWorkExecutor: blockingWorkExecutor,
+                requestTimeoutSeconds: 17
             )
 
             let result = try await downloader.download(sourceMetadata: source, byteRangePlan: plan)
 
             #expect(client.requestCount == 5)
             #expect(client.recordedHeaders.map { $0["Range"] } == plan.ranges.map(\.httpRangeHeaderValue))
+            #expect(client.recordedTimeouts == Array(repeating: 17, count: plan.ranges.count))
             #expect(result.byteSize == 20)
             #expect(result.data == Data("hgt-tmp-dpt-ugrdvgrd".utf8))
             #expect(result.checksumSHA256 == StableContentHasher.sha256Hex(of: Data("hgt-tmp-dpt-ugrdvgrd".utf8)))
@@ -296,6 +299,31 @@ struct HrrrPressureByteRangeDownloaderTests {
         }
     }
 
+    @Test("downloader terminates a stalled range request through its configured deadline")
+    func downloaderTerminatesStalledRangeRequestThroughConfiguredDeadline() async throws {
+        let application = try await Application.make(.testing)
+        do {
+            application.clients.use { application in
+                DeadlineDrivenTestVaporClient(eventLoop: application.eventLoopGroup.next())
+            }
+            let client = VaporApplicationHTTPClient(application: application, retryDelaysSeconds: [0])
+            do {
+                _ = try await client.get(
+                    URL(string: "https://pressure-artifact.test/stalled")!,
+                    headers: [:],
+                    timeoutSeconds: 0.001
+                )
+                Issue.record("Expected the stalled request to complete through the configured deadline.")
+            } catch let error as URLError {
+                #expect(error.code == .timedOut)
+            }
+            try await application.asyncShutdown()
+        } catch {
+            try? await application.asyncShutdown()
+            throw error
+        }
+    }
+
     private func makeSingleRangePlan() -> HrrrGribByteRangePlan {
         let inventory = HrrrPressureIdxInventory.parse(
             """
@@ -350,10 +378,11 @@ struct HrrrPressureByteRangeDownloaderTests {
     }
 }
 
-final class PressureRangeStubHTTPClient: HTTPClient, @unchecked Sendable {
+final class PressureRangeStubHTTPClient: App.HTTPClient, @unchecked Sendable {
     struct Request: Sendable, Equatable {
         let url: URL
         let headers: [String: String]
+        let timeoutSeconds: TimeInterval?
     }
 
     private let plannedResponses: [String: HTTPResponse]
@@ -363,8 +392,8 @@ final class PressureRangeStubHTTPClient: HTTPClient, @unchecked Sendable {
         self.plannedResponses = plannedResponses
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        requests.append(Request(url: url, headers: headers))
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        requests.append(Request(url: url, headers: headers, timeoutSeconds: timeoutSeconds))
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
         if let response = plannedResponses[key] {
             return response
@@ -382,7 +411,7 @@ final class PressureRangeStubHTTPClient: HTTPClient, @unchecked Sendable {
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(
@@ -391,7 +420,7 @@ final class PressureRangeStubHTTPClient: HTTPClient, @unchecked Sendable {
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func postWithoutRetry(
@@ -407,6 +436,27 @@ final class PressureRangeStubHTTPClient: HTTPClient, @unchecked Sendable {
 
     var requestCount: Int { requests.count }
     var recordedHeaders: [[String: String]] { requests.map(\.headers) }
+    var recordedTimeouts: [TimeInterval?] { requests.map(\.timeoutSeconds) }
+}
+
+private struct DeadlineDrivenTestVaporClient: Vapor.Client {
+    let eventLoop: any EventLoop
+
+    func delegating(to eventLoop: any EventLoop) -> any Vapor.Client {
+        DeadlineDrivenTestVaporClient(eventLoop: eventLoop)
+    }
+
+    func send(_ request: ClientRequest) -> EventLoopFuture<ClientResponse> {
+        guard let timeout = request.timeout else {
+            return eventLoop.makeFailedFuture(URLError(.cannotConnectToHost))
+        }
+
+        let promise = eventLoop.makePromise(of: ClientResponse.self)
+        _ = eventLoop.scheduleTask(in: timeout) {
+            promise.fail(URLError(.timedOut))
+        }
+        return promise.futureResult
+    }
 }
 
 private func makeUTCDate(

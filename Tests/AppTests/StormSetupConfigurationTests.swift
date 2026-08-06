@@ -23,6 +23,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 60 * 60)
         #expect(configuration.pressureArtifactCleanupIntervalSeconds == 15 * 60)
         #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 30 * 60)
+        #expect(configuration.pressureArtifactHTTPTimeoutSeconds == 30)
         #expect(configuration.anvilProfileAnalysisBaseURL == nil)
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == nil)
     }
@@ -54,6 +55,7 @@ struct StormSetupConfigurationTests {
             "STORM_SETUP_PRESSURE_ARTIFACT_DELETE_GRACE_SECONDS": "1200",
             "STORM_SETUP_PRESSURE_ARTIFACT_CLEANUP_INTERVAL_SECONDS": "1800",
             "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "540",
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "42",
             "ANVIL_PROFILE_ANALYSIS_BASE_URL": "https://anvil.example.com",
             "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS": "11"
         ])
@@ -69,6 +71,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 1_200)
         #expect(configuration.pressureArtifactCleanupIntervalSeconds == 1_800)
         #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 540)
+        #expect(configuration.pressureArtifactHTTPTimeoutSeconds == 42)
         #expect(configuration.anvilProfileAnalysisBaseURL?.absoluteString == "https://anvil.example.com")
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == 11)
     }
@@ -88,5 +91,44 @@ struct StormSetupConfigurationTests {
         #expect(zero.pressureArtifactRecoveryTimeoutSeconds == 1)
         #expect(negative.pressureArtifactRecoveryTimeoutSeconds == 1)
         #expect(invalid.pressureArtifactRecoveryTimeoutSeconds == 1)
+    }
+
+    @Test("pressure artifact HTTP timeout defaults for missing, blank, malformed, zero, and negative overrides")
+    func pressureArtifactHTTPTimeoutDefaultsForInvalidOverrides() {
+        let missing = StormSetupConfiguration.resolved(from: [:])
+        let blank = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "  "
+        ])
+        let malformed = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "banana"
+        ])
+        let zero = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "0"
+        ])
+        let negative = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "-1"
+        ])
+        let infinity = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "infinity"
+        ])
+        let exponentOverflow = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "1e309"
+        ])
+        let nanosecondOverflow = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "9223372037"
+        ])
+        let subnanosecond = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "0.0000000001"
+        ])
+
+        #expect(missing.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(blank.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(malformed.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(zero.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(negative.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(infinity.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(exponentOverflow.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(nanosecondOverflow.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(subnanosecond.pressureArtifactHTTPTimeoutSeconds == 30)
     }
 }

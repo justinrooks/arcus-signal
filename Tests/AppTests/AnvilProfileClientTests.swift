@@ -312,12 +312,13 @@ private final class AnvilProfileStubHTTPClient: HTTPClient, @unchecked Sendable 
         self.plannedError = plannedError
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await post(url, headers: headers, body: nil, timeoutSeconds: nil)
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
+        return try await post(url, headers: headers, body: nil, timeoutSeconds: nil)
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(

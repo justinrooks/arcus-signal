@@ -190,7 +190,8 @@ private final class PressureProfileStubHTTPClient: HTTPClient, @unchecked Sendab
         self.responses = responses
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
         requests.append(Request(url: url, headers: headers))
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
         guard let response = responses[key] ?? responses[url.absoluteString] else {
@@ -201,7 +202,7 @@ private final class PressureProfileStubHTTPClient: HTTPClient, @unchecked Sendab
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(
@@ -210,7 +211,7 @@ private final class PressureProfileStubHTTPClient: HTTPClient, @unchecked Sendab
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func postWithoutRetry(
