@@ -235,6 +235,200 @@ struct PressureArtifactWarmJobTests {
         }
     }
 
+    @Test("whole-warm timeout releases dequeue and completes the owned claim as failed")
+    func wholeWarmTimeoutReleasesDequeueAndCompletesOwnedClaimAsFailed() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let client = StalledPressureArtifactWarmHTTPClient()
+            let timeoutSleeper = ControllablePressureArtifactWarmTimeoutSleeper()
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 60,
+                warmTimeoutSeconds: 12,
+                timeoutSleeper: timeoutSleeper
+            )
+            let job = PressureArtifactWarmJob(warmingService: service)
+            let dequeueTask = Task {
+                try await job.dequeue(makeQueueContext(app: app), payload)
+            }
+
+            await client.waitUntilRequestStarts()
+            await timeoutSleeper.waitUntilSleepStarts()
+            await timeoutSleeper.fire()
+
+            do {
+                try await dequeueTask.value
+                Issue.record("Expected the queue-facing dequeue call to throw a warm timeout.")
+            } catch PressureArtifactWarmingError.warmAttemptTimedOut(let seconds) {
+                #expect(seconds == 12)
+            } catch {
+                Issue.record("Expected a distinct warm timeout, got \(String(reflecting: error)).")
+            }
+
+            let row = try #require(
+                try await PressureArtifactCatalogModel.find(
+                    runTime: payload.runTime,
+                    forecastHour: payload.forecastHour,
+                    product: payload.product,
+                    fieldSetVersion: payload.fieldSetVersion,
+                    on: app.db
+                ))
+
+            #expect(row.status == .failed)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+            #expect(row.localPath == nil)
+            #expect(row.byteSize == nil)
+            #expect(row.errorSummary == "Pressure artifact warm attempt timed out after 12 seconds.")
+            #expect((row.errorSummary?.count ?? .max) < 100)
+        }
+    }
+
+    @Test("whole-warm timeout cannot complete a newer catalog claim")
+    func wholeWarmTimeoutCannotCompleteNewerCatalogClaim() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let client = StalledPressureArtifactWarmHTTPClient()
+            let timeoutSleeper = ControllablePressureArtifactWarmTimeoutSleeper()
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 60,
+                warmTimeoutSeconds: 12,
+                timeoutSleeper: timeoutSleeper
+            )
+            let job = PressureArtifactWarmJob(warmingService: service)
+            let dequeueTask = Task {
+                try await job.dequeue(makeQueueContext(app: app), payload)
+            }
+
+            await client.waitUntilRequestStarts()
+            let row = try #require(
+                try await PressureArtifactCatalogModel.find(
+                    runTime: payload.runTime,
+                    forecastHour: payload.forecastHour,
+                    product: payload.product,
+                    fieldSetVersion: payload.fieldSetVersion,
+                    on: app.db
+                ))
+            let newerClaimToken = UUID()
+            let newerLeaseExpiresAt = makeDate().addingTimeInterval(120)
+            row.claimToken = newerClaimToken
+            row.leaseExpiresAt = newerLeaseExpiresAt
+            try await row.update(on: app.db)
+
+            await timeoutSleeper.waitUntilSleepStarts()
+            await timeoutSleeper.fire()
+
+            do {
+                try await dequeueTask.value
+                Issue.record("Expected the stale owner to surface its warm timeout.")
+            } catch PressureArtifactWarmingError.warmAttemptTimedOut(let seconds) {
+                #expect(seconds == 12)
+            } catch {
+                Issue.record("Expected a distinct warm timeout, got \(String(reflecting: error)).")
+            }
+
+            let refetched = try #require(
+                try await PressureArtifactCatalogModel.find(
+                    runTime: payload.runTime,
+                    forecastHour: payload.forecastHour,
+                    product: payload.product,
+                    fieldSetVersion: payload.fieldSetVersion,
+                    on: app.db
+                ))
+            #expect(refetched.status == .warming)
+            #expect(refetched.claimToken == newerClaimToken)
+            #expect(refetched.leaseExpiresAt == newerLeaseExpiresAt)
+            #expect(refetched.errorSummary == nil)
+        }
+    }
+
+    @Test("external task cancellation wins a timeout race and preserves the owned warming claim")
+    func externalTaskCancellationWinsTimeoutRaceAndPreservesOwnedWarmingClaim() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let client = StalledPressureArtifactWarmHTTPClient()
+            let timeoutSleeper = ControllablePressureArtifactWarmTimeoutSleeper()
+            let logHandler = CapturingLogHandler()
+            let logger = Logger(label: "pressure-warm-cancellation-race", factory: { _ in logHandler })
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 0.000_000_002,
+                warmTimeoutSeconds: 0.25,
+                timeoutSleeper: timeoutSleeper
+            )
+            let job = PressureArtifactWarmJob(warmingService: service)
+            let dequeueTask = Task {
+                try await job.dequeue(makeQueueContext(app: app, logger: logger), payload)
+            }
+
+            await client.waitUntilRequestStarts()
+            await timeoutSleeper.waitUntilSleepStarts()
+            let claimedRow = try #require(
+                try await PressureArtifactCatalogModel.find(
+                    runTime: payload.runTime,
+                    forecastHour: payload.forecastHour,
+                    product: payload.product,
+                    fieldSetVersion: payload.fieldSetVersion,
+                    on: app.db
+                ))
+            let claimToken = try #require(claimedRow.claimToken)
+            let leaseExpiresAt = try #require(claimedRow.leaseExpiresAt)
+            #expect(leaseExpiresAt == makeDate().addingTimeInterval(1))
+            #expect(leaseExpiresAt > makeDate())
+
+            dequeueTask.cancel()
+            await timeoutSleeper.fire()
+            await #expect(throws: CancellationError.self) {
+                try await dequeueTask.value
+            }
+
+            let refetched = try #require(
+                try await PressureArtifactCatalogModel.find(
+                    runTime: payload.runTime,
+                    forecastHour: payload.forecastHour,
+                    product: payload.product,
+                    fieldSetVersion: payload.fieldSetVersion,
+                    on: app.db
+                ))
+            #expect(refetched.status == .warming)
+            #expect(refetched.claimToken == claimToken)
+            #expect(refetched.leaseExpiresAt == leaseExpiresAt)
+            #expect(refetched.errorSummary == nil)
+            #expect(
+                logHandler.events.contains { $0.message == "Pressure artifact warm attempt timed out." }
+                    == false)
+            #expect(
+                logHandler.events.contains { $0.message == "Pressure artifact warming failed." }
+                    == false)
+            for event in logHandler.events {
+                #expect(event.metadata.keys.contains("claimToken") == false)
+                #expect(event.metadata.keys.contains("localPath") == false)
+            }
+        }
+    }
+
     @Test("ready artifact is skipped without rebuilding")
     func readyArtifactIsSkippedWithoutRebuilding() async throws {
         try await withApp { app, blockingWorkExecutor in
@@ -812,12 +1006,12 @@ private extension PressureArtifactWarmJobTests {
         try await row.create(on: db)
     }
 
-    func makeQueueContext(app: Application) -> QueueContext {
+    func makeQueueContext(app: Application, logger: Logger? = nil) -> QueueContext {
         QueueContext(
             queueName: QueueName(string: "test-pressure-warm"),
             configuration: app.queues.configuration,
             application: app,
-            logger: app.logger,
+            logger: logger ?? app.logger,
             on: app.eventLoopGroup.any()
         )
     }
@@ -961,6 +1155,90 @@ private extension PressureArtifactWarmJobTests {
 
     var serviceRetentionSeconds: TimeInterval { 12 * 60 * 60 }
     var serviceMaximumByteCount: Int { 1024 }
+}
+
+private actor ControllablePressureArtifactWarmTimeoutSleeper: PressureArtifactWarmTimeoutSleeping {
+    private var sleepStarted = false
+    private var sleepStartedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var timeoutContinuation: CheckedContinuation<Void, Never>?
+
+    func sleep(for timeoutSeconds: TimeInterval) async throws {
+        _ = timeoutSeconds
+        await withCheckedContinuation { continuation in
+            timeoutContinuation = continuation
+            sleepStarted = true
+            let waiters = sleepStartedWaiters
+            sleepStartedWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+        try Task.checkCancellation()
+    }
+
+    func waitUntilSleepStarts() async {
+        guard !sleepStarted else { return }
+        await withCheckedContinuation { continuation in
+            sleepStartedWaiters.append(continuation)
+        }
+    }
+
+    func fire() {
+        timeoutContinuation?.resume()
+        timeoutContinuation = nil
+    }
+}
+
+private actor StalledPressureArtifactWarmHTTPClient: App.HTTPClient {
+    private var requestStarted = false
+    private var requestStartedWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func get(
+        _ url: URL,
+        headers: [String: String],
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        _ = url
+        _ = headers
+        _ = timeoutSeconds
+        requestStarted = true
+        let waiters = requestStartedWaiters
+        requestStartedWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+
+        try await Task.sleep(for: .seconds(60 * 60))
+        throw URLError(.timedOut)
+    }
+
+    func waitUntilRequestStarts() async {
+        guard !requestStarted else { return }
+        await withCheckedContinuation { continuation in
+            requestStartedWaiters.append(continuation)
+        }
+    }
+
+    func head(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers, timeoutSeconds: nil)
+    }
+
+    func post(
+        _ url: URL,
+        headers: [String: String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        _ = body
+        return try await get(url, headers: headers, timeoutSeconds: timeoutSeconds)
+    }
+
+    func postWithoutRetry(
+        _ url: URL,
+        headers: [String: String],
+        body: Data?,
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await post(url, headers: headers, body: body, timeoutSeconds: timeoutSeconds)
+    }
+
+    nonisolated func clearCache() {}
 }
 
 private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @unchecked Sendable {
