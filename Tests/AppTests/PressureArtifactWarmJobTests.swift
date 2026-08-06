@@ -8,31 +8,35 @@ import ArcusCore
 
 @Suite("Pressure artifact warm job", .serialized)
 struct PressureArtifactWarmJobTests {
-    @Test("pressure payload requests wrfprsf source URLs")
-    func pressurePayloadRequestsPressureProductSourceURLs() async throws {
-        try await withApp { app, blockingWorkExecutor in
+    @Test("default pressure warmer propagates configured fractional HTTP timeout")
+    func defaultPressureWarmerPropagatesConfiguredFractionalHTTPTimeout() async throws {
+        try await withApp { app, _ in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
             try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            app.stormSetupConfiguration = .resolved(from: [
+                "STORM_SETUP_CACHE_ROOT": testRootURL().path,
+                "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "0.5"
+            ])
 
             let client = PressureArtifactWarmStubHTTPClient(
                 idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let service = PressureArtifactWarmingService(
+            let service = PressureArtifactWarmingService.makeDefault(
+                application: app,
                 httpClient: client,
-                blockingWorkExecutor: blockingWorkExecutor,
                 validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
-                cacheRootURL: testRootURL(),
-                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
-                retentionDuration: serviceRetentionSeconds,
-                maximumByteCount: serviceMaximumByteCount
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate())
             )
 
             try await service.warm(payload: payload, on: app, logger: app.logger)
 
             #expect(client.requestedURLs.isEmpty == false)
             #expect(client.requestedURLs.allSatisfy { $0.contains(".wrfprsf") })
+            #expect(client.idxRequestTimeouts == [0.5])
+            #expect(client.rangeRequestTimeouts.isEmpty == false)
+            #expect(client.rangeRequestTimeouts.allSatisfy { $0 == 0.5 })
         }
     }
 
@@ -966,6 +970,8 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
     private var _idxRequestCount = 0
     private var _rangeRequestCount = 0
     private var _requestedURLs: [String] = []
+    private var _idxRequestTimeouts: [TimeInterval?] = []
+    private var _rangeRequestTimeouts: [TimeInterval?] = []
 
     init(
         idxResponses: [String: Data] = [:],
@@ -987,11 +993,20 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
         lock.withLock { _requestedURLs }
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+    var idxRequestTimeouts: [TimeInterval?] {
+        lock.withLock { _idxRequestTimeouts }
+    }
+
+    var rangeRequestTimeouts: [TimeInterval?] {
+        lock.withLock { _rangeRequestTimeouts }
+    }
+
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
         lock.withLock { _requestedURLs.append(url.absoluteString) }
 
         if headers["Range"] == nil {
             lock.withLock { _idxRequestCount += 1 }
+            lock.withLock { _idxRequestTimeouts.append(timeoutSeconds) }
             guard let data = idxResponses[url.absoluteString] else {
                 throw URLError(.badServerResponse)
             }
@@ -1004,6 +1019,7 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
         }
 
         lock.withLock { _rangeRequestCount += 1 }
+        lock.withLock { _rangeRequestTimeouts.append(timeoutSeconds) }
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
         guard let response = rangeResponses[key] else {
             throw URLError(.badServerResponse)
@@ -1013,7 +1029,7 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(

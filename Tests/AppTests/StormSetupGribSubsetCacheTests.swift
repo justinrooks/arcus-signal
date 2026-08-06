@@ -528,7 +528,8 @@ final class StubHTTPClient: HTTPClient, @unchecked Sendable {
         self.plannedResponses = plannedResponses
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
         requests.append(url)
 
         guard let plannedResponse = plannedResponses[url.absoluteString] else {
@@ -542,7 +543,7 @@ final class StubHTTPClient: HTTPClient, @unchecked Sendable {
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(
@@ -551,7 +552,7 @@ final class StubHTTPClient: HTTPClient, @unchecked Sendable {
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func postWithoutRetry(

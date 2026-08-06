@@ -57,7 +57,8 @@ private final class NwsClientStubHTTPClient: HTTPClient, @unchecked Sendable {
         self.plannedResponse = plannedResponse
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
         recordedURLs.append(url)
         return plannedResponse
     }

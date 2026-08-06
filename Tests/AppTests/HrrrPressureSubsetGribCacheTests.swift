@@ -308,7 +308,8 @@ private final class PressureSubsetStubHTTPClient: HTTPClient, @unchecked Sendabl
         self.plannedResponses = plannedResponses
     }
 
-    func get(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
+    func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
+        _ = timeoutSeconds
         requests.append(Request(url: url, headers: headers))
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
         if let response = plannedResponses[key] {
@@ -327,7 +328,7 @@ private final class PressureSubsetStubHTTPClient: HTTPClient, @unchecked Sendabl
     }
 
     func head(_ url: URL, headers: [String : String]) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func post(
@@ -336,7 +337,7 @@ private final class PressureSubsetStubHTTPClient: HTTPClient, @unchecked Sendabl
         body: Data?,
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse {
-        try await get(url, headers: headers)
+        try await get(url, headers: headers, timeoutSeconds: nil)
     }
 
     func postWithoutRetry(

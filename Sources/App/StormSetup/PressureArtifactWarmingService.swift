@@ -48,6 +48,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
     private let dateProvider: any StormSetupDateProviding
     private let maximumByteCount: Int
     private let recoveryTimeoutSeconds: TimeInterval
+    private let httpRequestTimeoutSeconds: TimeInterval
     private let catalogStore: PressureArtifactCatalogStore
 
     init(
@@ -59,6 +60,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         retentionDuration: TimeInterval,
         maximumByteCount: Int,
         recoveryTimeoutSeconds: TimeInterval = 30 * 60,
+        httpRequestTimeoutSeconds: TimeInterval = 30,
         catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore()
     ) {
         self.httpClient = httpClient
@@ -69,30 +71,39 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             rootURL: cacheRootURL,
             dateProvider: dateProvider,
             retentionDuration: retentionDuration,
-            maximumByteCount: maximumByteCount
+            maximumByteCount: maximumByteCount,
+            requestTimeoutSeconds: httpRequestTimeoutSeconds
         )
         self.dateProvider = dateProvider
         self.maximumByteCount = maximumByteCount
         self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
+        self.httpRequestTimeoutSeconds = httpRequestTimeoutSeconds
         self.catalogStore = catalogStore
     }
 
-    static func makeDefault(application: Application) -> PressureArtifactWarmingService {
+    static func makeDefault(
+        application: Application,
+        httpClient: (any HTTPClient)? = nil,
+        validator: (any PressureArtifactValidating)? = nil,
+        dateProvider: (any StormSetupDateProviding)? = nil
+    ) -> PressureArtifactWarmingService {
+        let configuration = application.stormSetupConfiguration
         let blockingWorkExecutor = NIOThreadPoolPressureArtifactBlockingWorkExecutor(
             threadPool: application.threadPool
         )
         return PressureArtifactWarmingService(
-            httpClient: VaporApplicationHTTPClient(application: application),
+            httpClient: httpClient ?? VaporApplicationHTTPClient(application: application),
             blockingWorkExecutor: blockingWorkExecutor,
-            validator: DefaultPressureArtifactValidationService(
-                configuration: application.stormSetupConfiguration,
+            validator: validator ?? DefaultPressureArtifactValidationService(
+                configuration: configuration,
                 runner: ProcessRunner()
             ),
-            cacheRootURL: application.stormSetupConfiguration.pressureGribSubsetCacheRootURL,
-            dateProvider: SystemStormSetupDateProvider(),
-            retentionDuration: application.stormSetupConfiguration.gribSubsetCacheRetentionSeconds,
-            maximumByteCount: application.stormSetupConfiguration.gribSubsetMaximumByteCount,
-            recoveryTimeoutSeconds: application.stormSetupConfiguration.pressureArtifactRecoveryTimeoutSeconds
+            cacheRootURL: configuration.pressureGribSubsetCacheRootURL,
+            dateProvider: dateProvider ?? SystemStormSetupDateProvider(),
+            retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
+            maximumByteCount: configuration.gribSubsetMaximumByteCount,
+            recoveryTimeoutSeconds: configuration.pressureArtifactRecoveryTimeoutSeconds,
+            httpRequestTimeoutSeconds: configuration.pressureArtifactHTTPTimeoutSeconds
         )
     }
 
@@ -387,7 +398,8 @@ extension PressureArtifactWarmingService {
             headers: [
                 "User-Agent": HTTPRequestHeaders.userAgent(),
                 "Accept": "text/plain, application/octet-stream, */*"
-            ]
+            ],
+            timeoutSeconds: httpRequestTimeoutSeconds
         )
         try Task.checkCancellation()
 

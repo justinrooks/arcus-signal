@@ -52,13 +52,16 @@ enum HrrrPressureByteRangeDownloaderError: Error, Sendable, CustomStringConverti
 struct HrrrPressureByteRangeDownloader: Sendable {
     private let httpClient: any HTTPClient
     private let blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+    private let requestTimeoutSeconds: TimeInterval
 
     init(
         httpClient: any HTTPClient,
-        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
+        requestTimeoutSeconds: TimeInterval = StormSetupConfiguration.default.pressureArtifactHTTPTimeoutSeconds
     ) {
         self.httpClient = httpClient
         self.blockingWorkExecutor = blockingWorkExecutor
+        self.requestTimeoutSeconds = requestTimeoutSeconds
     }
 
     func download(
@@ -80,7 +83,11 @@ struct HrrrPressureByteRangeDownloader: Sendable {
 
         for range in byteRangePlan.ranges {
             try Task.checkCancellation()
-            let response = try await httpClient.get(sourceURL, headers: requestHeaders(for: range))
+            let response = try await httpClient.get(
+                sourceURL,
+                headers: requestHeaders(for: range),
+                timeoutSeconds: requestTimeoutSeconds
+            )
             try Task.checkCancellation()
 
             switch response.status {

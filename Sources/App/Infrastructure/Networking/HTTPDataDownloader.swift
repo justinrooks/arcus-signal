@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 import Vapor
 
 public enum HTTPStatusClassification: Sendable, Equatable {
@@ -105,7 +106,11 @@ public actor LastGlobalSuccessHTTPObserver: HTTPResponseObserving {
 }
 
 public protocol HTTPClient: Sendable {
-    func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse
+    func get(
+        _ url: URL,
+        headers: [String: String],
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse
     func head(_ url: URL, headers: [String: String]) async throws -> HTTPResponse
     func post(
         _ url: URL,
@@ -120,6 +125,12 @@ public protocol HTTPClient: Sendable {
         timeoutSeconds: TimeInterval?
     ) async throws -> HTTPResponse
     func clearCache()
+}
+
+public extension HTTPClient {
+    func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
+        try await get(url, headers: headers, timeoutSeconds: nil)
+    }
 }
 
 public final class VaporApplicationHTTPClient: HTTPClient {
@@ -139,8 +150,18 @@ public final class VaporApplicationHTTPClient: HTTPClient {
         self.logger = .networkDownloader
     }
 
-    public func get(_ url: URL, headers: [String: String] = [:]) async throws -> HTTPResponse {
-        try await request(url: url, method: .GET, headers: headers, retryTransientFailures: true)
+    public func get(
+        _ url: URL,
+        headers: [String: String] = [:],
+        timeoutSeconds: TimeInterval?
+    ) async throws -> HTTPResponse {
+        try await request(
+            url: url,
+            method: .GET,
+            headers: headers,
+            timeoutSeconds: timeoutSeconds,
+            retryTransientFailures: true
+        )
     }
 
     public func head(_ url: URL, headers: [String : String] = [:]) async throws -> HTTPResponse {
@@ -202,8 +223,7 @@ public final class VaporApplicationHTTPClient: HTTPClient {
                     to: uri
                 ) { request in
                     if let timeoutSeconds {
-                        let nanoseconds = Int64((timeoutSeconds * 1_000_000_000).rounded())
-                        request.timeout = .nanoseconds(nanoseconds)
+                        request.timeout = try requestTimeout(for: timeoutSeconds)
                     }
 
                     guard let body else { return }
@@ -247,6 +267,19 @@ public final class VaporApplicationHTTPClient: HTTPClient {
         }
 
         throw Abort(.internalServerError, reason: "Unexpected HTTP retry state reached.")
+    }
+
+    private func requestTimeout(for timeoutSeconds: TimeInterval) throws -> TimeAmount {
+        let nanoseconds = timeoutSeconds * 1_000_000_000
+        guard timeoutSeconds.isFinite,
+              timeoutSeconds > 0,
+              nanoseconds.isFinite,
+              nanoseconds >= 1,
+              nanoseconds < Double(Int64.max) else {
+            throw Abort(.internalServerError, reason: "HTTP request timeout must be finite, positive, and representable in nanoseconds.")
+        }
+
+        return .nanoseconds(Int64(nanoseconds.rounded(.down)))
     }
 
     private func vaporHeaders(from input: [String: String]) -> HTTPHeaders {

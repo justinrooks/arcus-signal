@@ -52,6 +52,8 @@ The request builder requires this complete surface row in addition to at least f
   - Timeout for `wgrib2` execution.
 - `STORM_SETUP_GRIB_MAX_BYTES`
   - Maximum size for the existing surface GRIB subset cache.
+- `STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS`
+  - Per-request IDX and GRIB byte-range deadline for pressure-artifact warming. Defaults to `30`; missing, blank, malformed, non-finite, zero, and negative values use the default.
 
 ### Anvil Profile Analysis
 
