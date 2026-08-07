@@ -9,6 +9,9 @@ import Foundation
 import Vapor
 
 struct StormSetupConfiguration: Sendable, Equatable {
+    static let defaultPressureArtifactRecoveryTimeoutSeconds: TimeInterval = 30 * 60
+    static let defaultPressureArtifactWarmTimeoutSeconds: TimeInterval = 15 * 60
+
     static let localStormSetupCacheRootURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("arcus-signal", isDirectory: true)
         .appendingPathComponent("storm-setup", isDirectory: true)
@@ -71,9 +74,14 @@ struct StormSetupConfiguration: Sendable, Equatable {
 
         let pressureArtifactRecoveryTimeoutSeconds = Self.environmentPositiveTimeInterval(
             for: "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS",
-            defaultValue: 30 * 60,
+            defaultValue: defaultPressureArtifactRecoveryTimeoutSeconds,
             in: environment
         )
+
+        let pressureArtifactWarmTimeoutSeconds = Self.environmentTimeInterval(
+            for: "STORM_SETUP_PRESSURE_ARTIFACT_WARM_TIMEOUT_SECONDS",
+            in: environment
+        ) ?? defaultPressureArtifactWarmTimeoutSeconds
 
         let pressureArtifactHTTPTimeoutSeconds = Self.environmentPositiveTimeIntervalOrDefault(
             for: "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS",
@@ -115,6 +123,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
             pressureArtifactDeleteGraceSeconds: pressureArtifactDeleteGraceSeconds,
             pressureArtifactCleanupIntervalSeconds: pressureArtifactCleanupIntervalSeconds,
             pressureArtifactRecoveryTimeoutSeconds: pressureArtifactRecoveryTimeoutSeconds,
+            pressureArtifactWarmTimeoutSeconds: pressureArtifactWarmTimeoutSeconds,
             pressureArtifactHTTPTimeoutSeconds: pressureArtifactHTTPTimeoutSeconds,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
@@ -133,7 +142,8 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureArtifactMaxStaleAgeSeconds: 2 * 60 * 60,
         pressureArtifactDeleteGraceSeconds: 60 * 60,
         pressureArtifactCleanupIntervalSeconds: 15 * 60,
-        pressureArtifactRecoveryTimeoutSeconds: 30 * 60,
+        pressureArtifactRecoveryTimeoutSeconds: defaultPressureArtifactRecoveryTimeoutSeconds,
+        pressureArtifactWarmTimeoutSeconds: defaultPressureArtifactWarmTimeoutSeconds,
         pressureArtifactHTTPTimeoutSeconds: 30,
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
@@ -151,6 +161,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let pressureArtifactDeleteGraceSeconds: TimeInterval
     let pressureArtifactCleanupIntervalSeconds: TimeInterval
     let pressureArtifactRecoveryTimeoutSeconds: TimeInterval
+    let pressureArtifactWarmTimeoutSeconds: TimeInterval
     let pressureArtifactHTTPTimeoutSeconds: TimeInterval
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
@@ -168,6 +179,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureArtifactDeleteGraceSeconds: TimeInterval,
         pressureArtifactCleanupIntervalSeconds: TimeInterval,
         pressureArtifactRecoveryTimeoutSeconds: TimeInterval,
+        pressureArtifactWarmTimeoutSeconds: TimeInterval = defaultPressureArtifactWarmTimeoutSeconds,
         pressureArtifactHTTPTimeoutSeconds: TimeInterval = 30,
         wgrib2ExecutableURL: URL,
         wgrib2TimeoutSeconds: TimeInterval,
@@ -183,7 +195,14 @@ struct StormSetupConfiguration: Sendable, Equatable {
         self.pressureArtifactMaxStaleAgeSeconds = pressureArtifactMaxStaleAgeSeconds
         self.pressureArtifactDeleteGraceSeconds = pressureArtifactDeleteGraceSeconds
         self.pressureArtifactCleanupIntervalSeconds = pressureArtifactCleanupIntervalSeconds
-        self.pressureArtifactRecoveryTimeoutSeconds = pressureArtifactRecoveryTimeoutSeconds
+        let recoveryTimeoutSeconds = Self.normalizedPressureArtifactRecoveryTimeoutSeconds(
+            pressureArtifactRecoveryTimeoutSeconds
+        )
+        self.pressureArtifactRecoveryTimeoutSeconds = recoveryTimeoutSeconds
+        self.pressureArtifactWarmTimeoutSeconds = Self.resolvedPressureArtifactWarmTimeoutSeconds(
+            pressureArtifactWarmTimeoutSeconds,
+            recoveryTimeoutSeconds: recoveryTimeoutSeconds
+        )
         self.pressureArtifactHTTPTimeoutSeconds = pressureArtifactHTTPTimeoutSeconds
         self.wgrib2ExecutableURL = wgrib2ExecutableURL
         self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
@@ -270,7 +289,9 @@ struct StormSetupConfiguration: Sendable, Equatable {
             return defaultValue
         }
 
-        guard let parsed = TimeInterval(rawValue), parsed > 0 else {
+        guard let parsed = TimeInterval(rawValue),
+              parsed.isFinite,
+              parsed > 0 else {
             return 1
         }
 
@@ -297,6 +318,36 @@ struct StormSetupConfiguration: Sendable, Equatable {
     private static func isRequestTimeoutRepresentable(_ timeoutSeconds: TimeInterval) -> Bool {
         let nanoseconds = timeoutSeconds * 1_000_000_000
         return nanoseconds.isFinite && nanoseconds >= 1 && nanoseconds < Double(Int64.max)
+    }
+
+    static func resolvedPressureArtifactWarmTimeoutSeconds(
+        _ configuredTimeoutSeconds: TimeInterval,
+        recoveryTimeoutSeconds: TimeInterval
+    ) -> TimeInterval {
+        let safeDefault = min(
+            defaultPressureArtifactWarmTimeoutSeconds,
+            recoveryTimeoutSeconds / 2
+        )
+
+        guard configuredTimeoutSeconds.isFinite,
+              configuredTimeoutSeconds > 0,
+              configuredTimeoutSeconds < recoveryTimeoutSeconds,
+              isRequestTimeoutRepresentable(configuredTimeoutSeconds) else {
+            return safeDefault
+        }
+
+        return configuredTimeoutSeconds
+    }
+
+    static func normalizedPressureArtifactRecoveryTimeoutSeconds(
+        _ configuredTimeoutSeconds: TimeInterval
+    ) -> TimeInterval {
+        guard configuredTimeoutSeconds.isFinite,
+              configuredTimeoutSeconds >= 1 else {
+            return 1
+        }
+
+        return configuredTimeoutSeconds
     }
 
     private static func environmentURL(

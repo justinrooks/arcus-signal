@@ -54,6 +54,9 @@ The request builder requires this complete surface row in addition to at least f
   - Maximum size for the existing surface GRIB subset cache.
 - `STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS`
   - Per-request IDX and GRIB byte-range deadline for pressure-artifact warming. Defaults to `30`; missing, blank, malformed, non-finite, zero, and negative values use the default.
+- `STORM_SETUP_PRESSURE_ARTIFACT_WARM_TIMEOUT_SECONDS`
+  - Whole-attempt deadline after a pressure artifact is claimed. Defaults to `900` seconds and must remain positive, representable, and shorter than `STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS`.
+  - Recovery leases shorter than one second normalize to one second. Missing, malformed, non-finite, non-positive, unrepresentable, or lease-incompatible warm values use the smaller of `900` seconds and half the normalized recovery lease.
 
 ### Anvil Profile Analysis
 

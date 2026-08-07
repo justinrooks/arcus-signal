@@ -223,6 +223,49 @@ struct PressureArtifactDiagnosticsTests {
         }
     }
 
+    @Test("warm timeout logs a distinct failure without claim or path data")
+    func warmTimeoutLogsDistinctFailureWithoutClaimOrPathData() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makeWarmPayload()
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let loggerContext = makeCapturingLogger(label: "warm-timeout")
+            let service = PressureArtifactWarmingService(
+                httpClient: PressureArtifactWarmHTTPClient(stallRequests: true),
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+                cacheRootURL: testRootURL(),
+                dateProvider: makeFixedStormSetupDateProvider(
+                    nowDate: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)),
+                retentionDuration: 12 * 60 * 60,
+                maximumByteCount: 1024,
+                recoveryTimeoutSeconds: 60,
+                warmTimeoutSeconds: 12,
+                timeoutSleeper: ImmediatePressureArtifactWarmTimeoutSleeper()
+            )
+
+            await #expect(throws: PressureArtifactWarmingError.self) {
+                try await service.warm(payload: payload, on: app, logger: loggerContext.logger)
+            }
+
+            let timeout = try #require(
+                try loggerContext.event(matching: "Pressure artifact warm attempt timed out."))
+            #expect(
+                metadataString(timeout.metadata, "status") == PressureArtifactCatalogStatus.failed.rawValue)
+            #expect(
+                metadataString(timeout.metadata, "error")
+                    == "Pressure artifact warm attempt timed out after 12 seconds.")
+            #expect(
+                metadataString(timeout.metadata, "warmTimeoutSeconds").flatMap(TimeInterval.init) == 12)
+            #expect(timeout.metadata.keys.contains("claimToken") == false)
+            #expect(timeout.metadata.keys.contains("claimTokenPrefix") == false)
+            #expect(timeout.metadata.keys.contains("localPath") == false)
+            #expect(timeout.metadata.keys.contains("sourceURL") == false)
+            #expect(timeout.metadata.keys.contains("idxURL") == false)
+            #expect(try loggerContext.event(matching: "Pressure artifact warming failed.") == nil)
+            assertNoSensitiveMetadata(in: loggerContext.events)
+        }
+    }
+
     @Test("lookup diagnostics distinguish exact hits, miss reasons, and stale selection")
     func lookupDiagnosticsDistinguishExactHitsMissReasonsAndStaleSelection() async throws {
         try await withApp { app, blockingWorkExecutor in
@@ -1249,7 +1292,7 @@ private extension PressureArtifactDiagnosticsTests {
     }
 }
 
-private final class CapturingLogHandler: LogHandler, @unchecked Sendable {
+final class CapturingLogHandler: LogHandler, @unchecked Sendable {
     private let lock = NSLock()
     private var _logLevel: Logger.Level = .trace
     private var _metadata: Logger.Metadata = [:]
@@ -1298,7 +1341,7 @@ private final class CapturingLogHandler: LogHandler, @unchecked Sendable {
     }
 }
 
-private struct CapturedLogEvent: Sendable, Equatable {
+struct CapturedLogEvent: Sendable, Equatable {
     let level: Logger.Level
     let message: String
     let metadata: Logger.Metadata
@@ -1375,17 +1418,24 @@ private final class ProbeStubHrrrRemoteObjectChecking: HrrrRemoteObjectChecking,
 private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked Sendable {
     private let idxResponses: [String: Data]
     private let rangeResponses: [String: HTTPResponse]
+    private let stallRequests: Bool
 
     init(
         idxResponses: [String: Data] = [:],
-        rangeResponses: [String: HTTPResponse] = [:]
+        rangeResponses: [String: HTTPResponse] = [:],
+        stallRequests: Bool = false
     ) {
         self.idxResponses = idxResponses
         self.rangeResponses = rangeResponses
+        self.stallRequests = stallRequests
     }
 
     func get(_ url: URL, headers: [String : String], timeoutSeconds: TimeInterval?) async throws -> HTTPResponse {
         _ = timeoutSeconds
+        if stallRequests {
+            try await Task.sleep(for: .seconds(60 * 60))
+        }
+
         if headers["Range"] == nil {
             guard let data = idxResponses[url.absoluteString] else {
                 throw URLError(.badServerResponse)
@@ -1428,6 +1478,12 @@ private final class PressureArtifactWarmHTTPClient: App.HTTPClient, @unchecked S
     }
 
     func clearCache() {}
+}
+
+private struct ImmediatePressureArtifactWarmTimeoutSleeper: PressureArtifactWarmTimeoutSleeping {
+    func sleep(for timeoutSeconds: TimeInterval) async throws {
+        _ = timeoutSeconds
+    }
 }
 
 private final class PressureArtifactWarmValidatorStub: PressureArtifactValidating, @unchecked Sendable {

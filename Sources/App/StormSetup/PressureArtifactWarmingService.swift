@@ -11,6 +11,16 @@ protocol PressureArtifactWarming: Sendable {
     ) async throws
 }
 
+protocol PressureArtifactWarmTimeoutSleeping: Sendable {
+    func sleep(for timeoutSeconds: TimeInterval) async throws
+}
+
+struct SystemPressureArtifactWarmTimeoutSleeper: PressureArtifactWarmTimeoutSleeping {
+    func sleep(for timeoutSeconds: TimeInterval) async throws {
+        try await Task.sleep(for: .seconds(timeoutSeconds))
+    }
+}
+
 enum PressureArtifactWarmingError: Error, Sendable, CustomStringConvertible {
     case unsupportedProduct(HrrrProduct)
     case missingIdxURL
@@ -18,6 +28,7 @@ enum PressureArtifactWarmingError: Error, Sendable, CustomStringConvertible {
     case noSelectableMessages
     case incompletePressureSelection([StormSetupPressureProfileMissingLevel])
     case validatedMessageCountMismatch(expected: Int, actual: Int)
+    case warmAttemptTimedOut(seconds: TimeInterval)
 
     var description: String {
         switch self {
@@ -37,7 +48,17 @@ enum PressureArtifactWarmingError: Error, Sendable, CustomStringConvertible {
             return "Pressure artifact selection is incomplete. Missing levels: \(details)."
         case .validatedMessageCountMismatch(let expected, let actual):
             return "Pressure artifact validation returned \(actual) messages, expected \(expected)."
+        case .warmAttemptTimedOut(let seconds):
+            return "Pressure artifact warm attempt timed out after \(Self.formattedSeconds(seconds)) seconds."
         }
+    }
+
+    private static func formattedSeconds(_ seconds: TimeInterval) -> String {
+        if seconds.rounded(.towardZero) == seconds {
+            return String(Int64(seconds))
+        }
+
+        return String(seconds)
     }
 }
 
@@ -48,7 +69,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
     private let dateProvider: any StormSetupDateProviding
     private let maximumByteCount: Int
     private let recoveryTimeoutSeconds: TimeInterval
+    private let warmTimeoutSeconds: TimeInterval
     private let httpRequestTimeoutSeconds: TimeInterval
+    private let timeoutSleeper: any PressureArtifactWarmTimeoutSleeping
     private let catalogStore: PressureArtifactCatalogStore
 
     init(
@@ -60,7 +83,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         retentionDuration: TimeInterval,
         maximumByteCount: Int,
         recoveryTimeoutSeconds: TimeInterval = 30 * 60,
+        warmTimeoutSeconds: TimeInterval = StormSetupConfiguration.defaultPressureArtifactWarmTimeoutSeconds,
         httpRequestTimeoutSeconds: TimeInterval = 30,
+        timeoutSleeper: any PressureArtifactWarmTimeoutSleeping = SystemPressureArtifactWarmTimeoutSleeper(),
         catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore()
     ) {
         self.httpClient = httpClient
@@ -76,8 +101,15 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         )
         self.dateProvider = dateProvider
         self.maximumByteCount = maximumByteCount
-        self.recoveryTimeoutSeconds = max(1, recoveryTimeoutSeconds)
+        self.recoveryTimeoutSeconds = StormSetupConfiguration.normalizedPressureArtifactRecoveryTimeoutSeconds(
+            recoveryTimeoutSeconds
+        )
+        self.warmTimeoutSeconds = StormSetupConfiguration.resolvedPressureArtifactWarmTimeoutSeconds(
+            warmTimeoutSeconds,
+            recoveryTimeoutSeconds: self.recoveryTimeoutSeconds
+        )
         self.httpRequestTimeoutSeconds = httpRequestTimeoutSeconds
+        self.timeoutSleeper = timeoutSleeper
         self.catalogStore = catalogStore
     }
 
@@ -103,6 +135,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             retentionDuration: configuration.gribSubsetCacheRetentionSeconds,
             maximumByteCount: configuration.gribSubsetMaximumByteCount,
             recoveryTimeoutSeconds: configuration.pressureArtifactRecoveryTimeoutSeconds,
+            warmTimeoutSeconds: configuration.pressureArtifactWarmTimeoutSeconds,
             httpRequestTimeoutSeconds: configuration.pressureArtifactHTTPTimeoutSeconds
         )
     }
@@ -170,6 +203,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         )
 
         do {
+            try await withWarmAttemptTimeout {
             let source = makeSourceMetadata(for: payload)
             let idxText = try await fetchIdxText(from: source, logger: logger)
             try Task.checkCancellation()
@@ -325,14 +359,21 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                     "status": .string(PressureArtifactCatalogStatus.ready.rawValue)
                 ]
             )
+            }
         } catch {
             try rethrowCancellationIfNeeded(error)
-            guard try await catalogStore.markFailed(
+            let timeoutSeconds = ownedTimeoutSeconds(from: error)
+            let errorSummary = timeoutSeconds == nil
+                ? String(reflecting: error)
+                : String(describing: error)
+            let completedFailure = try await catalogStore.markFailed(
                 payload: payload,
                 claimToken: claimToken,
-                errorSummary: String(reflecting: error),
+                errorSummary: errorSummary,
                 on: application.db
-            ) else {
+            )
+
+            guard completedFailure else {
                 logger.info(
                     "Pressure artifact warm completion lost claim.",
                     metadata: claimLostMetadata(
@@ -341,27 +382,70 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                         state: "failed"
                     )
                 )
+                if timeoutSeconds != nil {
+                    throw error
+                }
                 return
             }
 
-            logger.error(
-                "Pressure artifact warming failed.",
-                metadata: [
-                    "runTime": .string(payload.runTime.ISO8601Format()),
-                    "forecastHour": .stringConvertible(payload.forecastHour),
-                    "validTime": .string(payload.validTime.ISO8601Format()),
-                    "product": .string(payload.product.rawValue),
-                    "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
-                    "error": .string(String(reflecting: error)),
-                    "status": .string(PressureArtifactCatalogStatus.failed.rawValue)
-                ]
-            )
+            if let timeoutSeconds {
+                logger.error(
+                    "Pressure artifact warm attempt timed out.",
+                    metadata: [
+                        "runTime": .string(payload.runTime.ISO8601Format()),
+                        "forecastHour": .stringConvertible(payload.forecastHour),
+                        "validTime": .string(payload.validTime.ISO8601Format()),
+                        "product": .string(payload.product.rawValue),
+                        "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                        "error": .string(errorSummary),
+                        "status": .string(PressureArtifactCatalogStatus.failed.rawValue),
+                        "warmTimeoutSeconds": .stringConvertible(timeoutSeconds)
+                    ]
+                )
+            } else {
+                logger.error(
+                    "Pressure artifact warming failed.",
+                    metadata: [
+                        "runTime": .string(payload.runTime.ISO8601Format()),
+                        "forecastHour": .stringConvertible(payload.forecastHour),
+                        "validTime": .string(payload.validTime.ISO8601Format()),
+                        "product": .string(payload.product.rawValue),
+                        "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
+                        "error": .string(errorSummary),
+                        "status": .string(PressureArtifactCatalogStatus.failed.rawValue)
+                    ]
+                )
+            }
             throw error
         }
     }
 }
 
 extension PressureArtifactWarmingService {
+    func withWarmAttemptTimeout(
+        operation: @escaping @Sendable () async throws -> Void
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask(operation: operation)
+            group.addTask {
+                try await timeoutSleeper.sleep(for: warmTimeoutSeconds)
+                try Task.checkCancellation()
+                throw PressureArtifactWarmingError.warmAttemptTimedOut(seconds: warmTimeoutSeconds)
+            }
+            defer { group.cancelAll() }
+
+            _ = try await group.next()
+        }
+    }
+
+    func ownedTimeoutSeconds(from error: any Error) -> TimeInterval? {
+        guard case .warmAttemptTimedOut(let seconds) = error as? PressureArtifactWarmingError else {
+            return nil
+        }
+
+        return seconds
+    }
+
     func makeSourceMetadata(for payload: PressureArtifactWarmJobPayload) -> StormSetupSourceMetadata {
         let candidate = HrrrRunCandidate(
             product: payload.product,

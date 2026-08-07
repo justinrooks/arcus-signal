@@ -23,6 +23,8 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 60 * 60)
         #expect(configuration.pressureArtifactCleanupIntervalSeconds == 15 * 60)
         #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 30 * 60)
+        #expect(configuration.pressureArtifactWarmTimeoutSeconds == 15 * 60)
+        #expect(configuration.pressureArtifactWarmTimeoutSeconds < configuration.pressureArtifactRecoveryTimeoutSeconds)
         #expect(configuration.pressureArtifactHTTPTimeoutSeconds == 30)
         #expect(configuration.anvilProfileAnalysisBaseURL == nil)
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == nil)
@@ -55,6 +57,7 @@ struct StormSetupConfigurationTests {
             "STORM_SETUP_PRESSURE_ARTIFACT_DELETE_GRACE_SECONDS": "1200",
             "STORM_SETUP_PRESSURE_ARTIFACT_CLEANUP_INTERVAL_SECONDS": "1800",
             "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "540",
+            "STORM_SETUP_PRESSURE_ARTIFACT_WARM_TIMEOUT_SECONDS": "240",
             "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "42",
             "ANVIL_PROFILE_ANALYSIS_BASE_URL": "https://anvil.example.com",
             "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS": "11"
@@ -71,13 +74,35 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactDeleteGraceSeconds == 1_200)
         #expect(configuration.pressureArtifactCleanupIntervalSeconds == 1_800)
         #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 540)
+        #expect(configuration.pressureArtifactWarmTimeoutSeconds == 240)
         #expect(configuration.pressureArtifactHTTPTimeoutSeconds == 42)
         #expect(configuration.anvilProfileAnalysisBaseURL?.absoluteString == "https://anvil.example.com")
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == 11)
     }
 
-    @Test("recovery timeout clamps nonpositive or invalid overrides to a positive minimum")
-    func recoveryTimeoutClampsNonpositiveOrInvalidOverridesToAPositiveMinimum() {
+    @Test("pressure artifact warm timeout uses a safe value below the recovery lease for invalid overrides")
+    func pressureArtifactWarmTimeoutUsesSafeValueBelowRecoveryLeaseForInvalidOverrides() {
+        let invalidValues = [
+            "  ", "banana", "nan", "infinity", "0", "-1", "100", "101", "9223372037", "0.0000000001"
+        ]
+        let missing = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "100"
+        ])
+
+        #expect(missing.pressureArtifactWarmTimeoutSeconds == 50)
+        for value in invalidValues {
+            let configuration = StormSetupConfiguration.resolved(from: [
+                "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "100",
+                "STORM_SETUP_PRESSURE_ARTIFACT_WARM_TIMEOUT_SECONDS": value
+            ])
+            #expect(configuration.pressureArtifactWarmTimeoutSeconds == 50)
+            #expect(configuration.pressureArtifactWarmTimeoutSeconds > 0)
+            #expect(configuration.pressureArtifactWarmTimeoutSeconds < configuration.pressureArtifactRecoveryTimeoutSeconds)
+        }
+    }
+
+    @Test("recovery timeout clamps invalid or subsecond overrides to one second")
+    func recoveryTimeoutClampsInvalidOrSubsecondOverridesToOneSecond() {
         let zero = StormSetupConfiguration.resolved(from: [
             "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "0"
         ])
@@ -87,10 +112,22 @@ struct StormSetupConfigurationTests {
         let invalid = StormSetupConfiguration.resolved(from: [
             "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "banana"
         ])
+        let fractional = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "0.5"
+        ])
+        let nanoseconds = StormSetupConfiguration.resolved(from: [
+            "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "0.000000002"
+        ])
 
         #expect(zero.pressureArtifactRecoveryTimeoutSeconds == 1)
         #expect(negative.pressureArtifactRecoveryTimeoutSeconds == 1)
         #expect(invalid.pressureArtifactRecoveryTimeoutSeconds == 1)
+        #expect(fractional.pressureArtifactRecoveryTimeoutSeconds == 1)
+        #expect(nanoseconds.pressureArtifactRecoveryTimeoutSeconds == 1)
+        #expect(nanoseconds.pressureArtifactWarmTimeoutSeconds == 0.5)
+        #expect(
+            nanoseconds.pressureArtifactWarmTimeoutSeconds
+                < nanoseconds.pressureArtifactRecoveryTimeoutSeconds)
     }
 
     @Test("pressure artifact HTTP timeout defaults for missing, blank, malformed, zero, and negative overrides")
