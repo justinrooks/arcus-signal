@@ -59,6 +59,10 @@ Work only that issue. Preserve request-path degradation and pressure catalog fen
 - Every IDX and GRIB byte-range request has an explicit, positive deadline.
 - A complete warm attempt has a deadline shorter than its catalog lease.
 - A timed-out owner releases execution capacity and leaves a deterministic, recoverable catalog state.
+- If the fenced failed-state write cannot complete, the original artifact identity, claim token, and sanitized failure summary move to a dedicated durable completion job on `model-artifacts`.
+- Failure completion retries only the original fenced `markFailed` transition: one immediate attempt followed by at most three retries, defaulting to delays of 15, 60, and 300 seconds.
+- `STORM_SETUP_PRESSURE_ARTIFACT_FAILURE_COMPLETION_RETRY_DELAYS_SECONDS` overrides that schedule with one to three comma-separated positive integer seconds; missing or invalid values use `15,60,300`.
+- A stale completion token is an idempotent no-op; retry exhaustion leaves the original lease for probe recovery.
 - External task cancellation retains the existing fenced-lease behavior unless an issue explicitly changes and tests it.
 - Only transient acquisition failures receive bounded retries and backoff; deterministic selection and validation failures do not.
 - Worker startup safely recovers abandoned `model-artifacts` processing entries before consumers start.
@@ -92,6 +96,7 @@ Work only that issue. Preserve request-path degradation and pressure catalog fen
 |---|---|
 | Probe and dispatch | `HRRRPressureArtifactProbeService` |
 | Warm orchestration | `PressureArtifactWarmingService`, `PressureArtifactWarmJob` |
+| Durable failed-state completion | `PressureArtifactFailureCompletionJob`, `PressureArtifactCatalogStore.markFailed` |
 | Range acquisition | `HrrrPressureByteRangeDownloader`, `VaporApplicationHTTPClient` |
 | Catalog fencing | `PressureArtifactCatalogStore` |
 | Worker lifecycle | `WorkerRuntime`, `configure.swift` |
@@ -107,6 +112,8 @@ Work only that issue. Preserve request-path degradation and pressure catalog fen
 6. Surface stuck warming and pending backlog health on the dashboard.
 
 Issues 02–03 depend on 01. Issue 05 depends on 04. Issue 06 should follow 02 so its stuck threshold matches the implemented deadline contract.
+
+Issue [#201](https://github.com/justinrooks/arcus-signal/issues/201) is a prerequisite to resuming Issue 03. Its completion job deliberately uses a retry schedule distinct from Issue 03's 30/120-second acquisition schedule. When Issue 05 is implemented, its known model-artifact job set must include `PressureArtifactFailureCompletionJob`.
 
 ## Verification defaults
 

@@ -25,6 +25,20 @@ struct PressureArtifactWarmJobPayload: Codable, Sendable {
     }
 }
 
+enum PressureArtifactWarmJobError: Error, Sendable, CustomStringConvertible {
+    case warmAttemptTimedOut(seconds: TimeInterval)
+    case warmingFailed(errorType: String)
+
+    var description: String {
+        switch self {
+        case .warmAttemptTimedOut(let seconds):
+            return PressureArtifactWarmingError.warmAttemptTimedOut(seconds: seconds).description
+        case .warmingFailed(let errorType):
+            return "Pressure artifact warming failed (\(errorType))."
+        }
+    }
+}
+
 struct PressureArtifactWarmJob: AsyncJob {
     typealias Payload = PressureArtifactWarmJobPayload
 
@@ -55,7 +69,21 @@ struct PressureArtifactWarmJob: AsyncJob {
         )
 
         let warmingService = makeWarmingService(context.application)
-        try await warmingService.warm(payload: payload, on: context.application, logger: context.logger)
+        do {
+            try await warmingService.warm(
+                payload: payload,
+                on: context.application,
+                logger: context.logger
+            )
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            if case PressureArtifactWarmingError.warmAttemptTimedOut(let seconds) = error {
+                throw PressureArtifactWarmJobError.warmAttemptTimedOut(seconds: seconds)
+            }
+            throw PressureArtifactWarmJobError.warmingFailed(
+                errorType: String(describing: type(of: error))
+            )
+        }
 
         context.logger.info(
             "PressureArtifactWarmJob finished.",
@@ -78,7 +106,7 @@ struct PressureArtifactWarmJob: AsyncJob {
                 "validTime": .string(payload.validTime.ISO8601Format()),
                 "product": .string(payload.product.rawValue),
                 "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
-                "error": .string(String(reflecting: error))
+                "errorType": .string(String(describing: type(of: error)))
             ]
         )
     }
