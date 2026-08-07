@@ -53,6 +53,7 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 | 04 | [#194](https://github.com/justinrooks/arcus-signal/issues/194) | Characterize abandoned model-artifact processing jobs | None | Pending |
 | 05 | [#195](https://github.com/justinrooks/arcus-signal/issues/195) | Recover abandoned model-artifact jobs at worker startup | 04 | Pending |
 | 06 | [#196](https://github.com/justinrooks/arcus-signal/issues/196) | Surface stuck pressure-artifact backlog health | 02 | Pending |
+| 07 | [#201](https://github.com/justinrooks/arcus-signal/issues/201) | Add durable fenced failure-completion retries | 01, 02 | Implemented — ready for publication |
 
 ## Investigation notes
 
@@ -106,6 +107,16 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 - **Likely files:** dashboard snapshot metric/refresher, response DTO/renderer, dashboard pressure-artifact tests.
 - **Stop condition:** Operators can distinguish unavailable source data from a stuck warm pipeline without seeing claim tokens, Redis payloads, or local paths.
 
+### Issue #201 - 07: Add durable fenced failure-completion retries
+
+- **Status:** Implemented — ready for publication
+- **Behavior:** A thrown owned `markFailed` write dispatches a pressure-specific completion payload containing only artifact identity, the original claim token, and a bounded sanitized summary. The job reuses the existing fenced store transition and treats stale tokens as successful no-ops.
+- **Retry contract:** The first completion attempt is immediate. Vapor Queues owns up to three configured delayed retries on `model-artifacts`, defaulting to 15, 60, and 300 seconds.
+- **Exhaustion:** The completion job records explicit queue/log failure, leaves the warming claim and lease unchanged, and relies on the existing lease/probe recovery path.
+- **Review:** Human review completed. Independent defect and test audits reached `READY` after path-safe queue errors, configurable retry policy, and canonical documentation were verified.
+- **Sequencing:** Land this issue before resuming #193. Add the completion job name to #195's known model-artifact recovery set when that work begins.
+- **Focused verification:** `swift test --filter PressureArtifactFailureCompletionJobTests`; `swift test --filter PressureArtifactWarmJobTests`; `swift test --filter StormSetupConfigurationTests`; `swift test --filter PressureArtifactDiagnosticsTests`; strict-concurrency build; `git diff --check`.
+
 ## Verification ledger
 
 | Issue | Required focused verification | Result |
@@ -116,6 +127,7 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 | 04 | Focused model-artifact queue recovery characterization tests | Pending |
 | 05 | Recovery tests plus worker bootstrap tests and strict-concurrency build | Pending |
 | 06 | `swift test --filter OperatorDashboardPressureArtifactTests` | Pending |
+| 07 | Completion-job queue/PostgreSQL tests; warm and diagnostics regressions; strict-concurrency build | Passed |
 
 ## Handoff notes
 

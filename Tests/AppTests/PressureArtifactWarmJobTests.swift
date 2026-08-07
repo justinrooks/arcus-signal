@@ -4,6 +4,7 @@ import Foundation
 import Queues
 import Testing
 import Vapor
+import XCTQueues
 import ArcusCore
 
 @Suite("Pressure artifact warm job", .serialized)
@@ -160,7 +161,7 @@ struct PressureArtifactWarmJobTests {
             )
             let job = PressureArtifactWarmJob(warmingService: service)
 
-            await #expect(throws: PressureArtifactWarmValidatorStubError.self) {
+            await #expect(throws: PressureArtifactWarmJobError.self) {
                 try await job.dequeue(makeQueueContext(app: app), payload)
             }
 
@@ -176,6 +177,53 @@ struct PressureArtifactWarmJobTests {
             #expect(row.errorSummary?.contains("failedValidation") == true)
             #expect(row.localPath == nil)
             #expect(row.byteSize == nil)
+        }
+    }
+
+    @Test("queue-facing validation failure does not log its local path")
+    func queueFacingValidationFailureDoesNotLogLocalPath() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            app.queues.use(.test)
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let sentinelURL = URL(
+                fileURLWithPath: "/private/tmp/arcus-private-sentinel/subset.grib2"
+            )
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(
+                    error: PressureArtifactValidationError.emptyOutput(sentinelURL),
+                    lineCount: makeExpectedValidationLineCount()
+                ),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                failureCompleter: AlwaysFailingPressureArtifactFailureCompleter()
+            )
+            let logHandler = CapturingLogHandler()
+            var logger = Logger(label: "pressure-path-safety", factory: { _ in logHandler })
+            logger.logLevel = .info
+            app.logger = logger
+            app.queues.add(PressureArtifactWarmJob(warmingService: service))
+
+            let queue = app.queues.queue(ArcusQueueLane.modelArtifacts.queueName)
+            try await queue.dispatch(PressureArtifactWarmJob.self, payload)
+            try await queue.worker.run()
+
+            let renderedLogs = logHandler.events.map {
+                $0.message + String(describing: $0.metadata)
+            }.joined(separator: "\n")
+            #expect(renderedLogs.contains(sentinelURL.path) == false)
+            #expect(renderedLogs.contains(sentinelURL.absoluteString) == false)
+            #expect(renderedLogs.contains("Pressure artifact validation failed."))
+            #expect(renderedLogs.contains("Job failed"))
         }
     }
 
@@ -266,7 +314,7 @@ struct PressureArtifactWarmJobTests {
             do {
                 try await dequeueTask.value
                 Issue.record("Expected the queue-facing dequeue call to throw a warm timeout.")
-            } catch PressureArtifactWarmingError.warmAttemptTimedOut(let seconds) {
+            } catch PressureArtifactWarmJobError.warmAttemptTimedOut(let seconds) {
                 #expect(seconds == 12)
             } catch {
                 Issue.record("Expected a distinct warm timeout, got \(String(reflecting: error)).")
@@ -336,7 +384,7 @@ struct PressureArtifactWarmJobTests {
             do {
                 try await dequeueTask.value
                 Issue.record("Expected the stale owner to surface its warm timeout.")
-            } catch PressureArtifactWarmingError.warmAttemptTimedOut(let seconds) {
+            } catch PressureArtifactWarmJobError.warmAttemptTimedOut(let seconds) {
                 #expect(seconds == 12)
             } catch {
                 Issue.record("Expected a distinct warm timeout, got \(String(reflecting: error)).")
@@ -845,7 +893,7 @@ struct PressureArtifactWarmJobTests {
             )
             let job = PressureArtifactWarmJob(warmingService: service)
 
-            await #expect(throws: PressureArtifactWarmingError.self) {
+            await #expect(throws: PressureArtifactWarmJobError.self) {
                 try await job.dequeue(makeQueueContext(app: app), payload)
             }
 
@@ -886,7 +934,7 @@ struct PressureArtifactWarmJobTests {
             )
             let job = PressureArtifactWarmJob(warmingService: service)
 
-            await #expect(throws: PressureArtifactWarmingError.self) {
+            await #expect(throws: PressureArtifactWarmJobError.self) {
                 try await job.dequeue(makeQueueContext(app: app), payload)
             }
 
@@ -1155,6 +1203,15 @@ private extension PressureArtifactWarmJobTests {
 
     var serviceRetentionSeconds: TimeInterval { 12 * 60 * 60 }
     var serviceMaximumByteCount: Int { 1024 }
+}
+
+private struct AlwaysFailingPressureArtifactFailureCompleter: PressureArtifactFailureCompleting {
+    func complete(
+        _ payload: PressureArtifactFailureCompletionJobPayload,
+        on application: Application
+    ) async throws -> Bool {
+        throw PressureArtifactWarmValidatorStubError.failedValidation
+    }
 }
 
 private actor ControllablePressureArtifactWarmTimeoutSleeper: PressureArtifactWarmTimeoutSleeping {

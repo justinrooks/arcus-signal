@@ -44,7 +44,7 @@ The arrows are distinct boundaries. A durable intent, successful queue enqueue, 
 
 ### Queue retries and replay limits
 
-Production `.dispatch(...)` calls do not pass `maxRetryCount`. The installed Vapor Queues API defaults it to `0`, so a dequeued job failure is not retried by Vapor Queues. Outbox drain attempts are not a substitute for queue replay or APNs retry.
+Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `PressureArtifactFailureCompletionJob` is the narrow exception: it uses the configured positive completion schedule on the `model-artifacts` lane to retry the existing fenced failure transition. Outbox drain attempts are not a substitute for queue replay or APNs retry.
 
 ## Candidate selection, claim, and APNs delivery
 

@@ -89,6 +89,14 @@ struct StormSetupConfiguration: Sendable, Equatable {
             in: environment
         )
 
+        let pressureArtifactFailureCompletionRetryPolicy = PressureArtifactFailureCompletionRetryPolicy(
+            delaysSeconds: Self.environmentPositiveIntList(
+                for: "STORM_SETUP_PRESSURE_ARTIFACT_FAILURE_COMPLETION_RETRY_DELAYS_SECONDS",
+                defaultValue: PressureArtifactFailureCompletionRetryPolicy.defaultDelaysSeconds,
+                in: environment
+            )
+        )
+
         let wgrib2TimeoutSeconds = Self.environmentTimeInterval(
             for: "STORM_SETUP_WGRIB2_TIMEOUT_SECONDS",
             in: environment
@@ -125,6 +133,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
             pressureArtifactRecoveryTimeoutSeconds: pressureArtifactRecoveryTimeoutSeconds,
             pressureArtifactWarmTimeoutSeconds: pressureArtifactWarmTimeoutSeconds,
             pressureArtifactHTTPTimeoutSeconds: pressureArtifactHTTPTimeoutSeconds,
+            pressureArtifactFailureCompletionRetryPolicy: pressureArtifactFailureCompletionRetryPolicy,
             wgrib2ExecutableURL: wgrib2ExecutableURL,
             wgrib2TimeoutSeconds: wgrib2TimeoutSeconds,
             anvilProfileAnalysisBaseURL: anvilProfileAnalysisBaseURL,
@@ -145,6 +154,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureArtifactRecoveryTimeoutSeconds: defaultPressureArtifactRecoveryTimeoutSeconds,
         pressureArtifactWarmTimeoutSeconds: defaultPressureArtifactWarmTimeoutSeconds,
         pressureArtifactHTTPTimeoutSeconds: 30,
+        pressureArtifactFailureCompletionRetryPolicy: .init(),
         wgrib2ExecutableURL: localWgrib2ExecutableURL,
         wgrib2TimeoutSeconds: 15,
         anvilProfileAnalysisBaseURL: nil,
@@ -163,6 +173,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
     let pressureArtifactRecoveryTimeoutSeconds: TimeInterval
     let pressureArtifactWarmTimeoutSeconds: TimeInterval
     let pressureArtifactHTTPTimeoutSeconds: TimeInterval
+    let pressureArtifactFailureCompletionRetryPolicy: PressureArtifactFailureCompletionRetryPolicy
     let wgrib2ExecutableURL: URL
     let wgrib2TimeoutSeconds: TimeInterval
     let anvilProfileAnalysisBaseURL: URL?
@@ -181,6 +192,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
         pressureArtifactRecoveryTimeoutSeconds: TimeInterval,
         pressureArtifactWarmTimeoutSeconds: TimeInterval = defaultPressureArtifactWarmTimeoutSeconds,
         pressureArtifactHTTPTimeoutSeconds: TimeInterval = 30,
+        pressureArtifactFailureCompletionRetryPolicy: PressureArtifactFailureCompletionRetryPolicy = .init(),
         wgrib2ExecutableURL: URL,
         wgrib2TimeoutSeconds: TimeInterval,
         anvilProfileAnalysisBaseURL: URL? = nil,
@@ -204,6 +216,7 @@ struct StormSetupConfiguration: Sendable, Equatable {
             recoveryTimeoutSeconds: recoveryTimeoutSeconds
         )
         self.pressureArtifactHTTPTimeoutSeconds = pressureArtifactHTTPTimeoutSeconds
+        self.pressureArtifactFailureCompletionRetryPolicy = pressureArtifactFailureCompletionRetryPolicy
         self.wgrib2ExecutableURL = wgrib2ExecutableURL
         self.wgrib2TimeoutSeconds = wgrib2TimeoutSeconds
         self.anvilProfileAnalysisBaseURL = anvilProfileAnalysisBaseURL
@@ -313,6 +326,29 @@ struct StormSetupConfiguration: Sendable, Equatable {
         }
 
         return parsed
+    }
+
+    private static func environmentPositiveIntList(
+        for key: String,
+        defaultValue: [Int],
+        in environment: [String: String]
+    ) -> [Int] {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return defaultValue
+        }
+
+        let components = rawValue.split(separator: ",", omittingEmptySubsequences: false)
+        let values = components.compactMap { component in
+            Int(component.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        guard values.count == components.count,
+              values.isEmpty == false,
+              values.allSatisfy({ $0 > 0 }) else {
+            return defaultValue
+        }
+
+        return values
     }
 
     private static func isRequestTimeoutRepresentable(_ timeoutSeconds: TimeInterval) -> Bool {

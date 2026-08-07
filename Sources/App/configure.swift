@@ -43,6 +43,9 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.queues.add(TargetEventRevisionJob())
     app.queues.add(NotificationSendJob())
     app.queues.add(PressureArtifactWarmJob())
+    app.queues.add(PressureArtifactFailureCompletionJob(
+        retryPolicy: app.stormSetupConfiguration.pressureArtifactFailureCompletionRetryPolicy
+    ))
     app.queues.add(CleanupPressureArtifactsJob())
 
     let decoder = JSONDecoder()

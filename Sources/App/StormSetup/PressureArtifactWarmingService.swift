@@ -73,6 +73,8 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
     private let httpRequestTimeoutSeconds: TimeInterval
     private let timeoutSleeper: any PressureArtifactWarmTimeoutSleeping
     private let catalogStore: PressureArtifactCatalogStore
+    private let failureCompleter: any PressureArtifactFailureCompleting
+    private let failureCompletionDispatcher: any PressureArtifactFailureCompletionJobDispatching
 
     init(
         httpClient: any HTTPClient,
@@ -86,7 +88,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         warmTimeoutSeconds: TimeInterval = StormSetupConfiguration.defaultPressureArtifactWarmTimeoutSeconds,
         httpRequestTimeoutSeconds: TimeInterval = 30,
         timeoutSleeper: any PressureArtifactWarmTimeoutSleeping = SystemPressureArtifactWarmTimeoutSleeper(),
-        catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore()
+        catalogStore: PressureArtifactCatalogStore = PressureArtifactCatalogStore(),
+        failureCompleter: (any PressureArtifactFailureCompleting)? = nil,
+        failureCompletionDispatcher: any PressureArtifactFailureCompletionJobDispatching = DefaultPressureArtifactFailureCompletionJobDispatcher()
     ) {
         self.httpClient = httpClient
         self.validator = validator
@@ -111,6 +115,8 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
         self.httpRequestTimeoutSeconds = httpRequestTimeoutSeconds
         self.timeoutSleeper = timeoutSleeper
         self.catalogStore = catalogStore
+        self.failureCompleter = failureCompleter ?? DefaultPressureArtifactFailureCompleter(catalogStore: catalogStore)
+        self.failureCompletionDispatcher = failureCompletionDispatcher
     }
 
     static func makeDefault(
@@ -197,7 +203,6 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                 "status": .string(PressureArtifactCatalogStatus.warming.rawValue),
                 "product": .string(payload.product.rawValue),
                 "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
-                "claimTokenPrefix": .string(String(claimToken.uuidString.prefix(8))),
                 "leaseExpiresAt": .string(claimedRow.leaseExpiresAt?.ISO8601Format() ?? "nil")
             ]
         )
@@ -298,7 +303,10 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                         "product": .string(payload.product.rawValue),
                         "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
                         "status": .string(PressureArtifactCatalogStatus.failed.rawValue),
-                        "error": .string(String(reflecting: error))
+                        "error": .string(PressureArtifactFailureSummary.sanitized(
+                            from: error,
+                            claimToken: claimToken
+                        ))
                     ]
                 )
                 throw error
@@ -341,7 +349,6 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                     "Pressure artifact warm completion lost claim.",
                     metadata: claimLostMetadata(
                         payload: payload,
-                        claimToken: claimToken,
                         state: "ready"
                     )
                 )
@@ -362,28 +369,57 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
             }
         } catch {
             try rethrowCancellationIfNeeded(error)
-            let timeoutSeconds = ownedTimeoutSeconds(from: error)
-            let errorSummary = timeoutSeconds == nil
-                ? String(reflecting: error)
-                : String(describing: error)
-            let completedFailure = try await catalogStore.markFailed(
-                payload: payload,
-                claimToken: claimToken,
-                errorSummary: errorSummary,
-                on: application.db
+            let acquisitionError = error
+            let timeoutSeconds = ownedTimeoutSeconds(from: acquisitionError)
+            let errorSummary = PressureArtifactFailureSummary.sanitized(
+                from: acquisitionError,
+                claimToken: claimToken
             )
+            let completionPayload = PressureArtifactFailureCompletionJobPayload(
+                artifact: payload,
+                claimToken: claimToken,
+                errorSummary: errorSummary
+            )
+            let completedFailure: Bool
+            do {
+                completedFailure = try await failureCompleter.complete(
+                    completionPayload,
+                    on: application
+                )
+            } catch {
+                try rethrowCancellationIfNeeded(error)
+                do {
+                    try await failureCompletionDispatcher.dispatch(
+                        completionPayload,
+                        on: application
+                    )
+                } catch {
+                    try rethrowCancellationIfNeeded(error)
+                    throw PressureArtifactFailureCompletionError.dispatchFailed(
+                        errorType: String(describing: type(of: error))
+                    )
+                }
+
+                logger.error(
+                    "Pressure artifact failure completion deferred to durable queue work.",
+                    metadata: claimLostMetadata(
+                        payload: payload,
+                        state: "failure completion deferred"
+                    )
+                )
+                throw acquisitionError
+            }
 
             guard completedFailure else {
                 logger.info(
                     "Pressure artifact warm completion lost claim.",
                     metadata: claimLostMetadata(
                         payload: payload,
-                        claimToken: claimToken,
                         state: "failed"
                     )
                 )
                 if timeoutSeconds != nil {
-                    throw error
+                    throw acquisitionError
                 }
                 return
             }
@@ -416,7 +452,7 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                     ]
                 )
             }
-            throw error
+            throw acquisitionError
         }
     }
 }
@@ -518,7 +554,6 @@ extension PressureArtifactWarmingService {
 
     func claimLostMetadata(
         payload: PressureArtifactWarmJobPayload,
-        claimToken: UUID,
         state: String
     ) -> Logger.Metadata {
         [
@@ -527,7 +562,6 @@ extension PressureArtifactWarmingService {
             "validTime": .string(payload.validTime.ISO8601Format()),
             "product": .string(payload.product.rawValue),
             "fieldSetVersion": .string(payload.fieldSetVersion.rawValue),
-            "claimTokenPrefix": .string(String(claimToken.uuidString.prefix(8))),
             "lostClaimState": .string(state)
         ]
     }

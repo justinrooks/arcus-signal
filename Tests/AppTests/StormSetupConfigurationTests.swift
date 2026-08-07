@@ -26,6 +26,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactWarmTimeoutSeconds == 15 * 60)
         #expect(configuration.pressureArtifactWarmTimeoutSeconds < configuration.pressureArtifactRecoveryTimeoutSeconds)
         #expect(configuration.pressureArtifactHTTPTimeoutSeconds == 30)
+        #expect(configuration.pressureArtifactFailureCompletionRetryPolicy.delaysSeconds == [15, 60, 300])
         #expect(configuration.anvilProfileAnalysisBaseURL == nil)
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == nil)
     }
@@ -59,6 +60,7 @@ struct StormSetupConfigurationTests {
             "STORM_SETUP_PRESSURE_ARTIFACT_RECOVERY_TIMEOUT_SECONDS": "540",
             "STORM_SETUP_PRESSURE_ARTIFACT_WARM_TIMEOUT_SECONDS": "240",
             "STORM_SETUP_PRESSURE_ARTIFACT_HTTP_TIMEOUT_SECONDS": "42",
+            "STORM_SETUP_PRESSURE_ARTIFACT_FAILURE_COMPLETION_RETRY_DELAYS_SECONDS": "5, 20, 90",
             "ANVIL_PROFILE_ANALYSIS_BASE_URL": "https://anvil.example.com",
             "ANVIL_PROFILE_ANALYSIS_TIMEOUT_SECONDS": "11"
         ])
@@ -76,6 +78,7 @@ struct StormSetupConfigurationTests {
         #expect(configuration.pressureArtifactRecoveryTimeoutSeconds == 540)
         #expect(configuration.pressureArtifactWarmTimeoutSeconds == 240)
         #expect(configuration.pressureArtifactHTTPTimeoutSeconds == 42)
+        #expect(configuration.pressureArtifactFailureCompletionRetryPolicy.delaysSeconds == [5, 20, 90])
         #expect(configuration.anvilProfileAnalysisBaseURL?.absoluteString == "https://anvil.example.com")
         #expect(configuration.anvilProfileAnalysisTimeoutSeconds == 11)
     }
@@ -167,5 +170,25 @@ struct StormSetupConfigurationTests {
         #expect(exponentOverflow.pressureArtifactHTTPTimeoutSeconds == 30)
         #expect(nanosecondOverflow.pressureArtifactHTTPTimeoutSeconds == 30)
         #expect(subnanosecond.pressureArtifactHTTPTimeoutSeconds == 30)
+    }
+
+    @Test("failure completion retry delays default for missing or invalid overrides")
+    func failureCompletionRetryDelaysDefaultForInvalidOverrides() {
+        let key = "STORM_SETUP_PRESSURE_ARTIFACT_FAILURE_COMPLETION_RETRY_DELAYS_SECONDS"
+        let invalidValues = [
+            "  ", "banana", "0", "-1", "15,0,60", "15,,60", "1,2,3,4"
+        ]
+
+        #expect(
+            StormSetupConfiguration.resolved(from: [:])
+                .pressureArtifactFailureCompletionRetryPolicy.delaysSeconds == [15, 60, 300]
+        )
+        for value in invalidValues {
+            let configuration = StormSetupConfiguration.resolved(from: [key: value])
+            #expect(
+                configuration.pressureArtifactFailureCompletionRetryPolicy.delaysSeconds
+                    == [15, 60, 300]
+            )
+        }
     }
 }
