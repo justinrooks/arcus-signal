@@ -25,7 +25,11 @@ struct DefaultPressureArtifactWarmJobDispatcher: PressureArtifactWarmJobDispatch
     ) async throws {
         try await application.queues
             .queue(queueName)
-            .dispatch(PressureArtifactWarmJob.self, payload)
+            .dispatch(
+                PressureArtifactWarmJob.self,
+                payload,
+                maxRetryCount: 0
+            )
     }
 }
 

@@ -5,9 +5,30 @@ import Foundation
 import Queues
 import Testing
 import Vapor
+import XCTQueues
 
 @Suite("HRRR pressure artifact probe service", .serialized)
 struct HRRRPressureArtifactProbeServiceTests {
+    @Test("default pressure warm dispatcher disables automatic retries")
+    func defaultWarmDispatcherDisablesAutomaticRetries() async throws {
+        try await withApp { app, _ in
+            app.queues.use(.test)
+            let payload = makePayload(from: makePressureCandidate(from: makeSurfaceCandidate()))
+
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            let jobID = try #require(app.queues.test.queue.first)
+            let jobData = try #require(app.queues.test.jobs[jobID])
+            #expect(jobData.jobName == PressureArtifactWarmJob.name)
+            #expect(jobData.maxRetryCount == 0)
+            #expect(try PressureArtifactWarmJob.parsePayload(jobData.payload).acquisitionAttempt == 0)
+        }
+    }
+
     @Test("unavailable idx conflicts update only lastCheckedAt")
     func unavailableIdxConflictsUpdateOnlyLastCheckedAt() async throws {
         try await withApp { app, _ in

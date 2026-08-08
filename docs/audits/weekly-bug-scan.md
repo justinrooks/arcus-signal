@@ -351,3 +351,188 @@
 - Validation: `swift test --filter NotificationSendJobFreshnessDecisionTests` passed (7 tests).
 - Follow-up fixed on `2026-07-26`: NWS lifecycle classification and cleanup now expire alerts with an elapsed `expires` timestamp when `ends` is absent. Regression coverage verifies both canonical state derivation and persisted-series cleanup.
 - Roadmap: APNs failure retry/backoff remains unresolved and is tracked in [GitHub issue #13](https://github.com/justinrooks/arcus-signal/issues/13). The planned slice adds bounded queue retries, exponential backoff, retryable ledger reclaim, and terminal handling for permanent token failures.
+
+## 2026-07-30
+
+### 1. Repository scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Last automation run marker: `2026-07-23T16:07:02.928Z`
+- Window used: commits after `2026-07-23T16:07:02Z` through `2026-07-30`
+- Commits inspected:
+  - `c539de30e3f22fdab9e1d6a8d5c2dbba580003b8` (`Harden NWS alert lifecycle and notification delivery (#151)`)
+  - `254728f4c54816e59a06bd4422418f75a57c7267` (`Filter notification candidates by 24-hour presence freshness (#152)`)
+  - `45b636218ab262ed9bbf8a7022e7cb16f3d30024` (`Document architecture recovery plan and execution guardrails (#172)`)
+  - `a12d34e26c757b691bb97412b43f0bdb6ed9f9ba` (`Centralize HRRR surface-to-pressure identity (#173)`)
+  - `9fbb0f2260dd215dedee8c5de4af37b7d8d3a95f` (`Extract pure H3 coverage result (#174)`)
+  - `7feb0ada715baf7e3b26d7641c194963d145dc17` (`Move H3 computation before the transaction (#175)`)
+  - `a4b9f436bdc8ed87380f45bdf64f6f5796c8595d` (`Isolate notification candidate selection #158`)
+
+### 3. Highest-risk changed areas
+- NWS alert lifecycle and final delivery eligibility (`Sources/App/Jobs/IngestNWSAlertsJob.swift`, `Sources/App/Jobs/NotificationSendJob.swift`, `Sources/App/Models/NWS/ArcusEvent.swift`)
+- Candidate freshness and H3/UGC selection (`Sources/App/Infrastructure/Notifications/LocationFreshnessPolicy.swift`, `Sources/App/Models/Notification/NotificationCandidateStore.swift`)
+- H3 coverage computation, persistence transaction, and notification outbox dispatch (`Sources/App/Jobs/H3CoverageBuilder.swift`, `Sources/App/Jobs/TargetEventRevisionJob.swift`)
+- HRRR surface-to-pressure artifact identity (`Sources/App/StormSetup/HrrrSourceModels.swift`, `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`, `Sources/App/StormSetup/HrrrPressureDirectObjectResolver.swift`)
+
+### 4. Findings table
+
+| Bug | Repo | Evidence | Impact | Confidence | Minimal fix | Validation |
+|---|---|---|---|---|---|---|
+| No credible bug found | `arcus-signal` | Reviewed all seven commits and the changed lifecycle, candidate-query, H3 targeting, and HRRR identity paths. Focused suites passed: `NotificationSendJobCandidateQueryTests` (3), `H3CoverageBuilderTests` (6), `TargetEventRevisionJobFallbackTests` (5), `StormSetupHrrrSourceTests` (16), and `NotificationSendJobFreshnessDecisionTests` (7). | No confirmed defect to fix. | High | None. | No implementation required; continue with the next weekly scan. |
+
+### 5. Top recommended fix
+- No fix recommended.
+- Why it matters: the prior lifecycle finding is fixed, candidate freshness remains enforced after extraction, and H3 computation moved outside the transaction without breaking persistence, fallback, or notification dispatch behavior.
+- Expected files touched: none.
+- Estimated churn: none.
+- Regression risk: none.
+
+### 6. Watchlist
+- No low-confidence concern met the evidence threshold. Future-dated presence was considered, but `Sources/App/Controllers/DeviceController.swift` rejects timestamps more than five minutes ahead, so the local evidence does not support a bug finding.
+
+### 7. Out-of-scope notes
+- All sibling repositories and external client implementations were intentionally not scanned. No cross-repository findings were included.
+
+### 8. No fix recommended
+- Evidence inspected: seven commits in the bounded window; direct inspection of NWS lifecycle cleanup and delivery gates, H3/UGC candidate queries, H3 coverage construction and transaction boundaries, HRRR surface-to-pressure identity, and the five focused test suites listed above.
+- Implementation recommended: `no`
+
+### Audit entry (short)
+- Date: `2026-07-30`
+- Repository reviewed: `arcus-signal`
+- Workflow reviewed: weekly bug scan (audit-only, commits since last automation run)
+- Commit window inspected: after `2026-07-23T16:07:02Z` through `2026-07-30`; seven commits
+- Files inspected:
+  - `Sources/App/Clients/NwsClient.swift`
+  - `Sources/App/Infrastructure/Notifications/LocationFreshnessPolicy.swift`
+  - `Sources/App/Jobs/H3CoverageBuilder.swift`
+  - `Sources/App/Jobs/IngestNWSAlertsJob.swift`
+  - `Sources/App/Jobs/NotificationSendJob.swift`
+  - `Sources/App/Jobs/TargetEventRevisionJob.swift`
+  - `Sources/App/Models/NWS/ArcusEvent.swift`
+  - `Sources/App/Models/Notification/NotificationCandidateStore.swift`
+  - `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+  - `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+  - `Sources/App/StormSetup/HrrrPressureDirectObjectResolver.swift`
+  - `Sources/App/StormSetup/HrrrSourceModels.swift`
+  - `Tests/AppTests/H3CoverageBuilderTests.swift`
+  - `Tests/AppTests/NotificationSendJobCandidateQueryTests.swift`
+  - `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`
+  - `Tests/AppTests/StormSetupHrrrSourceTests.swift`
+  - `Tests/AppTests/TargetEventRevisionJobFallbackTests.swift`
+- Top finding: no credible bug found
+- Best next fix: no fix recommended; retain the current focused regression coverage
+- Implementation recommended: `no`
+- Out-of-scope repositories intentionally not scanned: all sibling repositories
+## 2026-08-06
+
+### 1. Repository scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Reliable previous end marker: `7d0f7bc51423f0f0df64663ffb02be1d872c302b` from the 2026-07-30 audit entry
+- Window used: commits after `7d0f7bc51423f0f0df64663ffb02be1d872c302b` through `51f4259b06f1e851f97ee37742e3384fe005f21a`
+- Dates: `2026-07-30T11:36:38-06:00` through `2026-08-02T13:05:34-06:00`
+- Commit count: 13
+- Start commit: `ed27578baabd48f63cb74c4dfb0f51ba1a154e0e`
+- End commit: `51f4259b06f1e851f97ee37742e3384fe005f21a`
+- Fallback strategy: none; the bounded window contained commits
+
+### 3. Highest-risk changed areas
+- Pressure-artifact catalog claims, probe transitions, cleanup, and warming completion (`Sources/App/Models/Data/PressureArtifactCatalogStore.swift`, `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`, `Sources/App/StormSetup/PressureArtifactWarmingService.swift`)
+- Storm Setup cache I/O and Anvil evidence orchestration (`Sources/App/StormSetup/GribSubsetCache.swift`, `Sources/App/StormSetup/StormSetupSnapshotCache.swift`, `Sources/App/StormSetup/StormSetupProvider.swift`, `Sources/App/StormSetup/StormSetupAnvilEvidencePolicy.swift`)
+- Child-process cancellation and output draining (`Sources/App/StormSetup/GribAdapter.swift`)
+- NWS persistence and notification ledger ownership (`Sources/App/Services/NWSIngestPersistence.swift`, `Sources/App/Models/Notification/NotificationDeliveryStore.swift`)
+- Device-presence migration repair (`Sources/App/Migrations/RepairDevicePresenceSourceConstraintForExpandedLocationUploadSources.swift`)
+
+### 4. Findings
+
+#### BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE
+
+- Finding ID: `BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE`
+- Fingerprint: `weekly-bug-scan|arcus-signal|HRRRPressureArtifactProbeService.markProbeFailure|unconditional-post-dispatch-state-overwrite`
+- Repository: `arcus-signal`
+- Audit type: Weekly Bug Scan
+- Title: Probe enqueue failure can overwrite active or completed pressure-artifact work
+- Status: `NEW`
+- Severity: `MEDIUM`
+- Confidence: `MEDIUM`
+- First observed: `2026-08-06`
+- Last verified: `2026-08-06`
+- Affected files and symbols: `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift` (`probe`), `Sources/App/Models/Data/PressureArtifactCatalogStore.swift` (`markProbeFailure`), `Sources/App/StormSetup/PressureArtifactWarmingService.swift` (`warm`, `claimCatalogRow`, `markReady`)
+- Failure mode: The probe changes a row to `pending`, dispatches `PressureArtifactWarmJob`, and treats any dispatch error as proof that the job was not accepted. If queue acceptance succeeds but the dispatcher throws afterward, the worker may advance the row to `warming` or `ready` before the probe catch path executes. `markProbeFailure` updates by artifact identity without a status or ownership predicate, so it can erase an active claim or replace a valid ready artifact with `failed`, clearing `local_path` and `byte_size`.
+- Evidence: Commit `1f5cda034628b4ae806cfca541e522353307c9e5` centralized the transition while preserving its behavior. `HRRRPressureArtifactProbeService.probe` claims at lines 204-223, dispatches at 225-230, and calls `markProbeFailure` for a non-cancellation error at 244-251. `PressureArtifactCatalogStore.markProbeFailure` at lines 474-499 has no current-state or ownership predicate. `PressureArtifactWarmingService` can legitimately claim the pending row at lines 112-117 and complete it ready at 288-304. The existing dispatch-failure test covers only a dispatcher that throws without advancing the row.
+- Blast radius: Affected cycles can lose current pressure-profile evidence until a later probe and warm cycle recovers the artifact, degrading Storm Setup analysis. Reachability is limited to ambiguous queue-dispatch failures, but the state mutation can discard completed work.
+- Minimal fix strategy: Make probe-failure persistence compare-and-set against the probe-owned pending transition so it cannot mutate `warming` or `ready`. Preserve the ordinary pre-enqueue failure behavior. Avoid broader queue or retry redesign.
+- Required validation: Deterministic integration tests that advance the row to `warming` and `ready` before the dispatcher throws, proving lease/claim and artifact metadata remain intact; retain the ordinary dispatch-failure test; run `HRRRPressureArtifactProbeServiceTests` and `PressureArtifactWarmJobTests`.
+- Related GitHub issue: [#198](https://github.com/justinrooks/arcus-signal/issues/198)
+- Triage: `ACTIONABLE`
+
+### 5. Watchlist
+- None. No lower-confidence candidate in the bounded window had enough concrete local evidence to retain.
+
+### 6. Resolved findings
+- None re-verified in this bounded window.
+
+### 7. Top finding
+- `BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE`
+
+### 8. Best next fix
+- Add an ownership/current-state predicate to probe failure persistence and regression-test ambiguous dispatch outcomes where the worker has already reached `warming` or `ready`.
+- Expected files: `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`, optionally `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`, and `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`.
+- Estimated churn: small, approximately 30-70 LOC.
+- Regression risk: low to medium; the ordinary pre-enqueue error path must continue to become `failed`.
+- Implementation recommended: `yes`
+
+### 9. Validation
+- `swift test --filter HRRRPressureArtifactProbeServiceTests` passed (11 tests).
+- `swift test --filter PressureArtifactWarmJobTests` passed (18 tests).
+- `swift test --filter ProcessRunnerTests` passed (9 tests).
+- `swift test --filter StormSetupAnvilEvidencePolicyTests` passed (6 tests).
+- `swift test --filter StormSetupGribSubsetCacheTests` passed (13 tests).
+- `swift test --filter StormSetupSnapshotCacheTests` passed (14 tests).
+- Total focused validation: 71 tests passed.
+
+### 10. GitHub triage
+- GitHub issues created: [#198](https://github.com/justinrooks/arcus-signal/issues/198)
+- GitHub issues updated: none
+- Existing issues referenced: none; searches by finding mechanism and affected subsystem found no equivalent open issue
+
+### 11. Files inspected
+- `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`
+- `Sources/App/Models/Notification/NotificationDeliveryStore.swift`
+- `Sources/App/Services/NWSIngestPersistence.swift`
+- `Sources/App/StormSetup/APIDependencyComposition.swift`
+- `Sources/App/StormSetup/AnvilProfilePreviewProvider.swift`
+- `Sources/App/StormSetup/GribAdapter.swift`
+- `Sources/App/StormSetup/GribSubsetCache.swift`
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/StormSetup/PressureArtifactCleanupService.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Sources/App/StormSetup/StormSetupAnvilEvidencePolicy.swift`
+- `Sources/App/StormSetup/StormSetupProvider.swift`
+- `Sources/App/StormSetup/StormSetupSnapshotCache.swift`
+- `Sources/App/Migrations/RepairDevicePresenceSourceConstraintForExpandedLocationUploadSources.swift`
+- `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+- `Tests/AppTests/ProcessRunnerTests.swift`
+- `Tests/AppTests/StormSetupAnvilEvidencePolicyTests.swift`
+- `Tests/AppTests/StormSetupGribSubsetCacheTests.swift`
+- `Tests/AppTests/StormSetupSnapshotCacheTests.swift`
+
+### 12. Scope notes
+- Repository scanned: `arcus-signal` only.
+- Out-of-scope repositories: all sibling repositories and external clients were intentionally not scanned.
+- Skipped evidence: no cross-repository claims were evaluated or included.
+
+### Audit entry (short)
+- Date: `2026-08-06`
+- Repository reviewed: `arcus-signal`
+- Workflow reviewed: weekly bug scan (audit-only, commits since the reliable previous end marker)
+- Commit window inspected: `ed27578baabd48f63cb74c4dfb0f51ba1a154e0e` through `51f4259b06f1e851f97ee37742e3384fe005f21a`; 13 commits
+- Files inspected: pressure-artifact catalog/probe/warm/cleanup paths, Storm Setup cache and evidence orchestration, child-process cancellation, NWS persistence, notification ledger ownership, migration repair, and focused tests listed above
+- Top finding: probe enqueue failure can overwrite pressure-artifact work that a worker has already advanced to `warming` or `ready`
+- Best next fix: constrain `markProbeFailure` to the probe-owned pending state and add deterministic ambiguous-dispatch regression tests
+- Implementation recommended: `yes`
+- Out-of-scope repositories intentionally not scanned: all sibling repositories

@@ -156,3 +156,86 @@
 - Implementation recommended: no - implemented on 2026-07-26
 - Implementation status: implemented on 2026-07-26 by [`/Users/justin/Code/arcus-signal/Tests/AppTests/AirQualityTests.swift`](/Users/justin/Code/arcus-signal/Tests/AppTests/AirQualityTests.swift)
 - Out-of-scope repositories intentionally not scanned: all sibling repositories and external AirNow implementation details
+
+## 2026-07-28
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-07-21T15:01:58.004Z` through `2026-07-28`); commits `c539de30e3f22fdab9e1d6a8d5c2dbba580003b8` and `254728f4c54816e59a06bd4422418f75a57c7267`
+- High-risk areas inspected:
+  - NWS lifecycle derivation and cleanup when `expires` or `ends` reaches its terminal timestamp
+  - send-boundary suppression for inactive or expired series while preserving explicit cancellation and all-clear delivery
+  - H3 and UGC candidate filtering at the shared 24-hour presence cutoff
+  - operator-dashboard reporting and stored-snapshot compatibility for candidate-query eligibility
+- Files inspected:
+  - `Sources/App/Clients/NwsClient.swift`
+  - `Sources/App/Infrastructure/Notifications/LocationFreshnessPolicy.swift`
+  - `Sources/App/Jobs/IngestNWSAlertsJob.swift`
+  - `Sources/App/Jobs/NotificationSendJob.swift`
+  - `Sources/App/Models/API/OperatorDashboardSnapshotResponse.swift`
+  - `Sources/App/Models/NWS/ArcusEvent.swift`
+  - `Sources/App/Models/Notification/NotificationSendAttemptModel.swift`
+  - `Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`
+  - `Tests/AppTests/LocationFreshnessPolicyTests.swift`
+  - `Tests/AppTests/NWSAlertLifecycleTests.swift`
+  - `Tests/AppTests/NotificationSendJobCandidateQueryTests.swift`
+  - `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`
+  - `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`
+  - `Tests/AppTests/OperatorDashboardTargetableCoverageTests.swift`
+  - `Tests/AppTests/OperatorDashboardTests.swift`
+- Existing relevant tests found:
+  - `NWSAlertLifecycleTests` covers earliest-terminal lifecycle derivation and cleanup of active series whose `expires` has elapsed while `ends` is absent
+  - `NotificationSendJobFreshnessDecisionTests` covers inactive/expired new and update suppression plus explicit terminal-notification eligibility at the pure decision boundary
+  - `NotificationSendJobCandidateQueryTests` covers H3 and UGC inclusion at the exact 24-hour cutoff and exclusion immediately beyond it, while preserving active/subscribed/token filters
+  - `LocationFreshnessPolicyTests`, `OperatorDashboardTargetableCoverageTests`, and `OperatorDashboardTests` cover the shared threshold, aggregate semantics, legacy snapshot defaults, API projection, and rendered metrics
+- Recommended test gap:
+  - Behavior: `NotificationSendJob.dequeue` must stop an inactive or expired normal notification before candidate resolution and APNs delivery, then persist one send-attempt summary with `noOpReason == inactiveOrExpiredSeries`
+  - Repository: `arcus-signal`
+  - Evidence: commit `c539de30e3f22fdab9e1d6a8d5c2dbba580003b8`; production wiring in `Sources/App/Jobs/NotificationSendJob.swift`; only the extracted `deliveryNoOpReason` helper is exercised by `Tests/AppTests/NotificationSendJobFreshnessDecisionTests.swift`, while adjacent delivery-boundary tests do not execute this early-return path
+  - Risk reduced: prevents a regression that could send stale severe-weather alerts or silently lose the operator-visible no-op accounting used to diagnose suppressed delivery
+  - Test type: integration
+  - Suggested test name: `dequeuePersistsInactiveSeriesNoOpWithoutResolvingCandidatesOrSending`
+  - Minimal setup: seed an inactive series and send-attempt table, execute `dequeue` with a recording sender, then query the persisted attempt
+  - Expected assertion: sender call count is zero, candidate resolution is false, counts remain zero, and exactly one attempt records `inactiveOrExpiredSeries`
+  - Size: S
+  - Confidence: Medium
+- Top recommended test: add the inactive-series `dequeue` integration test to the existing notification delivery-boundary suite; expected files touched: `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`; estimated churn: roughly 30-60 lines; regression risk: low
+- GitHub issue: [#154 — Characterize notification dequeue lifecycle](https://github.com/justinrooks/arcus-signal/issues/154) captured this exact finding, is labeled `test`, is attached to Project Arcus, and is closed after implementation
+- Watchlist items:
+  - The newly enabled `Flood Advisory`, `Flood Statement`, and `Heat Advisory` request-filter values rely on the existing NWS HTTP request-contract test. Promote only if that test does not assert the complete event whitelist after these commits.
+- Implementation recommended: yes, as one focused integration test
+- Out-of-scope repositories intentionally not scanned: all sibling repositories and external NWS/APNs implementations
+
+## 2026-08-04
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-07-28T15:01:54.935Z` through `2026-08-04`); 18 commits from `45b636218ab262ed9bbf8a7022e7cb16f3d30024` through `51f4259b06f1e851f97ee37742e3384fe005f21a`
+- High-risk areas inspected:
+  - notification candidate selection, atomic ledger claims/completions, duplicate suppression, and inactive-series send suppression
+  - NWS event/revision transactional persistence, lineage reconciliation, dispatch-intent creation, and rollback behavior
+  - Storm Setup cache I/O serialization, candidate fallback, pressure-artifact catalog transitions, and child-process cancellation/timeout cleanup
+- Files inspected:
+  - `Sources/App/Models/Notification/NotificationCandidateStore.swift`
+  - `Sources/App/Models/Notification/NotificationDeliveryStore.swift`
+  - `Sources/App/Jobs/NotificationSendJob.swift`
+  - `Sources/App/Services/NWSIngestPersistence.swift`
+  - `Sources/App/Jobs/IngestNWSAlertsJob.swift`
+  - `Sources/App/StormSetup/GribSubsetCache.swift`
+  - `Sources/App/StormSetup/StormSetupSnapshotCache.swift`
+  - `Sources/App/StormSetup/GribAdapter.swift`
+  - `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`
+  - `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`
+  - `Tests/AppTests/NotificationLedgerFreshnessPersistenceTests.swift`
+  - `Tests/AppTests/NWSIngestPersistenceFlowTests.swift`
+  - `Tests/AppTests/StormSetupGribSubsetCacheTests.swift`
+  - `Tests/AppTests/StormSetupProviderTests.swift`
+  - `Tests/AppTests/ProcessRunnerTests.swift`
+- Existing relevant tests found:
+  - notification delivery-boundary coverage now includes the prior audit's recommended inactive-series dequeue test, plus stale/degraded/fresh handling, duplicate claims, and sender failure persistence
+  - notification persistence coverage exercises exact claim fields, duplicate claims, sent/failed completion, and missing-claim failures
+  - NWS persistence flow coverage exercises geometry-specific dispatch intents, duplicate revisions, deterministic lineage reconciliation, and full rollback after a late transaction failure
+  - Storm Setup coverage exercises cache corruption and partial-write handling, serialized critical sections with cancellation, ordered candidate fallback, and cooperative/forced child-process termination
+- Recommended test gaps: none (High: 0, Medium: 0, Low: 0)
+- Top recommended test: none. No test gap recommended; the behavior-bearing extraction commits added or strengthened focused contract tests alongside the ownership changes.
+- Validation: `swift test --filter NotificationSendJobDeliveryBoundaryTests` (6 passed), `swift test --filter NWSIngestPersistenceFlowTests` (5 passed), `swift test --filter ProcessRunnerTests` (9 passed), and `swift test --filter StormSetupGribSubsetCacheTests` (13 passed)
+- Watchlist items:
+  - APNs retry/backoff, queue replay, abandoned-claim recovery, and unknown-outcome handling remain explicit unimplemented reliability gaps in `docs/architecture.md`; tests should accompany those behaviors when implementation is scoped, but current evidence does not justify tests for behavior that does not yet exist.
+- Implementation recommended: no
+- Out-of-scope repositories intentionally not scanned: all sibling repositories and external NWS, APNs, Redis, and PostgreSQL implementations

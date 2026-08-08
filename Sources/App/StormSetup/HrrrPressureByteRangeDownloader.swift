@@ -83,11 +83,17 @@ struct HrrrPressureByteRangeDownloader: Sendable {
 
         for range in byteRangePlan.ranges {
             try Task.checkCancellation()
-            let response = try await httpClient.get(
-                sourceURL,
-                headers: requestHeaders(for: range),
-                timeoutSeconds: requestTimeoutSeconds
-            )
+            let response: HTTPResponse
+            do {
+                response = try await httpClient.get(
+                    sourceURL,
+                    headers: requestHeaders(for: range),
+                    timeoutSeconds: requestTimeoutSeconds
+                )
+            } catch {
+                try rethrowCancellationIfNeeded(error)
+                throw PressureArtifactAcquisitionError.classify(error)
+            }
             try Task.checkCancellation()
 
             switch response.status {

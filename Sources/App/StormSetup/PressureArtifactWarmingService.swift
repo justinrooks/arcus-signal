@@ -62,6 +62,36 @@ enum PressureArtifactWarmingError: Error, Sendable, CustomStringConvertible {
     }
 }
 
+enum PressureArtifactFailureDispositionError: Error, Sendable, CustomStringConvertible {
+    case completionDeferred(errorType: String)
+    case completionObsolete(errorType: String)
+
+    var errorType: String {
+        switch self {
+        case .completionDeferred(let errorType), .completionObsolete(let errorType):
+            return errorType
+        }
+    }
+
+    var logMessage: String {
+        switch self {
+        case .completionDeferred:
+            return "PressureArtifactWarmJob left failure completion to durable queue work."
+        case .completionObsolete:
+            return "PressureArtifactWarmJob completed after losing its failure-completion claim."
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .completionDeferred(let errorType):
+            return "Pressure artifact failure completion was deferred (\(errorType))."
+        case .completionObsolete(let errorType):
+            return "Pressure artifact failure completion was already obsolete (\(errorType))."
+        }
+    }
+}
+
 struct PressureArtifactWarmingService: PressureArtifactWarming {
     private let httpClient: any HTTPClient
     private let validator: any PressureArtifactValidating
@@ -407,7 +437,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                         state: "failure completion deferred"
                     )
                 )
-                throw acquisitionError
+                throw PressureArtifactFailureDispositionError.completionDeferred(
+                    errorType: String(describing: type(of: acquisitionError))
+                )
             }
 
             guard completedFailure else {
@@ -418,10 +450,9 @@ struct PressureArtifactWarmingService: PressureArtifactWarming {
                         state: "failed"
                     )
                 )
-                if timeoutSeconds != nil {
-                    throw acquisitionError
-                }
-                return
+                throw PressureArtifactFailureDispositionError.completionObsolete(
+                    errorType: String(describing: type(of: acquisitionError))
+                )
             }
 
             if let timeoutSeconds {
@@ -513,14 +544,20 @@ extension PressureArtifactWarmingService {
             throw PressureArtifactWarmingError.missingIdxURL
         }
 
-        let response = try await httpClient.get(
-            idxURL,
-            headers: [
-                "User-Agent": HTTPRequestHeaders.userAgent(),
-                "Accept": "text/plain, application/octet-stream, */*"
-            ],
-            timeoutSeconds: httpRequestTimeoutSeconds
-        )
+        let response: HTTPResponse
+        do {
+            response = try await httpClient.get(
+                idxURL,
+                headers: [
+                    "User-Agent": HTTPRequestHeaders.userAgent(),
+                    "Accept": "text/plain, application/octet-stream, */*"
+                ],
+                timeoutSeconds: httpRequestTimeoutSeconds
+            )
+        } catch {
+            try rethrowCancellationIfNeeded(error)
+            throw PressureArtifactAcquisitionError.classify(error)
+        }
         try Task.checkCancellation()
 
         guard (200...299).contains(response.status) else {

@@ -9,6 +9,372 @@ import ArcusCore
 
 @Suite("Pressure artifact warm job", .serialized)
 struct PressureArtifactWarmJobTests {
+    @Test("pressure warm retry delays are deterministic and positive")
+    func retryDelaysAreDeterministicAndPositive() {
+        let initialPayload = makePayload()
+        let firstRetry = PressureArtifactWarmRetryPolicy.continuation(after: initialPayload)
+        let secondRetry = firstRetry.flatMap {
+            PressureArtifactWarmRetryPolicy.continuation(after: $0.payload)
+        }
+
+        #expect(PressureArtifactWarmRetryPolicy.maximumAcquisitionAttempts == 3)
+        #expect(firstRetry?.payload.acquisitionAttempt == 1)
+        #expect(firstRetry?.delaySeconds == 30)
+        #expect(secondRetry?.payload.acquisitionAttempt == 2)
+        #expect(secondRetry?.delaySeconds == 120)
+        #expect(firstRetry?.delaySeconds ?? 0 > 0)
+        #expect(secondRetry?.delaySeconds ?? 0 > 0)
+        #expect(secondRetry.flatMap {
+            PressureArtifactWarmRetryPolicy.continuation(after: $0.payload)
+        } == nil)
+    }
+
+    @Test("legacy pressure warm payloads decode as initial acquisition attempts")
+    func legacyPayloadsDecodeAsInitialAttempts() throws {
+        let payload = makePayload()
+        let encoded = try JSONEncoder().encode(payload)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "acquisitionAttempt")
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(PressureArtifactWarmJobPayload.self, from: legacyData)
+
+        #expect(decoded.acquisitionAttempt == 0)
+    }
+
+    @Test("pressure warm retry classification is narrow")
+    func retryClassificationIsNarrow() {
+        let source = makeSourceMetadata(for: makePayload())
+
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactAcquisitionError.classify(URLError(.timedOut))
+        ))
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactAcquisitionError.classify(URLError(.networkConnectionLost))
+        ))
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactAcquisitionError.classify(URLError(.dnsLookupFailed))
+        ))
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactWarmingError.warmAttemptTimedOut(seconds: 900)
+        ))
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactAcquisitionError.classify(
+                DescribedPressureArtifactWarmError(description: "HTTPClientError.readTimeout")
+            )
+        ))
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactAcquisitionError.classify(
+                DescribedPressureArtifactWarmError(description: "HTTPClientError.remoteConnectionClosed")
+            )
+        ))
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(CancellationError()) == false)
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactWarmingError.noSelectableMessages
+        ) == false)
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            HrrrPressureByteRangeDownloaderError.emptyResponseBody(source: source, range: "bytes=0-3")
+        ) == false)
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            HrrrPressureSubsetGribCacheError.responseTooLarge(
+                source: source,
+                byteCount: 2,
+                maximumByteCount: 1
+            )
+        ) == false)
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            HrrrPressureSubsetGribCacheError.checksumMismatch(
+                source: source,
+                expected: "expected",
+                actual: "actual"
+            )
+        ) == false)
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            PressureArtifactWarmValidatorStubError.failedValidation
+        ) == false)
+        #expect(PressureArtifactWarmRetryPolicy.isTransientAcquisitionFailure(
+            DescribedPressureArtifactWarmError(
+                description: "unknown work timed out after a DNS connection reset failed"
+            )
+        ) == false)
+    }
+
+    @Test("transient queue failure is delayed and a later attempt succeeds")
+    func transientQueueFailureIsDelayedAndLaterAttemptSucceeds() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload),
+                idxFailureDescriptions: [sourceURLs.idx.absoluteString: ["HTTPClientError.remoteConnectionClosed"]]
+            )
+            let service = makeWarmingService(
+                blockingWorkExecutor: blockingWorkExecutor,
+                client: client
+            )
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(warmingService: service))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            let firstAttemptStartedAt = Date()
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let delayed = try queuedJobData(on: app)
+            let retryPayload = try PressureArtifactWarmJob.parsePayload(delayed.data.payload)
+            #expect(delayed.data.maxRetryCount == 0)
+            #expect(retryPayload.acquisitionAttempt == 1)
+            let delayUntil = try #require(delayed.data.delayUntil)
+            #expect((29...31).contains(delayUntil.timeIntervalSince(firstAttemptStartedAt)))
+            let failedRow = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(failedRow.status == .failed)
+            #expect(failedRow.claimToken == nil)
+            #expect(failedRow.leaseExpiresAt == nil)
+
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+            let stillDelayed = try queuedJobData(on: app)
+            #expect(try PressureArtifactWarmJob.parsePayload(stillDelayed.data.payload).acquisitionAttempt == 1)
+            #expect(client.idxRequestCount == 1)
+
+            makeQueuedJobEligible(stillDelayed, on: app)
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let readyRow = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+            #expect(client.idxRequestCount == 2)
+            #expect(readyRow.status == .ready)
+            #expect(readyRow.claimToken == nil)
+            #expect(readyRow.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("transient range failure schedules a delayed continuation that later succeeds")
+    func transientRangeFailureSchedulesDelayedContinuationThatLaterSucceeds() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload),
+                rangeFailureCodes: [sourceURLs.grib.absoluteString: [.networkConnectionLost]]
+            )
+            let service = makeWarmingService(
+                blockingWorkExecutor: blockingWorkExecutor,
+                client: client
+            )
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(warmingService: service))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let delayed = try queuedJobData(on: app)
+            #expect(delayed.data.maxRetryCount == 0)
+            #expect(try PressureArtifactWarmJob.parsePayload(delayed.data.payload).acquisitionAttempt == 1)
+            #expect(client.rangeRequestCount == 1)
+
+            makeQueuedJobEligible(delayed, on: app)
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let row = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+            #expect(client.idxRequestCount == 2)
+            #expect(client.rangeRequestCount > 1)
+            #expect(row.status == .ready)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("three transient failures exhaust the queue job and leave a claim-free failed row")
+    func transientFailureExhaustionLeavesClaimFreeFailedRow() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxFailureCodes: [sourceURLs.idx.absoluteString: [.timedOut, .timedOut, .timedOut]]
+            )
+            let service = makeWarmingService(
+                blockingWorkExecutor: blockingWorkExecutor,
+                client: client
+            )
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(warmingService: service))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            for expectedFailureCount in 1...2 {
+                let attemptStartedAt = Date()
+                try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+                let delayed = try queuedJobData(on: app)
+                let retryPayload = try PressureArtifactWarmJob.parsePayload(delayed.data.payload)
+                #expect(delayed.data.maxRetryCount == 0)
+                #expect(retryPayload.acquisitionAttempt == expectedFailureCount)
+                let expectedDelay = expectedFailureCount == 1 ? 30.0 : 120.0
+                let delayUntil = try #require(delayed.data.delayUntil)
+                #expect(((expectedDelay - 1)...(expectedDelay + 1)).contains(
+                    delayUntil.timeIntervalSince(attemptStartedAt)
+                ))
+
+                try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+                let stillDelayed = try queuedJobData(on: app)
+                #expect(
+                    try PressureArtifactWarmJob.parsePayload(stillDelayed.data.payload).acquisitionAttempt
+                        == expectedFailureCount
+                )
+                #expect(client.idxRequestCount == expectedFailureCount)
+                makeQueuedJobEligible(stillDelayed, on: app)
+            }
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let row = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(client.idxRequestCount == 3)
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+            #expect(row.status == .failed)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+        }
+    }
+
+    @Test("deferred failure completion does not schedule an acquisition continuation")
+    func deferredFailureCompletionDoesNotScheduleAcquisitionContinuation() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let completionDispatcher = RecordingPressureArtifactFailureCompletionDispatcher()
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            let service = PressureArtifactWarmingService(
+                httpClient: PressureArtifactWarmStubHTTPClient(
+                    idxFailureCodes: [sourceURLs.idx.absoluteString: [.timedOut]]
+                ),
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                failureCompleter: AlwaysFailingPressureArtifactFailureCompleter(),
+                failureCompletionDispatcher: completionDispatcher
+            )
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: retryDispatcher
+            ))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let row = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(completionDispatcher.payloads.count == 1)
+            #expect(retryDispatcher.continuations.isEmpty)
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+            #expect(row.status == .warming)
+            #expect(row.claimToken != nil)
+            #expect(row.leaseExpiresAt != nil)
+        }
+    }
+
+    @Test("failed durable completion dispatch remains a zero-retry warm failure")
+    func failedCompletionDispatchRemainsZeroRetryWarmFailure() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            let service = PressureArtifactWarmingService(
+                httpClient: PressureArtifactWarmStubHTTPClient(
+                    idxFailureCodes: [sourceURLs.idx.absoluteString: [.timedOut]]
+                ),
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                failureCompleter: AlwaysFailingPressureArtifactFailureCompleter(),
+                failureCompletionDispatcher: ThrowingPressureArtifactFailureCompletionDispatcher()
+            )
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: retryDispatcher
+            ))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let row = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(retryDispatcher.continuations.isEmpty)
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+            #expect(row.status == .warming)
+            #expect(row.claimToken != nil)
+            #expect(row.leaseExpiresAt != nil)
+        }
+    }
+
+    @Test("failed acquisition continuation dispatch leaves a claim-free failed row")
+    func failedAcquisitionContinuationDispatchLeavesClaimFreeFailedRow() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+            let service = makeWarmingService(
+                blockingWorkExecutor: blockingWorkExecutor,
+                client: PressureArtifactWarmStubHTTPClient(
+                    idxFailureCodes: [sourceURLs.idx.absoluteString: [.timedOut]]
+                )
+            )
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: ThrowingPressureArtifactWarmRetryDispatcher()
+            ))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            let row = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+            #expect(row.status == .failed)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+        }
+    }
+
     @Test("default pressure warmer propagates configured fractional HTTP timeout")
     func defaultPressureWarmerPropagatesConfiguredFractionalHTTPTimeout() async throws {
         try await withApp { app, _ in
@@ -63,7 +429,11 @@ struct PressureArtifactWarmJobTests {
                 retentionDuration: serviceRetentionSeconds,
                 maximumByteCount: serviceMaximumByteCount
             )
-            let job = PressureArtifactWarmJob(warmingService: service)
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            let job = PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: retryDispatcher
+            )
             let context = makeQueueContext(app: app)
 
             async let first = job.dequeue(context, payload)
@@ -160,10 +530,10 @@ struct PressureArtifactWarmJobTests {
                 maximumByteCount: serviceMaximumByteCount
             )
             let job = PressureArtifactWarmJob(warmingService: service)
+            let logHandler = CapturingLogHandler()
+            let logger = Logger(label: "pressure-warm-terminal", factory: { _ in logHandler })
 
-            await #expect(throws: PressureArtifactWarmJobError.self) {
-                try await job.dequeue(makeQueueContext(app: app), payload)
-            }
+            try await job.dequeue(makeQueueContext(app: app, logger: logger), payload)
 
             let row = try #require(try await PressureArtifactCatalogModel.find(
                 runTime: payload.runTime,
@@ -177,6 +547,10 @@ struct PressureArtifactWarmJobTests {
             #expect(row.errorSummary?.contains("failedValidation") == true)
             #expect(row.localPath == nil)
             #expect(row.byteSize == nil)
+            #expect(logHandler.events.contains { $0.message == "PressureArtifactWarmJob finished." } == false)
+            #expect(logHandler.events.contains {
+                $0.message == "PressureArtifactWarmJob completed with a terminal failure."
+            })
         }
     }
 
@@ -223,7 +597,9 @@ struct PressureArtifactWarmJobTests {
             #expect(renderedLogs.contains(sentinelURL.path) == false)
             #expect(renderedLogs.contains(sentinelURL.absoluteString) == false)
             #expect(renderedLogs.contains("Pressure artifact validation failed."))
-            #expect(renderedLogs.contains("Job failed"))
+            #expect(renderedLogs.contains("Pressure artifact failure completion deferred to durable queue work."))
+            #expect(renderedLogs.contains("PressureArtifactWarmJob left failure completion to durable queue work."))
+            #expect(renderedLogs.contains("PressureArtifactWarmJob scheduled a transient acquisition retry.") == false)
         }
     }
 
@@ -250,7 +626,11 @@ struct PressureArtifactWarmJobTests {
                 maximumByteCount: serviceMaximumByteCount,
                 recoveryTimeoutSeconds: 1_800
             )
-            let job = PressureArtifactWarmJob(warmingService: service)
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            let job = PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: retryDispatcher
+            )
 
             await #expect(throws: CancellationError.self) {
                 try await job.dequeue(makeQueueContext(app: app), payload)
@@ -278,12 +658,36 @@ struct PressureArtifactWarmJobTests {
             #expect(client.idxRequestCount == 1)
             #expect(client.rangeRequestCount == makeExpectedValidationLineCount())
             #expect(validator.validationCount == 1)
+            #expect(retryDispatcher.continuations.isEmpty)
             #expect(FileManager.default.fileExists(atPath: cachedKey.subsetFileURL(rootURL: cacheRoot).path))
             #expect(FileManager.default.fileExists(atPath: cachedKey.metadataFileURL(rootURL: cacheRoot).path))
         }
     }
 
-    @Test("whole-warm timeout releases dequeue and completes the owned claim as failed")
+    @Test("queue-worker cancellation does not dispatch an acquisition continuation")
+    func queueWorkerCancellationDoesNotDispatchAcquisitionContinuation() async throws {
+        try await withApp { app, _ in
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(
+                warmingService: CancellingPressureArtifactWarming(),
+                retryDispatcher: retryDispatcher
+            ))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                makePayload(),
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+
+            #expect(retryDispatcher.continuations.isEmpty)
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
+        }
+    }
+
+    @Test("whole-warm timeout completes the owned claim and schedules a logical retry")
     func wholeWarmTimeoutReleasesDequeueAndCompletesOwnedClaimAsFailed() async throws {
         try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
@@ -302,23 +706,23 @@ struct PressureArtifactWarmJobTests {
                 warmTimeoutSeconds: 12,
                 timeoutSleeper: timeoutSleeper
             )
-            let job = PressureArtifactWarmJob(warmingService: service)
-            let dequeueTask = Task {
-                try await job.dequeue(makeQueueContext(app: app), payload)
+            app.queues.use(.test)
+            app.queues.add(PressureArtifactWarmJob(warmingService: service))
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+            let attemptStartedAt = Date()
+            let workerTask = Task {
+                try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
             }
 
             await client.waitUntilRequestStarts()
             await timeoutSleeper.waitUntilSleepStarts()
             await timeoutSleeper.fire()
 
-            do {
-                try await dequeueTask.value
-                Issue.record("Expected the queue-facing dequeue call to throw a warm timeout.")
-            } catch PressureArtifactWarmJobError.warmAttemptTimedOut(let seconds) {
-                #expect(seconds == 12)
-            } catch {
-                Issue.record("Expected a distinct warm timeout, got \(String(reflecting: error)).")
-            }
+            try await workerTask.value
 
             let row = try #require(
                 try await PressureArtifactCatalogModel.find(
@@ -336,6 +740,12 @@ struct PressureArtifactWarmJobTests {
             #expect(row.byteSize == nil)
             #expect(row.errorSummary == "Pressure artifact warm attempt timed out after 12 seconds.")
             #expect((row.errorSummary?.count ?? .max) < 100)
+            let delayed = try queuedJobData(on: app)
+            let retryPayload = try PressureArtifactWarmJob.parsePayload(delayed.data.payload)
+            let delayUntil = try #require(delayed.data.delayUntil)
+            #expect(delayed.data.maxRetryCount == 0)
+            #expect(retryPayload.acquisitionAttempt == 1)
+            #expect((29...31).contains(delayUntil.timeIntervalSince(attemptStartedAt)))
         }
     }
 
@@ -358,7 +768,11 @@ struct PressureArtifactWarmJobTests {
                 warmTimeoutSeconds: 12,
                 timeoutSleeper: timeoutSleeper
             )
-            let job = PressureArtifactWarmJob(warmingService: service)
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            let job = PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: retryDispatcher
+            )
             let dequeueTask = Task {
                 try await job.dequeue(makeQueueContext(app: app), payload)
             }
@@ -381,14 +795,7 @@ struct PressureArtifactWarmJobTests {
             await timeoutSleeper.waitUntilSleepStarts()
             await timeoutSleeper.fire()
 
-            do {
-                try await dequeueTask.value
-                Issue.record("Expected the stale owner to surface its warm timeout.")
-            } catch PressureArtifactWarmJobError.warmAttemptTimedOut(let seconds) {
-                #expect(seconds == 12)
-            } catch {
-                Issue.record("Expected a distinct warm timeout, got \(String(reflecting: error)).")
-            }
+            try await dequeueTask.value
 
             let refetched = try #require(
                 try await PressureArtifactCatalogModel.find(
@@ -402,6 +809,7 @@ struct PressureArtifactWarmJobTests {
             #expect(refetched.claimToken == newerClaimToken)
             #expect(refetched.leaseExpiresAt == newerLeaseExpiresAt)
             #expect(refetched.errorSummary == nil)
+            #expect(retryDispatcher.continuations.isEmpty)
         }
     }
 
@@ -869,8 +1277,8 @@ struct PressureArtifactWarmJobTests {
         #expect(requested.contains(50) == false)
     }
 
-    @Test("validation line-count mismatch marks the catalog row failed")
-    func validationLineCountMismatchMarksTheCatalogRowFailed() async throws {
+    @Test("validation failures containing transport words remain terminal")
+    func validationFailuresContainingTransportWordsRemainTerminal() async throws {
         try await withApp { app, blockingWorkExecutor in
             let payload = makePayload()
             let sourceURLs = makeSourceURLs(for: payload)
@@ -881,7 +1289,12 @@ struct PressureArtifactWarmJobTests {
                 idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
                 rangeResponses: makeRangeResponses(for: payload)
             )
-            let validator = PressureArtifactWarmValidatorStub(lineCount: expectedLineCount - 1)
+            let validator = PressureArtifactWarmValidatorStub(
+                error: DescribedPressureArtifactWarmError(
+                    description: "validation timed out after DNS connection reset failed"
+                ),
+                lineCount: expectedLineCount
+            )
             let service = PressureArtifactWarmingService(
                 httpClient: client,
                 blockingWorkExecutor: blockingWorkExecutor,
@@ -893,9 +1306,14 @@ struct PressureArtifactWarmJobTests {
             )
             let job = PressureArtifactWarmJob(warmingService: service)
 
-            await #expect(throws: PressureArtifactWarmJobError.self) {
-                try await job.dequeue(makeQueueContext(app: app), payload)
-            }
+            app.queues.use(.test)
+            app.queues.add(job)
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
 
             let row = try #require(try await PressureArtifactCatalogModel.find(
                 runTime: payload.runTime,
@@ -906,9 +1324,12 @@ struct PressureArtifactWarmJobTests {
             ))
 
             #expect(row.status == .failed)
-            #expect(row.errorSummary?.contains("expected \(expectedLineCount)") == true)
-            #expect(row.errorSummary?.contains("returned \(expectedLineCount - 1) messages") == true)
+            #expect(row.errorSummary?.contains("validation timed out") == true)
+            #expect(row.errorSummary?.contains("DNS connection reset") == true)
             #expect(row.status != .ready)
+            #expect(validator.validationCount == 1)
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
         }
     }
 
@@ -934,9 +1355,14 @@ struct PressureArtifactWarmJobTests {
             )
             let job = PressureArtifactWarmJob(warmingService: service)
 
-            await #expect(throws: PressureArtifactWarmJobError.self) {
-                try await job.dequeue(makeQueueContext(app: app), payload)
-            }
+            app.queues.use(.test)
+            app.queues.add(job)
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+            try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
 
             let row = try #require(try await PressureArtifactCatalogModel.find(
                 runTime: payload.runTime,
@@ -951,6 +1377,8 @@ struct PressureArtifactWarmJobTests {
             #expect(row.status == .failed)
             #expect(row.status != .ready)
             #expect(row.errorSummary?.contains("selection is incomplete") == true)
+            #expect(app.queues.test.queue.isEmpty)
+            #expect(app.queues.test.jobs.isEmpty)
         }
     }
 
@@ -1007,6 +1435,55 @@ struct PressureArtifactWarmJobTests {
 }
 
 private extension PressureArtifactWarmJobTests {
+    func makeWarmingService(
+        blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting,
+        client: any App.HTTPClient
+    ) -> PressureArtifactWarmingService {
+        PressureArtifactWarmingService(
+            httpClient: client,
+            blockingWorkExecutor: blockingWorkExecutor,
+            validator: PressureArtifactWarmValidatorStub(lineCount: makeExpectedValidationLineCount()),
+            cacheRootURL: testRootURL(),
+            dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+            retentionDuration: serviceRetentionSeconds,
+            maximumByteCount: serviceMaximumByteCount
+        )
+    }
+
+    func findCatalogRow(
+        for payload: PressureArtifactWarmJobPayload,
+        on db: any Database
+    ) async throws -> PressureArtifactCatalogModel? {
+        try await PressureArtifactCatalogModel.find(
+            runTime: payload.runTime,
+            forecastHour: payload.forecastHour,
+            product: payload.product,
+            fieldSetVersion: payload.fieldSetVersion,
+            on: db
+        )
+    }
+
+    func queuedJobData(on app: Application) throws -> (id: JobIdentifier, data: JobData) {
+        let id = try #require(app.queues.test.queue.first)
+        let data = try #require(app.queues.test.jobs[id])
+        return (id, data)
+    }
+
+    func makeQueuedJobEligible(
+        _ queuedJob: (id: JobIdentifier, data: JobData),
+        on app: Application
+    ) {
+        let data = queuedJob.data
+        app.queues.test.jobs[queuedJob.id] = JobData(
+            payload: data.payload,
+            maxRetryCount: data.maxRetryCount,
+            jobName: data.jobName,
+            delayUntil: .distantPast,
+            queuedAt: data.queuedAt,
+            attempts: data.attempts ?? 0
+        )
+    }
+
     func withApp(
         test: (Application, NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> Void
     ) async throws {
@@ -1214,6 +1691,64 @@ private struct AlwaysFailingPressureArtifactFailureCompleter: PressureArtifactFa
     }
 }
 
+private struct CancellingPressureArtifactWarming: PressureArtifactWarming {
+    func warm(
+        payload: PressureArtifactWarmJobPayload,
+        on application: Application,
+        logger: Logger
+    ) async throws {
+        _ = payload
+        _ = application
+        _ = logger
+        throw CancellationError()
+    }
+}
+
+private final class RecordingPressureArtifactFailureCompletionDispatcher: PressureArtifactFailureCompletionJobDispatching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _payloads: [PressureArtifactFailureCompletionJobPayload] = []
+
+    var payloads: [PressureArtifactFailureCompletionJobPayload] {
+        lock.withLock { _payloads }
+    }
+
+    func dispatch(
+        _ payload: PressureArtifactFailureCompletionJobPayload,
+        on application: Application
+    ) async throws {
+        _ = application
+        lock.withLock {
+            _payloads.append(payload)
+        }
+    }
+}
+
+private struct ThrowingPressureArtifactFailureCompletionDispatcher: PressureArtifactFailureCompletionJobDispatching {
+    func dispatch(
+        _ payload: PressureArtifactFailureCompletionJobPayload,
+        on application: Application
+    ) async throws {
+        _ = payload
+        _ = application
+        throw PressureArtifactWarmTestDispatchError.failed
+    }
+}
+
+private struct ThrowingPressureArtifactWarmRetryDispatcher: PressureArtifactWarmRetryDispatching {
+    func dispatch(
+        _ continuation: PressureArtifactWarmRetryContinuation,
+        on application: Application
+    ) async throws {
+        _ = continuation
+        _ = application
+        throw PressureArtifactWarmTestDispatchError.failed
+    }
+}
+
+private enum PressureArtifactWarmTestDispatchError: Error {
+    case failed
+}
+
 private actor ControllablePressureArtifactWarmTimeoutSleeper: PressureArtifactWarmTimeoutSleeping {
     private var sleepStarted = false
     private var sleepStartedWaiters: [CheckedContinuation<Void, Never>] = []
@@ -1302,6 +1837,9 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
     private let idxResponses: [String: Data]
     private let rangeResponses: [String: HTTPResponse]
     private let lock = NSLock()
+    private var idxFailureCodes: [String: [URLError.Code]]
+    private var idxFailureDescriptions: [String: [String]]
+    private var rangeFailureCodes: [String: [URLError.Code]]
     private var _idxRequestCount = 0
     private var _rangeRequestCount = 0
     private var _requestedURLs: [String] = []
@@ -1310,10 +1848,16 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
 
     init(
         idxResponses: [String: Data] = [:],
-        rangeResponses: [String: HTTPResponse] = [:]
+        rangeResponses: [String: HTTPResponse] = [:],
+        idxFailureCodes: [String: [URLError.Code]] = [:],
+        idxFailureDescriptions: [String: [String]] = [:],
+        rangeFailureCodes: [String: [URLError.Code]] = [:]
     ) {
         self.idxResponses = idxResponses
         self.rangeResponses = rangeResponses
+        self.idxFailureCodes = idxFailureCodes
+        self.idxFailureDescriptions = idxFailureDescriptions
+        self.rangeFailureCodes = rangeFailureCodes
     }
 
     var idxRequestCount: Int {
@@ -1342,6 +1886,28 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
         if headers["Range"] == nil {
             lock.withLock { _idxRequestCount += 1 }
             lock.withLock { _idxRequestTimeouts.append(timeoutSeconds) }
+            let failureDescription = lock.withLock { () -> String? in
+                guard var descriptions = idxFailureDescriptions[url.absoluteString], !descriptions.isEmpty else {
+                    return nil
+                }
+                let description = descriptions.removeFirst()
+                idxFailureDescriptions[url.absoluteString] = descriptions
+                return description
+            }
+            if let failureDescription {
+                throw DescribedPressureArtifactWarmError(description: failureDescription)
+            }
+            let failureCode = lock.withLock { () -> URLError.Code? in
+                guard var codes = idxFailureCodes[url.absoluteString], !codes.isEmpty else {
+                    return nil
+                }
+                let code = codes.removeFirst()
+                idxFailureCodes[url.absoluteString] = codes
+                return code
+            }
+            if let failureCode {
+                throw URLError(failureCode)
+            }
             guard let data = idxResponses[url.absoluteString] else {
                 throw URLError(.badServerResponse)
             }
@@ -1355,6 +1921,17 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
 
         lock.withLock { _rangeRequestCount += 1 }
         lock.withLock { _rangeRequestTimeouts.append(timeoutSeconds) }
+        let failureCode = lock.withLock { () -> URLError.Code? in
+            guard var codes = rangeFailureCodes[url.absoluteString], !codes.isEmpty else {
+                return nil
+            }
+            let code = codes.removeFirst()
+            rangeFailureCodes[url.absoluteString] = codes
+            return code
+        }
+        if let failureCode {
+            throw URLError(failureCode)
+        }
         let key = url.absoluteString + "|" + (headers["Range"] ?? "")
         guard let response = rangeResponses[key] else {
             throw URLError(.badServerResponse)
@@ -1386,6 +1963,29 @@ private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @uncheck
     }
 
     func clearCache() {}
+}
+
+private final class RecordingPressureArtifactWarmRetryDispatcher: PressureArtifactWarmRetryDispatching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _continuations: [PressureArtifactWarmRetryContinuation] = []
+
+    var continuations: [PressureArtifactWarmRetryContinuation] {
+        lock.withLock { _continuations }
+    }
+
+    func dispatch(
+        _ continuation: PressureArtifactWarmRetryContinuation,
+        on application: Application
+    ) async throws {
+        _ = application
+        lock.withLock {
+            _continuations.append(continuation)
+        }
+    }
+}
+
+private struct DescribedPressureArtifactWarmError: Error, CustomStringConvertible {
+    let description: String
 }
 
 private enum PressureArtifactWarmValidatorStubError: Error, CustomStringConvertible {
