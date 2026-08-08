@@ -133,6 +133,41 @@ public extension HTTPClient {
     }
 }
 
+enum HTTPTransportFailureClassifier {
+    static func isTransient(_ error: any Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut,
+                 .cannotFindHost,
+                 .cannotConnectToHost,
+                 .networkConnectionLost,
+                 .dnsLookupFailed,
+                 .resourceUnavailable,
+                 .notConnectedToInternet,
+                 .internationalRoamingOff,
+                 .callIsActive,
+                 .dataNotAllowed,
+                 .requestBodyStreamExhausted:
+                return true
+            default:
+                break
+            }
+        }
+
+        let message = String(describing: error).lowercased()
+        let transientTokens = [
+            "timed out",
+            "connection reset",
+            "connection refused",
+            "temporarily unavailable",
+            "network is unreachable",
+            "broken pipe",
+            "dns"
+        ]
+        return transientTokens.contains { message.contains($0) }
+    }
+}
+
 public final class VaporApplicationHTTPClient: HTTPClient {
     private let application: Application
     private let delays: [UInt64]
@@ -247,7 +282,7 @@ public final class VaporApplicationHTTPClient: HTTPClient {
                     throw CancellationError()
                 }
 
-                if isTransient(error), attempt < retryDelays.count - 1 {
+                if HTTPTransportFailureClassifier.isTransient(error), attempt < retryDelays.count - 1 {
                     let wait = retryDelays[attempt + 1]
                     logger.debug(
                         "Retrying transient HTTP failure.",
@@ -314,36 +349,4 @@ public final class VaporApplicationHTTPClient: HTTPClient {
         return output
     }
 
-    private func isTransient(_ error: any Error) -> Bool {
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .timedOut,
-                 .cannotFindHost,
-                 .cannotConnectToHost,
-                 .networkConnectionLost,
-                 .dnsLookupFailed,
-                 .resourceUnavailable,
-                 .notConnectedToInternet,
-                 .internationalRoamingOff,
-                 .callIsActive,
-                 .dataNotAllowed,
-                 .requestBodyStreamExhausted:
-                return true
-            default:
-                break
-            }
-        }
-
-        let message = String(describing: error).lowercased()
-        let transientTokens = [
-            "timed out",
-            "connection reset",
-            "connection refused",
-            "temporarily unavailable",
-            "network is unreachable",
-            "broken pipe",
-            "dns"
-        ]
-        return transientTokens.contains { message.contains($0) }
-    }
 }

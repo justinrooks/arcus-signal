@@ -28,7 +28,7 @@ struct PressureArtifactFailureCompletionJobTests {
                 failureCompleter: completer
             )
 
-            await #expect(throws: PressureArtifactWarmingError.self) {
+            await #expect(throws: PressureArtifactFailureDispositionError.self) {
                 try await service.warm(payload: artifact, on: app, logger: app.logger)
             }
 
