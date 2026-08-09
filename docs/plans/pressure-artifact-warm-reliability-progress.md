@@ -88,10 +88,11 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 
 ### Issue #194 - 04: Characterize abandoned model-artifact processing jobs
 
-- **Status:** Pending
+- **Status:** In progress — awaiting human review
 - **Goal:** Add tests and a narrow recovery seam that describe current Redis waiting/processing/job-data behavior without mutating production startup.
 - **Likely files:** new model-artifact queue recovery type/protocol and focused tests; no production lifecycle wiring.
 - **Stop condition:** Tests pin valid, missing-data, unknown-job, duplicate, and already-waiting cases using isolated Redis keys.
+- **Recovery transition for Issue #195:** In one Redis script, inspect each `vapor_queues[model-artifacts]-processing` entry. Preserve and report entries with malformed identifiers, missing or malformed job data, or unknown job names. For known warm, failure-completion, and cleanup jobs, add the identifier to `vapor_queues[model-artifacts]` only when absent, then remove all matching processing entries. The script must keep that check/add/remove sequence atomic so recovery cannot create a second waiting membership.
 
 ### Issue #195 - 05: Recover abandoned model-artifact jobs at worker startup
 
