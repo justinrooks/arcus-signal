@@ -21,6 +21,7 @@ let package = Package(
         .package(url: "https://github.com/vapor/queues.git", from: "1.18.0"),
         // 🧠 Redis queue backend.
         .package(url: "https://github.com/vapor/queues-redis-driver.git", from: "1.1.2"),
+        .package(url: "https://github.com/vapor/redis.git", from: "4.8.0"),
         // ⬡ H3 Geospacial Encoding
         .package(url: "https://github.com/pawelmajcher/SwiftyH3.git", from: "0.5.0"),
         // 📩 APNs push notifications
@@ -37,6 +38,7 @@ let package = Package(
                 .product(name: "FluentPostgresDriver", package: "fluent-postgres-driver"),
                 .product(name: "Queues", package: "queues"),
                 .product(name: "QueuesRedisDriver", package: "queues-redis-driver"),
+                .product(name: "Redis", package: "redis"),
                 .product(name: "SwiftyH3", package: "SwiftyH3"),
                 .product(name: "VaporAPNS", package: "apns"),
                 .product(name: "ArcusCore", package: "ArcusCore"),
@@ -84,6 +86,7 @@ let package = Package(
                 .target(name: "App"),
                 .product(name: "VaporTesting", package: "vapor"),
                 .product(name: "XCTQueues", package: "queues"),
+                .product(name: "Redis", package: "redis"),
             ],
             path: "Tests/AppTests",
             exclude: [
