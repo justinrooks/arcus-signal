@@ -51,7 +51,7 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 | 02 | [#192](https://github.com/justinrooks/arcus-signal/issues/192) | Bound warm attempts and complete timed-out claims | 01 | Pending |
 | 03 | [#193](https://github.com/justinrooks/arcus-signal/issues/193) | Retry transient warm failures with bounded backoff | 01, 02 | Pending |
 | 04 | [#194](https://github.com/justinrooks/arcus-signal/issues/194) | Characterize abandoned model-artifact processing jobs | None | Pending |
-| 05 | [#195](https://github.com/justinrooks/arcus-signal/issues/195) | Recover abandoned model-artifact jobs at worker startup | 04 | Pending |
+| 05 | [#195](https://github.com/justinrooks/arcus-signal/issues/195) | Recover abandoned model-artifact jobs at worker startup | 04 | Implemented — ready for commit |
 | 06 | [#196](https://github.com/justinrooks/arcus-signal/issues/196) | Surface stuck pressure-artifact backlog health | 02 | Pending |
 | 07 | [#201](https://github.com/justinrooks/arcus-signal/issues/201) | Add durable fenced failure-completion retries | 01, 02 | Implemented — ready for publication |
 
@@ -96,10 +96,11 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 
 ### Issue #195 - 05: Recover abandoned model-artifact jobs at worker startup
 
-- **Status:** Pending
-- **Goal:** Atomically return known abandoned model-artifact jobs to the waiting queue before consumers start.
-- **Likely files:** recovery implementation, worker lifecycle/configuration, characterization tests.
-- **Stop condition:** Restart recovery is idempotent, preserves unknown entries, avoids duplicate list membership, logs a summary, and starts consumers only after reconciliation.
+- **Status:** Implemented — ready for commit
+- **Behavior:** One Redis script classifies the complete `model-artifacts` processing list before mutation, returns registered warm, failure-completion, and cleanup jobs to waiting when absent, and removes all matching processing memberships atomically.
+- **Preservation:** Missing or malformed job data, malformed identifiers, and unknown job names remain in processing and are reported by count. Job data and other queue lanes are untouched.
+- **Startup:** `WorkerRuntime` awaits reconciliation before starting any queue consumer or schedule. A reconciliation failure starts neither and triggers the existing worker shutdown path.
+- **Focused verification:** `swift test --filter ModelArtifactQueueRecoveryTests`; `swift test --filter AppTests.AppTests`; strict-concurrency build; `git diff --check`.
 
 ### Issue #196 - 06: Surface stuck pressure-artifact backlog health
 
@@ -126,7 +127,7 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 | 02 | `swift test --filter PressureArtifactWarmJobTests`; `swift test --filter PressureArtifactDiagnosticsTests` | Pending |
 | 03 | Focused warm-job retry tests; probe dispatch tests | Pending |
 | 04 | Focused model-artifact queue recovery characterization tests | Pending |
-| 05 | Recovery tests plus worker bootstrap tests and strict-concurrency build | Pending |
+| 05 | Recovery tests plus worker bootstrap tests and strict-concurrency build | Passed |
 | 06 | `swift test --filter OperatorDashboardPressureArtifactTests` | Pending |
 | 07 | Completion-job queue/PostgreSQL tests; warm and diagnostics regressions; strict-concurrency build | Passed |
 
