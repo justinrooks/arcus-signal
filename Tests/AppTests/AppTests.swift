@@ -969,6 +969,83 @@ struct AppTests {
         }
     }
 
+    @Test("Worker recovers model-artifact jobs before starting any consumers or schedules")
+    func workerRuntimeReconcilesBeforeStartingQueues() async throws {
+        let app = try await Application.make(.testing)
+        let recorder = WorkerRuntimeStartRecorder()
+        let runtime = WorkerRuntime(
+            recoveryOperation: { _ in
+                recorder.record("recovery")
+                return .empty
+            },
+            queueConsumerStarter: { _, lane in
+                recorder.record("consumer:\(lane.rawValue)")
+            },
+            scheduledJobStarter: { _ in
+                recorder.record("scheduled")
+            }
+        )
+
+        do {
+            try await runtime.reconcileAndStartQueueRuntime(on: app)
+            try await app.asyncShutdown()
+        } catch {
+            try? await app.asyncShutdown()
+            throw error
+        }
+
+        #expect(recorder.events == ["recovery"] + ArcusQueueLane.allCases.map { "consumer:\($0.rawValue)" } + ["scheduled"])
+    }
+
+    @Test("Worker boot fails before consumers when zero-grace model-artifact recovery fails")
+    func workerRuntimeBootStopsBeforeConsumersWhenRecoveryFails() async throws {
+        let app = try await Application.make(.testing)
+        let recorder = WorkerRuntimeStartRecorder()
+        let runtime = WorkerRuntime(
+            recoveryOperation: { _ in
+                recorder.record("recovery")
+                throw WorkerRuntimeStartTestError.recoveryFailed
+            },
+            queueConsumerStarter: { _, lane in
+                recorder.record("consumer:\(lane.rawValue)")
+            },
+            scheduledJobStarter: { _ in
+                recorder.record("scheduled")
+            }
+        )
+        app.lifecycle.use(runtime)
+
+        await #expect(throws: WorkerRuntimeStartTestError.self) {
+            try await app.asyncBoot()
+        }
+        #expect(app.didShutdown == false)
+        #expect(recorder.events == ["recovery"])
+
+        try await app.asyncShutdown()
+        #expect(app.didShutdown)
+    }
+
+}
+
+private final class WorkerRuntimeStartRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedEvents: [String] = []
+
+    var events: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedEvents
+    }
+
+    func record(_ event: String) {
+        lock.lock()
+        recordedEvents.append(event)
+        lock.unlock()
+    }
+}
+
+private enum WorkerRuntimeStartTestError: Error {
+    case recoveryFailed
 }
 
 private final class SentinelStormSetupProvider: StormSetupProviding, @unchecked Sendable {

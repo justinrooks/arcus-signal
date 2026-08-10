@@ -12,7 +12,7 @@ Arcus Signal ingests NWS alert revisions, targets eligible installations by H3 o
 
 ### Queue topology
 
-[`ArcusQueueLane`](../Sources/App/Worker/ArcusQueueLane.swift) defines the `ingest`, `target`, `send`, and `model-artifacts` lanes. Worker configuration applies the same `QUEUE_WORKER_COUNT` to Vapor Queues, with a minimum and default of `1`, through [`configureWorkerQueueSettings(on:)`](../Sources/App/configure.swift); [`WorkerRuntime`](../Sources/App/Worker/WorkerRuntime.swift) starts consumers for every lane.
+[`ArcusQueueLane`](../Sources/App/Worker/ArcusQueueLane.swift) defines the `ingest`, `target`, `send`, and `model-artifacts` lanes. Worker configuration applies the same `QUEUE_WORKER_COUNT` to Vapor Queues, with a minimum and default of `1`, through [`configureWorkerQueueSettings(on:)`](../Sources/App/configure.swift). Before any consumer or schedule starts, [`WorkerRuntime`](../Sources/App/Worker/WorkerRuntime.swift) atomically returns abandoned registered model-artifact jobs to waiting while preserving and reporting unknown or malformed entries; failed reconciliation shuts the worker down. After successful reconciliation, `WorkerRuntime` starts consumers for every lane.
 
 ## Delivery pipeline
 
