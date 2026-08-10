@@ -394,7 +394,26 @@ struct OperatorDashboardSnapshotRefresher {
                 COUNT(*) FILTER (WHERE status = 'warming') AS "warmingCount",
                 COUNT(*) FILTER (WHERE status = 'ready') AS "readyCount",
                 COUNT(*) FILTER (WHERE status = 'failed') AS "failedCount",
-                COUNT(*) FILTER (WHERE status = 'expired') AS "expiredCount"
+                COUNT(*) FILTER (WHERE status = 'expired') AS "expiredCount",
+                COUNT(*) FILTER (
+                    WHERE status = 'warming'
+                      AND lease_expires_at <= \(bind: now)
+                ) AS "stuckWarmingCount",
+                CASE
+                    WHEN MIN(lease_expires_at) FILTER (
+                        WHERE status = 'warming'
+                          AND lease_expires_at <= \(bind: now)
+                    ) IS NULL THEN NULL
+                    ELSE GREATEST(0, EXTRACT(EPOCH FROM (
+                        \(bind: now) - MIN(lease_expires_at) FILTER (
+                            WHERE status = 'warming'
+                              AND lease_expires_at <= \(bind: now)
+                        )
+                    )))::BIGINT
+                END AS "oldestExpiredWarmingLeaseAgeSeconds",
+                GREATEST(0, EXTRACT(EPOCH FROM (
+                    \(bind: now) - MIN(COALESCE(last_checked_at, created_at)) FILTER (WHERE status = 'pending')
+                )))::BIGINT AS "oldestPendingAgeSeconds"
             FROM pressure_artifact_catalog
             WHERE product = 'wrfprsf'
               AND field_set_version = \(bind: fieldSetVersion)
@@ -451,6 +470,7 @@ struct OperatorDashboardSnapshotRefresher {
         """).first(decoding: PressureArtifactRow.self)
 
         let latestFailure = latestFailedRow ?? recentRows.first(where: { $0.status == PressureArtifactCatalogStatus.failed.rawValue })
+        let stuckWarmingCount = aggregate.map { Int($0.stuckWarmingCount) } ?? 0
 
         return .init(
             pressureArtifactReadiness: readiness,
@@ -462,6 +482,10 @@ struct OperatorDashboardSnapshotRefresher {
                 readyCount: aggregate.map { Int($0.readyCount) } ?? 0,
                 failedCount: aggregate.map { Int($0.failedCount) } ?? 0,
                 expiredCount: aggregate.map { Int($0.expiredCount) } ?? 0,
+                stuckWarmingCount: stuckWarmingCount,
+                oldestExpiredWarmingLeaseAgeSeconds: aggregate?.oldestExpiredWarmingLeaseAgeSeconds.map(Int.init),
+                oldestPendingAgeSeconds: aggregate?.oldestPendingAgeSeconds.map(Int.init),
+                stuckReason: makeStuckWarmingReason(count: stuckWarmingCount),
                 mostRecentFailureAt: latestFailure?.updatedAt,
                 mostRecentFailureSummary: latestFailure?.errorSummary
             ),
@@ -485,6 +509,12 @@ struct OperatorDashboardSnapshotRefresher {
                 }
             )
         )
+    }
+
+    private func makeStuckWarmingReason(count: Int) -> String? {
+        guard count > 0 else { return nil }
+        let artifactLabel = count == 1 ? "artifact has" : "artifacts have"
+        return "\(count) warming \(artifactLabel) an expired lease; the warming pipeline is stuck."
     }
 
     private func loadPressureArtifactReadiness(
@@ -772,6 +802,9 @@ private struct PressureArtifactCatalogAggregateRow: Decodable {
     let readyCount: Int64
     let failedCount: Int64
     let expiredCount: Int64
+    let stuckWarmingCount: Int64
+    let oldestExpiredWarmingLeaseAgeSeconds: Int64?
+    let oldestPendingAgeSeconds: Int64?
 }
 
 private struct PressureArtifactRow: Decodable {

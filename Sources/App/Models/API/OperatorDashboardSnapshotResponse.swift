@@ -442,6 +442,10 @@ public struct StoredPressureArtifactDashboardCatalogMetric: Codable, Sendable {
     public var readyCount: Int
     public var failedCount: Int
     public var expiredCount: Int
+    public var stuckWarmingCount: Int
+    public var oldestExpiredWarmingLeaseAgeSeconds: Int?
+    public var oldestPendingAgeSeconds: Int?
+    public var stuckReason: String?
     public var mostRecentFailureAt: Date?
     public var mostRecentFailureSummary: String?
 
@@ -453,6 +457,10 @@ public struct StoredPressureArtifactDashboardCatalogMetric: Codable, Sendable {
         readyCount: Int = 0,
         failedCount: Int = 0,
         expiredCount: Int = 0,
+        stuckWarmingCount: Int = 0,
+        oldestExpiredWarmingLeaseAgeSeconds: Int? = nil,
+        oldestPendingAgeSeconds: Int? = nil,
+        stuckReason: String? = nil,
         mostRecentFailureAt: Date? = nil,
         mostRecentFailureSummary: String? = nil
     ) {
@@ -463,8 +471,35 @@ public struct StoredPressureArtifactDashboardCatalogMetric: Codable, Sendable {
         self.readyCount = readyCount
         self.failedCount = failedCount
         self.expiredCount = expiredCount
+        self.stuckWarmingCount = stuckWarmingCount
+        self.oldestExpiredWarmingLeaseAgeSeconds = oldestExpiredWarmingLeaseAgeSeconds
+        self.oldestPendingAgeSeconds = oldestPendingAgeSeconds
+        self.stuckReason = stuckReason
         self.mostRecentFailureAt = mostRecentFailureAt
         self.mostRecentFailureSummary = mostRecentFailureSummary
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case refreshedAt, totalRowCount, pendingCount, warmingCount, readyCount, failedCount, expiredCount
+        case stuckWarmingCount, oldestExpiredWarmingLeaseAgeSeconds, oldestPendingAgeSeconds, stuckReason
+        case mostRecentFailureAt, mostRecentFailureSummary
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.refreshedAt = try container.decodeIfPresent(Date.self, forKey: .refreshedAt)
+        self.totalRowCount = try container.decodeIfPresent(Int.self, forKey: .totalRowCount) ?? 0
+        self.pendingCount = try container.decodeIfPresent(Int.self, forKey: .pendingCount) ?? 0
+        self.warmingCount = try container.decodeIfPresent(Int.self, forKey: .warmingCount) ?? 0
+        self.readyCount = try container.decodeIfPresent(Int.self, forKey: .readyCount) ?? 0
+        self.failedCount = try container.decodeIfPresent(Int.self, forKey: .failedCount) ?? 0
+        self.expiredCount = try container.decodeIfPresent(Int.self, forKey: .expiredCount) ?? 0
+        self.stuckWarmingCount = try container.decodeIfPresent(Int.self, forKey: .stuckWarmingCount) ?? 0
+        self.oldestExpiredWarmingLeaseAgeSeconds = try container.decodeIfPresent(Int.self, forKey: .oldestExpiredWarmingLeaseAgeSeconds)
+        self.oldestPendingAgeSeconds = try container.decodeIfPresent(Int.self, forKey: .oldestPendingAgeSeconds)
+        self.stuckReason = try container.decodeIfPresent(String.self, forKey: .stuckReason)
+        self.mostRecentFailureAt = try container.decodeIfPresent(Date.self, forKey: .mostRecentFailureAt)
+        self.mostRecentFailureSummary = try container.decodeIfPresent(String.self, forKey: .mostRecentFailureSummary)
     }
 }
 
@@ -804,6 +839,10 @@ public struct PressureArtifactCatalogMetricResponse: Content, Sendable {
     public var readyCount: Int
     public var failedCount: Int
     public var expiredCount: Int
+    public var stuckWarmingCount: Int
+    public var oldestExpiredWarmingLeaseAgeSeconds: Int?
+    public var oldestPendingAgeSeconds: Int?
+    public var stuckReason: String?
     public var mostRecentFailureAt: Date?
     public var mostRecentFailureSummary: String?
 
@@ -815,6 +854,10 @@ public struct PressureArtifactCatalogMetricResponse: Content, Sendable {
         self.readyCount = metric.readyCount
         self.failedCount = metric.failedCount
         self.expiredCount = metric.expiredCount
+        self.stuckWarmingCount = metric.stuckWarmingCount
+        self.oldestExpiredWarmingLeaseAgeSeconds = metric.oldestExpiredWarmingLeaseAgeSeconds
+        self.oldestPendingAgeSeconds = metric.oldestPendingAgeSeconds
+        self.stuckReason = metric.stuckReason
         self.mostRecentFailureAt = metric.mostRecentFailureAt
         self.mostRecentFailureSummary = metric.mostRecentFailureSummary
     }
