@@ -92,8 +92,9 @@ struct OperatorDashboardPressureArtifactTests {
                 status: .warming,
                 localPath: nil,
                 byteSize: nil,
+                leaseExpiresAt: now.addingTimeInterval(300),
                 source: .unknown,
-                lastCheckedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 20, minute: 30)
+                lastCheckedAt: nil
             )
             try await warmingRow.create(on: app.db)
 
@@ -107,7 +108,7 @@ struct OperatorDashboardPressureArtifactTests {
                 localPath: nil,
                 byteSize: nil,
                 source: .unknown,
-                lastCheckedAt: nil
+                lastCheckedAt: now.addingTimeInterval(-60)
             )
             try await pendingRow.create(on: app.db)
 
@@ -154,6 +155,10 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(artifacts.pressureArtifactCatalog.readyCount == 2)
             #expect(artifacts.pressureArtifactCatalog.failedCount == 2)
             #expect(artifacts.pressureArtifactCatalog.expiredCount == 1)
+            #expect(artifacts.pressureArtifactCatalog.stuckWarmingCount == 0)
+            #expect(artifacts.pressureArtifactCatalog.oldestExpiredWarmingLeaseAgeSeconds == nil)
+            #expect(artifacts.pressureArtifactCatalog.oldestPendingAgeSeconds == 60)
+            #expect(artifacts.pressureArtifactCatalog.stuckReason == nil)
             #expect(artifacts.pressureArtifactReadiness.selectionOutcome == .exact)
             #expect(artifacts.pressureArtifactReadiness.status == PressureArtifactCatalogStatus.ready.rawValue)
             #expect(artifacts.pressureArtifactReadiness.runTime == exactPressureRow.runTime)
@@ -187,6 +192,8 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(html.contains("EXACT"))
             #expect(html.contains("accent"))
             #expect(html.contains("Catalog status"))
+            #expect(html.contains("Pipeline status"))
+            #expect(html.contains("Healthy"))
             #expect(html.contains("localPath") == false)
         }
     }
@@ -367,6 +374,75 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(readiness.byteSize == 7)
             #expect(html.contains("UNAVAILABLE"))
             #expect(html.contains("danger"))
+        }
+    }
+
+    @Test("expired warming leases surface a stuck backlog without exposing lease details")
+    func expiredWarmingLeasesSurfaceAStuckBacklogWithoutExposingLeaseDetails() async throws {
+        try await withApp { app in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 23)
+            let currentVersion = HrrrProduct.wrfprsf.defaultFieldSetVersion
+            let stuckRow = PressureArtifactCatalogModel(
+                runTime: now,
+                forecastHour: 0,
+                validTime: now,
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .warming,
+                claimToken: UUID(),
+                leaseExpiresAt: now.addingTimeInterval(-300)
+            )
+            let pendingRow = PressureArtifactCatalogModel(
+                runTime: now.addingTimeInterval(-3_600),
+                forecastHour: 0,
+                validTime: now.addingTimeInterval(-3_600),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .pending,
+                lastCheckedAt: now.addingTimeInterval(-600)
+            )
+            let expiredAtBoundaryRow = PressureArtifactCatalogModel(
+                runTime: now.addingTimeInterval(-7_200),
+                forecastHour: 1,
+                validTime: now.addingTimeInterval(-7_200),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .warming,
+                claimToken: UUID(),
+                leaseExpiresAt: now
+            )
+            let olderPendingRow = PressureArtifactCatalogModel(
+                runTime: now.addingTimeInterval(-10_800),
+                forecastHour: 2,
+                validTime: now.addingTimeInterval(-10_800),
+                product: .wrfprsf,
+                fieldSetVersion: currentVersion,
+                status: .pending,
+                lastCheckedAt: now.addingTimeInterval(-1_200)
+            )
+            try await stuckRow.create(on: app.db)
+            try await pendingRow.create(on: app.db)
+            try await expiredAtBoundaryRow.create(on: app.db)
+            try await olderPendingRow.create(on: app.db)
+
+            try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+
+            let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+            let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response)
+            let body = try JSONEncoder().encode(response)
+
+            #expect(response.modelArtifacts.pressureArtifactReadiness.selectionOutcome == .unavailable)
+            #expect(response.modelArtifacts.pressureArtifactCatalog.pendingCount == 2)
+            #expect(response.modelArtifacts.pressureArtifactCatalog.oldestPendingAgeSeconds == 1_200)
+            #expect(response.modelArtifacts.pressureArtifactCatalog.stuckWarmingCount == 2)
+            #expect(response.modelArtifacts.pressureArtifactCatalog.oldestExpiredWarmingLeaseAgeSeconds == 300)
+            #expect(response.modelArtifacts.pressureArtifactCatalog.stuckReason == "2 warming artifacts have an expired lease; the warming pipeline is stuck.")
+            #expect(String(decoding: body, as: UTF8.self).contains("stuckReason"))
+            #expect(html.contains("Stuck warming"))
+            #expect(html.contains("warming pipeline is stuck"))
+            #expect(html.contains("claimToken") == false)
+            #expect(html.contains("leaseExpiresAt") == false)
         }
     }
 
@@ -569,6 +645,32 @@ struct OperatorDashboardPressureArtifactTests {
                 #expect(html.contains(expectedReason))
             }
         }
+    }
+
+    @Test("legacy pressure artifact catalog metrics decode with safe backlog defaults")
+    func legacyPressureArtifactCatalogMetricsDecodeWithSafeBacklogDefaults() throws {
+        let json = #"""
+        {
+          "refreshedAt": "2026-06-03T18:00:00Z",
+          "totalRowCount": 2,
+          "pendingCount": 1,
+          "warmingCount": 1,
+          "readyCount": 0,
+          "failedCount": 0,
+          "expiredCount": 0,
+          "mostRecentFailureAt": null,
+          "mostRecentFailureSummary": null
+        }
+        """#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let metric = try decoder.decode(StoredPressureArtifactDashboardCatalogMetric.self, from: Data(json.utf8))
+
+        #expect(metric.stuckWarmingCount == 0)
+        #expect(metric.oldestExpiredWarmingLeaseAgeSeconds == nil)
+        #expect(metric.oldestPendingAgeSeconds == nil)
+        #expect(metric.stuckReason == nil)
     }
 }
 

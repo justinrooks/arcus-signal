@@ -52,7 +52,7 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 | 03 | [#193](https://github.com/justinrooks/arcus-signal/issues/193) | Retry transient warm failures with bounded backoff | 01, 02 | Pending |
 | 04 | [#194](https://github.com/justinrooks/arcus-signal/issues/194) | Characterize abandoned model-artifact processing jobs | None | Pending |
 | 05 | [#195](https://github.com/justinrooks/arcus-signal/issues/195) | Recover abandoned model-artifact jobs at worker startup | 04 | Implemented — ready for commit |
-| 06 | [#196](https://github.com/justinrooks/arcus-signal/issues/196) | Surface stuck pressure-artifact backlog health | 02 | Pending |
+| 06 | [#196](https://github.com/justinrooks/arcus-signal/issues/196) | Surface stuck pressure-artifact backlog health | 02 | Implemented — ready for commit |
 | 07 | [#201](https://github.com/justinrooks/arcus-signal/issues/201) | Add durable fenced failure-completion retries | 01, 02 | Implemented — ready for publication |
 
 ## Investigation notes
@@ -104,10 +104,11 @@ This ledger tracks the bounded-execution and queue-recovery campaign defined by 
 
 ### Issue #196 - 06: Surface stuck pressure-artifact backlog health
 
-- **Status:** Pending
-- **Goal:** Show expired warming leases, pending count, and oldest actionable age in dashboard JSON and HTML.
-- **Likely files:** dashboard snapshot metric/refresher, response DTO/renderer, dashboard pressure-artifact tests.
-- **Stop condition:** Operators can distinguish unavailable source data from a stuck warm pipeline without seeing claim tokens, Redis payloads, or local paths.
+- **Status:** Implemented — ready for commit
+- **Behavior:** Catalog-derived dashboard metrics now report stuck `warming` rows with expired leases, the oldest expired-lease age, pending count, and oldest pending age. A concise pipeline-stuck reason appears in JSON and HTML only when an expired warming lease exists.
+- **Compatibility:** Legacy stored catalog metrics decode the new fields to safe zero/nil defaults.
+- **Privacy:** Claim tokens, lease timestamps, Redis payloads, source URLs, and local paths remain absent from dashboard responses and HTML.
+- **Focused verification:** Passed — `swift test --filter OperatorDashboardPressureArtifactTests`; `swift test --filter OperatorDashboardTests`.
 
 ### Issue #201 - 07: Add durable fenced failure-completion retries
 

@@ -845,7 +845,11 @@ enum OperatorDashboardPageRenderer {
             return renderCard('Pressure artifact catalog', `${metric?.readyCount ?? 0} ready`, metric?.refreshedAt, [
               { label: 'Total', value: String(metric?.totalCount ?? 0) },
               { label: 'Pending', value: String(metric?.pendingCount ?? 0) },
+              { label: 'Oldest pending', value: formatDuration(metric?.oldestPendingAgeSeconds) },
               { label: 'Warming', value: String(metric?.warmingCount ?? 0) },
+              { label: 'Stuck warming', value: String(metric?.stuckWarmingCount ?? 0) },
+              { label: 'Oldest expired lease', value: formatDuration(metric?.oldestExpiredWarmingLeaseAgeSeconds) },
+              { label: 'Pipeline status', value: metric?.stuckReason ?? 'Healthy' },
               { label: 'Failed', value: String(metric?.failedCount ?? 0) },
               { label: 'Expired', value: String(metric?.expiredCount ?? 0) },
               { label: 'Most recent failure', value: formatDate(metric?.mostRecentFailureAt) },
@@ -1345,7 +1349,11 @@ enum OperatorDashboardPageRenderer {
             lines: [
                 ("Total", "\(metric.totalCount)"),
                 ("Pending", "\(metric.pendingCount)"),
+                ("Oldest pending", maybeDuration(metric.oldestPendingAgeSeconds)),
                 ("Warming", "\(metric.warmingCount)"),
+                ("Stuck warming", "\(metric.stuckWarmingCount)"),
+                ("Oldest expired lease", maybeDuration(metric.oldestExpiredWarmingLeaseAgeSeconds)),
+                ("Pipeline status", metric.stuckReason ?? "Healthy"),
                 ("Failed", "\(metric.failedCount)"),
                 ("Expired", "\(metric.expiredCount)"),
                 ("Most recent failure", maybeDate(metric.mostRecentFailureAt)),
