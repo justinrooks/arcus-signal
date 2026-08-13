@@ -8,7 +8,7 @@ public enum PressureArtifactReadinessSelectionOutcome: String, Codable, Sendable
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -25,6 +25,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var apnsDelivery: StoredAPNsDeliveryMetric
     public var sendNoOps: StoredSendNoOpsMetric
     public var zeroCandidateRate: StoredZeroCandidateRateMetric
+    public var installationGrowth: StoredInstallationGrowthMetric
     public var targetableCoverage: StoredTargetableCoverageMetric
     public var h3Derivation: StoredH3DerivationMetric
     public var modelArtifacts: StoredPressureArtifactDashboardMetric
@@ -45,6 +46,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         apnsDelivery: StoredAPNsDeliveryMetric = .init(),
         sendNoOps: StoredSendNoOpsMetric = .init(),
         zeroCandidateRate: StoredZeroCandidateRateMetric = .init(),
+        installationGrowth: StoredInstallationGrowthMetric = .init(),
         targetableCoverage: StoredTargetableCoverageMetric = .init(),
         h3Derivation: StoredH3DerivationMetric = .init(),
         modelArtifacts: StoredPressureArtifactDashboardMetric = .init(),
@@ -64,6 +66,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.apnsDelivery = apnsDelivery
         self.sendNoOps = sendNoOps
         self.zeroCandidateRate = zeroCandidateRate
+        self.installationGrowth = installationGrowth
         self.targetableCoverage = targetableCoverage
         self.h3Derivation = h3Derivation
         self.modelArtifacts = modelArtifacts
@@ -85,6 +88,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case apnsDelivery
         case sendNoOps
         case zeroCandidateRate
+        case installationGrowth
         case targetableCoverage
         case h3Derivation
         case modelArtifacts
@@ -107,6 +111,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.apnsDelivery = try container.decode(StoredAPNsDeliveryMetric.self, forKey: .apnsDelivery)
         self.sendNoOps = try container.decode(StoredSendNoOpsMetric.self, forKey: .sendNoOps)
         self.zeroCandidateRate = try container.decode(StoredZeroCandidateRateMetric.self, forKey: .zeroCandidateRate)
+        self.installationGrowth = try container.decodeIfPresent(StoredInstallationGrowthMetric.self, forKey: .installationGrowth) ?? .init()
         self.targetableCoverage = try container.decode(StoredTargetableCoverageMetric.self, forKey: .targetableCoverage)
         self.h3Derivation = try container.decode(StoredH3DerivationMetric.self, forKey: .h3Derivation)
         self.modelArtifacts = try container.decodeIfPresent(StoredPressureArtifactDashboardMetric.self, forKey: .modelArtifacts) ?? .init()
@@ -274,6 +279,44 @@ public struct StoredZeroCandidateRateMetric: Codable, Sendable {
         self.windowHours = windowHours
         self.candidateResolutionAttemptCount = candidateResolutionAttemptCount
         self.zeroCandidateAttemptCount = zeroCandidateAttemptCount
+    }
+}
+
+public struct StoredMonthlyInstallationGrowth: Codable, Sendable {
+    public var monthStart: Date
+    public var newInstallationCount: Int
+    public var cumulativeInstallationCount: Int
+
+    public init(
+        monthStart: Date,
+        newInstallationCount: Int,
+        cumulativeInstallationCount: Int
+    ) {
+        self.monthStart = monthStart
+        self.newInstallationCount = newInstallationCount
+        self.cumulativeInstallationCount = cumulativeInstallationCount
+    }
+}
+
+public struct StoredInstallationGrowthMetric: Codable, Sendable {
+    public var knownInstallationCount: Int
+    public var newThisMonthCount: Int
+    public var currentlySubscribedCount: Int
+    public var seenLast24HoursCount: Int
+    public var monthlyGrowth: [StoredMonthlyInstallationGrowth]
+
+    public init(
+        knownInstallationCount: Int = 0,
+        newThisMonthCount: Int = 0,
+        currentlySubscribedCount: Int = 0,
+        seenLast24HoursCount: Int = 0,
+        monthlyGrowth: [StoredMonthlyInstallationGrowth] = []
+    ) {
+        self.knownInstallationCount = knownInstallationCount
+        self.newThisMonthCount = newThisMonthCount
+        self.currentlySubscribedCount = currentlySubscribedCount
+        self.seenLast24HoursCount = seenLast24HoursCount
+        self.monthlyGrowth = monthlyGrowth
     }
 }
 
@@ -668,6 +711,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
     public var generatedAt: Date
     public var redLights: OperatorDashboardRedLightsSectionResponse
     public var deliveryKPIs: OperatorDashboardDeliveryKPIsSectionResponse
+    public var growthUsage: OperatorDashboardGrowthUsageSectionResponse
     public var audienceTargeting: OperatorDashboardAudienceTargetingSectionResponse
     public var modelArtifacts: OperatorDashboardModelArtifactsSectionResponse
     public var operatorContext: OperatorDashboardOperatorContextSectionResponse
@@ -677,6 +721,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
         self.generatedAt = snapshot.generatedAt
         self.redLights = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.deliveryKPIs = .init(snapshot: snapshot, renderedAt: renderedAt)
+        self.growthUsage = .init(snapshot: snapshot)
         self.audienceTargeting = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.modelArtifacts = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.operatorContext = .init(snapshot: snapshot)
@@ -708,6 +753,17 @@ public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
         self.staleActiveSeriesCount = .init(
             refreshedAt: snapshot.standardRefreshedAt,
             metric: snapshot.staleActiveSeries
+        )
+    }
+}
+
+public struct OperatorDashboardGrowthUsageSectionResponse: Content, Sendable {
+    public var installationGrowth: InstallationGrowthMetricResponse
+
+    init(snapshot: OperatorDashboardStoredSnapshot) {
+        self.installationGrowth = .init(
+            refreshedAt: snapshot.slowRefreshedAt,
+            metric: snapshot.installationGrowth
         )
     }
 }
@@ -1085,6 +1141,41 @@ public struct TargetableCoverageBreakdownResponse: Content, Sendable {
     public var staleInstallationHeartbeatCount: Int
     public var stalePresenceCount: Int
     public var missingTargetingDataCount: Int
+}
+
+public struct MonthlyInstallationGrowthResponse: Content, Sendable {
+    public var monthStart: Date
+    public var newInstallationCount: Int
+    public var cumulativeInstallationCount: Int
+}
+
+public struct InstallationGrowthMetricResponse: Content, Sendable {
+    public var refreshedAt: Date?
+    public var knownInstallationCount: Int
+    public var newThisMonthCount: Int
+    public var currentlySubscribedCount: Int
+    public var seenLast24HoursCount: Int
+    public var seenLast24HoursRate: Double?
+    public var monthlyGrowth: [MonthlyInstallationGrowthResponse]
+
+    init(refreshedAt: Date?, metric: StoredInstallationGrowthMetric) {
+        self.refreshedAt = refreshedAt
+        self.knownInstallationCount = metric.knownInstallationCount
+        self.newThisMonthCount = metric.newThisMonthCount
+        self.currentlySubscribedCount = metric.currentlySubscribedCount
+        self.seenLast24HoursCount = metric.seenLast24HoursCount
+        self.seenLast24HoursRate = OperatorDashboardCalculations.rate(
+            numerator: metric.seenLast24HoursCount,
+            denominator: metric.knownInstallationCount
+        )
+        self.monthlyGrowth = metric.monthlyGrowth.map {
+            .init(
+                monthStart: $0.monthStart,
+                newInstallationCount: $0.newInstallationCount,
+                cumulativeInstallationCount: $0.cumulativeInstallationCount
+            )
+        }
+    }
 }
 
 public struct TargetableCoverageMetricResponse: Content, Sendable {

@@ -99,6 +99,24 @@ struct OperatorDashboardTests {
                 candidateResolutionAttemptCount: 24,
                 zeroCandidateAttemptCount: 6
             ),
+            installationGrowth: .init(
+                knownInstallationCount: 40,
+                newThisMonthCount: 4,
+                currentlySubscribedCount: 31,
+                seenLast24HoursCount: 27,
+                monthlyGrowth: [
+                    .init(
+                        monthStart: isoDate("2026-03-01T00:00:00Z"),
+                        newInstallationCount: 6,
+                        cumulativeInstallationCount: 36
+                    ),
+                    .init(
+                        monthStart: isoDate("2026-04-01T00:00:00Z"),
+                        newInstallationCount: 4,
+                        cumulativeInstallationCount: 40
+                    )
+                ]
+            ),
             targetableCoverage: .init(
                 installationFreshnessSeconds: 86_400,
                 presenceFreshnessSeconds: 21_600,
@@ -190,6 +208,7 @@ struct OperatorDashboardTests {
         #expect(abs((response.deliveryKPIs.apnsDeliverySuccessRate.successRate ?? 0) - 0.8) < 0.0001)
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
+        #expect(abs((response.growthUsage.installationGrowth.seenLast24HoursRate ?? 0) - 0.675) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.targetableRate ?? 0) - 0.61) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
         #expect(abs((response.audienceTargeting.alertsWithGeographyAndH3Success.successRate ?? 0) - 0.8333333333) < 0.0001)
@@ -292,6 +311,8 @@ struct OperatorDashboardTests {
         #expect(snapshot.targetableCoverage.hardStalePresenceThresholdSeconds == Int(LocationFreshnessPolicy.hardStaleThreshold))
         #expect(snapshot.targetableCoverage.candidateQueryEligibleInstallationCount == 0)
         #expect(snapshot.targetableCoverage.hardStalePresenceCount == 0)
+        #expect(snapshot.installationGrowth.knownInstallationCount == 0)
+        #expect(snapshot.installationGrowth.monthlyGrowth.isEmpty)
     }
 
     @Test("legacy snapshot backfills touched-series fields")
@@ -334,6 +355,9 @@ struct OperatorDashboardTests {
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.ugcCodes == ["COC005", "COC013"])
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDetection == "OBSERVED")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDamageThreat == "CONSIDERABLE")
+                #expect(payload.growthUsage.installationGrowth.knownInstallationCount == 40)
+                #expect(payload.growthUsage.installationGrowth.currentlySubscribedCount == 31)
+                #expect(payload.growthUsage.installationGrowth.monthlyGrowth.last?.cumulativeInstallationCount == 40)
                 let coverage = payload.audienceTargeting.freshTargetableInstallationCoverage
                 #expect(coverage.hardStalePresenceThresholdSeconds == 86_400)
                 #expect(coverage.candidateQueryEligibleInstallationCount == 74)
@@ -353,6 +377,13 @@ struct OperatorDashboardTests {
                 #expect(res.headers.contentType == .html)
                 #expect(res.body.string.contains("Red Lights"))
                 #expect(res.body.string.contains("Delivery KPIs"))
+                #expect(res.body.string.contains("Growth / Usage"))
+                #expect(res.body.string.contains("Known Installations"))
+                #expect(res.body.string.contains("New This Month"))
+                #expect(res.body.string.contains("Seen Last 24h — Server Activity"))
+                #expect(res.body.string.contains("Operational activity, not DAU"))
+                #expect(res.body.string.contains("Monthly Installation Growth"))
+                #expect(res.body.string.contains("April 2026"))
                 #expect(res.body.string.contains("Audience / Targeting"))
                 #expect(res.body.string.contains("Operator Context"))
                 #expect(res.body.string.contains("Arcus Signal"))
