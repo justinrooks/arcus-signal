@@ -38,6 +38,27 @@ struct NotificationSendJobDeliveryBoundaryTests {
             """).run()
 
         try await sql.raw("""
+            CREATE TABLE IF NOT EXISTS device_presence (
+                installation_id UUID PRIMARY KEY REFERENCES device_installations(installation_id) ON DELETE CASCADE,
+                captured_at TIMESTAMP NOT NULL,
+                received_at TIMESTAMP NOT NULL,
+                location_age_seconds DOUBLE PRECISION NOT NULL,
+                horizontal_accuracy_meters DOUBLE PRECISION NOT NULL,
+                cell_scheme TEXT NOT NULL,
+                h3_cell BIGINT,
+                h3_resolution INTEGER,
+                county TEXT,
+                zone TEXT,
+                fire_zone TEXT,
+                source TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                county_label TEXT,
+                fire_zone_label TEXT
+            );
+            """).run()
+
+        try await sql.raw("""
             CREATE TABLE IF NOT EXISTS arcus_series (
                 id UUID PRIMARY KEY,
                 source TEXT NOT NULL,
@@ -203,6 +224,13 @@ struct NotificationSendJobDeliveryBoundaryTests {
         )
     }
 
+    private func makeUniqueH3Cell() -> Int64 {
+        Int64(
+            UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(15),
+            radix: 16
+        )!
+    }
+
     private func seedInstallation(id: UUID, locationAuth: LocationAuth, on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
@@ -257,6 +285,53 @@ struct NotificationSendJobDeliveryBoundaryTests {
             """).run()
     }
 
+    private func seedH3Presence(
+        installationID: UUID,
+        h3Cell: Int64,
+        capturedAt: Date,
+        on db: any Database
+    ) async throws {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        try await sql.raw("""
+            INSERT INTO device_presence
+                (installation_id, captured_at, received_at, location_age_seconds, horizontal_accuracy_meters,
+                 cell_scheme, h3_cell, h3_resolution, county, zone, fire_zone, source, created_at, updated_at,
+                 county_label, fire_zone_label)
+            VALUES
+                (\(bind: installationID), \(bind: capturedAt), \(bind: capturedAt), 0, 0, 'h3',
+                 \(bind: h3Cell), 8, NULL, NULL, NULL, 'foreground', NOW(), NOW(), 'Test County', NULL)
+            """).run()
+    }
+
+    private func seedH3Candidate(
+        installationID: UUID,
+        h3Cell: Int64,
+        capturedAt: Date,
+        on db: any Database
+    ) async throws {
+        try await seedInstallation(id: installationID, locationAuth: .always, on: db)
+        try await seedH3Presence(
+            installationID: installationID,
+            h3Cell: h3Cell,
+            capturedAt: capturedAt,
+            on: db
+        )
+    }
+
+    private func seedGeolocation(seriesID: UUID, h3Cell: Int64, on db: any Database) async throws {
+        try await ArcusGeolocationModel(
+            series: seriesID,
+            geometry: .point(lon: 0, lat: 0),
+            geometryHash: String(repeating: "a", count: 64),
+            h3Cells: [h3Cell],
+            h3Resolution: 8,
+            h3Hash: String(repeating: "b", count: 64)
+        ).create(on: db)
+    }
+
     private func makeSeries(id: UUID, revisionUrn: String, now: Date) -> ArcusSeriesModel {
         ArcusSeriesModel(
             id: id,
@@ -291,6 +366,24 @@ struct NotificationSendJobDeliveryBoundaryTests {
             countyLabel: "Test County",
             fireZoneLabel: nil
         )
+    }
+
+    @Test("legacy payloads decode without an installation constraint")
+    func legacyPayloadDecodesWithoutInstallationConstraint() throws {
+        let seriesID = UUID()
+        let data = Data("""
+            {
+              "seriesId": "\(seriesID.uuidString)",
+              "revisionUrn": "urn:oid:legacy",
+              "mode": "h3",
+              "reason": "new"
+            }
+            """.utf8)
+
+        let payload = try JSONDecoder().decode(NotificationSendJobPayload.self, from: data)
+
+        #expect(payload.seriesId == seriesID)
+        #expect(payload.installationId == nil)
     }
 
     @Test("stale candidates are blocked before ledger and persist one stale miss across retries")
@@ -468,7 +561,8 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 seriesId: seriesID,
                 revisionUrn: revisionUrn,
                 mode: .h3,
-                reason: .new
+                reason: .new,
+                installationId: installationID
             )
 
             try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
@@ -502,6 +596,92 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 .filter(\.$recordKind == NotificationDebugRecordKind.candidate.rawValue)
                 .count()
             #expect(debugCount == 1)
+        }
+    }
+
+    @Test("constrained and unconstrained dequeue attempts converge on one claim")
+    func concurrentConstrainedAndUnconstrainedAttemptsConvergeOnOneClaim() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let sender = GatedRecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let constrainedContext = makeQueueContext(app: app)
+            let unconstrainedContext = makeQueueContext(app: app)
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:concurrent-constraint-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let installationID = UUID()
+            let otherInstallationID = UUID()
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: installationID,
+                h3Cell: h3Cell,
+                capturedAt: Date(),
+                on: app.db
+            )
+            try await seedH3Candidate(
+                installationID: otherInstallationID,
+                h3Cell: h3Cell,
+                capturedAt: Date(),
+                on: app.db
+            )
+
+            async let constrained: Void = job.dequeue(
+                constrainedContext,
+                .init(
+                    seriesId: seriesID,
+                    revisionUrn: revisionUrn,
+                    mode: .h3,
+                    reason: .new,
+                    installationId: installationID
+                )
+            )
+            await sender.waitForFirstSend()
+
+            async let unconstrained: Void = job.dequeue(
+                unconstrainedContext,
+                .init(
+                    seriesId: seriesID,
+                    revisionUrn: revisionUrn,
+                    mode: .h3,
+                    reason: .new
+                )
+            )
+            await sender.waitForSendCount(2)
+            await sender.releaseFirstSend()
+            _ = try await (constrained, unconstrained)
+
+            let ledgerCount = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == installationID)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .count()
+            let otherLedgerCount = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == otherInstallationID)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .count()
+            let attempts = try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .all()
+
+            #expect(ledgerCount == 1)
+            #expect(otherLedgerCount == 1)
+            #expect(attempts.count == 2)
+            let constrainedAttempt = try #require(attempts.first { $0.candidateCount == 1 })
+            let unconstrainedAttempt = try #require(attempts.first { $0.candidateCount == 2 })
+            #expect(constrainedAttempt.claimedCount == 1)
+            #expect(unconstrainedAttempt.claimedCount == 1)
+            #expect(unconstrainedAttempt.sentCount == 1)
+            #expect(attempts.reduce(0) { $0 + $1.claimedCount } == 2)
+            #expect(attempts.reduce(0) { $0 + $1.sentCount } == 2)
+            #expect(await sender.sendCount == 2)
         }
     }
 
@@ -611,6 +791,62 @@ private actor RecordingNotificationSender: NotificationSender {
         environment _: APNsEnvironment
     ) async throws {
         sendCount += 1
+    }
+}
+
+private actor GatedRecordingNotificationSender: NotificationSender {
+    private(set) var sendCount = 0
+    private var firstSendStarted = false
+    private var firstSendStartedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var sendCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private var firstSendRelease: CheckedContinuation<Void, Never>?
+
+    func waitForFirstSend() async {
+        guard !firstSendStarted else { return }
+
+        await withCheckedContinuation { continuation in
+            firstSendStartedWaiters.append(continuation)
+        }
+    }
+
+    func waitForSendCount(_ expectedCount: Int) async {
+        guard sendCount < expectedCount else { return }
+
+        await withCheckedContinuation { continuation in
+            sendCountWaiters.append((expectedCount, continuation))
+        }
+    }
+
+    func releaseFirstSend() {
+        firstSendRelease?.resume()
+        firstSendRelease = nil
+    }
+
+    func sendNotification(
+        app _: Application,
+        with _: AlertDetails,
+        hotAlertPayload _: HotAlertAPNsPayload,
+        to _: String,
+        environment _: APNsEnvironment
+    ) async throws {
+        sendCount += 1
+
+        if sendCount == 1 {
+            firstSendStarted = true
+            let waiters = firstSendStartedWaiters
+            firstSendStartedWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+
+        let readyWaiters = sendCountWaiters.filter { $0.count <= sendCount }
+        sendCountWaiters.removeAll { $0.count <= sendCount }
+        readyWaiters.forEach { $0.continuation.resume() }
+
+        if sendCount == 1 {
+            await withCheckedContinuation { continuation in
+                firstSendRelease = continuation
+            }
+        }
     }
 }
 

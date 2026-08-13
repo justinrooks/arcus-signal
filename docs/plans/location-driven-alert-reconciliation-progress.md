@@ -292,7 +292,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/212
 
-Status: Pending
+Status: Implemented — Awaiting Human Review
 
 Goal:
 - Make `NotificationSendJob` optionally select one installation without changing existing unconstrained alert-driven fan-out or last-mile semantics.
@@ -310,6 +310,15 @@ Verification:
 
 Stop condition:
 - Optional constrained payload behavior and backward decoding are tested; no reconciliation job exists yet.
+
+Evidence:
+- Added an optional installation ID to `NotificationSendJobPayload`; payloads queued before this field existed continue to decode with no constraint.
+- H3 and UGC candidate queries restrict to the requested installation when present and retain current fan-out when absent.
+- Focused tests cover constrained matching, moved-away no-op behavior, existing-claim no-op behavior, and concurrent constrained/unconstrained discovery converging at the ledger identity.
+- All three focused verification suites passed on 2026-08-13.
+
+Handoff:
+- After review and merge, issue #213 may dispatch installation-constrained send jobs from worker-owned reconciliation. This slice does not add reconciliation dispatch or processing.
 
 ### Issue #213 - 06: Dispatch and process installation reconciliation work
 
