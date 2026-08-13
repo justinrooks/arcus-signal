@@ -362,7 +362,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/214
 
-Status: Pending
+Status: Implemented — Ready for Commit
 
 Goal:
 - Add final deterministic vertical coverage, align living architecture docs, and record deployment validation and client-removal gates.
@@ -394,6 +394,25 @@ Required vertical matrix:
 
 Stop condition:
 - Full server capability and rollout evidence are documented. No client issue, repository change, or WatchEngine removal is created.
+
+Evidence:
+- Added a PostgreSQL-backed vertical suite using the test queues and a recording sender.
+- The suite covers outside-at-issuance entry, first usable and hard-stale-to-usable presence, unchanged heartbeat suppression, leave/re-entry, independent revisions, H3 and UGC fallback, lifecycle/current-revision exclusions, concurrent discovery, duplicate intent drain, and bounded reconciliation retry idempotency.
+- Concurrent alert-driven and installation-constrained discovery proves the constrained path sees one candidate, the legacy unconstrained path sees the complete candidate set, and both paths converge on one ledger claim for their shared installation/revision. A separate deterministic store-level collision proves exactly one successful claim; these remain at-most-one claim guarantees rather than exactly-once APNs delivery.
+- `docs/architecture.md` now documents the durable presence intent, installation-scoped active-alert discovery, constrained reuse of `NotificationSendJob`, retry boundary, and deployment gate.
+- Human review completed on 2026-08-13. Independent defect review and validation audit findings were corrected; final focused re-review found no remaining actionable findings.
+- `swift test --filter LocationDrivenAlertReconciliationFlowTests` passed 6 tests, including a bounded negative no-send gate test; `swift test --filter Notification` passed 35 tests; and `swift test --filter Device` passed 22 tests on 2026-08-13.
+- `swift test --filter Reconciliation` exposed the existing shared-table race in `migration can revert and prepare the outbox table` when Swift Testing ran filtered suites concurrently. The same profile passed all 27 tests with `--no-parallel`; no production change or issue-#214 test failed.
+- `swift build` and the final serialized 558-test `swift test --no-parallel` pass completed successfully on 2026-08-13.
+
+Deployment gate before client retirement:
+- Observe ready/dead presence-reconciliation intent counts and handoff failures without sustained backlog growth.
+- Correlate reconciliation `matchCount`/`dispatchCount` logs with constrained notification attempt outcomes for representative H3 and UGC transitions.
+- Inspect ledger status and identity outcomes for duplicate discovery, stale candidates, failures, and any abandoned `claimed` rows.
+- Do not remove the SkyAware WatchEngine notification producer until these checks pass on the deployed server. That removal requires a separate client campaign.
+
+Handoff:
+- Ready for commit. Production deployment observations remain mandatory before a separate SkyAware client-retirement campaign may remove WatchEngine notification behavior.
 
 ---
 
