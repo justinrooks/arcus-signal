@@ -19,7 +19,70 @@ struct NotificationCandidate: Decodable {
     }
 }
 
+struct NotificationActiveAlertMatch: Decodable, Sendable {
+    let seriesId: UUID
+    let revisionUrn: String
+    let mode: NotificationTargetMode
+    let reason: NotificationReason
+}
+
 struct NotificationCandidateStore {
+    func loadMatchingActiveAlerts(
+        for installationId: UUID,
+        evaluatedAt: Date,
+        on db: any Database
+    ) async throws -> [NotificationActiveAlertMatch] {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        return try await sql.raw("""
+            SELECT
+                s.id AS "seriesId",
+                r.revision_urn AS "revisionUrn",
+                o.mode AS "mode",
+                o.reason AS "reason"
+            FROM device_presence p
+            CROSS JOIN arcus_series s
+            JOIN alert_revisions r
+              ON r.series_id = s.id
+             AND r.revision_urn = s.current_revision_urn
+            JOIN notification_outbox o
+              ON o.series_id = s.id
+             AND o.revision_urn = r.revision_urn
+            LEFT JOIN arcus_geolocation g
+              ON g.series_id = s.id
+            WHERE p.installation_id = \(bind: installationId)
+              AND s.state = \(bind: EventState.active.rawValue)
+              AND (s.expires IS NULL OR s.expires > \(bind: evaluatedAt))
+              AND (s.ends IS NULL OR s.ends > \(bind: evaluatedAt))
+              AND o.mode IN (
+                  \(bind: NotificationTargetMode.h3.rawValue),
+                  \(bind: NotificationTargetMode.ugc.rawValue)
+              )
+              AND o.reason IN (
+                  \(bind: NotificationReason.new.rawValue),
+                  \(bind: NotificationReason.update.rawValue)
+              )
+              AND (
+                    (
+                        o.mode = \(bind: NotificationTargetMode.h3.rawValue)
+                    AND p.h3_cell IS NOT NULL
+                    AND p.h3_cell = ANY(g.h3_cells)
+                    )
+                 OR (
+                        o.mode = \(bind: NotificationTargetMode.ugc.rawValue)
+                    AND (
+                           p.county = ANY(s.ugc_codes)
+                        OR p.zone = ANY(s.ugc_codes)
+                        OR p.fire_zone = ANY(s.ugc_codes)
+                    )
+                 )
+              )
+            """)
+            .all(decoding: NotificationActiveAlertMatch.self)
+    }
+
     func loadUGCCandidates(
         ugcCodes: [String],
         capturedAtOrAfter cutoff: Date,
