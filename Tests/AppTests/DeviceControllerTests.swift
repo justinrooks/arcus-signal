@@ -3,9 +3,11 @@ import ArcusCore
 import Fluent
 import FluentSQL
 import Foundation
+import Queues
 import Testing
 import Vapor
 import VaporTesting
+import XCTQueues
 
 @Suite("Device controller", .serialized)
 struct DeviceControllerTests {
@@ -14,6 +16,7 @@ struct DeviceControllerTests {
         do {
             try await configure(app, mode: .api)
             try await app.autoMigrate()
+            app.queues.use(.test)
             try await test(app)
         } catch {
             try? await app.asyncShutdown()
@@ -111,9 +114,11 @@ struct DeviceControllerTests {
         }
     }
 
-    @Test("first usable presence records a reconciliation intent")
-    func firstUsablePresenceRecordsIntent() async throws {
+    @Test("first usable presence immediately hands its reconciliation intent to the target lane")
+    func firstUsablePresenceDispatchesReconciliation() async throws {
         try await withApp { app in
+            let capture = DeviceReconciliationDispatchCapture()
+            app.queues.add(capture)
             let installationID = UUID()
             let capturedAt = Date()
 
@@ -122,6 +127,37 @@ struct DeviceControllerTests {
             let intent = try #require(try await intents(for: installationID, in: app).first)
             #expect(abs(intent.presenceCapturedAt.timeIntervalSince(capturedAt)) < 1)
             #expect(intent.triggerCategory == .firstUsablePresence)
+            #expect(intent.state == .done)
+            #expect(intent.attemptCount == 1)
+
+            let payload = try #require(app.queues.test.first(ReconcileInstallationAlertsJob.self))
+            #expect(payload.intentId == intent.id)
+            #expect(payload.installationId == installationID)
+            #expect(payload.triggerCategory == .firstUsablePresence)
+
+            let dispatch = try #require(
+                await capture.firstDispatch(jobName: ReconcileInstallationAlertsJob.name)
+            )
+            #expect(dispatch.queueName == ArcusQueueLane.target.rawValue)
+            #expect(dispatch.maxRetryCount == ReconcileInstallationAlertsJob.maximumRetryCount)
+        }
+    }
+
+    @Test("queue failure after commit keeps the accepted intent ready for worker drain")
+    func queueFailureKeepsAcceptedIntentReady() async throws {
+        try await withApp { app in
+            app.presenceReconciliationHandoff = PresenceReconciliationHandoff(
+                dispatcher: ThrowingReconciliationJobDispatcher()
+            )
+            let installationID = UUID()
+
+            try await submit(makePayload(installationId: installationID.uuidString), to: app)
+
+            let intent = try #require(try await intents(for: installationID, in: app).first)
+            #expect(intent.state == .ready)
+            #expect(intent.attemptCount == 1)
+            #expect(intent.lastError == String(describing: ReconciliationJobDispatchTestError.self))
+            #expect(intent.availableAt > Date())
         }
     }
 
@@ -342,5 +378,32 @@ struct DeviceControllerTests {
             #expect(abs(presence.capturedAt.timeIntervalSince(capturedAt)) < 1)
             #expect(presence.county == "COC031")
         }
+    }
+}
+
+private enum ReconciliationJobDispatchTestError: Error {
+    case unavailable
+}
+
+private struct ThrowingReconciliationJobDispatcher: ReconcileInstallationAlertsJobDispatching {
+    func dispatch(
+        _ payload: ReconcileInstallationAlertsJobPayload,
+        on application: Application
+    ) async throws {
+        _ = payload
+        _ = application
+        throw ReconciliationJobDispatchTestError.unavailable
+    }
+}
+
+private actor DeviceReconciliationDispatchCapture: AsyncJobEventDelegate {
+    private var dispatches: [JobEventData] = []
+
+    func dispatched(job: JobEventData) async throws {
+        dispatches.append(job)
+    }
+
+    func firstDispatch(jobName: String) -> JobEventData? {
+        dispatches.first { $0.jobName == jobName }
     }
 }
