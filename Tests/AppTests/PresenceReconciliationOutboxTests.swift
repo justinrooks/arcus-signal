@@ -74,6 +74,9 @@ struct PresenceReconciliationOutboxTests {
     func insertParticipatesInCallerOwnedTransaction() async throws {
         try await withApp { app in
             let installationID = UUID()
+            let countBeforeTransaction = try await PresenceReconciliationOutboxModel
+                .query(on: app.db)
+                .count()
 
             try await withRollbackTransaction(on: app) { database in
                 try await createInstallation(id: installationID, on: database)
@@ -87,10 +90,17 @@ struct PresenceReconciliationOutboxTests {
 
                 #expect(result.inserted)
                 #expect(result.id != nil)
-                #expect(try await PresenceReconciliationOutboxModel.query(on: database).count() == 1)
+                #expect(
+                    try await PresenceReconciliationOutboxModel.query(on: database)
+                        .filter(\.$installation.$id == installationID)
+                        .count() == 1
+                )
             }
 
-            #expect(try await PresenceReconciliationOutboxModel.query(on: app.db).count() == 0)
+            #expect(
+                try await PresenceReconciliationOutboxModel.query(on: app.db).count()
+                    == countBeforeTransaction
+            )
         }
     }
 
@@ -119,7 +129,11 @@ struct PresenceReconciliationOutboxTests {
 
                 #expect(first.inserted)
                 #expect(!duplicate.inserted)
-                #expect(try await PresenceReconciliationOutboxModel.query(on: database).count() == 1)
+                #expect(
+                    try await PresenceReconciliationOutboxModel.query(on: database)
+                        .filter(\.$installation.$id == installationID)
+                        .count() == 1
+                )
             }
         }
     }

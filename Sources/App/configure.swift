@@ -41,6 +41,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.nwsReplayFixtureLoader = LocalNWSReplayFixtureLoader()
     app.queues.add(IngestNWSAlertsJob())
     app.queues.add(TargetEventRevisionJob())
+    app.queues.add(ReconcileInstallationAlertsJob())
     app.queues.add(NotificationSendJob())
     app.queues.add(PressureArtifactWarmJob())
     app.queues.add(PressureArtifactFailureCompletionJob(
@@ -65,6 +66,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         configureWorkerRuntime(on: app)
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)
         app.recordWorkerScheduledJob("DispatchIngestNWSAlertsScheduledJob")
+        app.queues.schedule(DispatchPresenceReconciliationScheduledJob()).minutely().at(0)
+        app.recordWorkerScheduledJob("DispatchPresenceReconciliationScheduledJob")
         app.queues.schedule(ProbeHRRRPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds))
         app.recordWorkerScheduledJob("ProbeHRRRPressureArtifactsScheduledJob")
         app.queues.schedule(CleanupPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactCleanupIntervalSeconds))

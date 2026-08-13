@@ -962,10 +962,18 @@ struct AppTests {
     func workerBootstrapRegistersPressureArtifactProbeSchedule() async throws {
         try await withApp(mode: .worker) { app in
             #expect(app.workerScheduledJobNames.contains("DispatchIngestNWSAlertsScheduledJob"))
+            #expect(app.workerScheduledJobNames.contains("DispatchPresenceReconciliationScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("ProbeHRRRPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("CleanupPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("RefreshOperatorDashboardSnapshotScheduledJob"))
-            #expect(app.workerScheduledJobNames.count == 4)
+            #expect(app.workerScheduledJobNames.count == 5)
+        }
+    }
+
+    @Test("API bootstrap does not register worker schedules")
+    func apiBootstrapDoesNotRegisterWorkerSchedules() async throws {
+        try await withApp(mode: .api) { app in
+            #expect(app.workerScheduledJobNames.isEmpty)
         }
     }
 

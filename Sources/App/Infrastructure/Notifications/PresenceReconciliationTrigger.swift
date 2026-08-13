@@ -49,7 +49,7 @@ public struct PresenceReconciliationState: Sendable {
     }
 }
 
-public enum PresenceReconciliationTriggerCategory: String, Sendable, Equatable {
+public enum PresenceReconciliationTriggerCategory: String, Codable, Sendable, Equatable {
     case firstUsablePresence
     case movedWhileUsable
     case becameUsable
@@ -90,10 +90,10 @@ public struct PresenceReconciliationTrigger: Sendable, Equatable {
         return Self(category: .movedWhileUsable)
     }
 
-    private static func isUsable(
+    static func isUsable(
         _ state: PresenceReconciliationState,
         now: Date,
-        freshnessPolicy: LocationFreshnessPolicy
+        freshnessPolicy: LocationFreshnessPolicy = .init()
     ) -> Bool {
         guard state.isActive, state.isSubscribed, state.hasAPNsToken else {
             return false
@@ -112,5 +112,32 @@ public struct PresenceReconciliationTrigger: Sendable, Equatable {
             now: now
         )
         return freshness.state != .stale
+    }
+}
+
+extension PresenceReconciliationState {
+    init?(
+        installation: DeviceInstallationModel?,
+        presence: DevicePresenceModel?
+    ) {
+        guard let installation, let presence else {
+            return nil
+        }
+
+        self.init(
+            fingerprint: .init(
+                h3Cell: presence.h3Cell,
+                county: presence.county,
+                forecastZone: presence.zone,
+                fireZone: presence.fireZone
+            ),
+            capturedAt: presence.capturedAt,
+            locationAuth: installation.locationAuth,
+            isActive: installation.isActive,
+            isSubscribed: installation.isSubscribed,
+            hasAPNsToken: !installation.apnsDeviceToken
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
+        )
     }
 }

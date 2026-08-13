@@ -262,7 +262,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/211
 
-Status: Implemented — Awaiting Human Review
+Status: Implemented — Ready for Commit
 
 Goal:
 - Add an installation-scoped active-current-revision lookup that preserves current H3 and UGC-fallback mode semantics.
@@ -325,7 +325,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/213
 
-Status: Pending
+Status: Implemented — Awaiting Human Review
 
 Goal:
 - Add best-effort API queue handoff, a worker scheduled outbox drain, and a bounded-retry target-lane job that dispatches installation-constrained send work for active matches.
@@ -345,6 +345,17 @@ Verification:
 
 Stop condition:
 - Durable intents reach the target lane and dispatch only installation-scoped send work; no end-to-end campaign expansion or client change.
+
+Evidence:
+- The location route now attempts target-lane handoff only after its persistence transaction commits; queue failure preserves the ready intent and records sanitized retry metadata without failing the accepted response.
+- A worker-only minute schedule drains ready intents, while `ReconcileInstallationAlertsJob` reloads authoritative installation/presence, applies bounded queue retries, rediscovers current active matches, and dispatches installation-constrained children on the send lane.
+- Focused tests cover immediate successful API handoff, target/send lane ownership, retry bounds, durable handoff failure, latest-presence movement, zero-match success, unusable state, and API/worker schedule isolation.
+- `swift test --filter InstallationAlertReconciliationJobTests`, `swift test --filter DeviceControllerTests`, and `swift test --filter AppTests.AppTests` passed on 2026-08-13.
+- Human review completed on 2026-08-13. Independent defect review found no actionable defects; the validation audit's two test-coverage findings were accepted, corrected, and confirmed closed.
+- `swift build` and the final full 552-test `swift test --no-parallel` pass completed successfully on 2026-08-13.
+
+Handoff:
+- After review and merge, issue #214 may add the final vertical race/idempotency matrix and align living architecture documentation. This slice does not change APNs retry/reclaim behavior or any client producer.
 
 ### Issue #214 - 07: Verify end-to-end races, retries, and rollout readiness
 
