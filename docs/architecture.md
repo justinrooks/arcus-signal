@@ -22,6 +22,9 @@ NWS ingest
   -> nil or point geometry: UGC notification-dispatch intent -> send queue handoff
   -> point geometry: both paths above
   -> target processing: notification-dispatch intent -> send queue handoff
+authoritative installation/presence transition
+  -> presence-reconciliation intent -> target queue handoff -> active-alert lookup
+  -> installation-constrained send queue handoff
   -> delivery-eligible installation (fresh or degraded) -> ledger claim
   -> candidate-specific copy composition -> APNs send and ledger completion
 ```
@@ -42,9 +45,17 @@ The arrows are distinct boundaries. A durable intent, successful queue enqueue, 
 
 [`DispatchAgent.dispatchPendingNotificationJobs(...)`](../Sources/App/lib/DispatchAgent.swift) enqueues `NotificationSendJob`, then marks the row `done` after successful queue enqueue. Its `attempts`, `available_at`, and `last_error` describe attempts to hand work to the send queue, not APNs delivery retries. A queue handoff can be duplicated if the subsequent row update fails; downstream ledger uniqueness absorbs a duplicate claim. Conversely, marking `done` does not provide consumer-completion replay.
 
+### Presence reconciliation
+
+[`DeviceController`](../Sources/App/Controllers/DeviceController.swift) compares the previously persisted installation/presence state with the accepted authoritative result. First usable presence, a changed H3/UGC targeting fingerprint, or an unusable/hard-stale state becoming usable writes a `presence_reconciliation_outbox` intent in the same PostgreSQL transaction. Unchanged targeting, source/app metadata changes, and stale rejected updates do not create work.
+
+After commit, the API attempts a target-lane handoff without waiting for reconciliation or APNs. [`DispatchPresenceReconciliationScheduledJob`](../Sources/App/Jobs/DispatchPresenceReconciliationScheduledJob.swift) drains ready intents when that best-effort handoff fails. Sequential drains stop after the ready row becomes done; concurrent selection or an enqueue/update split can still duplicate the queue handoff, which downstream reconciliation and ledger idempotency absorb. [`ReconcileInstallationAlertsJob`](../Sources/App/Jobs/ReconcileInstallationAlertsJob.swift) has three bounded queue retries (15, 60, and 300 seconds), reloads the latest authoritative presence, and queries only active, unexpired, current revisions matching that installation by H3 or UGC provenance.
+
+Each match is handed to the existing send lane as a `NotificationSendJob` constrained to the installation. The constraint narrows candidate selection but preserves the alert-driven path's lifecycle, freshness, claim, copy, APNs environment, completion, and telemetry behavior. Location-driven work therefore cannot send directly or create a parallel delivery authority.
+
 ### Queue retries and replay limits
 
-Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `PressureArtifactFailureCompletionJob` is the narrow exception: it uses the configured positive completion schedule on the `model-artifacts` lane to retry the existing fenced failure transition. Outbox drain attempts are not a substitute for queue replay or APNs retry.
+Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `ReconcileInstallationAlertsJob` is explicitly retryable because rediscovery and constrained send dispatch converge on the ledger identity; `PressureArtifactFailureCompletionJob` separately uses its configured completion schedule on the `model-artifacts` lane. Outbox drain attempts and reconciliation retries are not substitutes for general queue replay or APNs retry.
 
 ## Candidate selection, claim, and APNs delivery
 
@@ -62,6 +73,17 @@ On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the cla
 - It does **not** guarantee exactly-once APNs delivery or eventual delivery. A process loss or cancellation after a claim can leave it `claimed`; an unknown APNs outcome cannot safely be inferred from the claim; failed rows are terminal today.
 - APNs retry/backoff and failure classification, queue replay after consumer failure, abandoned-claim recovery, and a stored-payload redesign are deferred reliability work. They are not implemented by the outboxes, ledger, Swift concurrency, or `Sendable`.
 
+## Deployment and client-retirement gate
+
+Before any SkyAware WatchEngine notification producer is removed, a deployed Arcus Signal release must show:
+
+- presence-reconciliation intents are created for meaningful transitions, drain without a growing ready/dead backlog, and retain bounded failure metadata;
+- reconciliation logs show plausible match and constrained-dispatch counts for H3 and UGC traffic without repeated exhaustion;
+- constrained send-attempt telemetry reaches candidate resolution and records expected delivered, previously-claimed, stale, and zero-candidate outcomes;
+- ledger rows confirm one `(installation_id, series_id, revision_urn)` claim across alert-driven and location-driven discovery, with failed or abandoned claims investigated under the existing delivery limitations.
+
+Passing tests establishes release readiness, not production validation. Client WatchEngine removal is a separate campaign and is prohibited until these deployed observations succeed.
+
 ## Recovered owner map
 
 | Concern | Current owner and invariant |
@@ -71,6 +93,8 @@ On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the cla
 | NWS persistence and target intent | [`NWSIngestPersistence`](../Sources/App/Services/NWSIngestPersistence.swift) owns the ingest transaction script and target-dispatch intent creation. |
 | Target queue handoff | [`IngestNWSAlertsJob`](../Sources/App/Jobs/IngestNWSAlertsJob.swift) drains `target_dispatch_outbox`. |
 | H3/UGC targeting orchestration | [`TargetEventRevisionJob`](../Sources/App/Jobs/TargetEventRevisionJob.swift) and [`DispatchAgent`](../Sources/App/lib/DispatchAgent.swift) preserve targeting and notification-dispatch behavior. |
+| Presence transition and durable intent | [`DeviceController`](../Sources/App/Controllers/DeviceController.swift), [`PresenceReconciliationTrigger`](../Sources/App/Infrastructure/Notifications/PresenceReconciliationTrigger.swift), and [`PresenceReconciliationOutboxStore`](../Sources/App/Models/Notification/PresenceReconciliationOutboxStore.swift) own meaningful-transition policy and transactional intent persistence. |
+| Installation-to-alert reconciliation | [`DispatchPresenceReconciliationScheduledJob`](../Sources/App/Jobs/DispatchPresenceReconciliationScheduledJob.swift) and [`ReconcileInstallationAlertsJob`](../Sources/App/Jobs/ReconcileInstallationAlertsJob.swift) own durable target-lane handoff, latest-presence lookup, and constrained send dispatch. |
 | Candidate selection | [`NotificationCandidateStore`](../Sources/App/Models/Notification/NotificationCandidateStore.swift) owns H3/UGC candidate queries. |
 | Delivery claim/completion | [`NotificationDeliveryStore`](../Sources/App/Models/Notification/NotificationDeliveryStore.swift) owns atomic ledger claim and terminal completion persistence. |
 | Copy composition | [`NotificationEngine`](../Sources/App/Infrastructure/Notifications/NotificationEngine.swift) owns send-time notification wording. |
@@ -78,4 +102,4 @@ On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the cla
 
 ## Supporting evidence
 
-The recovered boundaries are characterized by [`NWSIngestPersistenceFlowTests.swift`](../Tests/AppTests/NWSIngestPersistenceFlowTests.swift), [`TargetEventRevisionJobFallbackTests.swift`](../Tests/AppTests/TargetEventRevisionJobFallbackTests.swift), [`NotificationSendJobCandidateQueryTests.swift`](../Tests/AppTests/NotificationSendJobCandidateQueryTests.swift), [`NotificationSendJobDeliveryBoundaryTests.swift`](../Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift), [`NotificationLedgerFreshnessPersistenceTests.swift`](../Tests/AppTests/NotificationLedgerFreshnessPersistenceTests.swift), [`APIDependencyCompositionTests.swift`](../Tests/AppTests/APIDependencyCompositionTests.swift), [`StormSetupProviderTests.swift`](../Tests/AppTests/StormSetupProviderTests.swift), and [`StormSetupAnvilEvidencePolicyTests.swift`](../Tests/AppTests/StormSetupAnvilEvidencePolicyTests.swift).
+The recovered boundaries are characterized by [`NWSIngestPersistenceFlowTests.swift`](../Tests/AppTests/NWSIngestPersistenceFlowTests.swift), [`TargetEventRevisionJobFallbackTests.swift`](../Tests/AppTests/TargetEventRevisionJobFallbackTests.swift), [`LocationDrivenAlertReconciliationFlowTests.swift`](../Tests/AppTests/LocationDrivenAlertReconciliationFlowTests.swift), [`NotificationSendJobCandidateQueryTests.swift`](../Tests/AppTests/NotificationSendJobCandidateQueryTests.swift), [`NotificationSendJobDeliveryBoundaryTests.swift`](../Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift), [`NotificationLedgerFreshnessPersistenceTests.swift`](../Tests/AppTests/NotificationLedgerFreshnessPersistenceTests.swift), [`APIDependencyCompositionTests.swift`](../Tests/AppTests/APIDependencyCompositionTests.swift), [`StormSetupProviderTests.swift`](../Tests/AppTests/StormSetupProviderTests.swift), and [`StormSetupAnvilEvidencePolicyTests.swift`](../Tests/AppTests/StormSetupAnvilEvidencePolicyTests.swift).
