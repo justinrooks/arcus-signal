@@ -227,4 +227,72 @@ struct NotificationSendJobCandidateQueryTests {
             }
         }
     }
+
+    @Test("installation constraint applies to H3 and UGC candidates")
+    func installationConstraintAppliesToBothCandidatePaths() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            try await withRollbackTransaction(on: app) { database in
+                let h3Cell = Int64(
+                    UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(15),
+                    radix: 16
+                )!
+                let otherH3Cell = h3Cell + 1
+                let ugcCode = "test-\(UUID().uuidString)"
+                let h3Target = UUID()
+                let movedH3Target = UUID()
+                let ugcTarget = UUID()
+                let movedUGCTarget = UUID()
+
+                try await seedCandidate(id: h3Target, capturedAt: now, h3Cell: h3Cell, county: nil, on: database)
+                try await seedCandidate(
+                    id: movedH3Target,
+                    capturedAt: now,
+                    h3Cell: otherH3Cell,
+                    county: nil,
+                    on: database
+                )
+                try await seedCandidate(id: ugcTarget, capturedAt: now, h3Cell: nil, county: ugcCode, on: database)
+                try await seedCandidate(
+                    id: movedUGCTarget,
+                    capturedAt: now,
+                    h3Cell: nil,
+                    county: "other-\(ugcCode)",
+                    on: database
+                )
+
+                let h3Candidates = try await NotificationCandidateStore().loadH3Candidates(
+                    cells: [h3Cell],
+                    capturedAtOrAfter: now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold),
+                    installationId: h3Target,
+                    on: database
+                )
+                let movedH3Candidates = try await NotificationCandidateStore().loadH3Candidates(
+                    cells: [h3Cell],
+                    capturedAtOrAfter: now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold),
+                    installationId: movedH3Target,
+                    on: database
+                )
+                let ugcCandidates = try await NotificationCandidateStore().loadUGCCandidates(
+                    ugcCodes: [ugcCode],
+                    capturedAtOrAfter: now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold),
+                    installationId: ugcTarget,
+                    on: database
+                )
+                let movedUGCCandidates = try await NotificationCandidateStore().loadUGCCandidates(
+                    ugcCodes: [ugcCode],
+                    capturedAtOrAfter: now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold),
+                    installationId: movedUGCTarget,
+                    on: database
+                )
+
+                #expect(h3Candidates.map(\.id) == [h3Target])
+                #expect(movedH3Candidates.isEmpty)
+                #expect(ugcCandidates.map(\.id) == [ugcTarget])
+                #expect(movedUGCCandidates.isEmpty)
+            }
+        }
+    }
 }

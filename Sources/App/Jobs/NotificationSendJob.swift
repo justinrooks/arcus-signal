@@ -44,17 +44,20 @@ public struct NotificationSendJobPayload: Codable, Sendable {
     let revisionUrn: String
     let mode: NotificationTargetMode
     let reason: NotificationReason
+    let installationId: UUID?
     
     init(
         seriesId: UUID,
         revisionUrn: String,
         mode: NotificationTargetMode,
-        reason: NotificationReason
+        reason: NotificationReason,
+        installationId: UUID? = nil
     ) {
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
         self.mode = mode
         self.reason = reason
+        self.installationId = installationId
     }
 }
 
@@ -245,6 +248,7 @@ public struct NotificationSendJob: AsyncJob {
             let h3Candidates = try await candidateStore.loadH3Candidates(
                 cells: geo.h3Cells,
                 capturedAtOrAfter: presenceCutoff,
+                installationId: payload.installationId,
                 on: context.application.db
             )
             
@@ -265,6 +269,7 @@ public struct NotificationSendJob: AsyncJob {
             let ugcCandidates = try await candidateStore.loadUGCCandidates(
                 ugcCodes: series.ugcCodes,
                 capturedAtOrAfter: presenceCutoff,
+                installationId: payload.installationId,
                 on: context.application.db
             )
 

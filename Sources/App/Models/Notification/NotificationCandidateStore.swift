@@ -86,6 +86,7 @@ struct NotificationCandidateStore {
     func loadUGCCandidates(
         ugcCodes: [String],
         capturedAtOrAfter cutoff: Date,
+        installationId: UUID? = nil,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
@@ -107,6 +108,7 @@ struct NotificationCandidateStore {
             WHERE i.is_active = TRUE
               AND i.is_subscribed = TRUE
               AND i.apns_device_token <> ''
+              AND (\(bind: installationId)::uuid IS NULL OR i.installation_id = \(bind: installationId)::uuid)
               AND p.captured_at >= \(bind: cutoff)
               AND (
                   p.county  = ANY(\(bind: ugcCodes)::text[])
@@ -120,6 +122,7 @@ struct NotificationCandidateStore {
     func loadH3Candidates(
         cells: [Int64],
         capturedAtOrAfter cutoff: Date,
+        installationId: UUID? = nil,
         on db: any Database
     ) async throws -> [NotificationCandidate] {
         guard let sql = db as? any SQLDatabase else {
@@ -143,6 +146,7 @@ struct NotificationCandidateStore {
             WHERE i.is_active = TRUE
               AND i.is_subscribed = TRUE
               AND i.apns_device_token <> ''
+              AND (\(bind: installationId)::uuid IS NULL OR i.installation_id = \(bind: installationId)::uuid)
               AND p.h3_cell IS NOT NULL
               AND p.h3_cell = ANY(\(bind: cells)::bigint[])
               AND p.captured_at >= \(bind: cutoff)
