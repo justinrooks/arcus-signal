@@ -199,7 +199,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/209
 
-Status: Pending
+Status: Complete
 
 Goal:
 - Add the minimal PostgreSQL model, migration, and store for immutable ready/done/dead reconciliation queue-handoff intents.
@@ -217,6 +217,14 @@ Verification:
 
 Stop condition:
 - Schema and persistence semantics are tested and registered; no route or worker behavior consumes them.
+
+Evidence:
+- Added `presence_reconciliation_outbox` with immutable installation/presence/trigger/fingerprint identity, ready/done/dead handoff state, retry metadata, and deterministic ready-drain index.
+- Added a transaction-owned store for idempotent intent insertion and guarded queue-handoff outcome updates.
+- `swift test --filter PresenceReconciliationOutboxTests` and `swift test --filter DevicePresenceMigrationTests` passed on 2026-08-13.
+
+Handoff:
+- Issue #210 should create intents only inside the accepted `DeviceController` transaction; it must not dispatch or consume them.
 
 ### Issue #210 - 03: Record intents for authoritative presence transitions
 
