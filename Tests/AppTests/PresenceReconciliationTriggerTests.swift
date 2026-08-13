@@ -159,4 +159,22 @@ struct PresenceReconciliationTriggerTests {
             #expect(trigger == nil)
         }
     }
+
+    @Test("a presence without targeting fields is not usable")
+    func targetlessPresenceDoesNotTrigger() {
+        let targetless = PresenceTargetingFingerprint(
+            h3Cell: nil,
+            county: nil,
+            forecastZone: nil,
+            fireZone: nil
+        )
+
+        let trigger = PresenceReconciliationTrigger.decide(
+            previous: nil,
+            current: state(fingerprint: targetless),
+            now: now
+        )
+
+        #expect(trigger == nil)
+    }
 }

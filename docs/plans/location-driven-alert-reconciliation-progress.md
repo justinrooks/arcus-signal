@@ -231,7 +231,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/210
 
-Status: Pending
+Status: Complete
 
 Goal:
 - Evaluate persisted before/after installation and presence state inside the existing route transaction and insert an intent only for meaningful usable transitions.
@@ -248,6 +248,14 @@ Verification:
 
 Stop condition:
 - The route transaction durably records correct intents; it does not dispatch reconciliation or APNs work.
+
+Evidence:
+- The location-snapshot transaction captures authoritative before/after installation and presence state, evaluates the established trigger after persistence, and inserts the immutable reconciliation intent only for accepted meaningful usable transitions.
+- Older `captured_at` uploads remain ignored without an intent; partial updates hash the persisted targeting fingerprint, preserving omitted H3/UGC fields.
+- `swift test --filter DeviceControllerTests` and `swift test --filter PresenceReconciliationTriggerTests` passed on 2026-08-13.
+
+Handoff:
+- Issue #211 may add the installation-scoped active-current-revision query. This route still does not dispatch, query alerts, or send APNs.
 
 ### Issue #211 - 04: Query matching active alerts for one installation
 
