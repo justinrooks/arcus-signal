@@ -262,7 +262,7 @@ Handoff:
 GitHub:
 - https://github.com/justinrooks/arcus-signal/issues/211
 
-Status: Pending
+Status: Implemented — Awaiting Human Review
 
 Goal:
 - Add an installation-scoped active-current-revision lookup that preserves current H3 and UGC-fallback mode semantics.
@@ -277,6 +277,15 @@ Verification:
 
 Stop condition:
 - Query tests cover H3, all three UGC fields, fallback mode, current revision, and lifecycle exclusions; no queue or delivery behavior changes.
+
+Evidence:
+- Added an installation-scoped inverse lookup that returns current series/revision identity plus existing H3/UGC mode and `.new`/`.update` reason provenance.
+- H3 exact membership, county/forecast-zone/fire-zone OR matching, current-revision UGC fallback despite an older series geolocation row, and lifecycle/reason exclusions are covered by PostgreSQL integration tests.
+- Existing indexes remain sufficient for this bounded lookup; no schema or index change was added.
+- `swift test --filter NotificationActiveAlertQueryTests` and `swift test --filter NotificationSendJobCandidateQueryTests` passed on 2026-08-13.
+
+Handoff:
+- After review and merge, issue #212 may add the backward-compatible installation constraint to the existing send job. This slice does not dispatch queue work or alter delivery behavior.
 
 ### Issue #212 - 05: Constrain the existing send job to one installation
 
