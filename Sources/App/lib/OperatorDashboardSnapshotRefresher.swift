@@ -59,6 +59,7 @@ struct OperatorDashboardSnapshotRefresher {
         if slowDue {
             snapshot.endToEndLatency = try await loadEndToEndLatency(on: sql, now: now)
             snapshot.apnsDelivery = try await loadAPNsDelivery(on: sql, now: now)
+            snapshot.installationGrowth = try await loadInstallationGrowth(on: sql, now: now)
             snapshot.targetableCoverage = try await loadTargetableCoverage(on: sql, now: now)
             snapshot.slowRefreshedAt = now
         }
@@ -350,6 +351,82 @@ struct OperatorDashboardSnapshotRefresher {
                 stalePresenceCount: row.map { Int($0.stalePresenceCount) } ?? 0,
                 missingTargetingDataCount: row.map { Int($0.missingTargetingDataCount) } ?? 0
             )
+        )
+    }
+
+    func loadInstallationGrowth(on sql: any SQLDatabase, now: Date) async throws -> StoredInstallationGrowthMetric {
+        let rows = try await sql.raw("""
+            WITH bounds AS (
+                SELECT
+                    date_trunc('month', \(bind: now) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS current_month_start,
+                    \(bind: now) AS observed_at
+            ),
+            months AS (
+                SELECT generate_series(
+                    current_month_start - INTERVAL '11 months',
+                    current_month_start,
+                    INTERVAL '1 month'
+                ) AS month_start
+                FROM bounds
+            ),
+            monthly_new AS (
+                SELECT
+                    months.month_start,
+                    COUNT(i.installation_id) AS new_installation_count
+                FROM months
+                LEFT JOIN device_installations i
+                  ON i.created_at >= months.month_start
+                 AND i.created_at < months.month_start + INTERVAL '1 month'
+                GROUP BY months.month_start
+            ),
+            prior_total AS (
+                SELECT COUNT(*) AS count
+                FROM device_installations, bounds
+                WHERE created_at < current_month_start - INTERVAL '11 months'
+            ),
+            current_state AS (
+                SELECT
+                    COUNT(*) AS known_installation_count,
+                    COUNT(*) FILTER (
+                        WHERE is_active = TRUE AND is_subscribed = TRUE
+                    ) AS currently_subscribed_count,
+                    COUNT(*) FILTER (
+                        WHERE last_seen_at >= observed_at - INTERVAL '24 hours'
+                    ) AS seen_last_24_hours_count
+                FROM device_installations, bounds
+            )
+            SELECT
+                monthly_new.month_start AS "monthStart",
+                monthly_new.new_installation_count AS "newInstallationCount",
+                (
+                    prior_total.count
+                        + SUM(monthly_new.new_installation_count) OVER (ORDER BY monthly_new.month_start)
+                )::BIGINT AS "cumulativeInstallationCount",
+                current_state.known_installation_count AS "knownInstallationCount",
+                current_state.currently_subscribed_count AS "currentlySubscribedCount",
+                current_state.seen_last_24_hours_count AS "seenLast24HoursCount"
+            FROM monthly_new
+            CROSS JOIN prior_total
+            CROSS JOIN current_state
+            ORDER BY monthly_new.month_start
+        """).all(decoding: InstallationGrowthRow.self)
+
+        guard let currentMonth = rows.last else {
+            return .init()
+        }
+
+        return .init(
+            knownInstallationCount: Int(currentMonth.knownInstallationCount),
+            newThisMonthCount: Int(currentMonth.newInstallationCount),
+            currentlySubscribedCount: Int(currentMonth.currentlySubscribedCount),
+            seenLast24HoursCount: Int(currentMonth.seenLast24HoursCount),
+            monthlyGrowth: rows.map {
+                .init(
+                    monthStart: $0.monthStart,
+                    newInstallationCount: Int($0.newInstallationCount),
+                    cumulativeInstallationCount: Int($0.cumulativeInstallationCount)
+                )
+            }
         )
     }
 
@@ -831,6 +908,15 @@ private struct TargetableCoverageRow: Decodable {
     let missingTargetingDataCount: Int64
     let candidateQueryEligibleInstallationCount: Int64
     let hardStalePresenceCount: Int64
+}
+
+private struct InstallationGrowthRow: Decodable {
+    let monthStart: Date
+    let newInstallationCount: Int64
+    let cumulativeInstallationCount: Int64
+    let knownInstallationCount: Int64
+    let currentlySubscribedCount: Int64
+    let seenLast24HoursCount: Int64
 }
 
 private struct H3AggregateRow: Decodable {

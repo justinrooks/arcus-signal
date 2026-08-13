@@ -412,6 +412,18 @@ enum OperatorDashboardPageRenderer {
             </section>
 
             <section class="section">
+              <h2>Growth / Usage</h2>
+              <div class="grid">
+                \(slot("known-installations-card", content: knownInstallationsCard(snapshot.growthUsage.installationGrowth)))
+                \(slot("new-installations-card", content: newInstallationsCard(snapshot.growthUsage.installationGrowth)))
+                \(slot("recent-server-activity-card", content: recentServerActivityCard(snapshot.growthUsage.installationGrowth)))
+              </div>
+              <div class="stack" style="margin-top: 16px;">
+                \(slot("installation-growth-table", content: installationGrowthTable(snapshot.growthUsage.installationGrowth)))
+              </div>
+            </section>
+
+            <section class="section">
               <h2>Model Artifacts</h2>
               <div class="grid">
                 \(slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(snapshot.modelArtifacts.pressureArtifactReadiness)))
@@ -595,6 +607,19 @@ enum OperatorDashboardPageRenderer {
             return `${dayDifference} days ago ${timeText}`;
           }
 
+          function formatMonth(value) {
+            const date = parseDateValue(value);
+            if (!date) {
+              return 'n/a';
+            }
+
+            return new Intl.DateTimeFormat('en-US', {
+              month: 'long',
+              year: 'numeric',
+              timeZone: 'UTC'
+            }).format(date);
+          }
+
           function formatDuration(value) {
             if (value === null || value === undefined || Number.isNaN(Number(value))) {
               return 'n/a';
@@ -709,6 +734,62 @@ enum OperatorDashboardPageRenderer {
             return renderCard('Stale active series', String(metric.count), metric.refreshedAt, [
               { label: 'Grace window', value: formatDuration(metric.graceSeconds) }
             ]);
+          }
+
+          function renderKnownInstallationsCard(metric) {
+            const previousMonth = metric.monthlyGrowth.length > 1
+              ? metric.monthlyGrowth[metric.monthlyGrowth.length - 2]
+              : null;
+            return renderCard('Known Installations', String(metric.knownInstallationCount), metric.refreshedAt, [
+              { label: 'Through last month', value: previousMonth ? String(previousMonth.cumulativeInstallationCount) : 'n/a' },
+              { label: 'Currently subscribed', value: String(metric.currentlySubscribedCount) }
+            ]);
+          }
+
+          function renderNewInstallationsCard(metric) {
+            const currentMonth = metric.monthlyGrowth.at(-1);
+            return renderCard('New This Month', String(metric.newThisMonthCount), metric.refreshedAt, [
+              { label: 'Month', value: formatMonth(currentMonth?.monthStart) }
+            ]);
+          }
+
+          function renderRecentServerActivityCard(metric) {
+            return renderCard('Seen Last 24h — Server Activity', String(metric.seenLast24HoursCount), metric.refreshedAt, [
+              { label: 'Share of known', value: formatPercent(metric.seenLast24HoursRate) },
+              { label: 'Interpretation', value: 'Operational activity, not DAU' }
+            ]);
+          }
+
+          function renderInstallationGrowthTable(metric) {
+            const rows = Array.isArray(metric.monthlyGrowth) ? metric.monthlyGrowth : [];
+            const body = rows.length === 0
+              ? '<div class="empty">No installation growth history.</div>'
+              : `
+                <div class="table-wrap">
+                  <table class="stream-table inline-mobile-table">
+                    <thead><tr><th>Month</th><th>New installations</th><th>Cumulative total</th></tr></thead>
+                    <tbody>
+                      ${rows.map((entry) => `
+                        <tr>
+                          <td data-label="Month">${escapeHtml(formatMonth(entry.monthStart))}</td>
+                          <td data-label="New installations">${escapeHtml(entry.newInstallationCount)}</td>
+                          <td data-label="Cumulative total">${escapeHtml(entry.cumulativeInstallationCount)}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              `;
+
+            return `
+              <div class="card table-card">
+                <div style="padding: 18px 18px 0;">
+                  <h3>Monthly Installation Growth</h3>
+                  <div class="subtle">Refreshed ${escapeHtml(formatDate(metric.refreshedAt))}</div>
+                </div>
+                ${body}
+              </div>
+            `;
           }
 
           function renderLatencyCard(metric) {
@@ -1064,6 +1145,15 @@ enum OperatorDashboardPageRenderer {
             updateSlot('pipeline-backlog-card', refreshKey(snapshot.redLights.pipelineBacklogAge.refreshedAt), renderPipelineBacklogCard(snapshot.redLights.pipelineBacklogAge));
             updateSlot('stuck-claimed-card', refreshKey(snapshot.redLights.stuckClaimedRows.refreshedAt), renderStuckClaimedCard(snapshot.redLights.stuckClaimedRows));
             updateSlot('stale-series-card', refreshKey(snapshot.redLights.staleActiveSeriesCount.refreshedAt), renderStaleSeriesCard(snapshot.redLights.staleActiveSeriesCount));
+            updateSlot('known-installations-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderKnownInstallationsCard(snapshot.growthUsage.installationGrowth));
+            updateSlot('new-installations-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderNewInstallationsCard(snapshot.growthUsage.installationGrowth));
+            updateSlot('recent-server-activity-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderRecentServerActivityCard(snapshot.growthUsage.installationGrowth));
+            updateSlot(
+              'installation-growth-table',
+              refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt),
+              renderInstallationGrowthTable(snapshot.growthUsage.installationGrowth),
+              { streamRows: true, streamDelayStepMs: 28 }
+            );
             updateSlot(
               'pressure-artifact-readiness-card',
               refreshKey(snapshot.modelArtifacts?.pressureArtifactReadiness?.refreshedAt),
@@ -1230,6 +1320,77 @@ enum OperatorDashboardPageRenderer {
             refreshedAt: metric.refreshedAt,
             lines: [("Grace window", maybeDuration(metric.graceSeconds))]
         )
+    }
+
+    private static func knownInstallationsCard(_ metric: InstallationGrowthMetricResponse) -> String {
+        let previousMonthTotal = metric.monthlyGrowth.dropLast().last?.cumulativeInstallationCount
+        return card(
+            title: "Known Installations",
+            primary: "\(metric.knownInstallationCount)",
+            refreshedAt: metric.refreshedAt,
+            lines: [
+                ("Through last month", previousMonthTotal.map(String.init) ?? "n/a"),
+                ("Currently subscribed", "\(metric.currentlySubscribedCount)")
+            ]
+        )
+    }
+
+    private static func newInstallationsCard(_ metric: InstallationGrowthMetricResponse) -> String {
+        card(
+            title: "New This Month",
+            primary: "\(metric.newThisMonthCount)",
+            refreshedAt: metric.refreshedAt,
+            lines: [
+                ("Month", metric.monthlyGrowth.last.map { formatMonth($0.monthStart) } ?? "n/a")
+            ]
+        )
+    }
+
+    private static func recentServerActivityCard(_ metric: InstallationGrowthMetricResponse) -> String {
+        card(
+            title: "Seen Last 24h — Server Activity",
+            primary: "\(metric.seenLast24HoursCount)",
+            refreshedAt: metric.refreshedAt,
+            lines: [
+                ("Share of known", maybePercent(metric.seenLast24HoursRate)),
+                ("Interpretation", "Operational activity, not DAU")
+            ]
+        )
+    }
+
+    private static func installationGrowthTable(_ metric: InstallationGrowthMetricResponse) -> String {
+        let body = metric.monthlyGrowth.isEmpty
+            ? #"<div class="empty">No installation growth history.</div>"#
+            : """
+              <div class="table-wrap">
+                <table class="stream-table inline-mobile-table">
+                  <thead><tr><th>Month</th><th>New installations</th><th>Cumulative total</th></tr></thead>
+                  <tbody>
+                    \(metric.monthlyGrowth.map(installationGrowthRow).joined())
+                  </tbody>
+                </table>
+              </div>
+            """
+
+        return """
+        <div class="card table-card">
+          <div style="padding: 18px 18px 0;">
+            <h3>Monthly Installation Growth</h3>
+            <div class="subtle">Refreshed \(escape(maybeDate(metric.refreshedAt)))</div>
+          </div>
+          \(body)
+        </div>
+        """
+    }
+
+    private static func installationGrowthRow(_ entry: MonthlyInstallationGrowthResponse) -> String {
+        """
+        <tr>
+          <td data-label="Month">\(escape(formatMonth(entry.monthStart)))</td>
+          <td data-label="New installations">\(entry.newInstallationCount)</td>
+          <td data-label="Cumulative total">\(entry.cumulativeInstallationCount)</td>
+        </tr>
+        """
     }
 
     private static func latencyCard(_ metric: EndToEndLatencyMetricResponse) -> String {
@@ -1634,6 +1795,10 @@ enum OperatorDashboardPageRenderer {
         return String(format: "%.1f%%", percent)
     }
 
+    private static func formatMonth(_ date: Date) -> String {
+        DateFormatter.dashboardMonthFormatter.string(from: date)
+    }
+
     private static func formatDuration(_ seconds: Int) -> String {
         if seconds < 60 {
             return "\(seconds)s"
@@ -1697,6 +1862,14 @@ enum OperatorDashboardPageRenderer {
 }
 
 private extension DateFormatter {
+    static let dashboardMonthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter
+    }()
+
     static let dashboardTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
