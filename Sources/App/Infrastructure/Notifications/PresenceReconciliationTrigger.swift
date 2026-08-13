@@ -5,7 +5,7 @@
 
 import Foundation
 
-public struct PresenceTargetingFingerprint: Equatable, Sendable {
+public struct PresenceTargetingFingerprint: Encodable, Equatable, Sendable {
     public let h3Cell: Int64?
     public let county: String?
     public let forecastZone: String?
@@ -96,6 +96,13 @@ public struct PresenceReconciliationTrigger: Sendable, Equatable {
         freshnessPolicy: LocationFreshnessPolicy
     ) -> Bool {
         guard state.isActive, state.isSubscribed, state.hasAPNsToken else {
+            return false
+        }
+
+        guard state.fingerprint.h3Cell != nil
+                || state.fingerprint.county != nil
+                || state.fingerprint.forecastZone != nil
+                || state.fingerprint.fireZone != nil else {
             return false
         }
 

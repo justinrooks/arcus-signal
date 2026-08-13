@@ -101,7 +101,14 @@ struct DeviceController: RouteCollection {
         }
         
         let presenceOutcome = try await req.db.transaction { database in
-            _ = try await upsertDeviceInstallation(
+            let previousInstallation = try await DeviceInstallationModel.find(installationUUID, on: database)
+            let previousPresence = try await DevicePresenceModel.find(installationUUID, on: database)
+            let previousState = reconciliationState(
+                installation: previousInstallation,
+                presence: previousPresence
+            )
+
+            let installation = try await upsertDeviceInstallation(
                 installationId: installationUUID,
                 apnsDeviceToken: apnsDeviceToken,
                 apnsEnvironment: apnsEnvironment,
@@ -115,7 +122,7 @@ struct DeviceController: RouteCollection {
                 on: database
             )
             
-            return try await upsertDevicePresence(
+            let presenceOutcome = try await upsertDevicePresence(
                 installationId: installationUUID,
                 payload: payload,
                 cellScheme: cellScheme,
@@ -123,6 +130,30 @@ struct DeviceController: RouteCollection {
                 receivedAt: receivedAt,
                 on: database
             )
+
+            guard presenceOutcome != .staleIgnored,
+                  let presence = try await DevicePresenceModel.find(installationUUID, on: database) else {
+                return presenceOutcome
+            }
+
+            guard let currentState = reconciliationState(installation: installation, presence: presence) else {
+                return presenceOutcome
+            }
+            if let trigger = PresenceReconciliationTrigger.decide(
+                previous: previousState,
+                current: currentState,
+                now: receivedAt
+            ) {
+                _ = try await PresenceReconciliationOutboxStore().insert(
+                    installationID: installationUUID,
+                    presenceCapturedAt: presence.capturedAt,
+                    triggerCategory: trigger.category,
+                    targetingFingerprint: try StableContentHasher.sha256Hex(of: currentState.fingerprint),
+                    on: database
+                )
+            }
+
+            return presenceOutcome
         }
         
         // Avoid logging full APNS token in production logs.
@@ -412,4 +443,27 @@ private func upsertDevicePresence(
         try await existing.update(on: database)
         return .updated
     }
+}
+
+private func reconciliationState(
+    installation: DeviceInstallationModel?,
+    presence: DevicePresenceModel?
+) -> PresenceReconciliationState? {
+    guard let installation, let presence else {
+        return nil
+    }
+
+    return PresenceReconciliationState(
+        fingerprint: .init(
+            h3Cell: presence.h3Cell,
+            county: presence.county,
+            forecastZone: presence.zone,
+            fireZone: presence.fireZone
+        ),
+        capturedAt: presence.capturedAt,
+        locationAuth: installation.locationAuth,
+        isActive: installation.isActive,
+        isSubscribed: installation.isSubscribed,
+        hasAPNsToken: !installation.apnsDeviceToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    )
 }
