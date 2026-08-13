@@ -239,3 +239,42 @@
   - APNs retry/backoff, queue replay, abandoned-claim recovery, and unknown-outcome handling remain explicit unimplemented reliability gaps in `docs/architecture.md`; tests should accompany those behaviors when implementation is scoped, but current evidence does not justify tests for behavior that does not yet exist.
 - Implementation recommended: no
 - Out-of-scope repositories intentionally not scanned: all sibling repositories and external NWS, APNs, Redis, and PostgreSQL implementations
+
+## 2026-08-11
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-08-04T15:01:09.569Z` through `2026-08-11`); seven commits from `8ededc70f7fcef9f99cf251d34269dbed52fde8b` through `8985a4d89e22b31bc6951acfbe3ba2886a973991`
+- High-risk areas inspected:
+  - pressure-artifact HTTP request deadlines, whole-warm timeout/cancellation ownership, transient failure classification, bounded logical retries, and terminal claim completion
+  - durable fenced failure-completion retries, stale-owner protection, retry exhaustion, and error-summary sanitization
+  - abandoned model-artifact Redis job recovery, atomic/idempotent queue transitions, malformed-state preservation, and worker startup ordering/failure
+  - pressure-artifact backlog metrics, expired-lease boundaries, stored-snapshot compatibility, and sensitive-field exclusion from operator output
+- Files inspected:
+  - `Sources/App/Infrastructure/Networking/HTTPDataDownloader.swift`
+  - `Sources/App/Jobs/PressureArtifactWarmJob.swift`
+  - `Sources/App/Jobs/PressureArtifactFailureCompletionJob.swift`
+  - `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+  - `Sources/App/StormSetup/HrrrPressureByteRangeDownloader.swift`
+  - `Sources/App/StormSetup/StormSetupConfiguration.swift`
+  - `Sources/App/Worker/ModelArtifactQueueRecovery.swift`
+  - `Sources/App/Worker/WorkerRuntime.swift`
+  - `Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`
+  - `Sources/App/Models/API/OperatorDashboardSnapshotResponse.swift`
+  - `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+  - `Tests/AppTests/PressureArtifactFailureCompletionJobTests.swift`
+  - `Tests/AppTests/HrrrPressureByteRangeDownloaderTests.swift`
+  - `Tests/AppTests/StormSetupConfigurationTests.swift`
+  - `Tests/AppTests/ModelArtifactQueueRecoveryTests.swift`
+  - `Tests/AppTests/AppTests.swift`
+  - `Tests/AppTests/OperatorDashboardPressureArtifactTests.swift`
+- Existing relevant tests found:
+  - warm-job coverage exercises deadline propagation, timeout/cancellation races, retry classification and exhaustion, continuation dispatch failure, fenced claim completion, concurrent ownership, and terminal validation failures
+  - failure-completion coverage exercises durable retry success, stale and duplicate completion, retry exhaustion, cancellation, configured schedules, and bounded token-redacted summaries
+  - queue-recovery coverage exercises atomic and idempotent recovery, duplicate/already-waiting membership, unknown/missing/malformed data preservation, invalid payload shapes, and all-or-nothing Redis failure behavior; worker-runtime tests cover recovery-before-consumer ordering and zero-grace startup failure
+  - dashboard coverage exercises healthy/stuck/empty catalogs, the exact expired-lease boundary, pending-age aggregation, JSON/HTML projection, legacy decoding defaults, and exclusion of claim/lease details
+- Recommended test gaps: none (High: 0, Medium: 0, Low: 0)
+- Top recommended test: none. No test gap recommended; each behavior-bearing reliability change in the commit window has focused contract or integration coverage proportional to its product risk.
+- Validation: `swift test --filter 'PressureArtifactWarmJobTests|PressureArtifactFailureCompletionJobTests|ModelArtifactQueueRecoveryTests|OperatorDashboardPressureArtifactTests|HrrrPressureByteRangeDownloaderTests|StormSetupConfigurationTests'` (80 tests passed across six suites)
+- Watchlist items:
+  - the delayed-startup-grace recovery-failure branch asynchronously shuts down the worker and lacks a direct lifecycle test; promote only if that branch changes or a deterministic shutdown harness becomes available, because the same recovery-before-consumer and failure-stop invariants are already covered through the zero-grace path
+- Implementation recommended: no
+- Out-of-scope repositories intentionally not scanned: all sibling repositories and external HRRR, Redis, PostgreSQL, and Vapor Queues implementations

@@ -343,6 +343,87 @@
 - Implementation recommended: `yes`
 - Out-of-scope repositories intentionally not scanned: all sibling repositories
 
+## 2026-08-13
+
+### 1. Repository scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Reliable previous end marker: `51f4259b06f1e851f97ee37742e3384fe005f21a` from the 2026-08-06 audit entry
+- Window used: commits after `51f4259b06f1e851f97ee37742e3384fe005f21a` through `8985a4d89e22b31bc6951acfbe3ba2886a973991`
+- Dates: `2026-08-06T12:34:12-06:00` through `2026-08-10T08:11:36-06:00`
+- Commit count: 7
+- Start commit: `8ededc70f7fcef9f99cf251d34269dbed52fde8b`
+- End commit: `8985a4d89e22b31bc6951acfbe3ba2886a973991`
+- Fallback strategy: none; the bounded window contained commits
+
+### 3. High-risk areas inspected
+- Pressure-artifact HTTP request deadlines and transport failure classification (`Sources/App/Infrastructure/Networking/HTTPDataDownloader.swift`, pressure downloaders and caches)
+- Warm attempt timeout, claim fencing, failure completion, and bounded acquisition retry (`Sources/App/StormSetup/PressureArtifactWarmingService.swift`, `Sources/App/Jobs/PressureArtifactWarmJob.swift`, `Sources/App/Jobs/PressureArtifactFailureCompletionJob.swift`)
+- Abandoned Redis queue-job recovery before worker startup (`Sources/App/Worker/ModelArtifactQueueRecovery.swift`, `Sources/App/Worker/WorkerRuntime.swift`)
+- Pressure-artifact backlog health and dashboard compatibility (`Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`, `Sources/App/Models/API/OperatorDashboardSnapshotResponse.swift`)
+- Prior probe dispatch-failure finding (`Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`, `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`)
+
+### 4. Findings
+- New findings: none.
+- Changed findings: none.
+- Recurring finding: `BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE` remains present at current `HEAD`. `PressureArtifactCatalogStore.markProbeFailure` still updates by artifact identity without a pending-state or ownership predicate. No materially new evidence, severity change, blast-radius change, or remediation improvement was found, so the normalized finding is not repeated. Existing GitHub issue: [#198](https://github.com/justinrooks/arcus-signal/issues/198) (open).
+- Resolved findings: none.
+
+### 5. Watchlist
+- None. The newly added timeout, retry, fenced failure-completion, startup recovery, and backlog-health paths had direct focused coverage and no concrete unsupported failure path was found.
+
+### 6. Top finding and best next fix
+- Top finding: recurring `BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE`.
+- Best next fix: constrain probe failure persistence to the probe-owned pending transition and add ambiguous-dispatch regression coverage, as already scoped in issue #198.
+- Implementation recommended: `yes`, through the existing issue; no new issue is warranted.
+
+### 7. Validation
+- `swift test --filter PressureArtifactWarmJobTests` passed (32 tests).
+- `swift test --filter PressureArtifactFailureCompletionJobTests` passed (8 tests).
+- `swift test --filter ModelArtifactQueueRecoveryTests` passed (13 tests).
+- `swift test --filter OperatorDashboardPressureArtifactTests` passed (11 tests).
+- `swift test --filter HRRRPressureArtifactProbeServiceTests` passed (12 tests).
+- Total focused validation: 76 tests passed.
+
+### 8. GitHub triage
+- GitHub issues created: none.
+- GitHub issues updated: none; no materially new evidence justified a repetitive comment or edit.
+- Existing issues referenced: [#198](https://github.com/justinrooks/arcus-signal/issues/198).
+
+### 9. Files inspected
+- `Sources/App/Infrastructure/Networking/HTTPDataDownloader.swift`
+- `Sources/App/Jobs/PressureArtifactFailureCompletionJob.swift`
+- `Sources/App/Jobs/PressureArtifactWarmJob.swift`
+- `Sources/App/Models/API/OperatorDashboardSnapshotResponse.swift`
+- `Sources/App/Models/Data/PressureArtifactCatalogStore.swift`
+- `Sources/App/StormSetup/HRRRPressureArtifactProbeService.swift`
+- `Sources/App/StormSetup/PressureArtifactWarmingService.swift`
+- `Sources/App/Worker/ModelArtifactQueueRecovery.swift`
+- `Sources/App/Worker/WorkerRuntime.swift`
+- `Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`
+- `Tests/AppTests/HRRRPressureArtifactProbeServiceTests.swift`
+- `Tests/AppTests/ModelArtifactQueueRecoveryTests.swift`
+- `Tests/AppTests/OperatorDashboardPressureArtifactTests.swift`
+- `Tests/AppTests/PressureArtifactFailureCompletionJobTests.swift`
+- `Tests/AppTests/PressureArtifactWarmJobTests.swift`
+
+### 10. Scope notes
+- Repository scanned: `arcus-signal` only.
+- Out-of-scope repositories: all sibling repositories and external clients were intentionally not scanned.
+- Skipped evidence: no cross-repository claims were evaluated or included.
+
+### Audit entry (short)
+- Date: `2026-08-13`
+- Repository reviewed: `arcus-signal`
+- Workflow reviewed: weekly bug scan (audit-only, commits since the reliable previous end marker)
+- Commit window inspected: `8ededc70f7fcef9f99cf251d34269dbed52fde8b` through `8985a4d89e22b31bc6951acfbe3ba2886a973991`; 7 commits
+- Files inspected: pressure-artifact HTTP deadlines, warm timeout/retry/failure completion, abandoned-job recovery, backlog health, prior probe failure transition, and focused tests listed above
+- Top finding: recurring probe enqueue failure can overwrite pressure-artifact work already advanced to `warming` or `ready`
+- Best next fix: implement existing issue #198; no duplicate issue or repetitive update
+- Implementation recommended: `yes`, through existing issue #198
+- Out-of-scope repositories intentionally not scanned: all sibling repositories
+
 ### 9. Implementation status
 - Fixed on `2026-07-26`.
 - `NotificationSendJob` now blocks `.new` and `.update` deliveries before candidate resolution, ledger claiming, and APNs when the series is inactive or its `expires` or `ends` timestamp has elapsed.
