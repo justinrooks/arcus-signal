@@ -778,6 +778,55 @@ struct NotificationSendJobDeliveryBoundaryTests {
             #expect(await sender.sendCount == 0)
         }
     }
+
+    @Test("dequeue persists stale revision mismatch without resolving candidates or sending")
+    func dequeuePersistsStaleRevisionMismatchWithoutResolvingCandidatesOrSending() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let seriesID = UUID()
+            let currentRevisionUrn = "urn:oid:current-dequeue-\(UUID().uuidString.lowercased())"
+            let staleRevisionUrn = "urn:oid:stale-dequeue-\(UUID().uuidString.lowercased())"
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: staleRevisionUrn,
+                mode: .h3,
+                reason: .update
+            )
+
+            try await seedSeries(id: seriesID, revisionUrn: currentRevisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: currentRevisionUrn, on: app.db)
+
+            try await job.dequeue(context, payload)
+
+            let attempts = try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == staleRevisionUrn)
+                .all()
+            let ledgerCount = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == staleRevisionUrn)
+                .count()
+            #expect(attempts.count == 1)
+            #expect(ledgerCount == 0)
+
+            let attempt = try #require(attempts.first)
+            #expect(attempt.outcome == NotificationSendAttemptOutcome.noOp.rawValue)
+            #expect(attempt.noOpReason == NotificationSendNoOpReason.staleRevisionMismatch.rawValue)
+            #expect(attempt.mode == NotificationTargetMode.h3.rawValue)
+            #expect(attempt.reason == NotificationReason.update.rawValue)
+            #expect(attempt.candidateResolutionReached == false)
+            #expect(attempt.candidateCount == 0)
+            #expect(attempt.claimedCount == 0)
+            #expect(attempt.sentCount == 0)
+            #expect(attempt.failedCount == 0)
+            #expect(await sender.sendCount == 0)
+        }
+    }
 }
 
 private actor RecordingNotificationSender: NotificationSender {

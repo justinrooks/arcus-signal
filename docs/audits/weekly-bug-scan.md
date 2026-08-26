@@ -617,3 +617,111 @@
 - Best next fix: constrain `markProbeFailure` to the probe-owned pending state and add deterministic ambiguous-dispatch regression tests
 - Implementation recommended: `yes`
 - Out-of-scope repositories intentionally not scanned: all sibling repositories
+
+## 2026-08-20
+
+### 1. Repository scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Reliable previous end marker: `8985a4d89e22b31bc6951acfbe3ba2886a973991` from the 2026-08-13 audit entry
+- Window used: commits after `8985a4d89e22b31bc6951acfbe3ba2886a973991` through `563bdb0d3f63df49a67f7d8fb20bad287811288b`
+- Dates: `2026-08-13T11:54:39-06:00` through `2026-08-13T16:46:49-06:00`
+- Commit count: 8
+- Start commit: `b5e08e633529b8028c49d344e5e42465debd38f2`
+- End commit: `563bdb0d3f63df49a67f7d8fb20bad287811288b`
+- Fallback strategy: none; the bounded window contained commits
+
+### 3. High-risk areas inspected
+- Authoritative installation/presence transition detection and transactional outbox creation (`Sources/App/Controllers/DeviceController.swift`, `Sources/App/Infrastructure/Notifications/PresenceReconciliationTrigger.swift`)
+- Durable reconciliation handoff, scheduled drain, and retry/idempotency behavior (`Sources/App/Models/Notification/PresenceReconciliationOutboxStore.swift`, `Sources/App/Jobs/DispatchPresenceReconciliationScheduledJob.swift`, `Sources/App/Jobs/ReconcileInstallationAlertsJob.swift`)
+- Active-alert H3/UGC matching and installation-constrained notification delivery (`Sources/App/Models/Notification/NotificationCandidateStore.swift`, `Sources/App/Jobs/NotificationSendJob.swift`)
+- Installation-growth dashboard aggregation and rendering (`Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`, `Sources/App/lib/OperatorDashboardPageRenderer.swift`)
+
+### 4. Findings
+
+#### BUG-SIGNAL-PRESENCE-PREFERENCE-RECONCILIATION
+
+- Finding ID: `BUG-SIGNAL-PRESENCE-PREFERENCE-RECONCILIATION`
+- Fingerprint: `weekly-bug-scan|arcus-signal|DeviceController.createPreferences|usable-installation-transition-without-reconciliation-intent`
+- Repository: `arcus-signal`
+- Audit type: Weekly Bug Scan
+- Title: Preference sync can restore delivery eligibility without reconciling active alerts
+- Status: `NEW`
+- Severity: `MEDIUM`
+- Confidence: `MEDIUM`
+- First observed: `2026-08-20`
+- Last verified: `2026-08-20`
+- Affected files and symbols: `Sources/App/Controllers/DeviceController.swift` (`createPreferences`, `create`), `Sources/App/Infrastructure/Notifications/PresenceReconciliationTrigger.swift` (`decide`, `isUsable`)
+- Failure mode: The location-snapshot route captures previous installation/presence state, persists both, evaluates whether the installation became usable, transactionally inserts a reconciliation intent, and performs post-commit queue handoff. The preferences route can independently change `isSubscribed`, APNs token, or location authorization while fresh targetable presence already exists, but it only upserts `device_installations`. An unusable-to-usable preference transition therefore creates no reconciliation intent and does not rediscover matching active alerts until a later qualifying location snapshot.
+- Evidence: Commit `31651e819170697dc4f88374c38c3301c0315d1a` added transition evaluation to `DeviceController.create`. Current `DeviceController.swift` lines 108-186 contain previous/current state evaluation, transactional intent creation, and handoff for location snapshots; lines 267-281 show `createPreferences` only updating the installation. `PresenceReconciliationTrigger.swift` lines 65-99 explicitly treats subscription, activity, APNs token, and location authorization as usability gates and returns `becameUsable` for recovery. Existing controller tests exercise a subscription recovery only through the location-snapshot route; no preference-sync test covers existing fresh presence.
+- Blast radius: Users who restore notification eligibility through preference sync can miss already-active severe-weather alerts matching their stored location. Future alert revisions still use the alert-driven path, and a later qualifying location heartbeat can recover the gap.
+- Minimal fix strategy: Apply the existing previous/current state evaluation and transactional outbox insertion to the preferences route when fresh targetable presence exists, then use the existing post-commit handoff. Keep the slice controller-local and avoid worker or notification-pipeline changes.
+- Required validation: Route-level tests for unsubscribed-to-subscribed recovery with existing fresh presence, unchanged/no-op preference updates, unusable states, transaction rollback on intent failure, and queue-handoff failure retention; run `DeviceControllerTests` and `LocationDrivenAlertReconciliationFlowTests` with PostgreSQL available.
+- Related GitHub issue: creation attempted on `2026-08-20` but blocked because the GitHub connector required approval while the automation approval policy was `never`; no issue was created and no prohibited fallback was used.
+- Triage: `ACTIONABLE`
+
+### 5. Recurring findings
+- `BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE` remains represented by open GitHub issue [#198](https://github.com/justinrooks/arcus-signal/issues/198). The bounded commit window did not touch its failure mechanism, so the normalized finding is not repeated.
+
+### 6. Watchlist
+- None. No additional candidate met the evidence threshold.
+
+### 7. Resolved findings
+- None re-verified in this bounded window.
+
+### 8. Top finding and best next fix
+- Top finding: `BUG-SIGNAL-PRESENCE-PREFERENCE-RECONCILIATION`.
+- Best next fix: make preference-sync usability recovery create and hand off the existing durable reconciliation intent.
+- Expected files: `Sources/App/Controllers/DeviceController.swift` and `Tests/AppTests/DeviceControllerTests.swift`.
+- Estimated churn: small, approximately 40-90 LOC.
+- Regression risk: low to medium; preserve transactional intent insertion and avoid duplicate intents for unchanged preferences.
+- Implementation recommended: `yes`
+
+### 9. Validation
+- Static execution-path inspection completed for all eight commits and the focused production/test files listed below.
+- `swift test --filter DeviceControllerTests` attempted; build passed, but all 12 selected tests were blocked by unavailable PostgreSQL at `127.0.0.1:5432` (`connection refused`).
+- Later focused suites in the chained command did not run after the first suite failed.
+
+### 10. GitHub triage
+- Deduplication searches by finding mechanism, route symbol, and impact found no equivalent issue.
+- GitHub issues created: none; the authorized creation attempt failed because the GitHub connector required approval under an approval policy of `never`.
+- GitHub issues updated: none.
+- Existing issues referenced: [#198](https://github.com/justinrooks/arcus-signal/issues/198).
+
+### 11. Files inspected
+- `Sources/App/Controllers/DeviceController.swift`
+- `Sources/App/Infrastructure/Notifications/PresenceReconciliationTrigger.swift`
+- `Sources/App/Jobs/DispatchPresenceReconciliationScheduledJob.swift`
+- `Sources/App/Jobs/NotificationSendJob.swift`
+- `Sources/App/Jobs/ReconcileInstallationAlertsJob.swift`
+- `Sources/App/Migrations/CreatePresenceReconciliationOutbox.swift`
+- `Sources/App/Models/Notification/NotificationCandidateStore.swift`
+- `Sources/App/Models/Notification/PresenceReconciliationOutboxStore.swift`
+- `Sources/App/configure.swift`
+- `Sources/App/lib/OperatorDashboardPageRenderer.swift`
+- `Sources/App/lib/OperatorDashboardSnapshotRefresher.swift`
+- `Tests/AppTests/DeviceControllerTests.swift`
+- `Tests/AppTests/InstallationAlertReconciliationJobTests.swift`
+- `Tests/AppTests/LocationDrivenAlertReconciliationFlowTests.swift`
+- `Tests/AppTests/NotificationActiveAlertQueryTests.swift`
+- `Tests/AppTests/PresenceReconciliationOutboxTests.swift`
+- `Tests/AppTests/PresenceReconciliationTriggerTests.swift`
+- `docs/architecture.md`
+
+### 12. Scope notes
+- Repository scanned: `arcus-signal` only.
+- Out-of-scope repositories: all sibling repositories and external clients were intentionally not scanned.
+- Skipped evidence: no cross-repository claims were evaluated or included.
+
+### Audit entry (short)
+- Date: `2026-08-20`
+- Repository reviewed: `arcus-signal`
+- Workflow reviewed: weekly bug scan (audit-only, commits since the reliable previous end marker)
+- Commit window inspected: `b5e08e633529b8028c49d344e5e42465debd38f2` through `563bdb0d3f63df49a67f7d8fb20bad287811288b`; 8 commits
+- Files inspected: presence transition policy, API persistence/intent boundary, reconciliation handoff and worker, active-alert matching, constrained notification delivery, installation-growth dashboard, and focused tests listed above
+- Top finding: preference sync can restore delivery eligibility without reconciling already-active alerts
+- Best next fix: apply the existing transactional transition/intent pattern to `createPreferences` and add route-level regression coverage
+- Implementation recommended: `yes`
+- GitHub issue creation: attempted but blocked by connector approval requirements; no issue created
+- Out-of-scope repositories intentionally not scanned: all sibling repositories
