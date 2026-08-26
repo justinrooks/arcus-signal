@@ -278,3 +278,47 @@
   - the delayed-startup-grace recovery-failure branch asynchronously shuts down the worker and lacks a direct lifecycle test; promote only if that branch changes or a deterministic shutdown harness becomes available, because the same recovery-before-consumer and failure-stop invariants are already covered through the zero-grace path
 - Implementation recommended: no
 - Out-of-scope repositories intentionally not scanned: all sibling repositories and external HRRR, Redis, PostgreSQL, and Vapor Queues implementations
+
+## 2026-08-25
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: no commits after the last automation run (`2026-08-18T15:00:27.570Z` through `2026-08-25`); `HEAD` remains `563bdb0d3f63df49a67f7d8fb20bad287811288b` from 2026-08-13, so the audit used current-state inspection of three high-risk areas
+- High-risk areas inspected:
+  - installation/presence reconciliation intent durability, latest-presence lookup, active-alert matching, constrained send dispatch, retries, and alert/location discovery races
+  - notification send-boundary revision and lifecycle suppression, installation constraints, freshness gating, ledger claims, APNs completion, and attempt telemetry
+  - NWS lifecycle derivation and transactional event/revision persistence, deterministic lineage merging, dispatch-intent creation, and rollback
+- Files inspected:
+  - `Sources/App/Jobs/ReconcileInstallationAlertsJob.swift`
+  - `Sources/App/Models/Notification/PresenceReconciliationOutboxStore.swift`
+  - `Sources/App/Models/Notification/NotificationCandidateStore.swift`
+  - `Sources/App/Jobs/NotificationSendJob.swift`
+  - `Sources/App/Services/NWSIngestPersistence.swift`
+  - `Tests/AppTests/LocationDrivenAlertReconciliationFlowTests.swift`
+  - `Tests/AppTests/InstallationAlertReconciliationJobTests.swift`
+  - `Tests/AppTests/PresenceReconciliationOutboxTests.swift`
+  - `Tests/AppTests/NotificationActiveAlertQueryTests.swift`
+  - `Tests/AppTests/NotificationSendJobCandidateQueryTests.swift`
+  - `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`
+  - `Tests/AppTests/NWSIngestPersistenceFlowTests.swift`
+  - `Tests/AppTests/NWSAlertLifecycleTests.swift`
+- Existing relevant tests found:
+  - reconciliation coverage exercises meaningful entry/re-entry transitions, latest authoritative presence, H3/UGC matches, inactive/stale exclusion, duplicate drains, bounded retries, and alert/location discovery races converging on the ledger identity
+  - notification delivery-boundary coverage exercises stale/degraded/fresh candidates, duplicate claims, constrained/unconstrained races, sender failure persistence, inactive-series suppression, and legacy payload decoding
+  - NWS persistence coverage exercises exact geometry-specific intents, duplicate and out-of-order revisions, deterministic lineage merging, lifecycle expiry, and full transaction rollback
+- Recommended test gap:
+  - Behavior: `NotificationSendJob.dequeue` should suppress a queued payload when `payload.revisionUrn` no longer equals the series' current revision, avoid candidate resolution and APNs delivery, and persist exactly one send-attempt row with `noOpReason == staleRevisionMismatch`
+  - Repository: `arcus-signal`
+  - Evidence: the early-return branch in `Sources/App/Jobs/NotificationSendJob.swift`; adjacent `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift` covers inactive-series suppression but contains no assertion for `staleRevisionMismatch`
+  - Risk reduced: prevents regressions that deliver superseded severe-weather copy and verifies the telemetry needed to distinguish safe queue staleness from a lost send
+  - Test type: integration
+  - Suggested test name: `dequeuePersistsStaleRevisionMismatchWithoutResolvingCandidatesOrSending`
+  - Minimal setup: seed a series and current revision, invoke `dequeue` with an older revision URN and a recording sender, then query send-attempt rows
+  - Expected assertion: sender count remains zero, no ledger row is claimed, candidate resolution remains false, counts remain zero, and exactly one attempt records `staleRevisionMismatch`
+  - Size: XS
+  - Confidence: Medium
+- Top recommended test: add the stale-revision mismatch dequeue test to `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`; expected churn is roughly 25-45 lines in one test file with low regression risk
+- Watchlist items:
+  - `NotificationSendJob.dequeue` also records `missingGeolocation` for H3 work without usable geometry. Promote only if that branch changes or operational evidence shows unexplained H3 no-op attempts; current repository evidence does not establish comparable product risk.
+- Implementation recommended: no — implemented on 2026-08-26 by `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`
+- Implementation status: `dequeuePersistsStaleRevisionMismatchWithoutResolvingCandidatesOrSending` now verifies stale-revision suppression, zero candidate resolution, zero ledger claims and sends, and persisted `staleRevisionMismatch` attempt telemetry
+- Validation: `swift test --filter NotificationSendJobDeliveryBoundaryTests` (9 executed, 9 passed, 0 failed, 0 skipped)
+- Out-of-scope repositories intentionally not scanned: all sibling repositories and external NWS, APNs, Redis, and PostgreSQL implementations

@@ -2,15 +2,15 @@ $kind: collection
 name: Arcus Signal API
 description: Comprehensive endpoint coverage for Arcus Signal API and worker health routes.
 variables:
-  apiBaseUrl: "http://localhost:8080"
-  workerBaseUrl: "http://localhost:8081"
+  apiBaseUrl: http://localhost:8080
+  workerBaseUrl: http://localhost:8081
   installationId: ""
-  apnsDeviceToken: "test-token-1234567890abcdef"
+  apnsDeviceToken: test-token-1234567890abcdef
   validH3Cell: "622236750694711295"
   validH3Resolution: "9"
-  sampleCounty: "COC001"
-  sampleForecast: "COZ041"
-  sampleFire: "COC001"
+  sampleCounty: COC001
+  sampleForecast: COZ041
+  sampleFire: COC001
   sampleArcusSeriesId: ""
   capturedAtNow: ""
   capturedAtFuture10m: ""

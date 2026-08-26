@@ -42,10 +42,10 @@ struct ProcessRunner: Sendable {
         process.executableURL = executableURL
         process.arguments = arguments
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        let pipes = ProcessPipeResources()
+        defer { pipes.closeAll() }
+        process.standardOutput = pipes.stdoutPipe
+        process.standardError = pipes.stderrPipe
 
         let exitObservation = ProcessExitObservation()
         process.terminationHandler = { _ in
@@ -60,12 +60,12 @@ struct ProcessRunner: Sendable {
                 "Failed to launch \(executableURL.path): \(error.localizedDescription)"
             )
         }
-
         return try await withTaskCancellationHandler {
-            let stdoutReader = ProcessPipeReader(fileHandle: stdoutPipe.fileHandleForReading)
-            let stderrReader = ProcessPipeReader(fileHandle: stderrPipe.fileHandleForReading)
+            let stdoutReader = ProcessPipeReader(fileHandle: pipes.stdoutReadingHandle)
+            let stderrReader = ProcessPipeReader(fileHandle: pipes.stderrReadingHandle)
             async let stdoutData = stdoutReader.readToEnd()
             async let stderrData = stderrReader.readToEnd()
+            pipes.closeWritingEnds()
 
             let waitOutcome: WaitOutcome
             do {
@@ -171,6 +171,72 @@ struct ProcessRunner: Sendable {
             ) {
                 continuation.resume()
             }
+        }
+    }
+}
+
+private final class ProcessPipeResources: Sendable {
+    private struct State: Sendable {
+        var stdoutReadClosed = false
+        var stdoutWriteClosed = false
+        var stderrReadClosed = false
+        var stderrWriteClosed = false
+    }
+
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+
+    var stdoutReadingHandle: FileHandle { stdoutPipe.fileHandleForReading }
+    var stderrReadingHandle: FileHandle { stderrPipe.fileHandleForReading }
+
+    private let state = NIOLockedValueBox(State())
+
+    func closeWritingEnds() {
+        let handles = state.withLockedValue { state -> [FileHandle] in
+            var handles: [FileHandle] = []
+
+            if !state.stdoutWriteClosed {
+                state.stdoutWriteClosed = true
+                handles.append(stdoutPipe.fileHandleForWriting)
+            }
+            if !state.stderrWriteClosed {
+                state.stderrWriteClosed = true
+                handles.append(stderrPipe.fileHandleForWriting)
+            }
+
+            return handles
+        }
+
+        handles.forEach { $0.closeFile() }
+    }
+
+    func closeAll() {
+        let handles = state.withLockedValue { state -> [FileHandle] in
+            var handles: [FileHandle] = []
+
+            if !state.stdoutReadClosed {
+                state.stdoutReadClosed = true
+                handles.append(stdoutPipe.fileHandleForReading)
+            }
+            if !state.stdoutWriteClosed {
+                state.stdoutWriteClosed = true
+                handles.append(stdoutPipe.fileHandleForWriting)
+            }
+            if !state.stderrReadClosed {
+                state.stderrReadClosed = true
+                handles.append(stderrPipe.fileHandleForReading)
+            }
+            if !state.stderrWriteClosed {
+                state.stderrWriteClosed = true
+                handles.append(stderrPipe.fileHandleForWriting)
+            }
+
+            return handles
+        }
+
+        handles.forEach {
+            $0.readabilityHandler = nil
+            $0.closeFile()
         }
     }
 }

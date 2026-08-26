@@ -213,6 +213,43 @@ struct ProcessRunnerTests {
         }
     }
 
+    @Test("releases pipe descriptors after repeated success and timeout runs")
+    func releasesPipeDescriptorsAfterRepeatedRuns() async throws {
+        #if os(Linux)
+        let fixture = try makeFixture()
+        defer { fixture.remove() }
+
+        let baseline = try openFileDescriptorCount()
+
+        for _ in 0..<40 {
+            _ = try await ProcessRunner().run(
+                executableURL: fixture.executableURL,
+                arguments: ["success"],
+                timeoutSeconds: 1
+            )
+        }
+
+        for _ in 0..<20 {
+            do {
+                _ = try await ProcessRunner().run(
+                    executableURL: fixture.executableURL,
+                    arguments: fixture.waitingArguments(mode: "timeout"),
+                    timeoutSeconds: 0.1
+                )
+                Issue.record("Expected a timeout error.")
+            } catch let error as ProcessRunnerError {
+                guard case .timedOut = error else {
+                    Issue.record("Expected a timeout error, got \(error).")
+                    continue
+                }
+            }
+        }
+
+        let finalCount = try openFileDescriptorCount()
+        #expect(finalCount <= baseline + 12)
+        #endif
+    }
+
     private func makeFixture() throws -> FixtureContext {
         guard let bundledURL = Bundle.module.url(
             forResource: "ProcessRunnerFixture",
@@ -269,6 +306,10 @@ struct ProcessRunnerTests {
             return true
         }
         return errno == EPERM
+    }
+
+    private func openFileDescriptorCount() throws -> Int {
+        try FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd").count
     }
 }
 
