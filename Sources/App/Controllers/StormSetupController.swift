@@ -11,8 +11,9 @@ import ArcusCore
 
 struct StormSetupController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let stormSetup = routes.grouped("api", "v1", "storm-setup")
-        stormSetup.get("current", use: current)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "storm-setup").get("current", use: current)
+        }
     }
 
     func current(req: Request) async throws -> StormSetupCurrentResponse {

@@ -14,8 +14,9 @@ private struct NotificationLookupQuery: Content {
 
 struct NotificationsController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let notifications = routes.grouped("api", "v1", "notifications")
-        notifications.get(use: index)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "notifications").get(use: index)
+        }
     }
 
     func index(req: Request) async throws -> [NotificationLedgerModel] {

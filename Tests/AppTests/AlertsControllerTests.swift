@@ -103,6 +103,22 @@ struct AlertsControllerTests {
         }
     }
 
+    @Test("GET /v2/alerts preserves the legacy response through the canonical route")
+    func canonicalTargetedLookupBySeriesUUID() async throws {
+        try await withApp { app in
+            let seriesID = UUID()
+            try await seedSeries(id: seriesID, on: app)
+
+            try await app.testing().test(.GET, "v2/alerts?id=\(seriesID.uuidString)", afterResponse: { res async throws in
+                #expect(res.status == .ok)
+
+                let payload = try res.content.decode([DecodedAlertPayload].self)
+                #expect(payload.count == 1)
+                #expect(payload.first?.id == seriesID)
+            })
+        }
+    }
+
     @Test("GET /api/v2/alerts rejects malformed targeted UUID")
     func targetedLookupRejectsMalformedUUID() async throws {
         try await withApp { app in

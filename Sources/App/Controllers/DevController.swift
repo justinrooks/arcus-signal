@@ -10,8 +10,9 @@ import Vapor
 
 struct DevController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let dev = routes.grouped("api", "v1", "dev")
-        dev.post(use: index)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "dev").post(use: index)
+        }
     }
 
     func index(req: Request) async throws -> Response {

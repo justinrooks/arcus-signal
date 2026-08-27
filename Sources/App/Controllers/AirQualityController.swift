@@ -4,7 +4,9 @@ import Vapor
 
 struct AirQualityController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        routes.grouped("api", "v1", "air-quality").get("current", use: current)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "air-quality").get("current", use: current)
+        }
     }
 
     func current(req: Request) async throws -> AirQualityCurrentResponse {
