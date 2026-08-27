@@ -32,8 +32,10 @@ private enum AlertLookupModeV2 {
 
 struct AlertsController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        routes.grouped("api", "v1", "alerts").get(use: indexV1)
-        routes.grouped("api", "v2", "alerts").get(use: indexV2)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "alerts").get(use: indexV1)
+            root.grouped("v2", "alerts").get(use: indexV2)
+        }
     }
 
     func indexV1(req: Request) async throws -> Response {

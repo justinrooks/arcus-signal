@@ -150,6 +150,32 @@ struct AppTests {
         }
     }
 
+    @Test("API route aliases register canonical and legacy paths exactly once")
+    func apiRouteAliasesRegisterCanonicalAndLegacyPaths() async throws {
+        try await withEnvironment(["ARCUS_DEBUG_ENDPOINTS_ENABLED": "true"]) {
+            try await withApp(mode: .api) { app in
+                let expectedRoutes = Set([
+                    "GET /v1/alerts", "GET /api/v1/alerts",
+                    "GET /v2/alerts", "GET /api/v2/alerts",
+                    "GET /v1/notifications", "GET /api/v1/notifications",
+                    "GET /v1/devices", "GET /api/v1/devices",
+                    "POST /v1/devices/location-snapshots", "POST /api/v1/devices/location-snapshots",
+                    "POST /v1/devices/preferences", "POST /api/v1/devices/preferences",
+                    "GET /v1/air-quality/current", "GET /api/v1/air-quality/current",
+                    "GET /v1/storm-setup/current", "GET /api/v1/storm-setup/current",
+                    "POST /v1/dev", "POST /api/v1/dev",
+                    "GET /v1/dev/anvil/profile-preview", "GET /api/v1/dev/anvil/profile-preview",
+                    "GET /v1/dev/anvil/profile-analysis", "GET /api/v1/dev/anvil/profile-analysis"
+                ])
+                let registeredRoutes = app.routes.all.map(\.description)
+                let matchingRoutes = registeredRoutes.filter(expectedRoutes.contains)
+
+                #expect(Set(matchingRoutes) == expectedRoutes)
+                #expect(matchingRoutes.count == expectedRoutes.count)
+            }
+        }
+    }
+
     private func productionBootstrapEnvironment(
         databaseURL: String? = "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable",
         redisURL: String? = "redis://127.0.0.1:6379"

@@ -3,8 +3,9 @@ import Vapor
 
 struct AnvilProfileAnalysisController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let dev = routes.grouped("api", "v1", "dev", "anvil")
-        dev.get("profile-analysis", use: analyzeProfile)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "dev", "anvil").get("profile-analysis", use: analyzeProfile)
+        }
     }
 
     func analyzeProfile(req: Request) async throws -> Response {

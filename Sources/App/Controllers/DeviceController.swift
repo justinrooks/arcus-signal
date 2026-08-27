@@ -22,10 +22,12 @@ private struct DevicePresenceCommitResult {
 
 struct DeviceController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let devices = routes.grouped("api", "v1", "devices")
-        devices.get(use: index)
-        devices.post("location-snapshots", use: create)
-        devices.post("preferences", use: createPreferences)
+        try registerOnAPIRoots(routes) { root in
+            let devices = root.grouped("v1", "devices")
+            devices.get(use: index)
+            devices.post("location-snapshots", use: create)
+            devices.post("preferences", use: createPreferences)
+        }
     }
     
     func create(req: Request) async throws -> LocationSnapshotAcceptedResponse {

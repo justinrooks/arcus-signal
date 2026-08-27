@@ -725,3 +725,73 @@
 - Implementation recommended: `yes`
 - GitHub issue creation: attempted but blocked by connector approval requirements; no issue created
 - Out-of-scope repositories intentionally not scanned: all sibling repositories
+
+## 2026-08-27
+
+### 1. Repository scanned
+- `arcus-signal`
+
+### 2. Commit window inspected
+- Reliable previous end marker: `563bdb0d3f63df49a67f7d8fb20bad287811288b` from the 2026-08-20 audit entry
+- Window used: commits after `563bdb0d3f63df49a67f7d8fb20bad287811288b` through `e957a454b2f1bcbd336abb66a162659cbc2a0a95`
+- Dates: `2026-08-26T12:08:09-06:00` through `2026-08-26T12:08:09-06:00`
+- Commit count: 1
+- Start and end commit: `e957a454b2f1bcbd336abb66a162659cbc2a0a95`
+- Fallback strategy: none; the bounded window contained one commit
+
+### 3. Files and high-risk areas inspected
+- Subprocess launch, output capture, timeout, cancellation, termination, and descriptor ownership (`Sources/App/StormSetup/GribAdapter.swift`, `Tests/AppTests/ProcessRunnerTests.swift`)
+- Stale notification-revision suppression at the final send boundary (`Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`)
+- API collection scalar normalization (`arcus-signal.postman_collection/Arcus Signal API/.resources/definition.yaml`)
+- Living delivery and runtime contracts (`docs/architecture.md`)
+
+### 4. Findings
+- No new credible bug was found. New findings by confidence: `HIGH 0`, `MEDIUM 0`, `LOW 0`.
+
+### 5. Recurring, changed, and resolved findings
+- Recurring findings re-verified: none.
+- Changed findings: none.
+- The commit did not touch `BUG-SIGNAL-PRESSURE-PROBE-ENQUEUE-OVERWRITE` or `BUG-SIGNAL-PRESENCE-PREFERENCE-RECONCILIATION`; neither is repeated or reclassified.
+- The descriptor fix corresponds to earlier `BUG-SIGNAL-PROCESS-PIPE-FD-LEAK`, but its Linux-only runtime regression could not be independently executed here, so resolution is not newly asserted.
+
+### 6. Watchlist
+- None. No low-confidence concern had sufficient local evidence to retain.
+
+### 7. Top finding and best next fix
+- Top finding: none.
+- Best next fix: no fix recommended.
+- Implementation recommended: `no`; expected churn and regression risk are none.
+
+### 8. Validation
+- Static inspection covered the complete production diff and focused tests in commit `e957a454b2f1bcbd336abb66a162659cbc2a0a95`.
+- The commit records 10 passing `ProcessRunnerTests` and 9 passing `NotificationSendJobDeliveryBoundaryTests`.
+- A local `ProcessRunnerTests` attempt was blocked before manifest compilation because the managed sandbox denied SwiftPM's sandbox operation. No local pass is claimed.
+
+### 9. GitHub triage
+- GitHub issues created: none.
+- GitHub issues updated: none.
+- Existing issues referenced: none for a new finding.
+- No candidate met issue eligibility, so remote deduplication and mutation were unnecessary.
+
+### 10. Scope notes
+- Repository scanned: `arcus-signal` only.
+- Out-of-scope repositories: all sibling repositories and external clients were intentionally not scanned.
+- Skipped evidence: no cross-repository claims were evaluated or included.
+- Unrelated working-tree change preserved: `docs/Sql/Device.sql`.
+
+### 11. No fix recommended
+- The single bounded commit fixes subprocess descriptor ownership, adds focused regression coverage, and exposes no concrete correctness, reliability, privacy, notification, or severe-weather-awareness regression.
+
+### Audit entry (short)
+- Date: `2026-08-27`
+- Repository reviewed: `arcus-signal`
+- Workflow reviewed: weekly bug scan (audit-only, commits since the reliable previous end marker)
+- Commit window inspected: `e957a454b2f1bcbd336abb66a162659cbc2a0a95`; 1 commit
+- Files inspected: `Sources/App/StormSetup/GribAdapter.swift`, `Tests/AppTests/ProcessRunnerTests.swift`, `Tests/AppTests/NotificationSendJobDeliveryBoundaryTests.swift`, `arcus-signal.postman_collection/Arcus Signal API/.resources/definition.yaml`, and `docs/architecture.md`
+- Top finding: no credible bug found
+- Best next fix: no fix recommended
+- Implementation recommended: `no`
+- GitHub issues created: none
+- GitHub issues updated: none
+- Existing issues referenced: none for a new finding
+- Out-of-scope repositories intentionally not scanned: all sibling repositories

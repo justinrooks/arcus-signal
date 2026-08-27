@@ -10,8 +10,9 @@ import Vapor
 
 struct AnvilProfilePreviewController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
-        let dev = routes.grouped("api", "v1", "dev", "anvil")
-        dev.get("profile-preview", use: profilePreview)
+        try registerOnAPIRoots(routes) { root in
+            root.grouped("v1", "dev", "anvil").get("profile-preview", use: profilePreview)
+        }
     }
 
     func profilePreview(req: Request) async throws -> AnvilAnalyzeProfilePreviewResponse {

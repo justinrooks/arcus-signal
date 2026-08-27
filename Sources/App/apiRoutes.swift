@@ -19,6 +19,16 @@ func configureAPIRoutes(_ app: Application) throws {
     try app.register(collection: AirQualityController())
 }
 
+/// Registers a route collection under both the canonical API root and the
+/// legacy `/api` root while clients migrate to the shorter URL scheme.
+func registerOnAPIRoots(
+    _ routes: any RoutesBuilder,
+    register: (any RoutesBuilder) throws -> Void
+) throws {
+    try register(routes)
+    try register(routes.grouped("api"))
+}
+
 public func normalizedOptional(_ value: String?) -> String? {
     guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
           !trimmed.isEmpty else {
