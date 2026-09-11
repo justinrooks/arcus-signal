@@ -749,6 +749,65 @@ struct PressureArtifactWarmJobTests {
         }
     }
 
+    @Test("warm timeout unwinds a validator stalled during output completion")
+    func warmTimeoutUnwindsStalledValidatorDuringOutputCompletion() async throws {
+        try await withApp { app, blockingWorkExecutor in
+            let payload = makePayload()
+            let sourceURLs = makeSourceURLs(for: payload)
+            try await seedCatalogRow(status: .pending, payload: payload, on: app.db)
+
+            let client = PressureArtifactWarmStubHTTPClient(
+                idxResponses: [sourceURLs.idx.absoluteString: Data(makeCompleteInventoryText().utf8)],
+                rangeResponses: makeRangeResponses(for: payload)
+            )
+            let validator = StalledPressureArtifactWarmValidator()
+            let timeoutSleeper = ControllablePressureArtifactWarmTimeoutSleeper()
+            let service = PressureArtifactWarmingService(
+                httpClient: client,
+                blockingWorkExecutor: blockingWorkExecutor,
+                validator: validator,
+                cacheRootURL: testRootURL(),
+                dateProvider: FixedStormSetupDateProvider(nowDate: makeDate()),
+                retentionDuration: serviceRetentionSeconds,
+                maximumByteCount: serviceMaximumByteCount,
+                recoveryTimeoutSeconds: 60,
+                warmTimeoutSeconds: 12,
+                timeoutSleeper: timeoutSleeper
+            )
+            let retryDispatcher = RecordingPressureArtifactWarmRetryDispatcher()
+            let job = PressureArtifactWarmJob(
+                warmingService: service,
+                retryDispatcher: retryDispatcher
+            )
+            app.queues.use(.test)
+            app.queues.add(job)
+            try await DefaultPressureArtifactWarmJobDispatcher().dispatch(
+                payload,
+                to: ArcusQueueLane.modelArtifacts.queueName,
+                on: app
+            )
+
+            let clock = ContinuousClock()
+            let dequeueStartedAt = clock.now
+            let workerTask = Task {
+                try await app.queues.queue(ArcusQueueLane.modelArtifacts.queueName).worker.run()
+            }
+
+            await validator.waitUntilValidationStarts()
+            await timeoutSleeper.waitUntilSleepStarts()
+            await timeoutSleeper.fire()
+            try await workerTask.value
+
+            #expect(dequeueStartedAt.duration(to: clock.now) < .seconds(2))
+            let row = try #require(try await findCatalogRow(for: payload, on: app.db))
+            #expect(row.status == .failed)
+            #expect(row.claimToken == nil)
+            #expect(row.leaseExpiresAt == nil)
+            #expect(row.errorSummary == "Pressure artifact warm attempt timed out after 12 seconds.")
+            #expect(retryDispatcher.continuations.count == 1)
+        }
+    }
+
     @Test("whole-warm timeout cannot complete a newer catalog claim")
     func wholeWarmTimeoutCannotCompleteNewerCatalogClaim() async throws {
         try await withApp { app, blockingWorkExecutor in
@@ -1831,6 +1890,29 @@ private actor StalledPressureArtifactWarmHTTPClient: App.HTTPClient {
     }
 
     nonisolated func clearCache() {}
+}
+
+private actor StalledPressureArtifactWarmValidator: PressureArtifactValidating {
+    private var validationStarted = false
+    private var validationStartedWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func validate(localFileURL: URL) async throws -> PressureArtifactValidationResult {
+        _ = localFileURL
+        validationStarted = true
+        let waiters = validationStartedWaiters
+        validationStartedWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+
+        try await Task.sleep(for: .seconds(3_600))
+        return PressureArtifactValidationResult(stdoutLineCount: 1)
+    }
+
+    func waitUntilValidationStarts() async {
+        guard !validationStarted else { return }
+        await withCheckedContinuation { continuation in
+            validationStartedWaiters.append(continuation)
+        }
+    }
 }
 
 private final class PressureArtifactWarmStubHTTPClient: App.HTTPClient, @unchecked Sendable {

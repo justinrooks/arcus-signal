@@ -69,6 +69,8 @@ struct ProcessRunnerTests {
         let fixture = try makeFixture()
         defer { fixture.remove() }
 
+        let clock = ContinuousClock()
+        let start = clock.now
         do {
             _ = try await ProcessRunner().run(
                 executableURL: fixture.executableURL,
@@ -85,6 +87,7 @@ struct ProcessRunnerTests {
             #expect(abs(timeoutSeconds - 0.2) < 0.0001)
             #expect(stderr == "waiting for timeout\n")
         }
+        #expect(start.duration(to: clock.now) < .seconds(2))
 
         let pid = try fixture.recordedPID()
         #expect(FileManager.default.fileExists(atPath: fixture.termURL.path))
@@ -112,6 +115,101 @@ struct ProcessRunnerTests {
         #expect(stdoutLines.last == "stdout-15000")
         #expect(stderrLines.first == "stderr-00001")
         #expect(stderrLines.last == "stderr-15000")
+    }
+
+    @Test("EOF, timeout, and cancellation paths complete repeatedly")
+    func terminalPathsCompleteRepeatedly() async throws {
+        for _ in 0..<8 {
+            let fixture = try makeFixture()
+            defer { fixture.remove() }
+
+            let clock = ContinuousClock()
+            let start = clock.now
+            let result = try await ProcessRunner().run(
+                executableURL: fixture.executableURL,
+                arguments: ["empty"],
+                timeoutSeconds: 1
+            )
+
+            #expect(result.stdout.isEmpty)
+            #expect(result.stderr.isEmpty)
+            #expect(start.duration(to: clock.now) < .seconds(2))
+        }
+
+        for _ in 0..<8 {
+            let fixture = try makeFixture()
+            defer { fixture.remove() }
+
+            let clock = ContinuousClock()
+            let start = clock.now
+            do {
+                _ = try await ProcessRunner().run(
+                    executableURL: fixture.executableURL,
+                    arguments: ["nonzero"],
+                    timeoutSeconds: 1
+                )
+                Issue.record("Expected a non-zero exit error.")
+            } catch let error as ProcessRunnerError {
+                guard case .nonZeroExit(let code, let stderr) = error else {
+                    Issue.record("Expected a non-zero exit error, got \(error).")
+                    continue
+                }
+                #expect(code == 7)
+                #expect(stderr == "boom\n")
+            }
+
+            #expect(start.duration(to: clock.now) < .seconds(2))
+        }
+
+        for _ in 0..<8 {
+            let fixture = try makeFixture()
+            defer { fixture.remove() }
+
+            let clock = ContinuousClock()
+            let start = clock.now
+            do {
+                _ = try await ProcessRunner().run(
+                    executableURL: fixture.executableURL,
+                    arguments: fixture.waitingArguments(mode: "timeout"),
+                    timeoutSeconds: 0.05
+                )
+                Issue.record("Expected a timeout error.")
+            } catch let error as ProcessRunnerError {
+                guard case .timedOut = error else {
+                    Issue.record("Expected a timeout error, got \(error).")
+                    continue
+                }
+            } catch {
+                Issue.record("Expected a timeout error, got \(error).")
+            }
+
+            #expect(start.duration(to: clock.now) < .seconds(2))
+            let pid = try fixture.recordedPID()
+            #expect(!isProcessRunning(pid))
+        }
+
+        for _ in 0..<8 {
+            let fixture = try makeFixture()
+            defer { fixture.remove() }
+
+            let task = Task {
+                try await ProcessRunner().run(
+                    executableURL: fixture.executableURL,
+                    arguments: fixture.waitingArguments(mode: "graceful"),
+                    timeoutSeconds: 10
+                )
+            }
+
+            try await waitForFile(fixture.readyURL)
+            let pid = try fixture.recordedPID()
+            let clock = ContinuousClock()
+            let start = clock.now
+            task.cancel()
+            await expectCancellation(from: task)
+
+            #expect(start.duration(to: clock.now) < .seconds(2))
+            #expect(!isProcessRunning(pid))
+        }
     }
 
     @Test("cancellation waits for a TERM-cooperative child")
