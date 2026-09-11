@@ -9,6 +9,25 @@ import Testing
 
 @Suite("Process runner", .serialized)
 struct ProcessRunnerTests {
+    @Test("drains buffered output when the final read event is missed")
+    func drainsBufferedOutputWhenFinalReadEventIsMissed() async throws {
+        let pipe = Pipe()
+        let reader = ProcessPipeReader(
+            fileHandle: pipe.fileHandleForReading,
+            installReadSource: false
+        )
+        let expectedData = Data("buffered output\n".utf8)
+
+        pipe.fileHandleForWriting.write(expectedData)
+        pipe.fileHandleForWriting.closeFile()
+        reader.processDidExit()
+
+        let data = await reader.readToEnd()
+
+        #expect(data == expectedData)
+        reader.cancel()
+    }
+
     @Test("captures empty stdout and stderr for successful commands")
     func capturesEmptyStandardOutputAndError() async throws {
         let fixture = try makeFixture()
@@ -171,7 +190,7 @@ struct ProcessRunnerTests {
                 _ = try await ProcessRunner().run(
                     executableURL: fixture.executableURL,
                     arguments: fixture.waitingArguments(mode: "timeout"),
-                    timeoutSeconds: 0.05
+                    timeoutSeconds: 0.2
                 )
                 Issue.record("Expected a timeout error.")
             } catch let error as ProcessRunnerError {

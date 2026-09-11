@@ -23,6 +23,7 @@ enum ProcessRunnerError: Error, Sendable, Equatable {
     case launchFailed(String)
     case timedOut(timeoutSeconds: TimeInterval, stderr: String)
     case nonZeroExit(code: Int32, stderr: String)
+    case pipeCleanupTimedOut
 }
 
 struct ProcessRunner: Sendable {
@@ -113,20 +114,24 @@ struct ProcessRunner: Sendable {
 
             stdoutReader.processDidExit()
             stderrReader.processDidExit()
-            let (capturedStdout, capturedStderr) = await Self.collectPipeData(
+            let collected = await Self.collectPipeData(
                 stdoutTask: stdoutData,
                 stderrTask: stderrData,
                 stdoutReader: stdoutReader,
                 stderrReader: stderrReader
             )
             let result = ProcessResult(
-                stdout: String(data: capturedStdout, encoding: .utf8) ?? "",
-                stderr: String(data: capturedStderr, encoding: .utf8) ?? "",
+                stdout: String(data: collected.stdout, encoding: .utf8) ?? "",
+                stderr: String(data: collected.stderr, encoding: .utf8) ?? "",
                 exitCode: process.terminationStatus
             )
 
             // Cancellation wins while lifecycle cleanup is still in flight.
             try Task.checkCancellation()
+
+            if collected.didTimeOut, waitOutcome == .exited {
+                throw ProcessRunnerError.pipeCleanupTimedOut
+            }
 
             if waitOutcome == .timedOut {
                 throw ProcessRunnerError.timedOut(
@@ -158,12 +163,18 @@ struct ProcessRunner: Sendable {
         case cleanupTimedOut
     }
 
+    private struct PipeCollection: Sendable {
+        let stdout: Data
+        let stderr: Data
+        let didTimeOut: Bool
+    }
+
     private static func collectPipeData(
         stdoutTask: Task<Data, Never>,
         stderrTask: Task<Data, Never>,
         stdoutReader: ProcessPipeReader,
         stderrReader: ProcessPipeReader
-    ) async -> (stdout: Data, stderr: Data) {
+    ) async -> PipeCollection {
         await withTaskGroup(of: PipeCollectionResult.self) { group in
             group.addTask {
                 .stdout(await stdoutTask.value)
@@ -183,6 +194,7 @@ struct ProcessRunner: Sendable {
             var stdout = Data()
             var stderr = Data()
             var completedReaders = 0
+            var didTimeOut = false
 
             while let result = await group.next() {
                 switch result {
@@ -193,6 +205,7 @@ struct ProcessRunner: Sendable {
                     stderr = data
                     completedReaders += 1
                 case .cleanupTimedOut:
+                    didTimeOut = true
                     stdoutReader.cancel()
                     stderrReader.cancel()
                     group.cancelAll()
@@ -204,7 +217,7 @@ struct ProcessRunner: Sendable {
                 }
             }
 
-            return (stdout, stderr)
+            return PipeCollection(stdout: stdout, stderr: stderr, didTimeOut: didTimeOut)
         }
     }
 
@@ -358,65 +371,87 @@ private final class ProcessExitObservation: Sendable {
     }
 }
 
-private final class ProcessPipeReader: Sendable {
+final class ProcessPipeReader: Sendable {
     private struct State: Sendable {
         var data = Data()
         var continuation: CheckedContinuation<Data, Never>?
         var isFinished = false
         var processDidExit = false
-        var isReading = false
+    }
+
+    private struct Lifecycle {
+        var readSource: (any DispatchSourceRead)?
+        var fileHandleIsClosed = false
     }
 
     private let fileHandle: FileHandle
+    private let fileDescriptor: Int32
+    private let installReadSource: Bool
+    private let queue = DispatchQueue(label: "arcus-signal.process-pipe-reader")
     private let state = NIOLockedValueBox(State())
+    private let lifecycle = NIOLockedValueBox(Lifecycle(readSource: nil))
 
-    init(fileHandle: FileHandle) {
+    init(fileHandle: FileHandle, installReadSource: Bool = true) {
         self.fileHandle = fileHandle
+        fileDescriptor = fileHandle.fileDescriptor
+        self.installReadSource = installReadSource
+
+        let flags = fcntl(fileDescriptor, F_GETFL)
+        precondition(flags >= 0, "Failed to inspect process pipe flags.")
+        precondition(
+            fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) >= 0,
+            "Failed to make process pipe nonblocking."
+        )
     }
 
     func readToEnd() async -> Data {
         await withCheckedContinuation { continuation in
-            let shouldStartReading = state.withLockedValue { state -> Bool in
+            let immediateData = state.withLockedValue { state -> Data? in
                 if state.isFinished {
-                    continuation.resume(returning: state.data)
-                    return false
+                    return state.data
                 }
 
                 state.continuation = continuation
-                return true
+                return nil
             }
 
-            guard shouldStartReading else {
+            if let immediateData {
+                continuation.resume(returning: immediateData)
                 return
             }
 
-            fileHandle.readabilityHandler = { [self] readableHandle in
-                consumeAvailableData(from: readableHandle)
-            }
+            queue.sync {
+                guard !state.withLockedValue({ $0.isFinished }) else {
+                    return
+                }
 
-            let (isFinished, processExited) = state.withLockedValue { state in
-                (state.isFinished, state.processDidExit)
-            }
-            if isFinished {
-                fileHandle.readabilityHandler = nil
-            } else if processExited {
-                processDidExit()
+                if installReadSource {
+                    let source = DispatchSource.makeReadSource(
+                        fileDescriptor: fileDescriptor,
+                        queue: queue
+                    )
+                    source.setEventHandler { [weak self] in
+                        self?.drainAvailableData()
+                    }
+                    lifecycle.withLockedValue { lifecycle in
+                        lifecycle.readSource = source
+                    }
+                    source.resume()
+                }
+
+                if state.withLockedValue({ $0.processDidExit }) {
+                    drainAvailableData()
+                }
             }
         }
     }
 
     func processDidExit() {
-        let shouldDrain = state.withLockedValue { state -> Bool in
+        state.withLockedValue { state in
             state.processDidExit = true
-            guard !state.isFinished, state.continuation != nil, !state.isReading else {
-                return false
-            }
-
-            state.isReading = true
-            return true
         }
 
-        if shouldDrain {
+        queue.async { [self] in
             drainAvailableData()
         }
     }
@@ -428,7 +463,6 @@ private final class ProcessPipeReader: Sendable {
             }
 
             state.isFinished = true
-            state.isReading = false
             guard let continuation = state.continuation else {
                 return nil
             }
@@ -437,75 +471,87 @@ private final class ProcessPipeReader: Sendable {
             return (continuation, state.data)
         }
 
-        fileHandle.readabilityHandler = nil
-        fileHandle.closeFile()
+        queue.sync {
+            closeOnQueue()
+        }
         if let completion {
             completion.0.resume(returning: completion.1)
         }
     }
 
-    private func consumeAvailableData(from readableHandle: FileHandle) {
-        let shouldRead = state.withLockedValue { state -> Bool in
-            guard !state.isFinished, !state.isReading else {
-                return false
+    private func drainAvailableData() {
+        while true {
+            var buffer = [UInt8](repeating: 0, count: 8_192)
+            let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    return 0
+                }
+                return read(fileDescriptor, baseAddress, rawBuffer.count)
             }
 
-            state.isReading = true
-            return true
+            if count > 0 {
+                let shouldContinue = state.withLockedValue { state -> Bool in
+                    guard !state.isFinished else {
+                        return false
+                    }
+
+                    state.data.append(contentsOf: buffer[0..<count])
+                    return true
+                }
+
+                guard shouldContinue else {
+                    return
+                }
+                continue
+            }
+
+            if count == 0 {
+                finishOnQueue()
+                return
+            }
+
+            guard errno == EAGAIN || errno == EWOULDBLOCK else {
+                return
+            }
+
+            return
+        }
+    }
+
+    private func finishOnQueue() {
+        let completion = state.withLockedValue { state -> (CheckedContinuation<Data, Never>?, Data)? in
+            guard !state.isFinished else {
+                return nil
+            }
+
+            state.isFinished = true
+            let continuation = state.continuation
+            state.continuation = nil
+            return (continuation, state.data)
         }
 
-        guard shouldRead else {
+        closeOnQueue()
+        if let completion {
+            completion.0?.resume(returning: completion.1)
+        }
+    }
+
+    private func closeOnQueue() {
+        let closeState = lifecycle.withLockedValue { lifecycle -> ((any DispatchSourceRead)?, Bool) in
+            guard !lifecycle.fileHandleIsClosed else {
+                return (nil, false)
+            }
+
+            let source = lifecycle.readSource
+            lifecycle.readSource = nil
+            lifecycle.fileHandleIsClosed = true
+            return (source, true)
+        }
+        guard closeState.1 else {
             return
         }
 
-        drainAvailableData(from: readableHandle)
-    }
-
-    private func drainAvailableData(from readableHandle: FileHandle? = nil) {
-        let handle = readableHandle ?? fileHandle
-
-        while true {
-            let data = handle.availableData
-            let result = state.withLockedValue { state -> DrainResult in
-                guard !state.isFinished else {
-                    return .alreadyFinished
-                }
-
-                guard !data.isEmpty else {
-                    state.isFinished = true
-                    state.isReading = false
-                    let continuation = state.continuation
-                    state.continuation = nil
-                    return .completed(continuation, state.data)
-                }
-
-                state.data.append(data)
-                return state.processDidExit ? .continueReading : .pauseReading
-            }
-
-            switch result {
-            case .alreadyFinished:
-                return
-            case .completed(let continuation, let data):
-                fileHandle.readabilityHandler = nil
-                fileHandle.closeFile()
-                continuation?.resume(returning: data)
-                return
-            case .pauseReading:
-                state.withLockedValue { state in
-                    state.isReading = false
-                }
-                return
-            case .continueReading:
-                continue
-            }
-        }
-    }
-
-    private enum DrainResult {
-        case alreadyFinished
-        case completed(CheckedContinuation<Data, Never>?, Data)
-        case pauseReading
-        case continueReading
+        closeState.0?.cancel()
+        fileHandle.closeFile()
     }
 }
