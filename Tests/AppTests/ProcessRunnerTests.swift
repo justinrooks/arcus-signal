@@ -20,14 +20,14 @@ struct ProcessRunnerTests {
 
         pipe.fileHandleForWriting.write(expectedData)
         pipe.fileHandleForWriting.closeFile()
-        reader.processDidExit()
+        await reader.processDidExit()
 
         let data = await reader.readToEnd()
 
         #expect(data == expectedData)
-        reader.processDidExit()
-        reader.cancel()
-        reader.processDidExit()
+        await reader.processDidExit()
+        await reader.cancel()
+        await reader.processDidExit()
     }
 
     @Test("captures empty stdout and stderr for successful commands")

@@ -13,3 +13,5 @@
 - When a discovered defect is a tiny, understood correction inside the active review unit, present the scope exception clearly but do not force a separate issue/session workflow unless the behavioral risk actually warrants that overhead.
 - Timeout regression tests must exercise the actual blocked resource or continuation; a cancellation-cooperative `Task.sleep` stub can pass before the fix and provide no evidence for a pipe-lifecycle bug.
 - File-descriptor lifecycle operations belong to the same serialized ownership boundary as reads; a separate state lock cannot make handler installation, cancellation, and close atomic.
+- Validate Swift concurrency changes in the repository's Linux/Docker toolchain as well as the local Apple toolchain; stricter Swift 6 sendability diagnostics can reject a build that passes locally.
+- Prefer actor isolation for non-Sendable descriptor owners before reaching for `@unchecked Sendable`.
