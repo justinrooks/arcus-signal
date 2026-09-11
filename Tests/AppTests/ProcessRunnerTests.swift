@@ -25,7 +25,9 @@ struct ProcessRunnerTests {
         let data = await reader.readToEnd()
 
         #expect(data == expectedData)
+        reader.processDidExit()
         reader.cancel()
+        reader.processDidExit()
     }
 
     @Test("captures empty stdout and stderr for successful commands")

@@ -447,11 +447,27 @@ final class ProcessPipeReader: Sendable {
     }
 
     func processDidExit() {
-        state.withLockedValue { state in
+        let shouldDrain = state.withLockedValue { state -> Bool in
+            guard !state.isFinished, !state.processDidExit else {
+                return false
+            }
+
             state.processDidExit = true
+            return true
+        }
+
+        guard shouldDrain else {
+            return
         }
 
         queue.async { [self] in
+            guard !state.withLockedValue({ $0.isFinished }) else {
+                return
+            }
+            guard !lifecycle.withLockedValue({ $0.fileHandleIsClosed }) else {
+                return
+            }
+
             drainAvailableData()
         }
     }
@@ -481,6 +497,13 @@ final class ProcessPipeReader: Sendable {
 
     private func drainAvailableData() {
         while true {
+            guard !state.withLockedValue({ $0.isFinished }) else {
+                return
+            }
+            guard !lifecycle.withLockedValue({ $0.fileHandleIsClosed }) else {
+                return
+            }
+
             var buffer = [UInt8](repeating: 0, count: 8_192)
             let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
                 guard let baseAddress = rawBuffer.baseAddress else {
