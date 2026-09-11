@@ -251,7 +251,11 @@ struct LocationDrivenAlertReconciliationFlowTests {
             try await deliver(firstPayload, sender: sender, on: app)
 
             let sendCountAfterEntry = app.queues.test.all(NotificationSendJob.self)
-                .filter { $0.installationId == installationID }.count
+                .reduce(into: 0) { count, payload in
+                    if payload.installationId == installationID {
+                        count += 1
+                    }
+                }
             try await submit(
                 snapshot(
                     for: installationID,

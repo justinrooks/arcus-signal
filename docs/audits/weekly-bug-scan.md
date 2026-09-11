@@ -795,3 +795,45 @@
 - GitHub issues updated: none
 - Existing issues referenced: none for a new finding
 - Out-of-scope repositories intentionally not scanned: all sibling repositories
+
+## 2026-09-03
+
+- Date: `2026-09-03`
+- Repository scanned: `arcus-signal`
+- Default branch: `main`; local HEAD and local `origin/main` both resolve to `fadeeaae38169618454fdeee72fba28014586357`. Remote freshness was not independently fetched.
+- Commit window: after the reliable 2026-08-27 ledger marker `e957a454b2f1bcbd336abb66a162659cbc2a0a95` through `fadeeaae38169618454fdeee72fba28014586357`; 1 commit. Included start/end commit: `fadeeaae38169618454fdeee72fba28014586357`, dated `2026-08-27T16:40:05-06:00`. Fallback strategy: none required.
+- Files inspected:
+  - `Sources/App/apiRoutes.swift`
+  - `Sources/App/configure.swift` (runtime route composition)
+  - `Sources/App/Controllers/AirQualityController.swift`
+  - `Sources/App/Controllers/AlertsController.swift`
+  - `Sources/App/Controllers/AnvilProfileAnalysisController.swift`
+  - `Sources/App/Controllers/AnvilProfilePreviewController.swift`
+  - `Sources/App/Controllers/DevController.swift`
+  - `Sources/App/Controllers/DeviceController.swift`
+  - `Sources/App/Controllers/NotificationsController.swift`
+  - `Sources/App/Controllers/StormSetupController.swift`
+  - `Tests/AppTests/AppTests.swift` (bootstrap and alias coverage)
+  - `Tests/AppTests/AlertsControllerTests.swift` (canonical/legacy targeted lookup)
+  - `Package.swift`, `Package.resolved`
+  - `docs/architecture.md`, `docs/epics-stories.md`, and previous entries in this ledger
+- High-risk areas inspected: canonical/legacy API routing and handler equivalence; debug endpoint gating and API/worker isolation; dependency lockfile changes affecting HTTP, persistence, and H3 integration.
+- Findings: no new credible bug found; confidence counts `HIGH 0`, `MEDIUM 0`, `LOW 0`.
+- Recurring findings: none newly re-verified. Existing preference-reconciliation and pressure-probe findings were not reclassified: the changed route registration does not modify their failure mechanisms, and those workflows are outside this bounded regression scan.
+- Changed findings: none.
+- Resolved findings: none newly verified.
+- Watchlist: none. Dependency updates alone do not demonstrate a defect.
+- Evidence: commit `fadeeaae` registers each controller through the same closure at both API roots. A read-only comparison confirmed all handler implementations remain byte-identical across the eight changed controllers. The route test enumerates 22 unique routes, comprising 11 canonical/legacy pairs. `configureAPIRoutes` still gates Anvil debug registration; `DevController.index` still rejects production requests; worker configuration still uses its separate route setup. A source search found no API-prefix-dependent request handling. The lockfile refresh changes 14 existing pins with no package additions/removals.
+- Validation: `swift test --skip-build --filter 'AppTests.apiRouteAliasesRegisterCanonicalAndLegacyPaths|AlertsControllerTests.canonicalTargetedLookupBySeriesUUID'` executed the two intended Swift Testing cases: expected 2, executed 2, passed 2, failed 0, skipped 0. The separate XCTest wrapper reported zero tests; the Swift Testing result explicitly names and passes both cases. This reused an existing build and is only supplemental evidence: it does not establish a fresh HEAD build or validate the refreshed dependencies. No Xcode/xcresult validation was performed. Read-only handler and route-pair assertions also passed.
+- Top finding: none.
+- Best next fix: No fix recommended.
+- Implementation recommended: `no`.
+- GitHub issues created: none.
+- GitHub issues updated: none.
+- Existing issues referenced: none for a finding. Commit metadata references PR #226 and issue #84 as routing-change context only.
+- GitHub triage: no candidate met issue eligibility; remote issue deduplication and writes were unnecessary.
+- Out-of-scope repositories: all sibling repositories and external clients.
+- Skipped evidence: external client/proxy behavior, upstream dependency implementation, fresh compilation/full suite, and live GitHub state. No cross-repository defect is asserted.
+- Working-tree preservation: existing changes to `docs/Sql/Device.sql` and `docs/audits/weekly-test-gap-audit.md` were left untouched. Only this repository audit ledger was intentionally edited.
+
+No fix recommended.

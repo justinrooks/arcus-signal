@@ -23,6 +23,7 @@ enum ProcessRunnerError: Error, Sendable, Equatable {
     case launchFailed(String)
     case timedOut(timeoutSeconds: TimeInterval, stderr: String)
     case nonZeroExit(code: Int32, stderr: String)
+    case pipeCleanupTimedOut
 }
 
 struct ProcessRunner: Sendable {
@@ -43,13 +44,26 @@ struct ProcessRunner: Sendable {
         process.arguments = arguments
 
         let pipes = ProcessPipeResources()
-        defer { pipes.closeAll() }
+        let stdoutReader = ProcessPipeReader(fileHandle: pipes.stdoutReadingHandle)
+        let stderrReader = ProcessPipeReader(fileHandle: pipes.stderrReadingHandle)
+        var processWasLaunched = false
+        defer {
+            if processWasLaunched {
+                pipes.closeWritingEnds()
+            } else {
+                pipes.closeAll()
+            }
+        }
         process.standardOutput = pipes.stdoutPipe
         process.standardError = pipes.stderrPipe
 
         let exitObservation = ProcessExitObservation()
         process.terminationHandler = { _ in
             exitObservation.processDidExit()
+            Task {
+                await stdoutReader.processDidExit()
+                await stderrReader.processDidExit()
+            }
         }
 
         do {
@@ -60,11 +74,10 @@ struct ProcessRunner: Sendable {
                 "Failed to launch \(executableURL.path): \(error.localizedDescription)"
             )
         }
+        processWasLaunched = true
         return try await withTaskCancellationHandler {
-            let stdoutReader = ProcessPipeReader(fileHandle: pipes.stdoutReadingHandle)
-            let stderrReader = ProcessPipeReader(fileHandle: pipes.stderrReadingHandle)
-            async let stdoutData = stdoutReader.readToEnd()
-            async let stderrData = stderrReader.readToEnd()
+            let stdoutData = Task { await stdoutReader.readToEnd() }
+            let stderrData = Task { await stderrReader.readToEnd() }
             pipes.closeWritingEnds()
 
             let waitOutcome: WaitOutcome
@@ -79,7 +92,14 @@ struct ProcessRunner: Sendable {
                     exitObservation: exitObservation,
                     sendTerminationSignal: false
                 )
-                _ = await (stdoutData, stderrData)
+                await stdoutReader.processDidExit()
+                await stderrReader.processDidExit()
+                _ = await Self.collectPipeData(
+                    stdoutTask: stdoutData,
+                    stderrTask: stderrData,
+                    stdoutReader: stdoutReader,
+                    stderrReader: stderrReader
+                )
                 throw CancellationError()
             }
 
@@ -94,15 +114,26 @@ struct ProcessRunner: Sendable {
                 )
             }
 
-            let (capturedStdout, capturedStderr) = await (stdoutData, stderrData)
+            await stdoutReader.processDidExit()
+            await stderrReader.processDidExit()
+            let collected = await Self.collectPipeData(
+                stdoutTask: stdoutData,
+                stderrTask: stderrData,
+                stdoutReader: stdoutReader,
+                stderrReader: stderrReader
+            )
             let result = ProcessResult(
-                stdout: String(data: capturedStdout, encoding: .utf8) ?? "",
-                stderr: String(data: capturedStderr, encoding: .utf8) ?? "",
+                stdout: String(data: collected.stdout, encoding: .utf8) ?? "",
+                stderr: String(data: collected.stderr, encoding: .utf8) ?? "",
                 exitCode: process.terminationStatus
             )
 
             // Cancellation wins while lifecycle cleanup is still in flight.
             try Task.checkCancellation()
+
+            if collected.didTimeOut, waitOutcome == .exited {
+                throw ProcessRunnerError.pipeCleanupTimedOut
+            }
 
             if waitOutcome == .timedOut {
                 throw ProcessRunnerError.timedOut(
@@ -123,6 +154,74 @@ struct ProcessRunner: Sendable {
             if process.isRunning {
                 process.terminate()
             }
+            Task {
+                await stdoutReader.cancel()
+                await stderrReader.cancel()
+            }
+        }
+    }
+
+    private enum PipeCollectionResult: Sendable {
+        case stdout(Data)
+        case stderr(Data)
+        case cleanupTimedOut
+    }
+
+    private struct PipeCollection: Sendable {
+        let stdout: Data
+        let stderr: Data
+        let didTimeOut: Bool
+    }
+
+    private static func collectPipeData(
+        stdoutTask: Task<Data, Never>,
+        stderrTask: Task<Data, Never>,
+        stdoutReader: ProcessPipeReader,
+        stderrReader: ProcessPipeReader
+    ) async -> PipeCollection {
+        await withTaskGroup(of: PipeCollectionResult.self) { group in
+            group.addTask {
+                .stdout(await stdoutTask.value)
+            }
+            group.addTask {
+                .stderr(await stderrTask.value)
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .milliseconds(500))
+                    return .cleanupTimedOut
+                } catch {
+                    return .cleanupTimedOut
+                }
+            }
+
+            var stdout = Data()
+            var stderr = Data()
+            var completedReaders = 0
+            var didTimeOut = false
+
+            while let result = await group.next() {
+                switch result {
+                case .stdout(let data):
+                    stdout = data
+                    completedReaders += 1
+                case .stderr(let data):
+                    stderr = data
+                    completedReaders += 1
+                case .cleanupTimedOut:
+                    didTimeOut = true
+                    await stdoutReader.cancel()
+                    await stderrReader.cancel()
+                    group.cancelAll()
+                }
+
+                if completedReaders == 2 {
+                    group.cancelAll()
+                    break
+                }
+            }
+
+            return PipeCollection(stdout: stdout, stderr: stderr, didTimeOut: didTimeOut)
         }
     }
 
@@ -276,57 +375,124 @@ private final class ProcessExitObservation: Sendable {
     }
 }
 
-private final class ProcessPipeReader: Sendable {
-    private struct State: Sendable {
-        var data = Data()
-        var continuation: CheckedContinuation<Data, Never>?
-        var isFinished = false
-    }
-
+actor ProcessPipeReader {
     private let fileHandle: FileHandle
-    private let state = NIOLockedValueBox(State())
+    private let fileDescriptor: Int32
+    private let installReadSource: Bool
+    private var data = Data()
+    private var continuation: CheckedContinuation<Data, Never>?
+    private var isFinished = false
+    private var didProcessExit = false
+    private var readSource: (any DispatchSourceRead)?
+    private var fileHandleIsClosed = false
 
-    init(fileHandle: FileHandle) {
+    init(fileHandle: FileHandle, installReadSource: Bool = true) {
         self.fileHandle = fileHandle
+        fileDescriptor = fileHandle.fileDescriptor
+        self.installReadSource = installReadSource
+
+        let flags = fcntl(fileDescriptor, F_GETFL)
+        precondition(flags >= 0, "Failed to inspect process pipe flags.")
+        precondition(
+            fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) >= 0,
+            "Failed to make process pipe nonblocking."
+        )
     }
 
     func readToEnd() async -> Data {
         await withCheckedContinuation { continuation in
-            state.withLockedValue { state in
-                state.continuation = continuation
+            if isFinished {
+                continuation.resume(returning: data)
+                return
             }
 
-            fileHandle.readabilityHandler = { [self] readableHandle in
-                consumeAvailableData(from: readableHandle)
+            self.continuation = continuation
+            installReadSourceIfNeeded()
+            if didProcessExit {
+                drainAvailableData()
             }
         }
     }
 
-    private func consumeAvailableData(from readableHandle: FileHandle) {
-        let completion: (CheckedContinuation<Data, Never>, Data)? = state.withLockedValue { state in
-            guard !state.isFinished else {
-                return nil
-            }
-
-            let data = readableHandle.availableData
-            guard data.isEmpty else {
-                state.data.append(data)
-                return nil
-            }
-
-            state.isFinished = true
-            guard let continuation = state.continuation else {
-                return nil
-            }
-            state.continuation = nil
-            return (continuation, state.data)
-        }
-
-        guard let completion else {
+    func processDidExit() {
+        guard !isFinished, !didProcessExit else {
             return
         }
 
-        fileHandle.readabilityHandler = nil
-        completion.0.resume(returning: completion.1)
+        didProcessExit = true
+        drainAvailableData()
+    }
+
+    func cancel() {
+        guard !isFinished else { return }
+        isFinished = true
+        let continuation = self.continuation
+        self.continuation = nil
+        close()
+        continuation?.resume(returning: data)
+    }
+
+    private func drainAvailableData() {
+        while true {
+            guard !isFinished, !fileHandleIsClosed else { return }
+
+            var buffer = [UInt8](repeating: 0, count: 8_192)
+            let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    return 0
+                }
+                return read(fileDescriptor, baseAddress, rawBuffer.count)
+            }
+
+            if count > 0 {
+                data.append(contentsOf: buffer[0..<count])
+                continue
+            }
+
+            if count == 0 {
+                finish()
+                return
+            }
+
+            guard errno == EAGAIN || errno == EWOULDBLOCK else {
+                return
+            }
+
+            return
+        }
+    }
+
+    private func installReadSourceIfNeeded() {
+        guard installReadSource, readSource == nil, !isFinished, !fileHandleIsClosed else {
+            return
+        }
+
+        let source = DispatchSource.makeReadSource(
+            fileDescriptor: fileDescriptor,
+            queue: DispatchQueue.global(qos: .utility)
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { await self.drainAvailableData() }
+        }
+        readSource = source
+        source.resume()
+    }
+
+    private func finish() {
+        guard !isFinished else { return }
+        isFinished = true
+        let continuation = self.continuation
+        self.continuation = nil
+        close()
+        continuation?.resume(returning: data)
+    }
+
+    private func close() {
+        guard !fileHandleIsClosed else { return }
+        fileHandleIsClosed = true
+        readSource?.cancel()
+        readSource = nil
+        fileHandle.closeFile()
     }
 }

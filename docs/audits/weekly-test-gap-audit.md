@@ -322,3 +322,34 @@
 - Implementation status: `dequeuePersistsStaleRevisionMismatchWithoutResolvingCandidatesOrSending` now verifies stale-revision suppression, zero candidate resolution, zero ledger claims and sends, and persisted `staleRevisionMismatch` attempt telemetry
 - Validation: `swift test --filter NotificationSendJobDeliveryBoundaryTests` (9 executed, 9 passed, 0 failed, 0 skipped)
 - Out-of-scope repositories intentionally not scanned: all sibling repositories and external NWS, APNs, Redis, and PostgreSQL implementations
+
+## 2026-09-01
+- Repository reviewed: `arcus-signal`
+- Commit window inspected: since the last automation run (`2026-08-25T15:00:24.336Z` through `2026-09-01`); commits `e957a454b2f1bcbd336abb66a162659cbc2a0a95` and `fadeeaae38169618454fdeee72fba28014586357`
+- High-risk areas inspected:
+  - subprocess pipe ownership and descriptor cleanup across success, timeout, cancellation, and launch-failure paths
+  - canonical `/v1` and `/v2` API route registration while preserving legacy `/api/v1` and `/api/v2` client compatibility
+- Files inspected:
+  - `Sources/App/StormSetup/GribAdapter.swift`
+  - `Sources/App/apiRoutes.swift`
+  - `Sources/App/Controllers/AirQualityController.swift`
+  - `Sources/App/Controllers/AlertsController.swift`
+  - `Sources/App/Controllers/AnvilProfileAnalysisController.swift`
+  - `Sources/App/Controllers/AnvilProfilePreviewController.swift`
+  - `Sources/App/Controllers/DevController.swift`
+  - `Sources/App/Controllers/DeviceController.swift`
+  - `Sources/App/Controllers/NotificationsController.swift`
+  - `Sources/App/Controllers/StormSetupController.swift`
+  - `Tests/AppTests/ProcessRunnerTests.swift`
+  - `Tests/AppTests/AppTests.swift`
+  - `Tests/AppTests/AlertsControllerTests.swift`
+- Existing relevant tests found:
+  - `ProcessRunnerTests` covers output capture, non-zero exits, launch failure, large concurrent output, timeout escalation, cooperative and forced cancellation, pre-launch cancellation, and repeated Linux descriptor cleanup across success and timeout
+  - `AppTests.apiRouteAliasesRegisterCanonicalAndLegacyPaths` asserts every changed controller route is registered under both roots exactly once
+  - `AlertsControllerTests.canonicalTargetedLookupBySeriesUUID` executes the canonical severe-weather alert route and verifies its response contract
+- Recommended test gaps: none (High: 0, Medium: 0, Low: 0)
+- Top recommended test: none. No test gap recommended; both behavior-bearing commits added focused coverage at the changed ownership boundary, and the shared route registrar makes per-controller duplicate response tests low-value.
+- Validation: `swift test --filter 'AppTests.apiRouteAliasesRegisterCanonicalAndLegacyPaths|AlertsControllerTests.canonicalTargetedLookupBySeriesUUID|ProcessRunnerTests'` (12 tests passed across three suites on macOS; the Linux-only descriptor-count assertions were compiled out locally)
+- Watchlist items: none
+- Implementation recommended: no
+- Out-of-scope repositories intentionally not scanned: all sibling repositories and external clients, APNs, Redis, PostgreSQL, and deployment infrastructure
