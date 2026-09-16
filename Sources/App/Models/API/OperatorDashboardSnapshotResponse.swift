@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 4
+    public static let currentSchemaVersion = 5
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -33,6 +33,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var sendNoOps: StoredSendNoOpsMetric
     public var zeroCandidateRate: StoredZeroCandidateRateMetric
     public var installationGrowth: StoredInstallationGrowthMetric
+    public var installationActivity: StoredInstallationActivityMetric
     public var targetableCoverage: StoredTargetableCoverageMetric
     public var h3Derivation: StoredH3DerivationMetric
     public var modelArtifacts: StoredPressureArtifactDashboardMetric
@@ -54,6 +55,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         sendNoOps: StoredSendNoOpsMetric = .init(),
         zeroCandidateRate: StoredZeroCandidateRateMetric = .init(),
         installationGrowth: StoredInstallationGrowthMetric = .init(),
+        installationActivity: StoredInstallationActivityMetric = .init(),
         targetableCoverage: StoredTargetableCoverageMetric = .init(),
         h3Derivation: StoredH3DerivationMetric = .init(),
         modelArtifacts: StoredPressureArtifactDashboardMetric = .init(),
@@ -74,6 +76,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.sendNoOps = sendNoOps
         self.zeroCandidateRate = zeroCandidateRate
         self.installationGrowth = installationGrowth
+        self.installationActivity = installationActivity
         self.targetableCoverage = targetableCoverage
         self.h3Derivation = h3Derivation
         self.modelArtifacts = modelArtifacts
@@ -96,6 +99,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case sendNoOps
         case zeroCandidateRate
         case installationGrowth
+        case installationActivity
         case targetableCoverage
         case h3Derivation
         case modelArtifacts
@@ -119,6 +123,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.sendNoOps = try container.decode(StoredSendNoOpsMetric.self, forKey: .sendNoOps)
         self.zeroCandidateRate = try container.decode(StoredZeroCandidateRateMetric.self, forKey: .zeroCandidateRate)
         self.installationGrowth = try container.decodeIfPresent(StoredInstallationGrowthMetric.self, forKey: .installationGrowth) ?? .init()
+        self.installationActivity = try container.decodeIfPresent(StoredInstallationActivityMetric.self, forKey: .installationActivity) ?? .init()
         self.targetableCoverage = try container.decode(StoredTargetableCoverageMetric.self, forKey: .targetableCoverage)
         self.h3Derivation = try container.decode(StoredH3DerivationMetric.self, forKey: .h3Derivation)
         self.modelArtifacts = try container.decodeIfPresent(StoredPressureArtifactDashboardMetric.self, forKey: .modelArtifacts) ?? .init()
@@ -324,6 +329,38 @@ public struct StoredInstallationGrowthMetric: Codable, Sendable {
         self.currentlySubscribedCount = currentlySubscribedCount
         self.seenLast24HoursCount = seenLast24HoursCount
         self.monthlyGrowth = monthlyGrowth
+    }
+}
+
+public struct StoredInstallationActivityState: Codable, Sendable {
+    public var state: String
+    public var activeTodayCount: Int
+    public var activeThisMonthCount: Int
+
+    public init(
+        state: String,
+        activeTodayCount: Int,
+        activeThisMonthCount: Int
+    ) {
+        self.state = state
+        self.activeTodayCount = activeTodayCount
+        self.activeThisMonthCount = activeThisMonthCount
+    }
+}
+
+public struct StoredInstallationActivityMetric: Codable, Sendable {
+    public var dailyActiveInstallationCount: Int
+    public var monthlyActiveInstallationCount: Int
+    public var stateBreakdown: [StoredInstallationActivityState]
+
+    public init(
+        dailyActiveInstallationCount: Int = 0,
+        monthlyActiveInstallationCount: Int = 0,
+        stateBreakdown: [StoredInstallationActivityState] = []
+    ) {
+        self.dailyActiveInstallationCount = dailyActiveInstallationCount
+        self.monthlyActiveInstallationCount = monthlyActiveInstallationCount
+        self.stateBreakdown = stateBreakdown
     }
 }
 
@@ -766,11 +803,16 @@ public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
 
 public struct OperatorDashboardGrowthUsageSectionResponse: Content, Sendable {
     public var installationGrowth: InstallationGrowthMetricResponse
+    public var installationActivity: InstallationActivityMetricResponse
 
     init(snapshot: OperatorDashboardStoredSnapshot) {
         self.installationGrowth = .init(
             refreshedAt: snapshot.slowRefreshedAt,
             metric: snapshot.installationGrowth
+        )
+        self.installationActivity = .init(
+            refreshedAt: snapshot.slowRefreshedAt,
+            metric: snapshot.installationActivity
         )
     }
 }
@@ -1195,6 +1237,32 @@ public struct InstallationGrowthMetricResponse: Content, Sendable {
                 monthStart: $0.monthStart,
                 newInstallationCount: $0.newInstallationCount,
                 cumulativeInstallationCount: $0.cumulativeInstallationCount
+            )
+        }
+    }
+}
+
+public struct InstallationActivityStateResponse: Content, Sendable {
+    public var state: String
+    public var activeTodayCount: Int
+    public var activeThisMonthCount: Int
+}
+
+public struct InstallationActivityMetricResponse: Content, Sendable {
+    public var refreshedAt: Date?
+    public var dailyActiveInstallationCount: Int
+    public var monthlyActiveInstallationCount: Int
+    public var stateBreakdown: [InstallationActivityStateResponse]
+
+    init(refreshedAt: Date?, metric: StoredInstallationActivityMetric) {
+        self.refreshedAt = refreshedAt
+        self.dailyActiveInstallationCount = metric.dailyActiveInstallationCount
+        self.monthlyActiveInstallationCount = metric.monthlyActiveInstallationCount
+        self.stateBreakdown = metric.stateBreakdown.map {
+            .init(
+                state: $0.state,
+                activeTodayCount: $0.activeTodayCount,
+                activeThisMonthCount: $0.activeThisMonthCount
             )
         }
     }

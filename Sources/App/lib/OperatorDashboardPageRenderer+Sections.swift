@@ -97,6 +97,65 @@ extension OperatorDashboardPageRenderer {
         )
     }
 
+    static func activeTodayCard(_ metric: InstallationActivityMetricResponse) -> String {
+        card(
+            title: "Active Today",
+            primary: "\(metric.dailyActiveInstallationCount)",
+            refreshedAt: metric.refreshedAt,
+            lines: [
+                ("Metric", "DAU"),
+                ("Source", "Explicit foreground activity")
+            ]
+        )
+    }
+
+    static func activeThisMonthCard(_ metric: InstallationActivityMetricResponse) -> String {
+        card(
+            title: "Active This Month",
+            primary: "\(metric.monthlyActiveInstallationCount)",
+            refreshedAt: metric.refreshedAt,
+            lines: [
+                ("Metric", "MAU"),
+                ("Source", "Explicit foreground activity")
+            ]
+        )
+    }
+
+    static func installationActivityStateTable(_ metric: InstallationActivityMetricResponse) -> String {
+        let body = metric.stateBreakdown.isEmpty
+            ? #"<div class="empty">No foreground activity this month.</div>"#
+            : """
+              <div class="table-wrap">
+                <table class="inline-mobile-table">
+                  <thead><tr><th>State</th><th>Today</th><th>This Month</th></tr></thead>
+                  <tbody>
+                    \(metric.stateBreakdown.map(installationActivityStateRow).joined())
+                  </tbody>
+                </table>
+              </div>
+            """
+
+        return """
+        <div class="card table-card">
+          <div class="table-card__header">
+            <h3>Active Installations by State</h3>
+            <div class="subtle">Current/last-known operational state · Refreshed \(escape(maybeDate(metric.refreshedAt)))</div>
+          </div>
+          \(body)
+        </div>
+        """
+    }
+
+    static func installationActivityStateRow(_ entry: InstallationActivityStateResponse) -> String {
+        """
+        <tr>
+          <td data-label="State">\(escape(entry.state))</td>
+          <td data-label="Today">\(entry.activeTodayCount)</td>
+          <td data-label="This Month">\(entry.activeThisMonthCount)</td>
+        </tr>
+        """
+    }
+
     static func installationGrowthTable(_ metric: InstallationGrowthMetricResponse) -> String {
         let body = metric.monthlyGrowth.isEmpty
             ? #"<div class="empty">No installation growth history.</div>"#

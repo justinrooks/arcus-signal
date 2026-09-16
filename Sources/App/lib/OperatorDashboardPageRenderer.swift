@@ -46,8 +46,11 @@ enum OperatorDashboardPageRenderer {
                 \(slot("known-installations-card", content: knownInstallationsCard(snapshot.growthUsage.installationGrowth)))
                 \(slot("new-installations-card", content: newInstallationsCard(snapshot.growthUsage.installationGrowth)))
                 \(slot("recent-server-activity-card", content: recentServerActivityCard(snapshot.growthUsage.installationGrowth)))
+                \(slot("active-today-card", content: activeTodayCard(snapshot.growthUsage.installationActivity)))
+                \(slot("active-this-month-card", content: activeThisMonthCard(snapshot.growthUsage.installationActivity)))
               </div>
               <div class="stack section-table">
+                \(slot("installation-activity-state-table", content: installationActivityStateTable(snapshot.growthUsage.installationActivity)))
                 \(slot("installation-growth-table", content: installationGrowthTable(snapshot.growthUsage.installationGrowth)))
               </div>
             </section>

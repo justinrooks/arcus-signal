@@ -117,6 +117,15 @@ struct OperatorDashboardTests {
                     )
                 ]
             ),
+            installationActivity: .init(
+                dailyActiveInstallationCount: 27,
+                monthlyActiveInstallationCount: 38,
+                stateBreakdown: [
+                    .init(state: "CO", activeTodayCount: 18, activeThisMonthCount: 29),
+                    .init(state: "TX", activeTodayCount: 4, activeThisMonthCount: 6),
+                    .init(state: "Unknown", activeTodayCount: 5, activeThisMonthCount: 3)
+                ]
+            ),
             targetableCoverage: .init(
                 installationFreshnessSeconds: 86_400,
                 presenceFreshnessSeconds: 21_600,
@@ -213,6 +222,9 @@ struct OperatorDashboardTests {
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.growthUsage.installationGrowth.seenLast24HoursRate ?? 0) - 0.675) < 0.0001)
+        #expect(response.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
+        #expect(response.growthUsage.installationActivity.monthlyActiveInstallationCount == 38)
+        #expect(response.growthUsage.installationActivity.stateBreakdown.last?.state == "Unknown")
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.targetableRate ?? 0) - 0.61) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
         #expect(abs((response.audienceTargeting.alertsWithGeographyAndH3Success.successRate ?? 0) - 0.8333333333) < 0.0001)
@@ -368,6 +380,9 @@ struct OperatorDashboardTests {
         #expect(snapshot.targetableCoverage.hardStalePresenceCount == 0)
         #expect(snapshot.installationGrowth.knownInstallationCount == 0)
         #expect(snapshot.installationGrowth.monthlyGrowth.isEmpty)
+        #expect(snapshot.installationActivity.dailyActiveInstallationCount == 0)
+        #expect(snapshot.installationActivity.monthlyActiveInstallationCount == 0)
+        #expect(snapshot.installationActivity.stateBreakdown.isEmpty)
     }
 
     @Test("legacy snapshot backfills touched-series fields")
@@ -415,6 +430,9 @@ struct OperatorDashboardTests {
                 #expect(payload.growthUsage.installationGrowth.knownInstallationCount == 40)
                 #expect(payload.growthUsage.installationGrowth.currentlySubscribedCount == 31)
                 #expect(payload.growthUsage.installationGrowth.monthlyGrowth.last?.cumulativeInstallationCount == 40)
+                #expect(payload.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
+                #expect(payload.growthUsage.installationActivity.monthlyActiveInstallationCount == 38)
+                #expect(payload.growthUsage.installationActivity.stateBreakdown.first?.state == "CO")
                 let coverage = payload.audienceTargeting.freshTargetableInstallationCoverage
                 #expect(coverage.hardStalePresenceThresholdSeconds == 86_400)
                 #expect(coverage.candidateQueryEligibleInstallationCount == 74)
@@ -444,6 +462,14 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("New This Month"))
                 #expect(res.body.string.contains("Seen Last 24h — Server Activity"))
                 #expect(res.body.string.contains("Operational activity, not DAU"))
+                #expect(res.body.string.contains("Active Today"))
+                #expect(res.body.string.contains("Active This Month"))
+                #expect(res.body.string.contains("Active Installations by State"))
+                #expect(res.body.string.contains("Current/last-known operational state"))
+                #expect(res.body.string.contains("installationActivity"))
+                #expect(res.body.string.contains("id=\"active-today-card\""))
+                #expect(res.body.string.contains("id=\"installation-activity-state-table\""))
+                #expect(res.body.string.contains("renderInstallationActivityStateTable(snapshot.growthUsage.installationActivity)"))
                 #expect(res.body.string.contains("Monthly Installation Growth"))
                 #expect(res.body.string.contains("April 2026"))
                 #expect(res.body.string.contains("Audience / Targeting"))
