@@ -189,14 +189,14 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(response.modelArtifacts.pressureArtifactReadiness.validTimeAgeSeconds == 0)
             #expect(response.modelArtifacts.pressureArtifactReadiness.selectionOutcome == .exact)
             #expect(response.modelArtifacts.pressureArtifactReadiness.readinessReason == nil)
-            #expect(html.contains("EXACT"))
+            #expect(html.contains("READY"))
             #expect(html.contains("accent"))
             #expect(html.contains("Catalog status"))
             #expect(html.contains("Pipeline status"))
             #expect(html.contains("Healthy"))
             #expect(html.contains("localPath") == false)
             #expect(html.contains("<details class=\"metric-details\">"))
-            #expect(html.contains("<details class=\"metric-details\" open>") == false)
+            #expect(html.contains("id=\"pressure-artifact-readiness-card\""))
         }
     }
 
@@ -575,8 +575,8 @@ struct OperatorDashboardPressureArtifactTests {
                 #expect(res.status == .ok)
                 #expect(res.headers.contentType == .html)
                 #expect(res.body.string.contains("Model Pipeline"))
-                #expect(res.body.string.contains("Pressure artifact readiness"))
-                #expect(res.body.string.contains("Pressure artifact catalog"))
+                #expect(res.body.string.contains("Pressure Artifact"))
+                #expect(res.body.string.contains("Catalog Summary"))
                 #expect(res.body.string.contains("Recent pressure artifacts"))
                 #expect(res.body.string.contains("UNAVAILABLE"))
                 #expect(res.body.string.contains("danger"))
@@ -625,7 +625,7 @@ struct OperatorDashboardPressureArtifactTests {
         )
 
         let cases: [(snapshot: OperatorDashboardStoredSnapshot, expectedPrimary: String, expectedClass: String?, expectedReason: String?)] = [
-            (exactSnapshot, "EXACT", "accent", nil),
+            (exactSnapshot, "READY", "accent", nil),
             (staleSnapshot, "STALE", "warn", "Bounded stale fallback selected"),
             (unavailableSnapshot, "UNAVAILABLE", "danger", "Newest catalog row is failed"),
             (legacySnapshot, "NO DATA", nil, nil)

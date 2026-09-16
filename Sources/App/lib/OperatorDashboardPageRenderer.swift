@@ -31,7 +31,7 @@ enum OperatorDashboardPageRenderer {
             </header>
 
             <section class="section">
-              <div class="section-header"><h2>Red Lights</h2></div>
+              <div class="section-header"><h2>Red Lights</h2><div class="subtle">At-a-glance service health</div></div>
               <div class="grid">
                 \(slot("ingest-card", content: ingestCard(snapshot.redLights.ingestFreshness)))
                 \(slot("pipeline-backlog-card", content: pipelineBacklogCard(snapshot.redLights.pipelineBacklogAge)))
@@ -50,19 +50,19 @@ enum OperatorDashboardPageRenderer {
             </section>
 
             <section class="section">
-              <div class="section-header"><h2>Growth / Usage</h2></div>
-              <div class="grid">
+              <div class="section-header"><h2>Installations / Usage</h2><div class="subtle">Registered footprint and explicit activity</div></div>
+              <div class="grid growth-primary-grid">
                 \(slot("known-installations-card", content: knownInstallationsCard(snapshot.growthUsage.installationGrowth)))
-                \(slot("new-installations-card", content: newInstallationsCard(snapshot.growthUsage.installationGrowth)))
-                \(slot("recent-server-activity-card", content: recentServerActivityCard(snapshot.growthUsage.installationGrowth)))
                 \(slot("active-today-card", content: activeTodayCard(snapshot.growthUsage.installationActivity)))
                 \(slot("active-this-month-card", content: activeThisMonthCard(snapshot.growthUsage.installationActivity)))
+                \(slot("new-installations-card", content: newInstallationsCard(snapshot.growthUsage.installationGrowth)))
               </div>
-              <div class="stack section-table">
+              <div class="growth-secondary">\(slot("recent-server-activity-card", content: recentServerActivityCard(snapshot.growthUsage.installationGrowth)))</div>
+              <div class="installation-detail-grid section-table">
                 \(slot("installation-activity-state-table", content: installationActivityStateTable(snapshot.growthUsage.installationActivity)))
-                \(slot("installation-growth-table", content: installationGrowthTable(snapshot.growthUsage.installationGrowth)))
                 \(slot("installation-footprint-table", content: installationFootprintTable(snapshot.growthUsage.installationFootprint, refreshedAt: snapshot.growthUsage.installationActivity.refreshedAt)))
               </div>
+              <div class="section-table">\(slot("installation-growth-table", content: installationGrowthTable(snapshot.growthUsage.installationGrowth)))</div>
             </section>
 
             <section class="section">
@@ -73,7 +73,7 @@ enum OperatorDashboardPageRenderer {
             </section>
 
             <section class="section">
-              <div class="section-header"><h2>Delivery / Targeting</h2><div class="subtle">Compact operational KPIs</div></div>
+              <div class="section-header"><h2>Delivery / Targeting</h2><div class="subtle">Primary delivery and coverage signals</div></div>
               <div class="operational-kpi-grid">
                 \(slot("latency-card", content: latencyCard(snapshot.deliveryKPIs.endToEndAlertLatency)))
                 \(slot("apns-success-card", content: apnsSuccessCard(snapshot.deliveryKPIs.apnsDeliverySuccessRate)))
