@@ -130,6 +130,25 @@ extension OperatorDashboardPageRenderer {
               grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
               gap: 16px;
             }
+            .model-pipeline-grid {
+              display: grid;
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+              gap: 16px;
+            }
+            .model-pipeline-grid > :nth-child(3) {
+              grid-column: span 2;
+            }
+            .operational-kpi-grid {
+              display: grid;
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+              gap: 16px;
+            }
+            .operational-kpi-secondary {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 16px;
+              margin-top: 12px;
+            }
             .stack {
               display: grid;
               grid-template-columns: 1fr;
@@ -187,6 +206,36 @@ extension OperatorDashboardPageRenderer {
               font-size: 2rem;
               font-weight: 700;
               letter-spacing: -0.04em;
+            }
+            .compact-card {
+              padding: 16px;
+              border-radius: 16px;
+            }
+            .compact-card .primary {
+              margin: 10px 0 4px;
+              font-size: 1.55rem;
+            }
+            .metric-summary {
+              color: var(--text);
+              font-size: 0.86rem;
+              line-height: 1.45;
+              min-height: 2.5em;
+            }
+            .metric-details {
+              margin-top: 10px;
+              border-top: 1px solid rgba(117, 165, 196, 0.10);
+            }
+            .metric-details summary {
+              cursor: pointer;
+              padding-top: 10px;
+              color: var(--accent);
+              font-size: 0.78rem;
+              font-weight: 700;
+              letter-spacing: 0.05em;
+              text-transform: uppercase;
+            }
+            .metric-details .meta-list {
+              margin-top: 4px;
             }
             .subtle {
               color: var(--muted);
@@ -294,6 +343,13 @@ extension OperatorDashboardPageRenderer {
               .grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
               }
+              .model-pipeline-grid,
+              .operational-kpi-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+              }
+              .model-pipeline-grid > :nth-child(3) {
+                grid-column: span 2;
+              }
               th, td {
                 padding: 11px 12px;
               }
@@ -355,6 +411,15 @@ extension OperatorDashboardPageRenderer {
               .grid {
                 grid-template-columns: 1fr;
                 gap: 12px;
+              }
+              .model-pipeline-grid,
+              .operational-kpi-grid,
+              .operational-kpi-secondary {
+                grid-template-columns: 1fr;
+                gap: 12px;
+              }
+              .model-pipeline-grid > :nth-child(3) {
+                grid-column: auto;
               }
               .stack {
                 gap: 12px;

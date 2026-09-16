@@ -195,6 +195,8 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(html.contains("Pipeline status"))
             #expect(html.contains("Healthy"))
             #expect(html.contains("localPath") == false)
+            #expect(html.contains("<details class=\"metric-details\">"))
+            #expect(html.contains("<details class=\"metric-details\" open>") == false)
         }
     }
 
@@ -283,6 +285,7 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(readiness.source == PressureArtifactCatalogSource.nomads.rawValue)
             #expect(html.contains("STALE"))
             #expect(html.contains("warn"))
+            #expect(html.contains("<details class=\"metric-details\" open>"))
         }
     }
 
@@ -571,7 +574,7 @@ struct OperatorDashboardPressureArtifactTests {
             try await app.testing().test(.GET, "dashboard", afterResponse: { res async in
                 #expect(res.status == .ok)
                 #expect(res.headers.contentType == .html)
-                #expect(res.body.string.contains("Model Artifacts"))
+                #expect(res.body.string.contains("Model Pipeline"))
                 #expect(res.body.string.contains("Pressure artifact readiness"))
                 #expect(res.body.string.contains("Pressure artifact catalog"))
                 #expect(res.body.string.contains("Recent pressure artifacts"))

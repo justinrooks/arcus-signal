@@ -40,6 +40,15 @@ enum OperatorDashboardPageRenderer {
               </div>
             </section>
 
+            <section class="section model-pipeline-section">
+              <div class="section-header"><h2>Model Pipeline</h2><div class="subtle">GRIB readiness and artifact flow</div></div>
+              <div class="model-pipeline-grid">
+                \(slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(snapshot.modelArtifacts.pressureArtifactReadiness)))
+                \(slot("pressure-artifact-catalog-card", content: pressureArtifactCatalogCard(snapshot.modelArtifacts.pressureArtifactCatalog)))
+                \(slot("recent-pressure-artifacts-table", content: recentPressureArtifactsTable(snapshot.modelArtifacts.recentPressureArtifacts)))
+              </div>
+            </section>
+
             <section class="section">
               <div class="section-header"><h2>Growth / Usage</h2></div>
               <div class="grid">
@@ -57,38 +66,23 @@ enum OperatorDashboardPageRenderer {
             </section>
 
             <section class="section">
-              <div class="section-header"><h2>Model Artifacts</h2></div>
-              <div class="grid">
-                \(slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(snapshot.modelArtifacts.pressureArtifactReadiness)))
-                \(slot("pressure-artifact-catalog-card", content: pressureArtifactCatalogCard(snapshot.modelArtifacts.pressureArtifactCatalog)))
-              </div>
-              <div class="stack section-table">
-                \(slot("recent-pressure-artifacts-table", content: recentPressureArtifactsTable(snapshot.modelArtifacts.recentPressureArtifacts)))
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header"><h2>Delivery KPIs</h2></div>
-              <div class="grid">
-                \(slot("latency-card", content: latencyCard(snapshot.deliveryKPIs.endToEndAlertLatency)))
-                \(slot("apns-success-card", content: apnsSuccessCard(snapshot.deliveryKPIs.apnsDeliverySuccessRate)))
-                \(slot("noop-card", content: noOpCard(snapshot.deliveryKPIs.sendNoOpRateByReason)))
-                \(slot("zero-candidate-card", content: zeroCandidateCard(snapshot.deliveryKPIs.zeroCandidateRevisionRate)))
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header"><h2>Audience / Targeting</h2></div>
-              <div class="grid">
-                \(slot("coverage-card", content: coverageCard(snapshot.audienceTargeting.freshTargetableInstallationCoverage)))
-                \(slot("h3-card", content: h3Card(snapshot.audienceTargeting.alertsWithGeographyAndH3Success)))
-              </div>
-            </section>
-
-            <section class="section">
               <div class="section-header"><h2>NWS / Alert Activity</h2><div class="subtle">Recent severe-weather activity and geography</div></div>
               <div class="stack">
                 \(slot("touched-series-table", content: touchedSeriesTable(snapshot.operatorContext.lastTouchedSeries)))
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-header"><h2>Delivery / Targeting</h2><div class="subtle">Compact operational KPIs</div></div>
+              <div class="operational-kpi-grid">
+                \(slot("latency-card", content: latencyCard(snapshot.deliveryKPIs.endToEndAlertLatency)))
+                \(slot("apns-success-card", content: apnsSuccessCard(snapshot.deliveryKPIs.apnsDeliverySuccessRate)))
+                \(slot("coverage-card", content: coverageCard(snapshot.audienceTargeting.freshTargetableInstallationCoverage)))
+                \(slot("h3-card", content: h3Card(snapshot.audienceTargeting.alertsWithGeographyAndH3Success)))
+              </div>
+              <div class="operational-kpi-secondary">
+                \(slot("noop-card", content: noOpCard(snapshot.deliveryKPIs.sendNoOpRateByReason)))
+                \(slot("zero-candidate-card", content: zeroCandidateCard(snapshot.deliveryKPIs.zeroCandidateRevisionRate)))
               </div>
             </section>
 

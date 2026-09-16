@@ -236,11 +236,11 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func latencyCard(_ metric: EndToEndLatencyMetricResponse) -> String {
-        card(
+        compactMetricCard(
             title: "End-to-end alert latency p95",
             primary: maybeDuration(metric.p95Seconds.flatMap { Int($0.rounded()) }),
             refreshedAt: metric.refreshedAt,
-            lines: [
+            details: [
                 ("Window", "\(metric.windowHours)h"),
                 ("Successful revisions", "\(metric.successfulRevisionCount)")
             ]
@@ -248,11 +248,11 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func apnsSuccessCard(_ metric: APNsDeliveryMetricResponse) -> String {
-        card(
+        compactMetricCard(
             title: "APNs delivery success rate",
             primary: maybePercent(metric.successRate),
             refreshedAt: metric.refreshedAt,
-            lines: [
+            details: [
                 ("Sent", "\(metric.sentCount)"),
                 ("Failed", "\(metric.failedCount)"),
                 ("Top failures", joinedReasons(metric.topFailureReasons))
@@ -261,11 +261,11 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func noOpCard(_ metric: SendNoOpsMetricResponse) -> String {
-        card(
+        compactMetricCard(
             title: "Send no-op rate by reason",
             primary: maybePercent(metric.noOpRate),
             refreshedAt: metric.refreshedAt,
-            lines: [
+            details: [
                 ("Total attempts", "\(metric.totalAttemptCount)"),
                 ("No-op attempts", "\(metric.noOpAttemptCount)"),
                 ("Reasons", joinedReasons(metric.reasons))
@@ -274,11 +274,11 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func zeroCandidateCard(_ metric: ZeroCandidateRateMetricResponse) -> String {
-        card(
+        compactMetricCard(
             title: "Zero-candidate revision rate",
             primary: maybePercent(metric.zeroCandidateRate),
             refreshedAt: metric.refreshedAt,
-            lines: [
+            details: [
                 ("Candidate-resolution attempts", "\(metric.candidateResolutionAttemptCount)"),
                 ("Zero-candidate attempts", "\(metric.zeroCandidateAttemptCount)")
             ]
@@ -286,11 +286,12 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func coverageCard(_ metric: TargetableCoverageMetricResponse) -> String {
-        card(
-            title: "Candidate-query eligibility",
-            primary: maybePercent(metric.candidateQueryEligibilityRate),
+        compactMetricCard(
+            title: "Fresh targetable coverage",
+            primary: maybePercent(metric.targetableRate),
             refreshedAt: metric.refreshedAt,
-            lines: [
+            summary: "Fresh targetable \(metric.targetableInstallationCount) / \(metric.activeSubscribedInstallationCount) · Eligible ≤24h \(metric.candidateQueryEligibleInstallationCount) / \(metric.activeSubscribedInstallationCount)",
+            details: [
                 ("Eligible ≤24h", "\(metric.candidateQueryEligibleInstallationCount) / \(metric.activeSubscribedInstallationCount)"),
                 ("Excluded >24h", "\(metric.hardStalePresenceCount)"),
                 ("Fresh targetable (≤6h)", "\(metric.targetableInstallationCount) / \(metric.activeSubscribedInstallationCount)"),
@@ -303,11 +304,11 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func h3Card(_ metric: H3DerivationMetricResponse) -> String {
-        card(
+        compactMetricCard(
             title: "Geography to H3 conversion",
             primary: maybePercent(metric.successRate),
             refreshedAt: metric.refreshedAt,
-            lines: [
+            details: [
                 ("Geometry-bearing revisions", "\(metric.geometryBearingRevisionCount)"),
                 ("Successful conversions", "\(metric.successfulConversionCount)"),
                 ("p95 conversion", maybeDuration(metric.p95ConversionSeconds.flatMap { Int($0.rounded()) }))
@@ -317,7 +318,7 @@ extension OperatorDashboardPageRenderer {
 
     static func pressureArtifactReadinessCard(_ metric: PressureArtifactReadinessMetricResponse?) -> String {
         let metric = metric ?? .init(refreshedAt: nil, renderedAt: .now, metric: .init())
-        var lines: [(String, String)] = [
+        var details: [(String, String)] = [
             ("Catalog status", metric.status ?? "n/a"),
             ("Valid time", maybeDate(metric.validTime)),
             ("Valid-time age", maybeDuration(metric.validTimeAgeSeconds)),
@@ -328,28 +329,37 @@ extension OperatorDashboardPageRenderer {
             ("Last checked / updated", maybeDate(metric.lastCheckedAt ?? metric.updatedAt))
         ]
         if let readinessReason = metric.readinessReason {
-            lines.insert(("Readiness reason", readinessReason), at: 1)
+            details.insert(("Readiness reason", readinessReason), at: 1)
         }
         if let errorSummary = metric.errorSummary {
-            lines.append(("Error", errorSummary))
+            details.append(("Error", errorSummary))
         }
 
-        return card(
+        let summary = [
+            metric.validTime.map { "Valid \(maybeDate($0))" },
+            pressureArtifactRunAndForecast(metric.runTime, metric.forecastHour),
+            "checked \(maybeDate(metric.lastCheckedAt ?? metric.updatedAt))"
+        ].compactMap { $0 }.joined(separator: " · ")
+
+        return compactMetricCard(
             title: "Pressure artifact readiness",
             primary: pressureArtifactOutcome(metric.selectionOutcome),
             primaryClass: pressureArtifactOutcomeClass(metric.selectionOutcome),
             refreshedAt: metric.refreshedAt,
-            lines: lines
+            summary: summary,
+            details: details,
+            expanded: metric.selectionOutcome != .exact || metric.readinessReason != nil || metric.errorSummary != nil
         )
     }
 
     static func pressureArtifactCatalogCard(_ metric: PressureArtifactCatalogMetricResponse?) -> String {
         let metric = metric ?? .init(refreshedAt: nil, metric: .init())
-        return card(
+        return compactMetricCard(
             title: "Pressure artifact catalog",
             primary: "\(metric.readyCount) ready",
             refreshedAt: metric.refreshedAt,
-            lines: [
+            summary: "Ready \(metric.readyCount) · Warming \(metric.warmingCount) · Pending \(metric.pendingCount) · Failed \(metric.failedCount)",
+            details: [
                 ("Total", "\(metric.totalCount)"),
                 ("Pending", "\(metric.pendingCount)"),
                 ("Oldest pending", maybeDuration(metric.oldestPendingAgeSeconds)),
@@ -361,7 +371,8 @@ extension OperatorDashboardPageRenderer {
                 ("Expired", "\(metric.expiredCount)"),
                 ("Most recent failure", maybeDate(metric.mostRecentFailureAt)),
                 ("Most recent failure reason", metric.mostRecentFailureSummary ?? "none")
-            ]
+            ],
+            expanded: metric.stuckReason != nil
         )
     }
 
@@ -557,6 +568,35 @@ extension OperatorDashboardPageRenderer {
           <ul class="meta-list">
             \(lines.map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined())
           </ul>
+        </div>
+        """
+    }
+
+    static func compactMetricCard(
+        title: String,
+        primary: String,
+        primaryClass: String? = nil,
+        refreshedAt: Date?,
+        summary: String? = nil,
+        details: [(String, String)],
+        expanded: Bool = false
+    ) -> String {
+        let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
+        let disclosure = details.isEmpty ? "" : """
+          <details class="metric-details"\(expanded ? " open" : "")>
+            <summary>Details</summary>
+            <ul class="meta-list">
+              \(details.map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined())
+            </ul>
+          </details>
+        """
+        return """
+        <div class="card compact-card">
+          <div class="card-heading"><h3>\(escape(title))</h3></div>
+          <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
+          \(summary.map { "<div class=\"metric-summary\">\(escape($0))</div>" } ?? "")
+          <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
+          \(disclosure)
         </div>
         """
     }
