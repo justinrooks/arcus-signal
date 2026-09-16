@@ -194,6 +194,11 @@ struct OperatorDashboardPressureArtifactTests {
             #expect(html.contains("Catalog status"))
             #expect(html.contains("Pipeline status"))
             #expect(html.contains("Healthy"))
+            #expect(html.contains("<th>Updated</th>"))
+            #expect(html.contains("data-label=\"Updated\""))
+            let exactEntry = try #require(artifacts.recentPressureArtifacts.entries.first { $0.validTime == exactPressureRow.validTime })
+            let expectedUpdatedCell = "data-label=\"Updated\">\(OperatorDashboardPageRenderer.maybeDate(exactEntry.updatedAt))</td>"
+            #expect(html.contains(expectedUpdatedCell))
             #expect(html.contains("localPath") == false)
             #expect(html.contains("<details class=\"metric-details\">"))
             #expect(html.contains("id=\"pressure-artifact-readiness-card\""))

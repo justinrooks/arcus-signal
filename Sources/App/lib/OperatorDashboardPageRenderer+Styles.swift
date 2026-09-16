@@ -67,7 +67,8 @@ extension OperatorDashboardPageRenderer {
               font-weight: 700;
               letter-spacing: 0.06em;
             }
-            .status-label.stale, .status-label.disconnected { color: var(--warn); }
+            .status-label.stale { color: var(--warn); }
+            .status-label.disconnected { color: var(--danger); }
             .status-label.live { color: var(--accent); }
             .status-dot {
               width: 8px;
@@ -77,7 +78,8 @@ extension OperatorDashboardPageRenderer {
               box-shadow: 0 0 12px currentColor;
             }
             .status-dot.live { color: var(--accent); }
-            .status-dot.stale, .status-dot.disconnected { color: var(--warn); }
+            .status-dot.stale { color: var(--warn); }
+            .status-dot.disconnected { color: var(--danger); }
             #snapshot-age {
               color: var(--muted);
               font-size: 0.84rem;
@@ -718,26 +720,44 @@ extension OperatorDashboardPageRenderer {
     """
 
     static let unavailableStyles = """
-            :root { color-scheme: dark; }
+            :root {
+              color-scheme: dark;
+              --panel: rgba(12, 24, 39, 0.96);
+              --line: rgba(117, 165, 196, 0.16);
+              --text: #eef6ff;
+              --muted: #a5bbcd;
+              --accent: #58d6c3;
+            }
+            * { box-sizing: border-box; }
             body {
               margin: 0;
-              font-family: "Avenir Next", "IBM Plex Sans", sans-serif;
+              padding: 16px;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
               background: linear-gradient(180deg, #08121d 0%, #050a11 100%);
-              color: #eef6ff;
+              color: var(--text);
               display: grid;
               place-items: center;
               min-height: 100vh;
             }
             .panel {
-              width: min(560px, calc(100vw - 32px));
-              padding: 28px;
-              border-radius: 24px;
-              border: 1px solid rgba(117, 165, 196, 0.18);
-              background: rgba(12, 24, 39, 0.94);
-              box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+              width: min(560px, 100%);
+              padding: 24px;
+              border-radius: 16px;
+              border: 1px solid var(--line);
+              background: var(--panel);
+              box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
             }
             h1 { margin: 0 0 8px; }
-            p { color: #8ca4ba; line-height: 1.5; }
-            a { color: #58d6c3; text-decoration: none; }
+            p { color: var(--muted); line-height: 1.5; }
+            a { color: var(--accent); text-decoration: none; }
+            a:focus-visible {
+              outline: 2px solid var(--accent);
+              outline-offset: 4px;
+              border-radius: 4px;
+            }
+            @media (max-width: 430px) {
+              body { padding: 12px; }
+              .panel { padding: 20px 16px; }
+            }
     """
 }

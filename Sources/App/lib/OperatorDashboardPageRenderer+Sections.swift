@@ -394,6 +394,7 @@ extension OperatorDashboardPageRenderer {
                   <th>Run / FH</th>
                   <th>Status</th>
                   <th>Size</th>
+                  <th>Updated</th>
                   <th>Error</th>
                 </tr>
               </thead>
@@ -423,6 +424,7 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Run / FH">\(escape(pressureArtifactRunAndForecast(entry.runTime, entry.forecastHour)))</td>
           <td data-label="Status"><span class="pill \(escape(statusClass(entry.status)))">\(escape(pressureArtifactStatus(entry.status)))</span></td>
           <td data-label="Size" class="mono">\(escape(maybeByteSize(entry.byteSize)))</td>
+          <td data-label="Updated">\(escape(maybeDate(entry.updatedAt)))</td>
           <td data-label="Error"><span class="diagnostic-truncate">\(escape(entry.errorSummary ?? "none"))</span></td>
         </tr>
         """

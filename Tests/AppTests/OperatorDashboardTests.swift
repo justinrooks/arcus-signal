@@ -41,6 +41,14 @@ struct OperatorDashboardTests {
         return date
     }
 
+    private func liveFunction(_ name: String, until endName: String, in html: String) -> String {
+        guard let start = html.range(of: name),
+              let end = html.range(of: endName, range: start.upperBound..<html.endIndex) else {
+            return ""
+        }
+        return String(html[start.lowerBound..<end.lowerBound])
+    }
+
     private func makeSnapshot() -> OperatorDashboardStoredSnapshot {
         .init(
             generatedAt: isoDate("2026-04-10T12:00:00Z"),
@@ -543,6 +551,13 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("radial-gradient(circle at top right" ) == false)
                 #expect(res.body.string.contains("metric-details"))
                 #expect(res.body.string.contains("Recent pressure artifacts"))
+                #expect(res.body.string.contains("<th>Updated</th>"))
+                #expect(res.body.string.contains("data-label=\"Updated\""))
+                #expect(liveFunction("function renderRecentPressureArtifactsTable(metric)", until: "function renderRecentDebugRow", in: res.body.string).contains("<th>Updated</th>"))
+                #expect(liveFunction("function renderPressureArtifactRow(entry)", until: "function renderRecentPressureArtifactsTable", in: res.body.string).contains("data-label=\"Updated\""))
+                #expect(liveFunction("function renderPressureArtifactRow(entry)", until: "function renderRecentPressureArtifactsTable", in: res.body.string).contains("formatDate(entry.updatedAt)"))
+                #expect(liveFunction("function renderRecentDebugTable(metric)", until: "function renderTouchedSeriesRow", in: res.body.string).contains("<div class=\"table-wrap\">") )
+                #expect(liveFunction("function renderTouchedSeriesTable(metric)", until: "function seriesStateClass", in: res.body.string).contains("<div class=\"table-wrap\">") )
                 #expect(res.body.string.contains("Fresh targetable coverage"))
                 #expect(res.body.string.contains("61.0%"))
                 #expect(res.body.string.contains("Eligible ≤24h 74 / 100"))
@@ -559,6 +574,8 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("Arcus Signal"))
                 #expect(res.body.string.contains("Operational Dashboard"))
                 #expect(res.body.string.contains("connection-status-label"))
+                #expect(res.body.string.contains(".status-label.disconnected { color: var(--danger); }"))
+                #expect(res.body.string.contains(".status-dot.disconnected { color: var(--danger); }"))
                 #expect(res.body.string.contains("id=\"snapshot-age\">Snapshot "))
                 #expect(res.body.string.contains("LIVE"))
                 #expect(res.body.string.contains("STALE"))
@@ -627,6 +644,9 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("Dashboard Snapshot Unavailable"))
                 #expect(res.body.string.contains("window.location.replace('/dashboard')"))
                 #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
+                #expect(res.body.string.contains("font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"))
+                #expect(res.body.string.contains("a:focus-visible"))
+                #expect(res.body.string.contains("@media (max-width: 430px)"))
             })
         }
     }

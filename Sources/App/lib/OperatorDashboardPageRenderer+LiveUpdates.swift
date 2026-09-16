@@ -600,6 +600,7 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Run / FH">${escapeHtml(renderPressureArtifactRunAndForecast(entry.runTime, entry.forecastHour))}</td>
                 <td data-label="Status"><span class="pill ${statusClass(entry.status)}">${escapeHtml(renderPressureArtifactStatus(entry.status))}</span></td>
                 <td data-label="Size" class="mono">${escapeHtml(formatByteSize(entry.byteSize))}</td>
+                <td data-label="Updated">${escapeHtml(formatDate(entry.updatedAt))}</td>
                 <td data-label="Error"><span class="diagnostic-truncate">${escapeHtml(entry.errorSummary ?? 'none')}</span></td>
               </tr>
             `;
@@ -617,6 +618,7 @@ extension OperatorDashboardPageRenderer {
                       <th>Run / FH</th>
                       <th>Status</th>
                       <th>Size</th>
+                      <th>Updated</th>
                       <th>Error</th>
                     </tr>
                   </thead>
@@ -667,6 +669,7 @@ extension OperatorDashboardPageRenderer {
             const body = !Array.isArray(metric.entries) || metric.entries.length === 0
               ? '<div class="empty">No recent notification debug entries.</div>'
               : `
+                <div class="table-wrap">
                 <table class="stream-table inline-mobile-table">
                   <thead>
                     <tr>
@@ -681,6 +684,7 @@ extension OperatorDashboardPageRenderer {
                     ${metric.entries.map(renderRecentDebugRow).join('')}
                   </tbody>
                 </table>
+                </div>
               `;
 
             return `
@@ -722,6 +726,7 @@ extension OperatorDashboardPageRenderer {
             const body = !Array.isArray(metric.entries) || metric.entries.length === 0
               ? '<div class="empty">No recently touched series.</div>'
               : `
+                <div class="table-wrap">
                 <table class="stream-table inline-mobile-table">
                   <thead>
                     <tr>
@@ -737,6 +742,7 @@ extension OperatorDashboardPageRenderer {
                     ${metric.entries.map(renderTouchedSeriesRow).join('')}
                   </tbody>
                 </table>
+                </div>
               `;
 
             return `
