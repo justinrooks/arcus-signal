@@ -204,7 +204,11 @@ struct OperatorDashboardTests {
         )
 
         #expect(response.redLights.ingestFreshness.timeSinceLastSuccessfulSweepSeconds == 300)
+        #expect(response.redLights.ingestFreshness.status == .unknown)
         #expect(response.redLights.pipelineBacklogAge.oldestPendingTargetDispatchAgeSeconds == 360)
+        #expect(response.redLights.pipelineBacklogAge.status == .unknown)
+        #expect(response.redLights.stuckClaimedRows.status == .critical)
+        #expect(response.redLights.staleActiveSeriesCount.status == .warning)
         #expect(abs((response.deliveryKPIs.apnsDeliverySuccessRate.successRate ?? 0) - 0.8) < 0.0001)
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
@@ -212,6 +216,57 @@ struct OperatorDashboardTests {
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.targetableRate ?? 0) - 0.61) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
         #expect(abs((response.audienceTargeting.alertsWithGeographyAndH3Success.successRate ?? 0) - 0.8333333333) < 0.0001)
+    }
+
+    @Test("red light statuses use existing domain thresholds")
+    func redLightStatusesUseExistingDomainThresholds() {
+        var snapshot = makeSnapshot()
+        snapshot.pipelineBacklog = .init()
+        snapshot.stuckClaimedRows = .init(thresholdSeconds: 300, count: 0)
+        snapshot.staleActiveSeries = .init(graceSeconds: 900, count: 0)
+
+        let response = OperatorDashboardSnapshotResponse(
+            snapshot: snapshot,
+            renderedAt: snapshot.generatedAt
+        )
+
+        #expect(response.redLights.ingestFreshness.status == .unknown)
+        #expect(response.redLights.pipelineBacklogAge.status == .healthy)
+        #expect(response.redLights.stuckClaimedRows.status == .healthy)
+        #expect(response.redLights.staleActiveSeriesCount.status == .healthy)
+
+        let html = OperatorDashboardPageRenderer.render(snapshot: response)
+        #expect(html.components(separatedBy: "health-card health-healthy").count == 4)
+    }
+
+    @Test("red light statuses require refresh evidence")
+    func redLightStatusesRequireRefreshEvidence() {
+        var snapshot = makeSnapshot()
+        snapshot.fastRefreshedAt = nil
+        snapshot.standardRefreshedAt = nil
+        snapshot.pipelineBacklog = .init()
+        snapshot.stuckClaimedRows = .init(thresholdSeconds: 300, count: 0)
+        snapshot.staleActiveSeries = .init(graceSeconds: 900, count: 0)
+
+        var response = OperatorDashboardSnapshotResponse(
+            snapshot: snapshot,
+            renderedAt: snapshot.generatedAt
+        )
+        #expect(response.redLights.pipelineBacklogAge.status == .unknown)
+        #expect(response.redLights.stuckClaimedRows.status == .unknown)
+        #expect(response.redLights.staleActiveSeriesCount.status == .unknown)
+
+        snapshot.pipelineBacklog = .init(pendingTargetDispatchCount: 1)
+        snapshot.stuckClaimedRows = .init(thresholdSeconds: 300, count: 1)
+        snapshot.staleActiveSeries = .init(graceSeconds: 900, count: 1)
+        response = .init(snapshot: snapshot, renderedAt: snapshot.generatedAt)
+        #expect(response.redLights.pipelineBacklogAge.status == .unknown)
+        #expect(response.redLights.stuckClaimedRows.status == .unknown)
+        #expect(response.redLights.staleActiveSeriesCount.status == .unknown)
+
+        let html = OperatorDashboardPageRenderer.render(snapshot: response)
+        #expect(html.components(separatedBy: "health-card health-unknown").count == 5)
+        #expect(html.components(separatedBy: "], '', metric.status);").count == 5)
     }
 
     @Test("legacy stored snapshot decodes without ugcCodes")
@@ -350,6 +405,8 @@ struct OperatorDashboardTests {
 
                 let payload = try res.content.decode(OperatorDashboardSnapshotResponse.self)
                 #expect(payload.redLights.staleActiveSeriesCount.count == 5)
+                #expect(payload.redLights.stuckClaimedRows.status == .critical)
+                #expect(payload.redLights.staleActiveSeriesCount.status == .warning)
                 #expect(payload.operatorContext.recentNotificationDebugEntries.entries.count == 2)
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.eventName == "Severe Thunderstorm Warning")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.ugcCodes == ["COC005", "COC013"])
@@ -376,6 +433,11 @@ struct OperatorDashboardTests {
                 #expect(res.status == .ok)
                 #expect(res.headers.contentType == .html)
                 #expect(res.body.string.contains("Red Lights"))
+                #expect(res.body.string.contains("health-card health-critical"))
+                #expect(res.body.string.contains("health-card health-warning"))
+                #expect(res.body.string.contains("health-card health-unknown"))
+                #expect(res.body.string.contains("Status: Critical"))
+                #expect(res.body.string.components(separatedBy: "], '', metric.status);").count == 5)
                 #expect(res.body.string.contains("Delivery KPIs"))
                 #expect(res.body.string.contains("Growth / Usage"))
                 #expect(res.body.string.contains("Known Installations"))
