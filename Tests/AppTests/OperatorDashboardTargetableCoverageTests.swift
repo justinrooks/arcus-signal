@@ -52,6 +52,7 @@ struct OperatorDashboardTargetableCoverageTests {
 
     private func seedInstallation(
         token: String = "token",
+        apnsEnvironment: APNsEnvironment = .sandbox,
         locationAuth: LocationAuth = .always,
         isActive: Bool = true,
         isSubscribed: Bool = true,
@@ -64,7 +65,7 @@ struct OperatorDashboardTargetableCoverageTests {
         try await DeviceInstallationModel(
             installationId: installationID,
             apnsDeviceToken: token,
-            apnsEnvironment: .sandbox,
+            apnsEnvironment: apnsEnvironment,
             platform: .iOS,
             osVersion: "26.0",
             appVersion: "1.0.0",
@@ -107,6 +108,7 @@ struct OperatorDashboardTargetableCoverageTests {
                 on: database
             )
             try await seedInstallation(
+                apnsEnvironment: .prod,
                 lastSeenAt: now,
                 capturedAt: cutoff.addingTimeInterval(1),
                 on: database
@@ -123,6 +125,7 @@ struct OperatorDashboardTargetableCoverageTests {
                 on: database
             )
             try await seedInstallation(
+                apnsEnvironment: .prod,
                 lastSeenAt: now,
                 capturedAt: now,
                 hasTargetingData: false,
@@ -142,6 +145,81 @@ struct OperatorDashboardTargetableCoverageTests {
             #expect(coverage.activeSubscribedInstallationCount == 6)
             #expect(coverage.candidateQueryEligibleInstallationCount == 2)
             #expect(coverage.hardStalePresenceCount == 1)
+        }
+    }
+
+    @Test("installation footprint is bounded, ordered, and explains eligibility")
+    func installationFootprintIsBoundedOrderedAndExplainsEligibility() async throws {
+        try await withApp { database in
+            try await seedInstallation(
+                apnsEnvironment: .prod,
+                lastSeenAt: now,
+                capturedAt: now.addingTimeInterval(-60),
+                on: database
+            )
+            try await seedInstallation(
+                apnsEnvironment: .prod,
+                lastSeenAt: now,
+                capturedAt: now.addingTimeInterval(-120),
+                hasTargetingData: false,
+                on: database
+            )
+            try await seedInstallation(
+                apnsEnvironment: .prod,
+                lastSeenAt: now,
+                capturedAt: now.addingTimeInterval(-180),
+                on: database
+            )
+            try await seedInstallation(
+                token: "",
+                apnsEnvironment: .prod,
+                lastSeenAt: now,
+                capturedAt: now.addingTimeInterval(-240),
+                on: database
+            )
+
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+
+            let entries = try await OperatorDashboardSnapshotRefresher()
+                .loadInstallationFootprint(on: sql, now: now)
+            #expect(entries.count == 4)
+            #expect(entries[0].capturedAt == now.addingTimeInterval(-60))
+            #expect(entries[0].candidateQueryEligible)
+            #expect(entries[1].ineligibilityReason == "missing targeting data")
+            #expect(entries[2].candidateQueryEligible)
+            #expect(entries[3].ineligibilityReason == "missing device token")
+        }
+    }
+
+    @Test("installation footprint returns only the newest bounded production rows")
+    func installationFootprintReturnsOnlyNewestBoundedProductionRows() async throws {
+        try await withApp { database in
+            try await seedInstallation(
+                apnsEnvironment: .sandbox,
+                lastSeenAt: now,
+                capturedAt: now,
+                on: database
+            )
+            for offset in 0..<55 {
+                try await seedInstallation(
+                    apnsEnvironment: .prod,
+                    lastSeenAt: now,
+                    capturedAt: now.addingTimeInterval(-Double(offset * 60)),
+                    on: database
+                )
+            }
+
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+
+            let entries = try await OperatorDashboardSnapshotRefresher()
+                .loadInstallationFootprint(on: sql, now: now)
+            #expect(entries.count == OperatorDashboardConfig.installationFootprintLimit)
+            #expect(entries.first?.capturedAt == now)
+            #expect(entries.last?.capturedAt == now.addingTimeInterval(-49 * 60))
         }
     }
 }

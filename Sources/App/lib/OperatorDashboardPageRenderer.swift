@@ -52,6 +52,7 @@ enum OperatorDashboardPageRenderer {
               <div class="stack section-table">
                 \(slot("installation-activity-state-table", content: installationActivityStateTable(snapshot.growthUsage.installationActivity)))
                 \(slot("installation-growth-table", content: installationGrowthTable(snapshot.growthUsage.installationGrowth)))
+                \(slot("installation-footprint-table", content: installationFootprintTable(snapshot.growthUsage.installationFootprint, refreshedAt: snapshot.growthUsage.installationActivity.refreshedAt)))
               </div>
             </section>
 

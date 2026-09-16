@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 5
+    public static let currentSchemaVersion = 6
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -34,6 +34,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var zeroCandidateRate: StoredZeroCandidateRateMetric
     public var installationGrowth: StoredInstallationGrowthMetric
     public var installationActivity: StoredInstallationActivityMetric
+    public var installationFootprint: [StoredInstallationFootprintEntry]
     public var targetableCoverage: StoredTargetableCoverageMetric
     public var h3Derivation: StoredH3DerivationMetric
     public var modelArtifacts: StoredPressureArtifactDashboardMetric
@@ -56,6 +57,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         zeroCandidateRate: StoredZeroCandidateRateMetric = .init(),
         installationGrowth: StoredInstallationGrowthMetric = .init(),
         installationActivity: StoredInstallationActivityMetric = .init(),
+        installationFootprint: [StoredInstallationFootprintEntry] = [],
         targetableCoverage: StoredTargetableCoverageMetric = .init(),
         h3Derivation: StoredH3DerivationMetric = .init(),
         modelArtifacts: StoredPressureArtifactDashboardMetric = .init(),
@@ -77,6 +79,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.zeroCandidateRate = zeroCandidateRate
         self.installationGrowth = installationGrowth
         self.installationActivity = installationActivity
+        self.installationFootprint = installationFootprint
         self.targetableCoverage = targetableCoverage
         self.h3Derivation = h3Derivation
         self.modelArtifacts = modelArtifacts
@@ -100,6 +103,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case zeroCandidateRate
         case installationGrowth
         case installationActivity
+        case installationFootprint
         case targetableCoverage
         case h3Derivation
         case modelArtifacts
@@ -124,6 +128,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.zeroCandidateRate = try container.decode(StoredZeroCandidateRateMetric.self, forKey: .zeroCandidateRate)
         self.installationGrowth = try container.decodeIfPresent(StoredInstallationGrowthMetric.self, forKey: .installationGrowth) ?? .init()
         self.installationActivity = try container.decodeIfPresent(StoredInstallationActivityMetric.self, forKey: .installationActivity) ?? .init()
+        self.installationFootprint = try container.decodeIfPresent([StoredInstallationFootprintEntry].self, forKey: .installationFootprint) ?? []
         self.targetableCoverage = try container.decode(StoredTargetableCoverageMetric.self, forKey: .targetableCoverage)
         self.h3Derivation = try container.decode(StoredH3DerivationMetric.self, forKey: .h3Derivation)
         self.modelArtifacts = try container.decodeIfPresent(StoredPressureArtifactDashboardMetric.self, forKey: .modelArtifacts) ?? .init()
@@ -361,6 +366,37 @@ public struct StoredInstallationActivityMetric: Codable, Sendable {
         self.dailyActiveInstallationCount = dailyActiveInstallationCount
         self.monthlyActiveInstallationCount = monthlyActiveInstallationCount
         self.stateBreakdown = stateBreakdown
+    }
+}
+
+public struct StoredInstallationFootprintEntry: Codable, Sendable {
+    public var locationLabel: String
+    public var appVersion: String
+    public var locationAuth: String
+    public var capturedAt: Date?
+    public var isActive: Bool
+    public var isSubscribed: Bool
+    public var candidateQueryEligible: Bool
+    public var ineligibilityReason: String?
+
+    public init(
+        locationLabel: String = "Unknown",
+        appVersion: String = "Unknown",
+        locationAuth: String = "unknown",
+        capturedAt: Date? = nil,
+        isActive: Bool = false,
+        isSubscribed: Bool = false,
+        candidateQueryEligible: Bool = false,
+        ineligibilityReason: String? = nil
+    ) {
+        self.locationLabel = locationLabel
+        self.appVersion = appVersion
+        self.locationAuth = locationAuth
+        self.capturedAt = capturedAt
+        self.isActive = isActive
+        self.isSubscribed = isSubscribed
+        self.candidateQueryEligible = candidateQueryEligible
+        self.ineligibilityReason = ineligibilityReason
     }
 }
 
@@ -804,6 +840,7 @@ public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
 public struct OperatorDashboardGrowthUsageSectionResponse: Content, Sendable {
     public var installationGrowth: InstallationGrowthMetricResponse
     public var installationActivity: InstallationActivityMetricResponse
+    public var installationFootprint: [InstallationFootprintEntryResponse]
 
     init(snapshot: OperatorDashboardStoredSnapshot) {
         self.installationGrowth = .init(
@@ -814,6 +851,32 @@ public struct OperatorDashboardGrowthUsageSectionResponse: Content, Sendable {
             refreshedAt: snapshot.slowRefreshedAt,
             metric: snapshot.installationActivity
         )
+        let ageReference = snapshot.slowRefreshedAt ?? snapshot.generatedAt
+        self.installationFootprint = snapshot.installationFootprint.map { .init(entry: $0, renderedAt: ageReference) }
+    }
+}
+
+public struct InstallationFootprintEntryResponse: Content, Sendable {
+    public var locationLabel: String
+    public var appVersion: String
+    public var locationAuth: String
+    public var capturedAt: Date?
+    public var presenceAgeSeconds: Int?
+    public var isActive: Bool
+    public var isSubscribed: Bool
+    public var candidateQueryEligible: Bool
+    public var ineligibilityReason: String?
+
+    init(entry: StoredInstallationFootprintEntry, renderedAt: Date) {
+        self.locationLabel = entry.locationLabel
+        self.appVersion = entry.appVersion
+        self.locationAuth = entry.locationAuth
+        self.capturedAt = entry.capturedAt
+        self.presenceAgeSeconds = entry.capturedAt.map { max(0, Int(renderedAt.timeIntervalSince($0))) }
+        self.isActive = entry.isActive
+        self.isSubscribed = entry.isSubscribed
+        self.candidateQueryEligible = entry.candidateQueryEligible
+        self.ineligibilityReason = entry.ineligibilityReason
     }
 }
 

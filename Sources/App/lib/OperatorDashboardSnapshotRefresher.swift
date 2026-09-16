@@ -62,6 +62,7 @@ struct OperatorDashboardSnapshotRefresher {
             snapshot.installationGrowth = try await loadInstallationGrowth(on: sql, now: now)
             snapshot.installationActivity = try await loadInstallationActivity(on: sql, now: now)
             snapshot.targetableCoverage = try await loadTargetableCoverage(on: sql, now: now)
+            snapshot.installationFootprint = try await loadInstallationFootprint(on: sql, now: now)
             snapshot.slowRefreshedAt = now
         }
 
@@ -353,6 +354,75 @@ struct OperatorDashboardSnapshotRefresher {
                 missingTargetingDataCount: row.map { Int($0.missingTargetingDataCount) } ?? 0
             )
         )
+    }
+
+    func loadInstallationFootprint(
+        on sql: any SQLDatabase,
+        now: Date
+    ) async throws -> [StoredInstallationFootprintEntry] {
+        let hardStaleCutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+        let rows = try await sql.raw("""
+            SELECT
+                COALESCE(
+                    NULLIF(BTRIM(p.county_label), ''),
+                    NULLIF(BTRIM(p.fire_zone_label), ''),
+                    NULLIF(BTRIM(p.county), ''),
+                    NULLIF(BTRIM(p.zone), ''),
+                    NULLIF(BTRIM(p.fire_zone), ''),
+                    'Unknown'
+                ) AS "locationLabel",
+                i.app_version AS "appVersion",
+                i.location_auth AS "locationAuth",
+                p.captured_at AS "capturedAt",
+                i.is_active AS "isActive",
+                i.is_subscribed AS "isSubscribed",
+                (
+                    i.is_active = TRUE
+                    AND i.is_subscribed = TRUE
+                    AND i.apns_device_token <> ''
+                    AND p.installation_id IS NOT NULL
+                    AND p.captured_at >= \(bind: hardStaleCutoff)
+                    AND (
+                        p.h3_cell IS NOT NULL
+                        OR COALESCE(BTRIM(p.county), '') <> ''
+                        OR COALESCE(BTRIM(p.zone), '') <> ''
+                        OR COALESCE(BTRIM(p.fire_zone), '') <> ''
+                    )
+                ) AS "candidateQueryEligible",
+                CASE
+                    WHEN i.is_active = FALSE THEN 'inactive'
+                    WHEN i.is_subscribed = FALSE THEN 'unsubscribed'
+                    WHEN i.apns_device_token = '' THEN 'missing device token'
+                    WHEN p.installation_id IS NULL THEN 'missing presence'
+                    WHEN p.captured_at < \(bind: hardStaleCutoff) THEN 'stale presence'
+                    WHEN NOT (
+                        p.h3_cell IS NOT NULL
+                        OR COALESCE(BTRIM(p.county), '') <> ''
+                        OR COALESCE(BTRIM(p.zone), '') <> ''
+                        OR COALESCE(BTRIM(p.fire_zone), '') <> ''
+                    ) THEN 'missing targeting data'
+                    ELSE NULL
+                END AS "ineligibilityReason"
+            FROM device_installations i
+            LEFT JOIN device_presence p
+              ON p.installation_id = i.installation_id
+            WHERE i.apns_environment = 'prod'
+            ORDER BY p.captured_at DESC NULLS LAST, i.last_seen_at DESC, i.created_at DESC
+            LIMIT \(bind: OperatorDashboardConfig.installationFootprintLimit)
+        """).all(decoding: InstallationFootprintRow.self)
+
+        return rows.map {
+            .init(
+                locationLabel: $0.locationLabel,
+                appVersion: $0.appVersion,
+                locationAuth: $0.locationAuth,
+                capturedAt: $0.capturedAt,
+                isActive: $0.isActive,
+                isSubscribed: $0.isSubscribed,
+                candidateQueryEligible: $0.candidateQueryEligible,
+                ineligibilityReason: $0.ineligibilityReason
+            )
+        }
     }
 
     func loadInstallationGrowth(on sql: any SQLDatabase, now: Date) async throws -> StoredInstallationGrowthMetric {
@@ -1007,6 +1077,17 @@ private struct InstallationActivityStateRow: Decodable {
     let state: String
     let activeTodayCount: Int64
     let activeThisMonthCount: Int64
+}
+
+private struct InstallationFootprintRow: Decodable {
+    let locationLabel: String
+    let appVersion: String
+    let locationAuth: String
+    let capturedAt: Date?
+    let isActive: Bool
+    let isSubscribed: Bool
+    let candidateQueryEligible: Bool
+    let ineligibilityReason: String?
 }
 
 private struct H3AggregateRow: Decodable {

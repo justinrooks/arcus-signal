@@ -191,6 +191,50 @@ extension OperatorDashboardPageRenderer {
         """
     }
 
+    static func installationFootprintTable(
+        _ entries: [InstallationFootprintEntryResponse],
+        refreshedAt: Date?
+    ) -> String {
+        let body = entries.isEmpty
+            ? #"<div class="empty">No installation presence rows available.</div>"#
+            : """
+              <div class="table-wrap">
+                <table class="stream-table footprint-table inline-mobile-table">
+                  <thead><tr><th>Coarse location</th><th>App version</th><th>Auth</th><th>Presence age</th><th>State</th><th>Eligibility</th></tr></thead>
+                  <tbody>
+                    \(entries.map(installationFootprintRow).joined())
+                  </tbody>
+                </table>
+              </div>
+            """
+
+        return """
+        <div class="card table-card">
+          <div class="table-card__header">
+            <h3>Installation Footprint</h3>
+            <div class="subtle">Newest presence first · \(entries.count) of \(OperatorDashboardConfig.installationFootprintLimit) rows · Refreshed \(escape(maybeDate(refreshedAt)))</div>
+          </div>
+          \(body)
+        </div>
+        """
+    }
+
+    static func installationFootprintRow(_ entry: InstallationFootprintEntryResponse) -> String {
+        let eligibility = entry.candidateQueryEligible ? "Eligible" : entry.ineligibilityReason ?? "Ineligible"
+        let eligibilityClass = entry.candidateQueryEligible ? "footprint-eligible" : "footprint-ineligible"
+        let state = entry.isActive ? (entry.isSubscribed ? "Active / subscribed" : "Active / paused") : "Inactive"
+        return """
+        <tr>
+          <td data-label="Coarse location">\(escape(entry.locationLabel))</td>
+          <td data-label="App version">\(escape(entry.appVersion))</td>
+          <td data-label="Auth">\(escape(entry.locationAuth))</td>
+          <td data-label="Presence age" class="presence-age">\(escape(maybeDuration(entry.presenceAgeSeconds)))</td>
+          <td data-label="State">\(escape(state))</td>
+          <td data-label="Eligibility"><span class="pill \(eligibilityClass)">\(escape(eligibility))</span></td>
+        </tr>
+        """
+    }
+
     static func latencyCard(_ metric: EndToEndLatencyMetricResponse) -> String {
         card(
             title: "End-to-end alert latency p95",
