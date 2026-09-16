@@ -179,6 +179,7 @@ struct OperatorDashboardTests {
                 .init(
                     seriesID: UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!,
                     eventName: "Severe Thunderstorm Warning",
+                    areaDescription: "Weld / Morgan, CO",
                     state: "active",
                     ugcCodes: ["COC005", "COC013"],
                     tornadoDetection: "OBSERVED",
@@ -191,6 +192,7 @@ struct OperatorDashboardTests {
                 .init(
                     seriesID: UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!,
                     eventName: "Red Flag Warning",
+                    areaDescription: "Larimer County, CO",
                     state: "expired",
                     ugcCodes: [],
                     tornadoDetection: nil,
@@ -202,6 +204,14 @@ struct OperatorDashboardTests {
                 )
             ]
         )
+    }
+
+    @Test("dashboard geography adds state context from UGC")
+    func dashboardGeographyAddsStateContext() {
+        #expect(operatorDashboardAreaDescription(areaDescription: "Denver County", ugcCodes: ["COC031"]) == "Denver County, CO")
+        #expect(operatorDashboardAreaDescription(areaDescription: "Border area", ugcCodes: ["COC031", "TXZ001", "COC005"]) == "Border area, CO, TX")
+        #expect(operatorDashboardAreaDescription(areaDescription: nil, ugcCodes: ["COC031"]) == "Areas in CO")
+        #expect(operatorDashboardAreaDescription(areaDescription: "Weld / Morgan, CO", ugcCodes: ["COC005"]) == "Weld / Morgan, CO")
     }
 
     @Test("snapshot response computes rates and ages")
@@ -463,6 +473,7 @@ struct OperatorDashboardTests {
                 #expect(payload.redLights.staleActiveSeriesCount.status == .warning)
                 #expect(payload.operatorContext.recentNotificationDebugEntries.entries.count == 2)
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.eventName == "Severe Thunderstorm Warning")
+                #expect(payload.operatorContext.lastTouchedSeries.entries.first?.areaDescription == "Weld / Morgan, CO")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.ugcCodes == ["COC005", "COC013"])
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDetection == "OBSERVED")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDamageThreat == "CONSIDERABLE")
@@ -512,6 +523,10 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("Monthly Installation Growth"))
                 #expect(res.body.string.contains("April 2026"))
                 #expect(res.body.string.contains("Audience / Targeting"))
+                #expect(res.body.string.contains("NWS / Alert Activity"))
+                #expect(res.body.string.contains("Recent severe-weather activity and geography"))
+                #expect(res.body.string.contains("Weld / Morgan, CO"))
+                #expect(res.body.string.contains("UGC: COC005, COC013"))
                 #expect(res.body.string.contains("Operator Context"))
                 #expect(res.body.string.contains("Arcus Signal"))
                 #expect(res.body.string.contains("Operational Dashboard"))
@@ -529,10 +544,15 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("Tornado Warning"))
                 #expect(res.body.string.contains("Tornado detection"))
                 #expect(res.body.string.contains("Tornado damage threat"))
-                #expect(res.body.string.contains("ugc_codes"))
+                #expect(res.body.string.contains("ugc_codes") == false)
                 #expect(res.body.string.contains("COC005, COC013"))
                 #expect(res.body.string.contains("OBSERVED"))
                 #expect(res.body.string.contains("CONSIDERABLE"))
+                #expect(res.body.string.contains("class=\"pill accent\">active"))
+                #expect(res.body.string.contains("class=\"danger\">OBSERVED"))
+                #expect(res.body.string.contains("class=\"danger\">CONSIDERABLE"))
+                #expect(res.body.string.contains("seriesStateClass(entry.state)"))
+                #expect(res.body.string.contains("tornadoThreatClass(entry.tornadoDamageThreat)"))
                 #expect(res.body.string.contains("urn:oid:series-1"))
                 #expect(res.body.string.contains("fetch('/v1/metrics'"))
                 #expect(res.body.string.contains("window.setTimeout(fetchSnapshot, nextDelay)"))

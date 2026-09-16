@@ -725,6 +725,7 @@ public struct StoredRecentNotificationDebugEntry: Codable, Sendable {
 public struct StoredTouchedSeriesEntry: Codable, Sendable {
     public var seriesID: UUID
     public var eventName: String
+    public var areaDescription: String?
     public var state: String
     public var ugcCodes: [String]
     public var tornadoDetection: String?
@@ -737,6 +738,7 @@ public struct StoredTouchedSeriesEntry: Codable, Sendable {
     public init(
         seriesID: UUID,
         eventName: String,
+        areaDescription: String? = nil,
         state: String,
         ugcCodes: [String] = [],
         tornadoDetection: String? = nil,
@@ -748,6 +750,7 @@ public struct StoredTouchedSeriesEntry: Codable, Sendable {
     ) {
         self.seriesID = seriesID
         self.eventName = eventName
+        self.areaDescription = areaDescription
         self.state = state
         self.ugcCodes = ugcCodes
         self.tornadoDetection = tornadoDetection
@@ -761,6 +764,7 @@ public struct StoredTouchedSeriesEntry: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case seriesID
         case eventName
+        case areaDescription
         case state
         case ugcCodes
         case tornadoDetection
@@ -775,6 +779,7 @@ public struct StoredTouchedSeriesEntry: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.seriesID = try container.decode(UUID.self, forKey: .seriesID)
         self.eventName = try container.decode(String.self, forKey: .eventName)
+        self.areaDescription = try container.decodeIfPresent(String.self, forKey: .areaDescription)
         self.state = try container.decode(String.self, forKey: .state)
         self.ugcCodes = try container.decodeIfPresent([String].self, forKey: .ugcCodes) ?? []
         self.tornadoDetection = try container.decodeIfPresent(String.self, forKey: .tornadoDetection)
@@ -1432,6 +1437,7 @@ public struct RecentNotificationDebugEntriesResponse: Content, Sendable {
 public struct TouchedSeriesEntryResponse: Content, Sendable {
     public var seriesID: UUID
     public var eventName: String
+    public var areaDescription: String?
     public var state: String
     public var ugcCodes: [String]
     public var tornadoDetection: String?
@@ -1452,6 +1458,7 @@ public struct LastTouchedSeriesResponse: Content, Sendable {
             .init(
                 seriesID: $0.seriesID,
                 eventName: $0.eventName,
+                areaDescription: $0.areaDescription,
                 state: $0.state,
                 ugcCodes: $0.ugcCodes,
                 tornadoDetection: $0.tornadoDetection,
