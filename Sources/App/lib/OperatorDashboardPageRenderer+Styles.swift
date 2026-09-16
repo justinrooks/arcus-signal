@@ -156,6 +156,32 @@ extension OperatorDashboardPageRenderer {
               letter-spacing: 0.02em;
               color: var(--muted);
             }
+            .card-heading {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+            }
+            .health-card {
+              --health-color: var(--muted);
+              border-left: 4px solid var(--health-color);
+            }
+            .health-healthy { --health-color: rgba(88, 214, 195, 0.46); }
+            .health-warning { --health-color: var(--warn); }
+            .health-critical { --health-color: var(--danger); }
+            .health-unknown { --health-color: rgba(140, 164, 186, 0.48); }
+            .health-dot {
+              flex: 0 0 auto;
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              color: var(--health-color);
+              background: currentColor;
+              box-shadow: 0 0 10px currentColor;
+            }
+            .health-warning .primary { color: var(--warn); }
+            .health-critical .primary { color: var(--danger); }
+            .health-unknown .primary { color: var(--muted); }
             .primary {
               margin: 14px 0 6px;
               font-size: 2rem;

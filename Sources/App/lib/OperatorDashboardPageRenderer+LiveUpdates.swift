@@ -214,11 +214,15 @@ extension OperatorDashboardPageRenderer {
             return codes.join(', ');
           }
 
-          function renderCard(title, primary, refreshedAt, lines, primaryClass = '') {
+          function renderCard(title, primary, refreshedAt, lines, primaryClass = '', status = null) {
             const primaryClassSuffix = primaryClass ? ` ${primaryClass}` : '';
+            const healthClassSuffix = status ? ` health-card health-${status}` : '';
+            const statusDot = status
+              ? `<span class="health-dot" role="img" aria-label="Status: ${escapeHtml(status.charAt(0).toUpperCase() + status.slice(1))}"></span>`
+              : '';
             return `
-              <div class="card">
-                <h3>${escapeHtml(title)}</h3>
+              <div class="card${healthClassSuffix}">
+                <div class="card-heading"><h3>${escapeHtml(title)}</h3>${statusDot}</div>
                 <div class="primary${primaryClassSuffix}">${escapeHtml(primary)}</div>
                 <div class="subtle">Refreshed ${escapeHtml(formatDate(refreshedAt))}</div>
                 <ul class="meta-list">
@@ -234,7 +238,7 @@ extension OperatorDashboardPageRenderer {
               { label: 'Last attempt', value: formatDate(metric.lastAttemptAt) },
               { label: 'Recent', value: `${metric.recentSuccessCount} success / ${metric.recentFailureCount} failure` },
               { label: 'Last error', value: metric.lastFailureMessage ?? 'none' }
-            ]);
+            ], '', metric.status);
           }
 
           function renderPipelineBacklogCard(metric) {
@@ -243,7 +247,7 @@ extension OperatorDashboardPageRenderer {
               { label: 'Oldest target row', value: formatDate(metric.oldestPendingTargetDispatchCreatedAt) },
               { label: 'Notification backlog', value: formatDuration(metric.oldestPendingNotificationDispatchAgeSeconds) },
               { label: 'Pending notification rows', value: String(metric.pendingNotificationDispatchCount) }
-            ]);
+            ], '', metric.status);
           }
 
           function renderStuckClaimedCard(metric) {
@@ -251,13 +255,13 @@ extension OperatorDashboardPageRenderer {
               { label: 'Threshold', value: formatDuration(metric.thresholdSeconds) },
               { label: 'Oldest claim age', value: formatDuration(metric.oldestClaimedAgeSeconds) },
               { label: 'Oldest claim', value: formatDate(metric.oldestClaimedCreatedAt) }
-            ]);
+            ], '', metric.status);
           }
 
           function renderStaleSeriesCard(metric) {
             return renderCard('Stale active series', String(metric.count), metric.refreshedAt, [
               { label: 'Grace window', value: formatDuration(metric.graceSeconds) }
-            ]);
+            ], '', metric.status);
           }
 
           function renderKnownInstallationsCard(metric) {

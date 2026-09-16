@@ -11,6 +11,7 @@ extension OperatorDashboardPageRenderer {
         card(
             title: "Ingest freshness",
             primary: maybeDuration(metric.timeSinceLastSuccessfulSweepSeconds),
+            status: metric.status,
             refreshedAt: metric.refreshedAt,
             lines: [
                 ("Last success", maybeDate(metric.lastSuccessfulSweepAt)),
@@ -25,6 +26,7 @@ extension OperatorDashboardPageRenderer {
         card(
             title: "Pipeline backlog age",
             primary: "Target \(maybeDuration(metric.oldestPendingTargetDispatchAgeSeconds))",
+            status: metric.status,
             refreshedAt: metric.refreshedAt,
             lines: [
                 ("Pending target rows", "\(metric.pendingTargetDispatchCount)"),
@@ -39,6 +41,7 @@ extension OperatorDashboardPageRenderer {
         card(
             title: "Stuck claimed rows",
             primary: "\(metric.count)",
+            status: metric.status,
             refreshedAt: metric.refreshedAt,
             lines: [
                 ("Threshold", maybeDuration(metric.thresholdSeconds)),
@@ -52,6 +55,7 @@ extension OperatorDashboardPageRenderer {
         card(
             title: "Stale active series",
             primary: "\(metric.count)",
+            status: metric.status,
             refreshedAt: metric.refreshedAt,
             lines: [("Grace window", maybeDuration(metric.graceSeconds))]
         )
@@ -430,13 +434,18 @@ extension OperatorDashboardPageRenderer {
         title: String,
         primary: String,
         primaryClass: String? = nil,
+        status: OperatorDashboardHealthState? = nil,
         refreshedAt: Date?,
         lines: [(String, String)]
     ) -> String {
         let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
+        let cardClass = status.map { "card health-card health-\($0.rawValue)" } ?? "card"
+        let statusDot = status.map {
+            "<span class=\"health-dot\" role=\"img\" aria-label=\"Status: \(escape($0.rawValue.capitalized))\"></span>"
+        } ?? ""
         return """
-        <div class="card">
-          <h3>\(escape(title))</h3>
+        <div class="\(cardClass)">
+          <div class="card-heading"><h3>\(escape(title))</h3>\(statusDot)</div>
           <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
           <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
           <ul class="meta-list">

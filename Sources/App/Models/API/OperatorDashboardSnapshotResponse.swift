@@ -7,6 +7,13 @@ public enum PressureArtifactReadinessSelectionOutcome: String, Codable, Sendable
     case unavailable
 }
 
+public enum OperatorDashboardHealthState: String, Codable, Sendable {
+    case healthy
+    case warning
+    case critical
+    case unknown
+}
+
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public static let currentSchemaVersion = 4
 
@@ -958,6 +965,7 @@ public struct RecentPressureArtifactEntriesResponse: Content, Sendable {
 }
 
 public struct IngestFreshnessMetricResponse: Content, Sendable {
+    public var status: OperatorDashboardHealthState
     public var refreshedAt: Date?
     public var lastSuccessfulSweepAt: Date?
     public var timeSinceLastSuccessfulSweepSeconds: Int?
@@ -969,6 +977,8 @@ public struct IngestFreshnessMetricResponse: Content, Sendable {
     public var lastFailureMessage: String?
 
     init(refreshedAt: Date?, renderedAt: Date, metric: StoredIngestFreshnessMetric) {
+        // Ingest runs minutely, but no operational freshness threshold is defined.
+        self.status = .unknown
         self.refreshedAt = refreshedAt
         self.lastSuccessfulSweepAt = metric.lastSuccessfulCompletedAt
         self.timeSinceLastSuccessfulSweepSeconds = OperatorDashboardCalculations.ageSeconds(
@@ -985,6 +995,7 @@ public struct IngestFreshnessMetricResponse: Content, Sendable {
 }
 
 public struct PipelineBacklogMetricResponse: Content, Sendable {
+    public var status: OperatorDashboardHealthState
     public var refreshedAt: Date?
     public var pendingTargetDispatchCount: Int
     public var oldestPendingTargetDispatchCreatedAt: Date?
@@ -994,6 +1005,13 @@ public struct PipelineBacklogMetricResponse: Content, Sendable {
     public var oldestPendingNotificationDispatchAgeSeconds: Int?
 
     init(refreshedAt: Date?, renderedAt: Date, metric: StoredPipelineBacklogMetric) {
+        self.status = if refreshedAt == nil {
+            .unknown
+        } else if metric.pendingTargetDispatchCount == 0 && metric.pendingNotificationDispatchCount == 0 {
+            .healthy
+        } else {
+            .unknown
+        }
         self.refreshedAt = refreshedAt
         self.pendingTargetDispatchCount = metric.pendingTargetDispatchCount
         self.oldestPendingTargetDispatchCreatedAt = metric.oldestPendingTargetDispatchCreatedAt
@@ -1011,6 +1029,7 @@ public struct PipelineBacklogMetricResponse: Content, Sendable {
 }
 
 public struct StuckClaimedRowsMetricResponse: Content, Sendable {
+    public var status: OperatorDashboardHealthState
     public var refreshedAt: Date?
     public var thresholdSeconds: Int
     public var count: Int
@@ -1018,6 +1037,7 @@ public struct StuckClaimedRowsMetricResponse: Content, Sendable {
     public var oldestClaimedAgeSeconds: Int?
 
     init(refreshedAt: Date?, renderedAt: Date, metric: StoredStuckClaimedRowsMetric) {
+        self.status = refreshedAt.map { _ in metric.count == 0 ? .healthy : .critical } ?? .unknown
         self.refreshedAt = refreshedAt
         self.thresholdSeconds = metric.thresholdSeconds
         self.count = metric.count
@@ -1030,11 +1050,13 @@ public struct StuckClaimedRowsMetricResponse: Content, Sendable {
 }
 
 public struct StaleActiveSeriesMetricResponse: Content, Sendable {
+    public var status: OperatorDashboardHealthState
     public var refreshedAt: Date?
     public var graceSeconds: Int
     public var count: Int
 
     init(refreshedAt: Date?, metric: StoredStaleActiveSeriesMetric) {
+        self.status = refreshedAt.map { _ in metric.count == 0 ? .healthy : .warning } ?? .unknown
         self.refreshedAt = refreshedAt
         self.graceSeconds = metric.graceSeconds
         self.count = metric.count
