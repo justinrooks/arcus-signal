@@ -387,6 +387,18 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("Audience / Targeting"))
                 #expect(res.body.string.contains("Operator Context"))
                 #expect(res.body.string.contains("Arcus Signal"))
+                #expect(res.body.string.contains("Operational Dashboard"))
+                #expect(res.body.string.contains("connection-status-label"))
+                #expect(res.body.string.contains("id=\"snapshot-age\">Snapshot "))
+                #expect(res.body.string.contains("LIVE"))
+                #expect(res.body.string.contains("STALE"))
+                #expect(res.body.string.contains("DISCONNECTED"))
+                #expect(res.body.string.contains("disconnectAfterFailures = 2"))
+                #expect(res.body.string.contains("freshnessThresholdMs = 60000"))
+                #expect(res.body.string.contains("requestTimeoutMs"))
+                #expect(res.body.string.contains("abortController.abort()"))
+                #expect(res.body.string.contains("snapshot.renderedAt"))
+                #expect(res.body.string.contains("performance.now()"))
                 #expect(res.body.string.contains("Tornado Warning"))
                 #expect(res.body.string.contains("Tornado detection"))
                 #expect(res.body.string.contains("Tornado damage threat"))
@@ -397,7 +409,10 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("urn:oid:series-1"))
                 #expect(res.body.string.contains("fetch('/v1/metrics'"))
                 #expect(res.body.string.contains("window.setTimeout(fetchSnapshot, nextDelay)"))
-                #expect(res.body.string.contains("The page polls the canonical"))
+                #expect(res.body.string.contains("The page polls the canonical") == false)
+                #expect(res.body.string.contains("window.setInterval(updateStatus, 1_000)"))
+                #expect(res.body.string.contains("state.consecutiveFailures += 1"))
+                #expect(res.body.string.contains("state.consecutiveFailures = 0"))
                 #expect(res.body.string.components(separatedBy: "Eligible ≤24h").count == 3)
                 #expect(res.body.string.contains("Excluded &gt;24h"))
                 #expect(res.body.string.contains("Excluded >24h"))
@@ -406,10 +421,25 @@ struct OperatorDashboardTests {
                 #expect(res.body.string.contains("candidateQueryEligibilityRate"))
                 #expect(res.body.string.contains("candidateQueryEligibleInstallationCount"))
                 #expect(res.body.string.contains("hardStalePresenceCount"))
-                #expect(res.body.string.contains("hero-rendered-at"))
+                #expect(res.body.string.contains("hero-rendered-at") == false)
                 #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
             })
         }
+    }
+
+    @Test("dashboard status is server-freshness based")
+    func dashboardStatusUsesServerFreshness() {
+        let generatedAt = isoDate("2026-04-10T12:00:00Z")
+        let fresh = OperatorDashboardPageRenderer.render(
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt)
+        )
+        let stale = OperatorDashboardPageRenderer.render(
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(61))
+        )
+
+        #expect(fresh.contains("class=\"status-label live\">LIVE"))
+        #expect(stale.contains("class=\"status-label stale\">STALE"))
+        #expect(stale.contains("Date.now() - state.lastGeneratedAtMs") == false)
     }
 
     @Test("dashboard page returns unavailable shell without snapshot")

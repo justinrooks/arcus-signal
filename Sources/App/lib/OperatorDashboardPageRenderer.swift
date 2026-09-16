@@ -15,17 +15,20 @@ enum OperatorDashboardPageRenderer {
         </head>
         <body>
           <main class="shell">
-            <section class="hero">
+            <header class="masthead">
               <div>
                 <h1>Arcus Signal</h1>
-                <p>Operational snapshot for ingest, targeting, and notification delivery. The page polls the canonical <span class="mono">/v1/metrics</span> snapshot and updates in place without a full reload.</p>
+                <p>Operational Dashboard</p>
               </div>
-              <div class="hero-meta">
-                <div id="hero-rendered-at">Rendered \(escape(formatDate(snapshot.renderedAt)))</div>
-                <div id="hero-generated-at">Snapshot generated \(escape(formatDate(snapshot.generatedAt)))</div>
-                <div><a href="/v1/metrics">View JSON API</a></div>
+              <div class="masthead-meta">
+                <div class="masthead-status">
+                  <span id="connection-status" class="status-dot \(initialStatusClass(for: snapshot))" aria-hidden="true"></span>
+                  <span id="connection-status-label" class="status-label \(initialStatusClass(for: snapshot))">\(initialStatusLabel(for: snapshot))</span>
+                  <span id="snapshot-age">Snapshot \(escape(formatDuration(max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt))))) ) ago</span>
+                </div>
+                <div><a href="/v1/metrics">JSON API ↗</a></div>
               </div>
-            </section>
+            </header>
 
             <section class="section">
               <div class="section-header"><h2>Red Lights</h2></div>
@@ -88,7 +91,9 @@ enum OperatorDashboardPageRenderer {
           </main>
           \(liveUpdateScript(
               pollIntervalMilliseconds: pollIntervalMilliseconds,
-              initialGeneratedAtMilliseconds: Int(snapshot.generatedAt.timeIntervalSince1970 * 1_000)
+              initialGeneratedAtMilliseconds: Int(snapshot.generatedAt.timeIntervalSince1970 * 1_000),
+              freshnessThresholdMilliseconds: freshnessThresholdMilliseconds,
+              initialSnapshotAgeMilliseconds: initialSnapshotAgeMilliseconds(for: snapshot)
           ))
         </body>
         </html>
@@ -120,4 +125,19 @@ static func renderUnavailable(renderedAt: Date = .now) -> String {
     }
 
     private static let pollIntervalMilliseconds = max(15, OperatorDashboardConfig.fastRefreshIntervalSeconds / 2) * 1_000
+    private static let freshnessThresholdMilliseconds = OperatorDashboardConfig.fastRefreshIntervalSeconds * 2 * 1_000
+
+    private static func initialSnapshotAgeMilliseconds(for snapshot: OperatorDashboardSnapshotResponse) -> Int {
+        max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt) * 1_000))
+    }
+
+    private static func initialStatusClass(for snapshot: OperatorDashboardSnapshotResponse) -> String {
+        snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt) <= TimeInterval(OperatorDashboardConfig.fastRefreshIntervalSeconds * 2)
+            ? "live"
+            : "stale"
+    }
+
+    private static func initialStatusLabel(for snapshot: OperatorDashboardSnapshotResponse) -> String {
+        initialStatusClass(for: snapshot).uppercased()
+    }
 }

@@ -34,34 +34,60 @@ extension OperatorDashboardPageRenderer {
                 padding: 20px 0 32px;
               }
             }
-            .hero {
+            .masthead {
               display: flex;
               gap: 16px;
               justify-content: space-between;
               align-items: flex-end;
-              padding: 24px;
+              padding: 16px 20px;
               border: 1px solid var(--line);
-              border-radius: 24px;
+              border-radius: 16px;
               background: linear-gradient(135deg, rgba(14, 29, 46, 0.96), rgba(7, 15, 25, 0.94));
               box-shadow: var(--shadow);
             }
-            .hero h1 {
+            .masthead h1 {
               margin: 0;
               font-family: "Space Grotesk", "Avenir Next", sans-serif;
-              font-size: clamp(2rem, 3vw, 3rem);
+              font-size: clamp(1.7rem, 2.5vw, 2.35rem);
               letter-spacing: -0.04em;
             }
-            .hero p {
-              margin: 10px 0 0;
+            .masthead p {
+              margin: 4px 0 0;
               color: var(--muted);
-              max-width: 720px;
             }
-            .hero-meta {
+            .masthead-meta {
               text-align: right;
               color: var(--muted);
               font-size: 0.95rem;
             }
-            .hero-meta a {
+            .masthead-status {
+              display: flex;
+              align-items: center;
+              justify-content: flex-end;
+              gap: 8px;
+              margin-bottom: 6px;
+              color: var(--text);
+              font-weight: 700;
+              letter-spacing: 0.06em;
+            }
+            .status-label.stale, .status-label.disconnected { color: var(--warn); }
+            .status-label.live { color: var(--accent); }
+            .status-dot {
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              background: currentColor;
+              box-shadow: 0 0 12px currentColor;
+            }
+            .status-dot.live { color: var(--accent); }
+            .status-dot.stale, .status-dot.disconnected { color: var(--warn); }
+            #snapshot-age {
+              color: var(--muted);
+              font-size: 0.84rem;
+              font-weight: 400;
+              letter-spacing: 0;
+            }
+            .masthead-meta a {
               color: var(--accent);
               text-decoration: none;
             }
@@ -210,7 +236,7 @@ extension OperatorDashboardPageRenderer {
             .danger { color: var(--danger); }
             .mono { font-family: "SF Mono", "IBM Plex Mono", monospace; font-size: 0.78rem; }
             .micro-mono { font-family: "SF Mono", "IBM Plex Mono", monospace; font-size: 0.54rem; line-height: 1.3; }
-            .hero-meta, .primary, th, td, .mono, .micro-mono {
+            .masthead-meta, .primary, th, td, .mono, .micro-mono {
               font-variant-numeric: tabular-nums;
             }
             .empty {
@@ -260,24 +286,28 @@ extension OperatorDashboardPageRenderer {
                 font-size: 0.92rem;
                 letter-spacing: 0.1em;
               }
-              .hero {
+              .masthead {
                 padding: 16px;
                 border-radius: 18px;
                 flex-direction: column;
                 align-items: stretch;
               }
-              .hero h1 {
+              .masthead h1 {
                 font-size: clamp(1.5rem, 8vw, 2rem);
                 letter-spacing: -0.02em;
               }
-              .hero p {
+              .masthead p {
                 margin-top: 8px;
                 font-size: 0.92rem;
                 line-height: 1.4;
               }
-              .hero-meta {
+              .masthead-meta {
                 text-align: left;
                 font-size: 0.86rem;
+              }
+              .masthead-status {
+                justify-content: flex-start;
+                flex-wrap: wrap;
               }
               .card {
                 padding: 14px;
@@ -376,7 +406,7 @@ extension OperatorDashboardPageRenderer {
                 width: calc(100vw - 12px);
                 padding-top: 12px;
               }
-              .hero {
+              .masthead {
                 padding: 14px;
                 border-radius: 14px;
               }

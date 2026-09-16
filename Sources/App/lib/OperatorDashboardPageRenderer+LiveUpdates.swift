@@ -3,16 +3,24 @@ import Foundation
 extension OperatorDashboardPageRenderer {
     static func liveUpdateScript(
         pollIntervalMilliseconds: Int,
-        initialGeneratedAtMilliseconds: Int
+        initialGeneratedAtMilliseconds: Int,
+        freshnessThresholdMilliseconds: Int,
+        initialSnapshotAgeMilliseconds: Int
     ) -> String {
         #"""
         <script>
         (function() {
           const pollIntervalMs = \#(pollIntervalMilliseconds);
           const hiddenPollIntervalMs = Math.max(pollIntervalMs * 3, pollIntervalMs + 5_000);
+          const freshnessThresholdMs = \#(freshnessThresholdMilliseconds);
+          const disconnectAfterFailures = 2;
+          const requestTimeoutMs = Math.max(5_000, pollIntervalMs - 1_000);
           const state = {
             inFlight: false,
             lastGeneratedAtMs: \#(initialGeneratedAtMilliseconds),
+            snapshotAgeMs: \#(initialSnapshotAgeMilliseconds),
+            snapshotAgeAnchorMs: performance.now(),
+            consecutiveFailures: 0,
             refreshKeys: Object.create(null),
             timerHandle: null
           };
@@ -122,6 +130,43 @@ extension OperatorDashboardPageRenderer {
             const days = Math.floor(seconds / 86400);
             const hours = Math.floor((seconds % 86400) / 3600);
             return `${days}d ${hours}h`;
+          }
+
+          function currentSnapshotAgeMs() {
+            if (state.snapshotAgeMs === null) {
+              return null;
+            }
+
+            return state.snapshotAgeMs + (performance.now() - state.snapshotAgeAnchorMs);
+          }
+
+          function formatSnapshotAge(ageMs) {
+            if (ageMs === null) {
+              return 'Snapshot age unavailable';
+            }
+
+            return `Snapshot ${formatDuration(ageMs / 1000)} ago`;
+          }
+
+          function updateStatus() {
+            const statusDot = document.getElementById('connection-status');
+            const statusLabel = document.getElementById('connection-status-label');
+            const ageNode = document.getElementById('snapshot-age');
+            const ageMs = currentSnapshotAgeMs();
+            const disconnected = state.consecutiveFailures >= disconnectAfterFailures;
+            const stale = ageMs === null || ageMs > freshnessThresholdMs;
+            const status = disconnected ? 'DISCONNECTED' : (stale ? 'STALE' : 'LIVE');
+
+            if (statusDot) {
+              statusDot.className = `status-dot ${status.toLowerCase()}`;
+            }
+            if (statusLabel) {
+              statusLabel.className = `status-label ${status.toLowerCase()}`;
+              statusLabel.textContent = status;
+            }
+            if (ageNode) {
+              ageNode.textContent = formatSnapshotAge(ageMs);
+            }
           }
 
           function formatByteSize(value) {
@@ -606,20 +651,7 @@ extension OperatorDashboardPageRenderer {
             swapHTML(id, html, options);
           }
 
-          function updateHero(snapshot) {
-            const renderedNode = document.getElementById('hero-rendered-at');
-            if (renderedNode) {
-              renderedNode.textContent = `Rendered ${formatDate(snapshot.renderedAt)}`;
-            }
-
-            const generatedNode = document.getElementById('hero-generated-at');
-            if (generatedNode) {
-              generatedNode.textContent = `Snapshot generated ${formatDate(snapshot.generatedAt)}`;
-            }
-          }
-
           function applySnapshot(snapshot) {
-            updateHero(snapshot);
             updateSlot('ingest-card', refreshKey(snapshot.redLights.ingestFreshness.refreshedAt), renderIngestCard(snapshot.redLights.ingestFreshness));
             updateSlot('pipeline-backlog-card', refreshKey(snapshot.redLights.pipelineBacklogAge.refreshedAt), renderPipelineBacklogCard(snapshot.redLights.pipelineBacklogAge));
             updateSlot('stuck-claimed-card', refreshKey(snapshot.redLights.stuckClaimedRows.refreshedAt), renderStuckClaimedCard(snapshot.redLights.stuckClaimedRows));
@@ -675,30 +707,49 @@ extension OperatorDashboardPageRenderer {
             }
 
             state.inFlight = true;
+            const abortController = new AbortController();
+            const timeoutHandle = window.setTimeout(() => abortController.abort(), requestTimeoutMs);
             try {
               const response = await fetch('/v1/metrics', {
                 headers: { 'Accept': 'application/json' },
-                cache: 'no-store'
+                cache: 'no-store',
+                signal: abortController.signal
               });
 
               if (!response.ok) {
+                state.consecutiveFailures += 1;
+                updateStatus();
                 return;
               }
 
               const snapshot = await response.json();
               const generatedAtMs = dateToMillis(snapshot.generatedAt);
-              if (generatedAtMs !== null && generatedAtMs === state.lastGeneratedAtMs) {
+              const renderedAtMs = dateToMillis(snapshot.renderedAt);
+              const snapshotChanged = generatedAtMs !== null && generatedAtMs !== state.lastGeneratedAtMs;
+              state.consecutiveFailures = 0;
+              state.lastGeneratedAtMs = generatedAtMs;
+              state.snapshotAgeMs = generatedAtMs !== null && renderedAtMs !== null
+                ? Math.max(0, renderedAtMs - generatedAtMs)
+                : null;
+              state.snapshotAgeAnchorMs = performance.now();
+              updateStatus();
+              if (!snapshotChanged) {
                 return;
               }
 
               applySnapshot(snapshot);
-              state.lastGeneratedAtMs = generatedAtMs;
             } catch (_) {
+              state.consecutiveFailures += 1;
+              updateStatus();
             } finally {
+              window.clearTimeout(timeoutHandle);
               state.inFlight = false;
               scheduleNextPoll();
             }
           }
+
+          updateStatus();
+          window.setInterval(updateStatus, 1_000);
 
           function scheduleNextPoll() {
             if (state.timerHandle !== null) {
