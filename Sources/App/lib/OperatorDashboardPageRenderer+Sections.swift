@@ -466,10 +466,10 @@ extension OperatorDashboardPageRenderer {
                 <tr>
                   <th>Touched</th>
                   <th>Alert</th>
+                  <th>Geography</th>
                   <th>State</th>
                   <th>Tornado detection</th>
                   <th>Tornado damage threat</th>
-                  <th>ugc_codes</th>
                 </tr>
               </thead>
               <tbody>
@@ -525,10 +525,13 @@ extension OperatorDashboardPageRenderer {
             <div class="subtle mono">\(escape(entry.seriesID.uuidString))</div>
             <div class="subtle micro-mono narrow-truncate" title="\(escape(entry.currentRevisionUrn))">\(escape(entry.currentRevisionUrn))</div>
           </td>
-          <td data-label="State"><span class="pill">\(escape(entry.state))</span></td>
-          <td data-label="Tornado detection">\(escape(entry.tornadoDetection ?? "none"))</td>
-          <td data-label="Tornado damage">\(escape(entry.tornadoDamageThreat ?? "none"))</td>
-          <td data-label="ugc_codes" class="mono">\(escape(joinedCodes(entry.ugcCodes)))</td>
+          <td data-label="Geography">
+            <div>\(escape(entry.areaDescription ?? "Unknown area"))</div>
+            <div class="subtle mono">UGC: \(escape(joinedCodes(entry.ugcCodes)))</div>
+          </td>
+          <td data-label="State"><span class="pill \(escape(seriesStateClass(entry.state)))">\(escape(entry.state))</span></td>
+          <td data-label="Tornado detection"><span class="\(escape(tornadoThreatClass(entry.tornadoDetection)))">\(escape(entry.tornadoDetection ?? "none"))</span></td>
+          <td data-label="Tornado damage"><span class="\(escape(tornadoThreatClass(entry.tornadoDamageThreat)))">\(escape(entry.tornadoDamageThreat ?? "none"))</span></td>
         </tr>
         """
     }
@@ -566,6 +569,22 @@ extension OperatorDashboardPageRenderer {
     static func joinedCodes(_ codes: [String]) -> String {
         guard codes.isEmpty == false else { return "none" }
         return codes.joined(separator: ", ")
+    }
+
+    static func seriesStateClass(_ state: String) -> String {
+        switch state.lowercased() {
+        case "active": return "accent"
+        case "warning", "pending": return "warn"
+        default: return ""
+        }
+    }
+
+    static func tornadoThreatClass(_ value: String?) -> String {
+        switch value?.lowercased() {
+        case "observed", "confirmed", "considerable", "catastrophic": return "danger"
+        case "possible", "probable", "radar indicated", "significant": return "warn"
+        default: return ""
+        }
     }
 
     static func pressureArtifactOutcome(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String {

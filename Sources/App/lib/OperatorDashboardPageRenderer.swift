@@ -86,10 +86,16 @@ enum OperatorDashboardPageRenderer {
             </section>
 
             <section class="section">
+              <div class="section-header"><h2>NWS / Alert Activity</h2><div class="subtle">Recent severe-weather activity and geography</div></div>
+              <div class="stack">
+                \(slot("touched-series-table", content: touchedSeriesTable(snapshot.operatorContext.lastTouchedSeries)))
+              </div>
+            </section>
+
+            <section class="section">
               <div class="section-header"><h2>Operator Context</h2></div>
               <div class="stack">
                 \(slot("recent-debug-table", content: recentDebugTable(snapshot.operatorContext.recentNotificationDebugEntries)))
-                \(slot("touched-series-table", content: touchedSeriesTable(snapshot.operatorContext.lastTouchedSeries)))
               </div>
             </section>
           </main>

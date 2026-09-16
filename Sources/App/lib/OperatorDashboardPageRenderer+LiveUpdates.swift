@@ -666,10 +666,13 @@ extension OperatorDashboardPageRenderer {
                   <div class="subtle mono">${escapeHtml(entry.seriesID)}</div>
                   <div class="subtle micro-mono narrow-truncate" title="${escapeHtml(entry.currentRevisionUrn)}">${escapeHtml(entry.currentRevisionUrn)}</div>
                 </td>
-                <td data-label="State"><span class="pill">${escapeHtml(entry.state)}</span></td>
-                <td data-label="Tornado detection">${escapeHtml(entry.tornadoDetection ?? 'none')}</td>
-                <td data-label="Tornado damage">${escapeHtml(entry.tornadoDamageThreat ?? 'none')}</td>
-                <td data-label="ugc_codes" class="mono">${escapeHtml(joinedCodes(entry.ugcCodes))}</td>
+                <td data-label="Geography">
+                  <div>${escapeHtml(entry.areaDescription ?? 'Unknown area')}</div>
+                  <div class="subtle mono">UGC: ${escapeHtml(joinedCodes(entry.ugcCodes))}</div>
+                </td>
+                <td data-label="State"><span class="pill ${seriesStateClass(entry.state)}">${escapeHtml(entry.state)}</span></td>
+                <td data-label="Tornado detection"><span class="${tornadoThreatClass(entry.tornadoDetection)}">${escapeHtml(entry.tornadoDetection ?? 'none')}</span></td>
+                <td data-label="Tornado damage"><span class="${tornadoThreatClass(entry.tornadoDamageThreat)}">${escapeHtml(entry.tornadoDamageThreat ?? 'none')}</span></td>
               </tr>
             `;
           }
@@ -683,10 +686,10 @@ extension OperatorDashboardPageRenderer {
                     <tr>
                       <th>Touched</th>
                       <th>Alert</th>
+                      <th>Geography</th>
                       <th>State</th>
                       <th>Tornado detection</th>
                       <th>Tornado damage threat</th>
-                      <th>ugc_codes</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -704,6 +707,29 @@ extension OperatorDashboardPageRenderer {
                 ${body}
               </div>
             `;
+          }
+
+          function seriesStateClass(state) {
+            switch ((state ?? '').toLowerCase()) {
+              case 'active': return 'accent';
+              case 'warning':
+              case 'pending': return 'warn';
+              default: return '';
+            }
+          }
+
+          function tornadoThreatClass(value) {
+            switch ((value ?? '').toLowerCase()) {
+              case 'observed':
+              case 'confirmed':
+              case 'considerable':
+              case 'catastrophic': return 'danger';
+              case 'possible':
+              case 'probable':
+              case 'radar indicated':
+              case 'significant': return 'warn';
+              default: return '';
+            }
           }
 
           function refreshKey(value) {

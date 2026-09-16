@@ -11,6 +11,28 @@ struct RefreshOperatorDashboardSnapshotScheduledJob: AsyncScheduledJob {
     }
 }
 
+func operatorDashboardAreaDescription(areaDescription: String?, ugcCodes: [String]) -> String? {
+    let area = areaDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let states = ugcCodes.compactMap { code -> String? in
+        let prefix = String(code.prefix(2)).uppercased()
+        guard prefix.count == 2, prefix.allSatisfy({ $0.isLetter }) else { return nil }
+        return prefix
+    }
+    .reduce(into: [String]()) { result, state in
+        if result.contains(state) == false { result.append(state) }
+    }
+
+    if let area, area.isEmpty == false {
+        let suffix = area.split(separator: ",").last.map(String.init)?.trimmingCharacters(in: .whitespaces)
+        if suffix?.count == 2, suffix?.allSatisfy({ $0.isLetter && $0.isUppercase }) == true {
+            return area
+        }
+        return states.isEmpty ? area : "\(area), \(states.joined(separator: ", "))"
+    }
+
+    return states.isEmpty ? nil : "Areas in \(states.joined(separator: ", "))"
+}
+
 private struct FixedStormSetupDateProvider: StormSetupDateProviding {
     let nowDate: Date
 
@@ -962,6 +984,7 @@ struct OperatorDashboardSnapshotRefresher {
             SELECT
                 s.id AS "seriesID",
                 s.event AS "eventName",
+                NULLIF(BTRIM(s.area_desc), '') AS "areaDescription",
                 s.state AS "state",
                 s.ugc_codes AS "ugcCodes",
                 s.tornado_detection AS "tornadoDetection",
@@ -984,6 +1007,7 @@ struct OperatorDashboardSnapshotRefresher {
             .init(
                 seriesID: $0.seriesID,
                 eventName: $0.eventName,
+                areaDescription: operatorDashboardAreaDescription(areaDescription: $0.areaDescription, ugcCodes: $0.ugcCodes),
                 state: $0.state,
                 ugcCodes: $0.ugcCodes,
                 tornadoDetection: $0.tornadoDetection,
@@ -1113,6 +1137,7 @@ private struct RecentNotificationDebugRow: Decodable {
 private struct TouchedSeriesRow: Decodable {
     let seriesID: UUID
     let eventName: String
+    let areaDescription: String?
     let state: String
     let ugcCodes: [String]
     let tornadoDetection: String?
