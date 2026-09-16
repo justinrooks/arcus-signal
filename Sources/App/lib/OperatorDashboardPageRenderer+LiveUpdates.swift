@@ -68,6 +68,11 @@ extension OperatorDashboardPageRenderer {
               .replaceAll("'", '&#39;');
           }
 
+          function diagnosticDisclosure(value, className = 'diagnostic-copy') {
+            const escapedValue = escapeHtml(value);
+            return `<details class="diagnostic-disclosure"><summary class="${className}">${escapedValue}</summary><div class="diagnostic-full">${escapedValue}</div></details>`;
+          }
+
           function formatDate(value) {
             const date = parseDateValue(value);
             if (!date) {
@@ -218,11 +223,14 @@ extension OperatorDashboardPageRenderer {
             const primaryClassSuffix = primaryClass ? ` ${primaryClass}` : '';
             const healthClassSuffix = status ? ` health-card health-${status}` : '';
             const statusDot = status
-              ? `<span class="health-dot" role="img" aria-label="Status: ${escapeHtml(status.charAt(0).toUpperCase() + status.slice(1))}"></span>`
+              ? '<span class="health-dot" aria-hidden="true"></span>'
+              : '';
+            const statusText = status
+              ? `<span class="health-status">${escapeHtml(status.charAt(0).toUpperCase() + status.slice(1))}</span>`
               : '';
             return `
               <div class="card${healthClassSuffix}">
-                <div class="card-heading"><h3>${escapeHtml(title)}</h3>${statusDot}</div>
+                <div class="card-heading"><h3>${escapeHtml(title)}</h3><span class="health-indicator">${statusText}${statusDot}</span></div>
                 <div class="primary${primaryClassSuffix}">${escapeHtml(primary)}</div>
                 <div class="subtle">Refreshed ${escapeHtml(formatDate(refreshedAt))}</div>
                 <ul class="meta-list">
@@ -587,7 +595,7 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Source">${escapeHtml(entry.source ?? 'n/a')}</td>
                 <td data-label="Size" class="mono">${escapeHtml(formatByteSize(entry.byteSize))}</td>
                 <td data-label="Updated">${escapeHtml(formatDate(entry.updatedAt))}</td>
-                <td data-label="Error">${escapeHtml(entry.errorSummary ?? 'none')}</td>
+                <td data-label="Error">${diagnosticDisclosure(entry.errorSummary ?? 'none')}</td>
               </tr>
             `;
           }
@@ -633,20 +641,20 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Time">${escapeHtml(formatDate(entry.createdAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
-                  <div class="subtle mono">${escapeHtml(entry.seriesID)}</div>
+                  ${diagnosticDisclosure(entry.seriesID, 'diagnostic-mono')}
                 </td>
                 <td data-label="Mode / reason">
                   <span class="pill">${escapeHtml(entry.mode)}</span>
-                  <div class="subtle">${escapeHtml(entry.reason)} / ${escapeHtml(entry.recordKind)}</div>
+                  ${diagnosticDisclosure(`${entry.reason} / ${entry.recordKind}`)}
                 </td>
                 <td data-label="Message">
                   <div><strong>${escapeHtml(entry.title)}</strong></div>
                   <div class="subtle">${escapeHtml(entry.subtitle)}</div>
-                  <div class="subtle">${escapeHtml(entry.body)}</div>
+                  ${diagnosticDisclosure(entry.body)}
                 </td>
                 <td data-label="Outcome">
                   <div>${escapeHtml(entry.ledgerStatus ?? 'preview')}</div>
-                  <div class="subtle">${escapeHtml(entry.apnsErrorCode ?? 'none')}</div>
+                  ${diagnosticDisclosure(entry.apnsErrorCode ?? 'none')}
                 </td>
               </tr>
             `;
@@ -689,12 +697,12 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Touched">${escapeHtml(formatDate(entry.touchedAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
-                  <div class="subtle mono">${escapeHtml(entry.seriesID)}</div>
-                  <div class="subtle micro-mono narrow-truncate" title="${escapeHtml(entry.currentRevisionUrn)}">${escapeHtml(entry.currentRevisionUrn)}</div>
+                  ${diagnosticDisclosure(entry.seriesID, 'diagnostic-mono')}
+                  ${diagnosticDisclosure(entry.currentRevisionUrn, 'diagnostic-mono')}
                 </td>
                 <td data-label="Geography">
                   <div>${escapeHtml(entry.areaDescription ?? 'Unknown area')}</div>
-                  <div class="subtle mono">UGC: ${escapeHtml(joinedCodes(entry.ugcCodes))}</div>
+                  ${diagnosticDisclosure(`UGC Codes: ${joinedCodes(entry.ugcCodes)}`, 'diagnostic-mono')}
                 </td>
                 <td data-label="State"><span class="pill ${seriesStateClass(entry.state)}">${escapeHtml(entry.state)}</span></td>
                 <td data-label="Tornado detection"><span class="${tornadoThreatClass(entry.tornadoDetection)}">${escapeHtml(entry.tornadoDetection ?? 'none')}</span></td>
