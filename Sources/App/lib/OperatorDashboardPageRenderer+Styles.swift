@@ -85,6 +85,8 @@ extension OperatorDashboardPageRenderer {
               letter-spacing: 0;
             }
             .masthead-meta a {
+              display: inline-block;
+              padding: 4px 0;
               color: var(--accent);
               text-decoration: none;
             }
@@ -106,6 +108,7 @@ extension OperatorDashboardPageRenderer {
               display: flex;
               align-items: baseline;
               justify-content: flex-start;
+              flex-wrap: wrap;
               gap: 12px;
               margin-bottom: 12px;
             }
@@ -119,6 +122,8 @@ extension OperatorDashboardPageRenderer {
             }
             .section-header .subtle {
               font-size: 0.88rem;
+              min-width: 0;
+              flex: 1 1 240px;
             }
             .section-table {
               margin-top: 16px;
@@ -319,6 +324,16 @@ extension OperatorDashboardPageRenderer {
             }
             .footprint-table {
               min-width: 820px;
+            }
+            .footprint-table-wrap {
+              max-height: 24rem;
+              overflow-y: auto;
+              scrollbar-gutter: stable;
+            }
+            .footprint-table-wrap:focus-visible {
+              outline: 2px solid var(--accent);
+              outline-offset: 4px;
+              border-radius: 4px;
             }
             table {
               width: 100%;
@@ -611,6 +626,60 @@ extension OperatorDashboardPageRenderer {
                 direction: rtl;
                 text-align: left;
                 vertical-align: bottom;
+              }
+              .diagnostic-truncate,
+              .diagnostic-copy {
+                max-width: 100%;
+              }
+            }
+            @media (min-width: 721px) and (max-width: 900px) {
+              .footprint-table-wrap .inline-mobile-table {
+                min-width: 0;
+                border-collapse: separate;
+                border-spacing: 0;
+              }
+              .footprint-table-wrap .inline-mobile-table thead {
+                display: none;
+              }
+              .footprint-table-wrap .inline-mobile-table tbody {
+                display: grid;
+                gap: 14px;
+                padding: 12px 12px 14px;
+              }
+              .footprint-table-wrap .inline-mobile-table tbody tr {
+                display: grid;
+                gap: 9px;
+                padding: 12px;
+                border: 1px solid rgba(117, 165, 196, 0.24);
+                border-radius: 12px;
+                background: linear-gradient(180deg, rgba(19, 40, 63, 0.34), rgba(12, 27, 45, 0.2));
+              }
+              .footprint-table-wrap .inline-mobile-table tbody td {
+                display: grid;
+                grid-template-columns: minmax(112px, 28%) 1fr;
+                gap: 12px;
+                min-width: 0;
+                padding: 0;
+                border: 0;
+              }
+              .footprint-table-wrap .inline-mobile-table tbody td + td {
+                padding-top: 3px;
+                border-top: 1px solid rgba(117, 165, 196, 0.14);
+              }
+              .footprint-table-wrap .inline-mobile-table tbody td::before {
+                content: attr(data-label);
+                color: var(--muted);
+                font-size: 0.72rem;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+              }
+              .footprint-table-wrap .inline-mobile-table tbody td > * {
+                min-width: 0;
+                max-width: 100%;
+              }
+              .footprint-table-wrap .inline-mobile-table .pill {
+                white-space: normal;
+                overflow-wrap: anywhere;
               }
               .diagnostic-truncate,
               .diagnostic-copy {

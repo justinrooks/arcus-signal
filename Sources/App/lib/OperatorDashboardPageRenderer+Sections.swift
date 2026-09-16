@@ -201,7 +201,7 @@ extension OperatorDashboardPageRenderer {
         let body = entries.isEmpty
             ? #"<div class="empty">No installation presence rows available.</div>"#
             : """
-              <div class="table-wrap">
+              <div class="table-wrap footprint-table-wrap" role="region" aria-label="Installation footprint" tabindex="0">
                 <table class="stream-table footprint-table inline-mobile-table">
                   <thead><tr><th>Coarse location</th><th>App version</th><th>Auth</th><th>Presence age</th><th>State</th><th>Eligibility</th></tr></thead>
                   <tbody>
@@ -215,7 +215,7 @@ extension OperatorDashboardPageRenderer {
         <div class="card table-card">
           <div class="table-card__header">
             <h3>Installation Footprint</h3>
-            <div class="subtle">Newest presence first · \(entries.count) of \(OperatorDashboardConfig.installationFootprintLimit) rows · Refreshed \(escape(maybeDate(refreshedAt)))</div>
+            <div class="subtle">Freshest presence first · \(entries.count) of \(OperatorDashboardConfig.installationFootprintLimit) rows · Refreshed \(escape(maybeDate(refreshedAt)))</div>
           </div>
           \(body)
         </div>
