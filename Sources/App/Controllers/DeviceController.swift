@@ -20,6 +20,10 @@ private struct DevicePresenceCommitResult {
     let reconciliationHandoff: PresenceReconciliationHandoffRequest?
 }
 
+private struct ForegroundActivityRequest: Content {
+    let installationId: UUID
+}
+
 struct DeviceController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         try registerOnAPIRoots(routes) { root in
@@ -27,7 +31,18 @@ struct DeviceController: RouteCollection {
             devices.get(use: index)
             devices.post("location-snapshots", use: create)
             devices.post("preferences", use: createPreferences)
+            devices.post("foreground-activity", use: createForegroundActivity)
         }
+    }
+
+    func createForegroundActivity(req: Request) async throws -> HTTPStatus {
+        let payload = try req.content.decode(ForegroundActivityRequest.self)
+        try await InstallationActivityDailyStore().record(
+            installationID: payload.installationId,
+            receivedAt: .now,
+            on: req.db
+        )
+        return .noContent
     }
     
     func create(req: Request) async throws -> LocationSnapshotAcceptedResponse {
