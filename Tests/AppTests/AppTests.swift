@@ -161,6 +161,7 @@ struct AppTests {
                     "GET /v1/devices", "GET /api/v1/devices",
                     "POST /v1/devices/location-snapshots", "POST /api/v1/devices/location-snapshots",
                     "POST /v1/devices/preferences", "POST /api/v1/devices/preferences",
+                    "POST /v1/devices/foreground-activity", "POST /api/v1/devices/foreground-activity",
                     "GET /v1/air-quality/current", "GET /api/v1/air-quality/current",
                     "GET /v1/storm-setup/current", "GET /api/v1/storm-setup/current",
                     "POST /v1/dev", "POST /api/v1/dev",
