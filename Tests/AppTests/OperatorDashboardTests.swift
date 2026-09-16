@@ -230,6 +230,44 @@ struct OperatorDashboardTests {
         #expect(abs((response.audienceTargeting.alertsWithGeographyAndH3Success.successRate ?? 0) - 0.8333333333) < 0.0001)
     }
 
+    @Test("installation footprint exposes only coarse operational fields")
+    func installationFootprintExposesOnlyCoarseOperationalFields() throws {
+        let snapshot = OperatorDashboardStoredSnapshot(
+            generatedAt: isoDate("2026-04-10T12:10:00Z"),
+            slowRefreshedAt: isoDate("2026-04-10T12:00:00Z"),
+            installationFootprint: [
+                .init(
+                    locationLabel: "Larimer County, CO",
+                    appVersion: "1.2.3",
+                    locationAuth: "always",
+                    capturedAt: isoDate("2026-04-10T11:55:00Z"),
+                    isActive: true,
+                    isSubscribed: true,
+                    candidateQueryEligible: true
+                )
+            ]
+        )
+        let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: snapshot.generatedAt)
+        let html = OperatorDashboardPageRenderer.render(snapshot: response)
+
+        #expect(response.growthUsage.installationFootprint.count == 1)
+        #expect(response.growthUsage.installationFootprint[0].presenceAgeSeconds == 300)
+        #expect(html.contains("Installation Footprint"))
+        #expect(html.contains("Larimer County, CO"))
+        #expect(!html.contains("apnsDeviceToken"))
+        #expect(!html.contains("h3Cell"))
+        #expect(!html.contains("installationId"))
+
+        let json = String(decoding: try JSONEncoder().encode(response), as: UTF8.self)
+        #expect(json.contains("installationFootprint"))
+        #expect(json.contains("locationLabel"))
+        #expect(!json.contains("installationId"))
+        #expect(!json.contains("apnsDeviceToken"))
+        #expect(!json.contains("h3Cell"))
+        #expect(!json.contains("latitude"))
+        #expect(!json.contains("longitude"))
+    }
+
     @Test("red light statuses use existing domain thresholds")
     func redLightStatusesUseExistingDomainThresholds() {
         var snapshot = makeSnapshot()
@@ -374,6 +412,7 @@ struct OperatorDashboardTests {
 
         let snapshot = try decoder.decode(OperatorDashboardStoredSnapshot.self, from: Data(json.utf8))
         #expect(snapshot.schemaVersion == 0)
+        #expect(snapshot.installationFootprint.isEmpty)
         #expect(snapshot.touchedSeries.first?.ugcCodes == [])
         #expect(snapshot.targetableCoverage.hardStalePresenceThresholdSeconds == Int(LocationFreshnessPolicy.hardStaleThreshold))
         #expect(snapshot.targetableCoverage.candidateQueryEligibleInstallationCount == 0)

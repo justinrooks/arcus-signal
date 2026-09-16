@@ -17,4 +17,5 @@ public enum OperatorDashboardConfig {
     public static let recentNotificationDebugLimit = 5
     public static let touchedSeriesLimit = 5
     public static let topFailureReasonLimit = 3
+    public static let installationFootprintLimit = 50
 }

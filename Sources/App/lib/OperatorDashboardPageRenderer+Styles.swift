@@ -226,6 +226,9 @@ extension OperatorDashboardPageRenderer {
             .pressure-artifact-table {
               min-width: 920px;
             }
+            .footprint-table {
+              min-width: 820px;
+            }
             table {
               width: 100%;
               border-collapse: collapse;
@@ -257,6 +260,9 @@ extension OperatorDashboardPageRenderer {
               color: var(--text);
               background: rgba(255, 255, 255, 0.05);
             }
+            .footprint-eligible { color: var(--accent); border-color: rgba(88, 214, 195, 0.35); }
+            .footprint-ineligible { color: var(--warn); border-color: rgba(245, 190, 93, 0.35); }
+            .presence-age { font-weight: 700; color: var(--text); }
             .accent { color: var(--accent); }
             .warn { color: var(--warn); }
             .danger { color: var(--danger); }

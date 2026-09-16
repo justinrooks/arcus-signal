@@ -366,6 +366,46 @@ extension OperatorDashboardPageRenderer {
             `;
           }
 
+          function renderInstallationFootprintTable(entries, refreshedAt) {
+            const rows = Array.isArray(entries) ? entries : [];
+            const body = rows.length === 0
+              ? '<div class="empty">No installation presence rows available.</div>'
+              : `
+                <div class="table-wrap">
+                  <table class="stream-table footprint-table inline-mobile-table">
+                    <thead><tr><th>Coarse location</th><th>App version</th><th>Auth</th><th>Presence age</th><th>State</th><th>Eligibility</th></tr></thead>
+                    <tbody>
+                      ${rows.map((entry) => {
+                        const eligibility = entry.candidateQueryEligible ? 'Eligible' : (entry.ineligibilityReason || 'Ineligible');
+                        const eligibilityClass = entry.candidateQueryEligible ? 'footprint-eligible' : 'footprint-ineligible';
+                        const state = entry.isActive ? (entry.isSubscribed ? 'Active / subscribed' : 'Active / paused') : 'Inactive';
+                        return `
+                          <tr>
+                            <td data-label="Coarse location">${escapeHtml(entry.locationLabel)}</td>
+                            <td data-label="App version">${escapeHtml(entry.appVersion)}</td>
+                            <td data-label="Auth">${escapeHtml(entry.locationAuth)}</td>
+                            <td data-label="Presence age" class="presence-age">${escapeHtml(formatDuration(entry.presenceAgeSeconds))}</td>
+                            <td data-label="State">${escapeHtml(state)}</td>
+                            <td data-label="Eligibility"><span class="pill ${eligibilityClass}">${escapeHtml(eligibility)}</span></td>
+                          </tr>
+                        `;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              `;
+
+            return `
+              <div class="card table-card">
+                <div class="table-card__header">
+                  <h3>Installation Footprint</h3>
+                  <div class="subtle">Newest presence first · ${rows.length} of 50 rows · Refreshed ${escapeHtml(formatDate(refreshedAt))}</div>
+                </div>
+                ${body}
+              </div>
+            `;
+          }
+
           function renderLatencyCard(metric) {
             return renderCard('End-to-end alert latency p95', formatDuration(metric.p95Seconds === null ? null : Math.round(metric.p95Seconds)), metric.refreshedAt, [
               { label: 'Window', value: `${metric.windowHours}h` },
@@ -722,6 +762,12 @@ extension OperatorDashboardPageRenderer {
               refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt),
               renderInstallationGrowthTable(snapshot.growthUsage.installationGrowth),
               { streamRows: true, streamDelayStepMs: 28 }
+            );
+            updateSlot(
+              'installation-footprint-table',
+              refreshKey(snapshot.growthUsage.installationActivity.refreshedAt),
+              renderInstallationFootprintTable(snapshot.growthUsage.installationFootprint, snapshot.growthUsage.installationActivity.refreshedAt),
+              { streamRows: true, streamDelayStepMs: 24 }
             );
             updateSlot(
               'pressure-artifact-readiness-card',
