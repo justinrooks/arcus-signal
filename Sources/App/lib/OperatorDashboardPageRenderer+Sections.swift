@@ -90,6 +90,7 @@ extension OperatorDashboardPageRenderer {
             title: "Seen Last 24h — Server Activity",
             primary: "\(metric.seenLast24HoursCount)",
             refreshedAt: metric.refreshedAt,
+            showDetails: false,
             lines: [
                 ("Share of known", maybePercent(metric.seenLast24HoursRate)),
                 ("Interpretation", "Operational activity, not DAU")
@@ -102,6 +103,7 @@ extension OperatorDashboardPageRenderer {
             title: "Active Today",
             primary: "\(metric.dailyActiveInstallationCount)",
             refreshedAt: metric.refreshedAt,
+            showDetails: false,
             lines: [
                 ("Metric", "DAU"),
                 ("Source", "Explicit foreground activity")
@@ -114,6 +116,7 @@ extension OperatorDashboardPageRenderer {
             title: "Active This Month",
             primary: "\(metric.monthlyActiveInstallationCount)",
             refreshedAt: metric.refreshedAt,
+            showDetails: false,
             lines: [
                 ("Metric", "MAU"),
                 ("Source", "Explicit foreground activity")
@@ -147,7 +150,7 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func installationActivityStateRow(_ entry: InstallationActivityStateResponse) -> String {
-        """
+        return """
         <tr>
           <td data-label="State">\(escape(entry.state))</td>
           <td data-label="Today">\(entry.activeTodayCount)</td>
@@ -182,7 +185,7 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func installationGrowthRow(_ entry: MonthlyInstallationGrowthResponse) -> String {
-        """
+        return """
         <tr>
           <td data-label="Month">\(escape(formatMonth(entry.monthStart)))</td>
           <td data-label="New installations">\(entry.newInstallationCount)</td>
@@ -342,7 +345,7 @@ extension OperatorDashboardPageRenderer {
         ].compactMap { $0 }.joined(separator: " · ")
 
         return compactMetricCard(
-            title: "Pressure artifact readiness",
+            title: "Pressure Artifact",
             primary: pressureArtifactOutcome(metric.selectionOutcome),
             primaryClass: pressureArtifactOutcomeClass(metric.selectionOutcome),
             refreshedAt: metric.refreshedAt,
@@ -355,7 +358,7 @@ extension OperatorDashboardPageRenderer {
     static func pressureArtifactCatalogCard(_ metric: PressureArtifactCatalogMetricResponse?) -> String {
         let metric = metric ?? .init(refreshedAt: nil, metric: .init())
         return compactMetricCard(
-            title: "Pressure artifact catalog",
+            title: "Catalog Summary",
             primary: "\(metric.readyCount) ready",
             refreshedAt: metric.refreshedAt,
             summary: "Ready \(metric.readyCount) · Warming \(metric.warmingCount) · Pending \(metric.pendingCount) · Failed \(metric.failedCount)",
@@ -390,9 +393,7 @@ extension OperatorDashboardPageRenderer {
                   <th>Valid time</th>
                   <th>Run / FH</th>
                   <th>Status</th>
-                  <th>Source</th>
                   <th>Size</th>
-                  <th>Updated</th>
                   <th>Error</th>
                 </tr>
               </thead>
@@ -416,15 +417,13 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func renderPressureArtifactRow(_ entry: PressureArtifactEntryResponse) -> String {
-        """
+        return """
         <tr>
           <td data-label="Valid time">\(escape(maybeDate(entry.validTime)))</td>
           <td data-label="Run / FH">\(escape(pressureArtifactRunAndForecast(entry.runTime, entry.forecastHour)))</td>
           <td data-label="Status"><span class="pill \(escape(statusClass(entry.status)))">\(escape(pressureArtifactStatus(entry.status)))</span></td>
-          <td data-label="Source">\(escape(entry.source))</td>
           <td data-label="Size" class="mono">\(escape(maybeByteSize(entry.byteSize)))</td>
-          <td data-label="Updated">\(escape(maybeDate(entry.updatedAt)))</td>
-          <td data-label="Error">\(diagnosticDisclosure(entry.errorSummary ?? "none"))</td>
+          <td data-label="Error"><span class="diagnostic-truncate">\(escape(entry.errorSummary ?? "none"))</span></td>
         </tr>
         """
     }
@@ -508,7 +507,7 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Time">\(escape(formatDate(entry.createdAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
-            \(diagnosticDisclosure(entry.seriesID.uuidString, className: "diagnostic-mono"))
+            <div class="diagnostic-mono">\(escape(entry.seriesID.uuidString))</div>
           </td>
           <td data-label="Mode / reason">
             <span class="pill">\(escape(entry.mode))</span>
@@ -528,17 +527,18 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func renderTouchedSeriesRow(_ entry: TouchedSeriesEntryResponse) -> String {
-        """
+        let area = operatorDashboardAreaDescription(areaDescription: entry.areaDescription, ugcCodes: entry.ugcCodes) ?? "Unknown area"
+        return """
         <tr>
           <td data-label="Touched">\(escape(formatDate(entry.touchedAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
-            \(diagnosticDisclosure(entry.seriesID.uuidString, className: "diagnostic-mono"))
-            \(diagnosticDisclosure(entry.currentRevisionUrn, className: "diagnostic-mono"))
+            <div class="diagnostic-mono">\(escape(entry.seriesID.uuidString))</div>
+            <div class="diagnostic-mono">\(escape(entry.currentRevisionUrn))</div>
           </td>
           <td data-label="Geography">
-            <div>\(escape(entry.areaDescription ?? "Unknown area"))</div>
-            \(diagnosticDisclosure("UGC Codes: \(joinedCodes(entry.ugcCodes))", className: "diagnostic-mono"))
+            <div>\(escape(area))</div>
+            <div class="diagnostic-mono">UGC: \(escape(joinedCodes(entry.ugcCodes)))</div>
           </td>
           <td data-label="State"><span class="pill \(escape(seriesStateClass(entry.state)))">\(escape(entry.state))</span></td>
           <td data-label="Tornado detection"><span class="\(escape(tornadoThreatClass(entry.tornadoDetection)))">\(escape(entry.tornadoDetection ?? "none"))</span></td>
@@ -553,6 +553,7 @@ extension OperatorDashboardPageRenderer {
         primaryClass: String? = nil,
         status: OperatorDashboardHealthState? = nil,
         refreshedAt: Date?,
+        showDetails: Bool = true,
         lines: [(String, String)]
     ) -> String {
         let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
@@ -561,14 +562,21 @@ extension OperatorDashboardPageRenderer {
             "<span class=\"health-dot\" aria-hidden=\"true\"></span>"
         } ?? ""
         let statusText = status.map { "<span class=\"health-status\">\(escape($0.rawValue.capitalized))</span>" } ?? ""
+        let isExpanded = status == .warning || status == .critical || status == .unknown
+        let summary = lines.first.map { "\($0.0): \($0.1)" }
+        let details = showDetails ? lines.dropFirst().map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined() : ""
+        let disclosure = details.isEmpty ? "" : """
+          <details class="metric-details"\(isExpanded ? " open" : "")>
+            <summary>Details</summary>
+            <ul class="meta-list">\(details)</ul>
+          </details>
+        """
         return """
         <div class="\(cardClass)">
           <div class="card-heading"><h3>\(escape(title))</h3><span class="health-indicator">\(statusText)\(statusDot)</span></div>
           <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
-          <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
-          <ul class="meta-list">
-            \(lines.map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined())
-          </ul>
+          \(summary.map { "<div class=\"metric-summary\">\(escape($0))</div>" } ?? "")
+          \(disclosure)
         </div>
         """
     }
@@ -639,7 +647,7 @@ extension OperatorDashboardPageRenderer {
 
     static func pressureArtifactOutcome(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String {
         guard let outcome else { return "NO DATA" }
-        return outcome.rawValue.uppercased()
+        return outcome == .exact ? "READY" : outcome.rawValue.uppercased()
     }
 
     static func pressureArtifactOutcomeClass(_ outcome: PressureArtifactReadinessSelectionOutcome?) -> String? {

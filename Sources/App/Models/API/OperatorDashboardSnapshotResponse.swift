@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 6
+    public static let currentSchemaVersion = 7
 
     public var schemaVersion: Int
     public var generatedAt: Date

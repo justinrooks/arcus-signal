@@ -3,24 +3,21 @@ extension OperatorDashboardPageRenderer {
             :root {
               color-scheme: dark;
               --bg: #07111c;
-              --panel: rgba(12, 24, 39, 0.92);
-              --panel-2: rgba(17, 33, 52, 0.88);
-              --line: rgba(117, 165, 196, 0.18);
+              --panel: rgba(12, 24, 39, 0.96);
+              --panel-2: rgba(17, 33, 52, 0.92);
+              --line: rgba(117, 165, 196, 0.16);
               --text: #eef6ff;
               --muted: #a5bbcd;
               --accent: #58d6c3;
               --warn: #ffb15c;
               --danger: #ff6f7d;
-              --shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+              --shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
             }
             * { box-sizing: border-box; }
             body {
               margin: 0;
-              font-family: "Avenir Next", "IBM Plex Sans", "Segoe UI", sans-serif;
-              background:
-                radial-gradient(circle at top left, rgba(88, 214, 195, 0.10), transparent 32%),
-                radial-gradient(circle at top right, rgba(255, 111, 125, 0.12), transparent 28%),
-                linear-gradient(180deg, #08121d 0%, #050a11 100%);
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              background: linear-gradient(180deg, #08121d 0%, #050a11 100%);
               color: var(--text);
             }
             .shell {
@@ -47,7 +44,7 @@ extension OperatorDashboardPageRenderer {
             }
             .masthead h1 {
               margin: 0;
-              font-family: "Space Grotesk", "Avenir Next", sans-serif;
+              font-family: inherit;
               font-size: clamp(1.7rem, 2.5vw, 2.35rem);
               letter-spacing: -0.04em;
             }
@@ -101,17 +98,16 @@ extension OperatorDashboardPageRenderer {
             }
             .section h2 {
               margin: 0;
-              font-size: 1.05rem;
-              text-transform: uppercase;
-              letter-spacing: 0.12em;
-              color: var(--muted);
+              font-size: 1.28rem;
+              letter-spacing: -0.02em;
+              color: var(--text);
             }
             .section-header {
               display: flex;
               align-items: baseline;
-              justify-content: space-between;
+              justify-content: flex-start;
               gap: 12px;
-              margin-bottom: 14px;
+              margin-bottom: 12px;
             }
             .section-header h2 {
               margin: 0;
@@ -120,6 +116,9 @@ extension OperatorDashboardPageRenderer {
               margin: 0;
               color: var(--muted);
               font-size: 0.82rem;
+            }
+            .section-header .subtle {
+              font-size: 0.88rem;
             }
             .section-table {
               margin-top: 16px;
@@ -133,6 +132,18 @@ extension OperatorDashboardPageRenderer {
             .grid {
               display: grid;
               grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+              gap: 16px;
+            }
+            .growth-primary-grid {
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+            .growth-secondary {
+              max-width: calc(25% - 12px);
+              margin-top: 12px;
+            }
+            .installation-detail-grid {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
               gap: 16px;
             }
             .model-pipeline-grid {
@@ -168,8 +179,8 @@ extension OperatorDashboardPageRenderer {
               transform: translateY(1px);
             }
             .card {
-              padding: 18px;
-              border-radius: 20px;
+              padding: 16px;
+              border-radius: 14px;
               border: 1px solid var(--line);
               background: var(--panel);
               box-shadow: var(--shadow);
@@ -203,6 +214,7 @@ extension OperatorDashboardPageRenderer {
             .health-card {
               --health-color: var(--muted);
               border-left: 4px solid var(--health-color);
+              padding: 14px 16px;
             }
             .health-healthy { --health-color: rgba(88, 214, 195, 0.46); }
             .health-warning { --health-color: var(--warn); }
@@ -220,6 +232,12 @@ extension OperatorDashboardPageRenderer {
             .health-warning .primary { color: var(--warn); }
             .health-critical .primary { color: var(--danger); }
             .health-unknown .primary { color: var(--muted); }
+            .health-card .primary {
+              margin: 10px 0 0;
+            }
+            .health-card .metric-details {
+              margin-top: 8px;
+            }
             .primary {
               margin: 14px 0 6px;
               font-size: 2rem;
@@ -292,7 +310,12 @@ extension OperatorDashboardPageRenderer {
               min-width: 720px;
             }
             .pressure-artifact-table {
-              min-width: 920px;
+              min-width: 0;
+              table-layout: fixed;
+            }
+            .pressure-artifact-table th:last-child,
+            .pressure-artifact-table td:last-child {
+              width: 28%;
             }
             .footprint-table {
               min-width: 820px;
@@ -419,6 +442,15 @@ extension OperatorDashboardPageRenderer {
               .grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
               }
+              .growth-primary-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+              }
+              .growth-secondary {
+                max-width: calc(50% - 8px);
+              }
+              .installation-detail-grid {
+                grid-template-columns: 1fr;
+              }
               .model-pipeline-grid,
               .operational-kpi-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -447,8 +479,8 @@ extension OperatorDashboardPageRenderer {
               }
               .section h2 {
                 margin-bottom: 0;
-                font-size: 0.92rem;
-                letter-spacing: 0.1em;
+                font-size: 1.08rem;
+                letter-spacing: -0.01em;
               }
               .masthead {
                 padding: 16px;
@@ -487,6 +519,13 @@ extension OperatorDashboardPageRenderer {
               .grid {
                 grid-template-columns: 1fr;
                 gap: 12px;
+              }
+              .growth-primary-grid,
+              .installation-detail-grid {
+                grid-template-columns: 1fr;
+              }
+              .growth-secondary {
+                max-width: none;
               }
               .model-pipeline-grid,
               .operational-kpi-grid,

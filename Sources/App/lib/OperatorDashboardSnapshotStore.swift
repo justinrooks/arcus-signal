@@ -94,6 +94,11 @@ func backfillTouchedSeriesFields(
         return updatedEntry
     }
     upgraded.schemaVersion = OperatorDashboardStoredSnapshot.currentSchemaVersion
+    // A schema upgrade may add metrics or cached projections. Force every lane
+    // to refresh once so decoder defaults do not become durable snapshot data.
+    upgraded.fastRefreshedAt = nil
+    upgraded.standardRefreshedAt = nil
+    upgraded.slowRefreshedAt = nil
     return upgraded
 }
 

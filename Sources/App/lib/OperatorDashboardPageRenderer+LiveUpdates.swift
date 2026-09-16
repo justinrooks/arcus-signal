@@ -219,7 +219,7 @@ extension OperatorDashboardPageRenderer {
             return codes.join(', ');
           }
 
-          function renderCard(title, primary, refreshedAt, lines, primaryClass = '', status = null) {
+          function renderCard(title, primary, refreshedAt, lines, primaryClass = '', status = null, showDetails = true) {
             const primaryClassSuffix = primaryClass ? ` ${primaryClass}` : '';
             const healthClassSuffix = status ? ` health-card health-${status}` : '';
             const statusDot = status
@@ -228,14 +228,21 @@ extension OperatorDashboardPageRenderer {
             const statusText = status
               ? `<span class="health-status">${escapeHtml(status.charAt(0).toUpperCase() + status.slice(1))}</span>`
               : '';
+            const summary = lines.length > 0 ? `${lines[0].label}: ${lines[0].value}` : '';
+            const details = showDetails ? lines.slice(1) : [];
+            const expanded = status === 'warning' || status === 'critical' || status === 'unknown';
+            const detailMarkup = details.length === 0 ? '' : (
+              '<details class="metric-details"' + (expanded ? ' open' : '') + '>' +
+                '<summary>Details</summary><ul class="meta-list">' +
+                details.map((line) => `<li><span>${escapeHtml(line.label)}</span><strong>${escapeHtml(line.value)}</strong></li>`).join('') +
+                '</ul></details>'
+            );
             return `
               <div class="card${healthClassSuffix}">
                 <div class="card-heading"><h3>${escapeHtml(title)}</h3><span class="health-indicator">${statusText}${statusDot}</span></div>
                 <div class="primary${primaryClassSuffix}">${escapeHtml(primary)}</div>
-                <div class="subtle">Refreshed ${escapeHtml(formatDate(refreshedAt))}</div>
-                <ul class="meta-list">
-                  ${lines.map((line) => `<li><span>${escapeHtml(line.label)}</span><strong>${escapeHtml(line.value)}</strong></li>`).join('')}
-                </ul>
+                ${summary ? `<div class="metric-summary">${escapeHtml(summary)}</div>` : ''}
+                ${detailMarkup}
               </div>
             `;
           }
@@ -310,21 +317,21 @@ extension OperatorDashboardPageRenderer {
             return renderCard('Seen Last 24h — Server Activity', String(metric.seenLast24HoursCount), metric.refreshedAt, [
               { label: 'Share of known', value: formatPercent(metric.seenLast24HoursRate) },
               { label: 'Interpretation', value: 'Operational activity, not DAU' }
-            ]);
+            ], '', null, false);
           }
 
           function renderActiveTodayCard(metric) {
             return renderCard('Active Today', String(metric.dailyActiveInstallationCount), metric.refreshedAt, [
               { label: 'Metric', value: 'DAU' },
               { label: 'Source', value: 'Explicit foreground activity' }
-            ]);
+            ], '', null, false);
           }
 
           function renderActiveThisMonthCard(metric) {
             return renderCard('Active This Month', String(metric.monthlyActiveInstallationCount), metric.refreshedAt, [
               { label: 'Metric', value: 'MAU' },
               { label: 'Source', value: 'Explicit foreground activity' }
-            ]);
+            ], '', null, false);
           }
 
           function renderInstallationActivityStateTable(metric) {
@@ -502,7 +509,7 @@ extension OperatorDashboardPageRenderer {
               return 'NO DATA';
             }
 
-            return String(outcome).toUpperCase();
+            return String(outcome).toLowerCase() === 'exact' ? 'READY' : String(outcome).toUpperCase();
           }
 
           function renderPressureArtifactOutcomeClass(outcome) {
@@ -559,7 +566,7 @@ extension OperatorDashboardPageRenderer {
               'checked ' + formatDate(metric?.lastCheckedAt ?? metric?.updatedAt)
             ].filter(Boolean).join(' · ');
             return renderCompactMetricCard(
-              'Pressure artifact readiness',
+              'Pressure Artifact',
               renderPressureArtifactOutcome(metric?.selectionOutcome),
               metric?.refreshedAt,
               summary,
@@ -570,7 +577,7 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderPressureArtifactCatalogCard(metric) {
-            return renderCompactMetricCard('Pressure artifact catalog', String(metric?.readyCount ?? 0) + ' ready', metric?.refreshedAt,
+            return renderCompactMetricCard('Catalog Summary', String(metric?.readyCount ?? 0) + ' ready', metric?.refreshedAt,
               'Ready ' + (metric?.readyCount ?? 0) + ' · Warming ' + (metric?.warmingCount ?? 0) + ' · Pending ' + (metric?.pendingCount ?? 0) + ' · Failed ' + (metric?.failedCount ?? 0), [
               { label: 'Total', value: String(metric?.totalCount ?? 0) },
               { label: 'Pending', value: String(metric?.pendingCount ?? 0) },
@@ -592,10 +599,8 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Valid time">${escapeHtml(formatDate(entry.validTime))}</td>
                 <td data-label="Run / FH">${escapeHtml(renderPressureArtifactRunAndForecast(entry.runTime, entry.forecastHour))}</td>
                 <td data-label="Status"><span class="pill ${statusClass(entry.status)}">${escapeHtml(renderPressureArtifactStatus(entry.status))}</span></td>
-                <td data-label="Source">${escapeHtml(entry.source ?? 'n/a')}</td>
                 <td data-label="Size" class="mono">${escapeHtml(formatByteSize(entry.byteSize))}</td>
-                <td data-label="Updated">${escapeHtml(formatDate(entry.updatedAt))}</td>
-                <td data-label="Error">${diagnosticDisclosure(entry.errorSummary ?? 'none')}</td>
+                <td data-label="Error"><span class="diagnostic-truncate">${escapeHtml(entry.errorSummary ?? 'none')}</span></td>
               </tr>
             `;
           }
@@ -611,9 +616,7 @@ extension OperatorDashboardPageRenderer {
                       <th>Valid time</th>
                       <th>Run / FH</th>
                       <th>Status</th>
-                      <th>Source</th>
                       <th>Size</th>
-                      <th>Updated</th>
                       <th>Error</th>
                     </tr>
                   </thead>
@@ -641,7 +644,7 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Time">${escapeHtml(formatDate(entry.createdAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
-                  ${diagnosticDisclosure(entry.seriesID, 'diagnostic-mono')}
+                  <div class="diagnostic-mono">${escapeHtml(entry.seriesID)}</div>
                 </td>
                 <td data-label="Mode / reason">
                   <span class="pill">${escapeHtml(entry.mode)}</span>
@@ -692,17 +695,21 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderTouchedSeriesRow(entry) {
+            const stateCodes = Array.isArray(entry.ugcCodes)
+              ? [...new Set(entry.ugcCodes.map((code) => String(code).slice(0, 2).toUpperCase()).filter((code) => /^[A-Z]{2}$/.test(code)))]
+              : [];
+            const area = entry.areaDescription || (stateCodes.length > 0 ? 'Areas in ' + stateCodes.join(', ') : 'Unknown area');
             return `
               <tr>
                 <td data-label="Touched">${escapeHtml(formatDate(entry.touchedAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
-                  ${diagnosticDisclosure(entry.seriesID, 'diagnostic-mono')}
-                  ${diagnosticDisclosure(entry.currentRevisionUrn, 'diagnostic-mono')}
+                  <div class="diagnostic-mono">${escapeHtml(entry.seriesID)}</div>
+                  <div class="diagnostic-mono">${escapeHtml(entry.currentRevisionUrn)}</div>
                 </td>
                 <td data-label="Geography">
-                  <div>${escapeHtml(entry.areaDescription ?? 'Unknown area')}</div>
-                  ${diagnosticDisclosure(`UGC Codes: ${joinedCodes(entry.ugcCodes)}`, 'diagnostic-mono')}
+                  <div>${escapeHtml(area)}</div>
+                  <div class="diagnostic-mono">UGC: ${escapeHtml(joinedCodes(entry.ugcCodes))}</div>
                 </td>
                 <td data-label="State"><span class="pill ${seriesStateClass(entry.state)}">${escapeHtml(entry.state)}</span></td>
                 <td data-label="Tornado detection"><span class="${tornadoThreatClass(entry.tornadoDetection)}">${escapeHtml(entry.tornadoDetection ?? 'none')}</span></td>
