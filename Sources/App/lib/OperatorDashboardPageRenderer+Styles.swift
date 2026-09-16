@@ -7,7 +7,7 @@ extension OperatorDashboardPageRenderer {
               --panel-2: rgba(17, 33, 52, 0.88);
               --line: rgba(117, 165, 196, 0.18);
               --text: #eef6ff;
-              --muted: #8ca4ba;
+              --muted: #a5bbcd;
               --accent: #58d6c3;
               --warn: #ffb15c;
               --danger: #ff6f7d;
@@ -90,6 +90,11 @@ extension OperatorDashboardPageRenderer {
             .masthead-meta a {
               color: var(--accent);
               text-decoration: none;
+            }
+            :where(a, summary):focus-visible {
+              outline: 2px solid var(--accent);
+              outline-offset: 4px;
+              border-radius: 4px;
             }
             .section {
               margin-top: 28px;
@@ -181,6 +186,20 @@ extension OperatorDashboardPageRenderer {
               justify-content: space-between;
               gap: 12px;
             }
+            .health-indicator {
+              display: inline-flex;
+              align-items: center;
+              gap: 7px;
+              color: var(--health-color, var(--muted));
+              font-size: 0.7rem;
+              font-weight: 700;
+              letter-spacing: 0.06em;
+              text-transform: uppercase;
+            }
+            .health-healthy .health-indicator { color: #7de3d2; }
+            .health-warning .health-indicator { color: #ffc77d; }
+            .health-critical .health-indicator { color: #ff9aa3; }
+            .health-unknown .health-indicator { color: #c1d0dc; }
             .health-card {
               --health-color: var(--muted);
               border-left: 4px solid var(--health-color);
@@ -317,6 +336,46 @@ extension OperatorDashboardPageRenderer {
             .danger { color: var(--danger); }
             .mono { font-family: "SF Mono", "IBM Plex Mono", monospace; font-size: 0.78rem; }
             .micro-mono { font-family: "SF Mono", "IBM Plex Mono", monospace; font-size: 0.54rem; line-height: 1.3; }
+            .diagnostic-mono {
+              font-family: "SF Mono", "IBM Plex Mono", monospace;
+              font-size: 0.72rem;
+              line-height: 1.4;
+              overflow-wrap: anywhere;
+            }
+            .diagnostic-truncate {
+              display: block;
+              max-width: min(42ch, 34vw);
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .diagnostic-copy {
+              display: block;
+              max-width: 48ch;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .diagnostic-disclosure {
+              max-width: 100%;
+            }
+            .diagnostic-disclosure summary {
+              max-width: 100%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+              cursor: pointer;
+              color: var(--text);
+            }
+            .diagnostic-disclosure[open] summary {
+              white-space: normal;
+              overflow-wrap: anywhere;
+            }
+            .diagnostic-full {
+              margin-top: 6px;
+              color: var(--muted);
+              overflow-wrap: anywhere;
+            }
             .masthead-meta, .primary, th, td, .mono, .micro-mono {
               font-variant-numeric: tabular-nums;
             }
@@ -327,6 +386,10 @@ extension OperatorDashboardPageRenderer {
             .stream-table tbody tr {
               opacity: 1;
               transform: translateY(0);
+              transition: background-color 0.18s ease;
+            }
+            .stream-table tbody tr:hover {
+              background: rgba(88, 214, 195, 0.045);
             }
             .stream-table tbody tr.stream-row {
               opacity: 0;
@@ -337,6 +400,19 @@ extension OperatorDashboardPageRenderer {
               to {
                 opacity: 1;
                 transform: translateY(0);
+              }
+            }
+            @media (prefers-reduced-motion: reduce) {
+              *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+              }
+              .stream-table tbody tr.stream-row {
+                animation: none !important;
+                opacity: 1;
+                transform: none;
               }
             }
             @media (min-width: 721px) and (max-width: 1120px) {
@@ -357,7 +433,7 @@ extension OperatorDashboardPageRenderer {
                 font-size: 0.9rem;
               }
               .micro-mono {
-                font-size: 0.6rem;
+                font-size: 0.68rem;
               }
             }
             @media (max-width: 720px) {
@@ -497,6 +573,10 @@ extension OperatorDashboardPageRenderer {
                 text-align: left;
                 vertical-align: bottom;
               }
+              .diagnostic-truncate,
+              .diagnostic-copy {
+                max-width: 100%;
+              }
             }
             @media (max-width: 430px) {
               .shell {
@@ -523,7 +603,7 @@ extension OperatorDashboardPageRenderer {
                 font-size: 0.72rem;
               }
               .micro-mono {
-                font-size: 0.5rem;
+                font-size: 0.62rem;
               }
             }
 

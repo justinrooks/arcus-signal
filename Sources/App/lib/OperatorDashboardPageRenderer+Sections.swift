@@ -424,7 +424,7 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Source">\(escape(entry.source))</td>
           <td data-label="Size" class="mono">\(escape(maybeByteSize(entry.byteSize)))</td>
           <td data-label="Updated">\(escape(maybeDate(entry.updatedAt)))</td>
-          <td data-label="Error">\(escape(entry.errorSummary ?? "none"))</td>
+          <td data-label="Error">\(diagnosticDisclosure(entry.errorSummary ?? "none"))</td>
         </tr>
         """
     }
@@ -508,20 +508,20 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Time">\(escape(formatDate(entry.createdAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
-            <div class="subtle mono">\(escape(entry.seriesID.uuidString))</div>
+            \(diagnosticDisclosure(entry.seriesID.uuidString, className: "diagnostic-mono"))
           </td>
           <td data-label="Mode / reason">
             <span class="pill">\(escape(entry.mode))</span>
-            <div class="subtle">\(escape(entry.reason)) / \(escape(entry.recordKind))</div>
+            \(diagnosticDisclosure("\(entry.reason) / \(entry.recordKind)"))
           </td>
           <td data-label="Message">
             <div><strong>\(escape(entry.title))</strong></div>
             <div class="subtle">\(escape(entry.subtitle))</div>
-            <div class="subtle">\(escape(entry.body))</div>
+            \(diagnosticDisclosure(entry.body))
           </td>
           <td data-label="Outcome">
             <div>\(escape(entry.ledgerStatus ?? "preview"))</div>
-            <div class="subtle">\(escape(entry.apnsErrorCode ?? "none"))</div>
+            \(diagnosticDisclosure(entry.apnsErrorCode ?? "none"))
           </td>
         </tr>
         """
@@ -533,12 +533,12 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Touched">\(escape(formatDate(entry.touchedAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
-            <div class="subtle mono">\(escape(entry.seriesID.uuidString))</div>
-            <div class="subtle micro-mono narrow-truncate" title="\(escape(entry.currentRevisionUrn))">\(escape(entry.currentRevisionUrn))</div>
+            \(diagnosticDisclosure(entry.seriesID.uuidString, className: "diagnostic-mono"))
+            \(diagnosticDisclosure(entry.currentRevisionUrn, className: "diagnostic-mono"))
           </td>
           <td data-label="Geography">
             <div>\(escape(entry.areaDescription ?? "Unknown area"))</div>
-            <div class="subtle mono">UGC: \(escape(joinedCodes(entry.ugcCodes)))</div>
+            \(diagnosticDisclosure("UGC Codes: \(joinedCodes(entry.ugcCodes))", className: "diagnostic-mono"))
           </td>
           <td data-label="State"><span class="pill \(escape(seriesStateClass(entry.state)))">\(escape(entry.state))</span></td>
           <td data-label="Tornado detection"><span class="\(escape(tornadoThreatClass(entry.tornadoDetection)))">\(escape(entry.tornadoDetection ?? "none"))</span></td>
@@ -557,12 +557,13 @@ extension OperatorDashboardPageRenderer {
     ) -> String {
         let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
         let cardClass = status.map { "card health-card health-\($0.rawValue)" } ?? "card"
-        let statusDot = status.map {
-            "<span class=\"health-dot\" role=\"img\" aria-label=\"Status: \(escape($0.rawValue.capitalized))\"></span>"
+        let statusDot = status.map { _ in
+            "<span class=\"health-dot\" aria-hidden=\"true\"></span>"
         } ?? ""
+        let statusText = status.map { "<span class=\"health-status\">\(escape($0.rawValue.capitalized))</span>" } ?? ""
         return """
         <div class="\(cardClass)">
-          <div class="card-heading"><h3>\(escape(title))</h3>\(statusDot)</div>
+          <div class="card-heading"><h3>\(escape(title))</h3><span class="health-indicator">\(statusText)\(statusDot)</span></div>
           <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
           <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
           <ul class="meta-list">
@@ -609,6 +610,15 @@ extension OperatorDashboardPageRenderer {
     static func joinedCodes(_ codes: [String]) -> String {
         guard codes.isEmpty == false else { return "none" }
         return codes.joined(separator: ", ")
+    }
+
+    static func diagnosticDisclosure(_ value: String, className: String = "diagnostic-copy") -> String {
+        """
+        <details class="diagnostic-disclosure">
+          <summary class="\(className)">\(escape(value))</summary>
+          <div class="diagnostic-full">\(escape(value))</div>
+        </details>
+        """
     }
 
     static func seriesStateClass(_ state: String) -> String {
