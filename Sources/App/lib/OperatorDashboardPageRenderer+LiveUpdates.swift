@@ -232,6 +232,23 @@ extension OperatorDashboardPageRenderer {
             `;
           }
 
+          function renderCompactMetricCard(title, primary, refreshedAt, summary, details, primaryClass = '', expanded = false) {
+            const primaryClassSuffix = primaryClass ? ' ' + primaryClass : '';
+            const detailMarkup = details.length === 0 ? '' : (
+              '<details class="metric-details"' + (expanded ? ' open' : '') + '>' +
+                '<summary>Details</summary><ul class="meta-list">' +
+                details.map((line) => '<li><span>' + escapeHtml(line.label) + '</span><strong>' + escapeHtml(line.value) + '</strong></li>').join('') +
+                '</ul></details>'
+            );
+            return '<div class="card compact-card">' +
+              '<div class="card-heading"><h3>' + escapeHtml(title) + '</h3></div>' +
+              '<div class="primary' + primaryClassSuffix + '">' + escapeHtml(primary) + '</div>' +
+              (summary ? '<div class="metric-summary">' + escapeHtml(summary) + '</div>' : '') +
+              '<div class="subtle">Refreshed ' + escapeHtml(formatDate(refreshedAt)) + '</div>' +
+              detailMarkup +
+              '</div>';
+          }
+
           function renderIngestCard(metric) {
             return renderCard('Ingest freshness', formatDuration(metric.timeSinceLastSuccessfulSweepSeconds), metric.refreshedAt, [
               { label: 'Last success', value: formatDate(metric.lastSuccessfulSweepAt) },
@@ -407,14 +424,14 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderLatencyCard(metric) {
-            return renderCard('End-to-end alert latency p95', formatDuration(metric.p95Seconds === null ? null : Math.round(metric.p95Seconds)), metric.refreshedAt, [
+            return renderCompactMetricCard('End-to-end alert latency p95', formatDuration(metric.p95Seconds === null ? null : Math.round(metric.p95Seconds)), metric.refreshedAt, null, [
               { label: 'Window', value: `${metric.windowHours}h` },
               { label: 'Successful revisions', value: String(metric.successfulRevisionCount) }
             ]);
           }
 
           function renderAPNsSuccessCard(metric) {
-            return renderCard('APNs delivery success rate', formatPercent(metric.successRate), metric.refreshedAt, [
+            return renderCompactMetricCard('APNs delivery success rate', formatPercent(metric.successRate), metric.refreshedAt, null, [
               { label: 'Sent', value: String(metric.sentCount) },
               { label: 'Failed', value: String(metric.failedCount) },
               { label: 'Top failures', value: joinedReasons(metric.topFailureReasons) }
@@ -422,7 +439,7 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderNoOpCard(metric) {
-            return renderCard('Send no-op rate by reason', formatPercent(metric.noOpRate), metric.refreshedAt, [
+            return renderCompactMetricCard('Send no-op rate by reason', formatPercent(metric.noOpRate), metric.refreshedAt, null, [
               { label: 'Total attempts', value: String(metric.totalAttemptCount) },
               { label: 'No-op attempts', value: String(metric.noOpAttemptCount) },
               { label: 'Reasons', value: joinedReasons(metric.reasons) }
@@ -430,14 +447,15 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderZeroCandidateCard(metric) {
-            return renderCard('Zero-candidate revision rate', formatPercent(metric.zeroCandidateRate), metric.refreshedAt, [
+            return renderCompactMetricCard('Zero-candidate revision rate', formatPercent(metric.zeroCandidateRate), metric.refreshedAt, null, [
               { label: 'Candidate-resolution attempts', value: String(metric.candidateResolutionAttemptCount) },
               { label: 'Zero-candidate attempts', value: String(metric.zeroCandidateAttemptCount) }
             ]);
           }
 
           function renderCoverageCard(metric) {
-            return renderCard('Candidate-query eligibility', formatPercent(metric.candidateQueryEligibilityRate), metric.refreshedAt, [
+            return renderCompactMetricCard('Fresh targetable coverage', formatPercent(metric.targetableRate), metric.refreshedAt,
+              'Fresh targetable ' + metric.targetableInstallationCount + ' / ' + metric.activeSubscribedInstallationCount + ' · Eligible ≤24h ' + metric.candidateQueryEligibleInstallationCount + ' / ' + metric.activeSubscribedInstallationCount, [
               { label: 'Eligible ≤24h', value: `${metric.candidateQueryEligibleInstallationCount} / ${metric.activeSubscribedInstallationCount}` },
               { label: 'Excluded >24h', value: String(metric.hardStalePresenceCount) },
               { label: 'Fresh targetable (≤6h)', value: `${metric.targetableInstallationCount} / ${metric.activeSubscribedInstallationCount}` },
@@ -449,7 +467,7 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderH3Card(metric) {
-            return renderCard('Geography to H3 conversion', formatPercent(metric.successRate), metric.refreshedAt, [
+            return renderCompactMetricCard('Geography to H3 conversion', formatPercent(metric.successRate), metric.refreshedAt, null, [
               { label: 'Geometry-bearing revisions', value: String(metric.geometryBearingRevisionCount) },
               { label: 'Successful conversions', value: String(metric.successfulConversionCount) },
               { label: 'p95 conversion', value: formatDuration(metric.p95ConversionSeconds === null ? null : Math.round(metric.p95ConversionSeconds)) }
@@ -514,7 +532,7 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderPressureArtifactReadinessCard(metric) {
-            const lines = [
+            const details = [
               { label: 'Catalog status', value: metric?.status ?? 'n/a' },
               { label: 'Valid time', value: formatDate(metric?.validTime) },
               { label: 'Valid-time age', value: formatDuration(metric?.validTimeAgeSeconds) },
@@ -527,17 +545,25 @@ extension OperatorDashboardPageRenderer {
               ...(metric?.errorSummary ? [{ label: 'Error', value: metric.errorSummary }] : [])
             ];
 
-            return renderCard(
+            const summary = [
+              metric?.validTime ? 'Valid ' + formatDate(metric.validTime) : null,
+              renderPressureArtifactRunAndForecast(metric?.runTime, metric?.forecastHour),
+              'checked ' + formatDate(metric?.lastCheckedAt ?? metric?.updatedAt)
+            ].filter(Boolean).join(' · ');
+            return renderCompactMetricCard(
               'Pressure artifact readiness',
               renderPressureArtifactOutcome(metric?.selectionOutcome),
               metric?.refreshedAt,
-              lines,
-              renderPressureArtifactOutcomeClass(metric?.selectionOutcome)
+              summary,
+              details,
+              renderPressureArtifactOutcomeClass(metric?.selectionOutcome),
+              metric?.selectionOutcome !== 'exact' || Boolean(metric?.readinessReason) || Boolean(metric?.errorSummary)
             );
           }
 
           function renderPressureArtifactCatalogCard(metric) {
-            return renderCard('Pressure artifact catalog', `${metric?.readyCount ?? 0} ready`, metric?.refreshedAt, [
+            return renderCompactMetricCard('Pressure artifact catalog', String(metric?.readyCount ?? 0) + ' ready', metric?.refreshedAt,
+              'Ready ' + (metric?.readyCount ?? 0) + ' · Warming ' + (metric?.warmingCount ?? 0) + ' · Pending ' + (metric?.pendingCount ?? 0) + ' · Failed ' + (metric?.failedCount ?? 0), [
               { label: 'Total', value: String(metric?.totalCount ?? 0) },
               { label: 'Pending', value: String(metric?.pendingCount ?? 0) },
               { label: 'Oldest pending', value: formatDuration(metric?.oldestPendingAgeSeconds) },
@@ -549,7 +575,7 @@ extension OperatorDashboardPageRenderer {
               { label: 'Expired', value: String(metric?.expiredCount ?? 0) },
               { label: 'Most recent failure', value: formatDate(metric?.mostRecentFailureAt) },
               { label: 'Most recent failure reason', value: metric?.mostRecentFailureSummary ?? 'none' }
-            ]);
+            ], '', Boolean(metric?.stuckReason));
           }
 
           function renderPressureArtifactRow(entry) {
