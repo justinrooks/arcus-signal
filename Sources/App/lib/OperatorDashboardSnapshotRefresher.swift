@@ -383,6 +383,7 @@ struct OperatorDashboardSnapshotRefresher {
         now: Date
     ) async throws -> [StoredInstallationFootprintEntry] {
         let hardStaleCutoff = now.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+        let footprintCutoff = now.addingTimeInterval(-TimeInterval(OperatorDashboardConfig.installationFootprintMaxAgeSeconds))
         let rows = try await sql.raw("""
             SELECT
                 COALESCE(
@@ -429,6 +430,7 @@ struct OperatorDashboardSnapshotRefresher {
             LEFT JOIN device_presence p
               ON p.installation_id = i.installation_id
             WHERE i.apns_environment = 'prod'
+              AND p.captured_at >= \(bind: footprintCutoff)
             ORDER BY p.captured_at DESC NULLS LAST, i.last_seen_at DESC, i.created_at DESC
             LIMIT \(bind: OperatorDashboardConfig.installationFootprintLimit)
         """).all(decoding: InstallationFootprintRow.self)

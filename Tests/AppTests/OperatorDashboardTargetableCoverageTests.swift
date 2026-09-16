@@ -193,8 +193,8 @@ struct OperatorDashboardTargetableCoverageTests {
         }
     }
 
-    @Test("installation footprint returns only the newest bounded production rows")
-    func installationFootprintReturnsOnlyNewestBoundedProductionRows() async throws {
+    @Test("installation footprint returns the five freshest production rows within 90 days")
+    func installationFootprintReturnsOnlyFiveFreshestRowsWithin90Days() async throws {
         try await withApp { database in
             try await seedInstallation(
                 apnsEnvironment: .sandbox,
@@ -202,7 +202,7 @@ struct OperatorDashboardTargetableCoverageTests {
                 capturedAt: now,
                 on: database
             )
-            for offset in 0..<55 {
+            for offset in 0..<7 {
                 try await seedInstallation(
                     apnsEnvironment: .prod,
                     lastSeenAt: now,
@@ -210,6 +210,12 @@ struct OperatorDashboardTargetableCoverageTests {
                     on: database
                 )
             }
+            try await seedInstallation(
+                apnsEnvironment: .prod,
+                lastSeenAt: now,
+                capturedAt: now.addingTimeInterval(-Double(91 * 24 * 60 * 60)),
+                on: database
+            )
 
             guard let sql = database as? any SQLDatabase else {
                 throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
@@ -217,9 +223,9 @@ struct OperatorDashboardTargetableCoverageTests {
 
             let entries = try await OperatorDashboardSnapshotRefresher()
                 .loadInstallationFootprint(on: sql, now: now)
-            #expect(entries.count == OperatorDashboardConfig.installationFootprintLimit)
+            #expect(entries.count == 5)
             #expect(entries.first?.capturedAt == now)
-            #expect(entries.last?.capturedAt == now.addingTimeInterval(-49 * 60))
+            #expect(entries.last?.capturedAt == now.addingTimeInterval(-4 * 60))
         }
     }
 }
