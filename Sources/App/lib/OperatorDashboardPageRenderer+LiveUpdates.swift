@@ -288,6 +288,52 @@ extension OperatorDashboardPageRenderer {
             ]);
           }
 
+          function renderActiveTodayCard(metric) {
+            return renderCard('Active Today', String(metric.dailyActiveInstallationCount), metric.refreshedAt, [
+              { label: 'Metric', value: 'DAU' },
+              { label: 'Source', value: 'Explicit foreground activity' }
+            ]);
+          }
+
+          function renderActiveThisMonthCard(metric) {
+            return renderCard('Active This Month', String(metric.monthlyActiveInstallationCount), metric.refreshedAt, [
+              { label: 'Metric', value: 'MAU' },
+              { label: 'Source', value: 'Explicit foreground activity' }
+            ]);
+          }
+
+          function renderInstallationActivityStateTable(metric) {
+            const rows = Array.isArray(metric.stateBreakdown) ? metric.stateBreakdown : [];
+            const body = rows.length === 0
+              ? '<div class="empty">No foreground activity this month.</div>'
+              : `
+                <div class="table-wrap">
+                  <table class="inline-mobile-table">
+                    <thead><tr><th>State</th><th>Today</th><th>This Month</th></tr></thead>
+                    <tbody>
+                      ${rows.map((entry) => `
+                        <tr>
+                          <td data-label="State">${escapeHtml(entry.state)}</td>
+                          <td data-label="Today">${escapeHtml(entry.activeTodayCount)}</td>
+                          <td data-label="This Month">${escapeHtml(entry.activeThisMonthCount)}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              `;
+
+            return `
+              <div class="card table-card">
+                <div class="table-card__header">
+                  <h3>Active Installations by State</h3>
+                  <div class="subtle">Current/last-known operational state · Refreshed ${escapeHtml(formatDate(metric.refreshedAt))}</div>
+                </div>
+                ${body}
+              </div>
+            `;
+          }
+
           function renderInstallationGrowthTable(metric) {
             const rows = Array.isArray(metric.monthlyGrowth) ? metric.monthlyGrowth : [];
             const body = rows.length === 0
@@ -663,6 +709,14 @@ extension OperatorDashboardPageRenderer {
             updateSlot('known-installations-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderKnownInstallationsCard(snapshot.growthUsage.installationGrowth));
             updateSlot('new-installations-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderNewInstallationsCard(snapshot.growthUsage.installationGrowth));
             updateSlot('recent-server-activity-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderRecentServerActivityCard(snapshot.growthUsage.installationGrowth));
+            updateSlot('active-today-card', refreshKey(snapshot.growthUsage.installationActivity.refreshedAt), renderActiveTodayCard(snapshot.growthUsage.installationActivity));
+            updateSlot('active-this-month-card', refreshKey(snapshot.growthUsage.installationActivity.refreshedAt), renderActiveThisMonthCard(snapshot.growthUsage.installationActivity));
+            updateSlot(
+              'installation-activity-state-table',
+              refreshKey(snapshot.growthUsage.installationActivity.refreshedAt),
+              renderInstallationActivityStateTable(snapshot.growthUsage.installationActivity),
+              { streamRows: true, streamDelayStepMs: 28 }
+            );
             updateSlot(
               'installation-growth-table',
               refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt),

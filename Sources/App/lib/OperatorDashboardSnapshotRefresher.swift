@@ -60,6 +60,7 @@ struct OperatorDashboardSnapshotRefresher {
             snapshot.endToEndLatency = try await loadEndToEndLatency(on: sql, now: now)
             snapshot.apnsDelivery = try await loadAPNsDelivery(on: sql, now: now)
             snapshot.installationGrowth = try await loadInstallationGrowth(on: sql, now: now)
+            snapshot.installationActivity = try await loadInstallationActivity(on: sql, now: now)
             snapshot.targetableCoverage = try await loadTargetableCoverage(on: sql, now: now)
             snapshot.slowRefreshedAt = now
         }
@@ -425,6 +426,89 @@ struct OperatorDashboardSnapshotRefresher {
                     monthStart: $0.monthStart,
                     newInstallationCount: Int($0.newInstallationCount),
                     cumulativeInstallationCount: Int($0.cumulativeInstallationCount)
+                )
+            }
+        )
+    }
+
+    func loadInstallationActivity(on sql: any SQLDatabase, now: Date) async throws -> StoredInstallationActivityMetric {
+        let rows = try await sql.raw("""
+            WITH bounds AS (
+                SELECT
+                    (\(bind: now) AT TIME ZONE 'UTC')::date AS current_day,
+                    date_trunc('month', \(bind: now) AT TIME ZONE 'UTC')::date AS current_month_start
+            ),
+            valid_states(state) AS (
+                VALUES
+                    ('AK'), ('AL'), ('AR'), ('AS'), ('AZ'), ('CA'), ('CO'), ('CT'), ('DC'),
+                    ('DE'), ('FL'), ('GA'), ('GU'), ('HI'), ('IA'), ('ID'), ('IL'), ('IN'),
+                    ('KS'), ('KY'), ('LA'), ('MA'), ('MD'), ('ME'), ('MI'), ('MN'), ('MO'),
+                    ('MP'), ('MS'), ('MT'), ('NC'), ('ND'), ('NE'), ('NH'), ('NJ'), ('NM'),
+                    ('NV'), ('NY'), ('OH'), ('OK'), ('OR'), ('PA'), ('PR'), ('RI'), ('SC'),
+                    ('SD'), ('TN'), ('TX'), ('UM'), ('UT'), ('VA'), ('VI'), ('VT'), ('WA'),
+                    ('WI'), ('WV'), ('WY')
+            ),
+            normalized_presence AS (
+                SELECT
+                    installation_id,
+                    UPPER(BTRIM(county)) AS county,
+                    UPPER(BTRIM(zone)) AS zone,
+                    UPPER(BTRIM(fire_zone)) AS fire_zone
+                FROM device_presence
+            ),
+            presence_state AS (
+                SELECT
+                    installation_id,
+                    CASE
+                        WHEN county ~ '^[A-Z]{2}C[0-9]{3}$'
+                          AND LEFT(county, 2) IN (SELECT state FROM valid_states)
+                            THEN LEFT(county, 2)
+                        WHEN zone ~ '^[A-Z]{2}Z[0-9]{3}$'
+                          AND LEFT(zone, 2) IN (SELECT state FROM valid_states)
+                            THEN LEFT(zone, 2)
+                        WHEN fire_zone ~ '^[A-Z]{2}Z[0-9]{3}$'
+                          AND LEFT(fire_zone, 2) IN (SELECT state FROM valid_states)
+                            THEN LEFT(fire_zone, 2)
+                        ELSE 'Unknown'
+                    END AS state
+                FROM normalized_presence
+            ),
+            active_installations AS (
+                SELECT
+                    activity.installation_id,
+                    BOOL_OR(activity.activity_date = bounds.current_day) AS active_today
+                FROM installation_activity_daily activity
+                CROSS JOIN bounds
+                WHERE activity.activity_date >= bounds.current_month_start
+                  AND activity.activity_date < bounds.current_month_start + INTERVAL '1 month'
+                GROUP BY activity.installation_id
+            ),
+            classified AS (
+                SELECT
+                    active.installation_id,
+                    active.active_today,
+                    COALESCE(presence.state, 'Unknown') AS state
+                FROM active_installations active
+                LEFT JOIN presence_state presence
+                  ON presence.installation_id = active.installation_id
+            )
+            SELECT
+                state,
+                COUNT(*) FILTER (WHERE active_today) AS "activeTodayCount",
+                COUNT(*) AS "activeThisMonthCount"
+            FROM classified
+            GROUP BY state
+            ORDER BY CASE WHEN state = 'Unknown' THEN 1 ELSE 0 END, state
+        """).all(decoding: InstallationActivityStateRow.self)
+
+        return .init(
+            dailyActiveInstallationCount: rows.reduce(0) { $0 + Int($1.activeTodayCount) },
+            monthlyActiveInstallationCount: rows.reduce(0) { $0 + Int($1.activeThisMonthCount) },
+            stateBreakdown: rows.map {
+                .init(
+                    state: $0.state,
+                    activeTodayCount: Int($0.activeTodayCount),
+                    activeThisMonthCount: Int($0.activeThisMonthCount)
                 )
             }
         )
@@ -917,6 +1001,12 @@ private struct InstallationGrowthRow: Decodable {
     let knownInstallationCount: Int64
     let currentlySubscribedCount: Int64
     let seenLast24HoursCount: Int64
+}
+
+private struct InstallationActivityStateRow: Decodable {
+    let state: String
+    let activeTodayCount: Int64
+    let activeThisMonthCount: Int64
 }
 
 private struct H3AggregateRow: Decodable {
