@@ -660,11 +660,18 @@ Model-routing acceptance criteria:
 
 ### Phase 2 — Context and scope
 
-- [ ] Implement `tools/issue_context.sh`.
-- [ ] Create the `arcus-issue-context` skill.
+- [x] Implement `tools/issue_context.sh`.
+- [x] Create the `arcus-issue-context` skill.
 - [ ] Create `arcus-issue-readiness` as a small consumer of the packet.
 - [ ] Implement `tools/diff_scope.sh`.
 - [ ] Create `arcus-diff-scope`.
+
+**Completed evidence for issue context:**
+
+- `tools/issue_context.sh` reads one GitHub issue, its comments, the issue-specific progress section, and the repository preflight packet without mutating GitHub or the repository.
+- The centralized skill is registered in `Prompt_Fu/manifest.yaml` and installed into both Codex and Xcode target directories from the same Prompt_Fu source.
+- A fresh session generated `/private/tmp/arcus-issue/213/result.json` for issue #213 at branch `skill-tuning` / revision `9907c15a`; it captured parent #207, no dependencies, five mentioned production files, one test file, four validation commands, the stop condition, and preflight exit 1 for the expected dirty worktree.
+- The packet keeps issue/progress text and repository state as referenced artifacts rather than copying large source excerpts into the JSON handoff.
 
 **Review gate:** compare the new packets against the manual context gathered for issues #208–#214.
 

@@ -12,6 +12,10 @@
     "focused-validation": {
       "skill": "arcus-focused-validation",
       "script": "tools/test_lane.sh"
+    },
+    "issue-context": {
+      "skill": "arcus-issue-context",
+      "script": "tools/issue_context.sh"
     }
   }
 }
