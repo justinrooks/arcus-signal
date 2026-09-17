@@ -662,7 +662,7 @@ Model-routing acceptance criteria:
 
 - [x] Implement `tools/issue_context.sh`.
 - [x] Create the `arcus-issue-context` skill.
-- [ ] Create `arcus-issue-readiness` as a small consumer of the packet.
+- [x] Create `arcus-issue-readiness` as a small consumer of the packet.
 - [ ] Implement `tools/diff_scope.sh`.
 - [ ] Create `arcus-diff-scope`.
 
@@ -672,6 +672,12 @@ Model-routing acceptance criteria:
 - The centralized skill is registered in `Prompt_Fu/manifest.yaml` and installed into both Codex and Xcode target directories from the same Prompt_Fu source.
 - A fresh session generated `/private/tmp/arcus-issue/213/result.json` for issue #213 at branch `skill-tuning` / revision `9907c15a`; it captured parent #207, no dependencies, five mentioned production files, one test file, four validation commands, the stop condition, and preflight exit 1 for the expected dirty worktree.
 - The packet keeps issue/progress text and repository state as referenced artifacts rather than copying large source excerpts into the JSON handoff.
+
+**Completed evidence for issue readiness:**
+
+- `arcus-issue-readiness` is registered in `Prompt_Fu/manifest.yaml` as a skill-only consumer of the issue-context and repository-preflight packets; no repository capability or script was added.
+- The skill reports exactly `READY`, `BLOCKED`, or `REQUIRES HUMAN DECISION`, distinguishes packet completeness from implementation readiness, and preserves the packet artifacts as its evidence boundary.
+- A trial against the current issue #213 packet produced `REQUIRES HUMAN DECISION`: the packet is complete and preflight is clean, but #213 is closed with completed implementation evidence and cannot enter a new implementation workflow without direction.
 
 **Review gate:** compare the new packets against the manual context gathered for issues #208–#214.
 
