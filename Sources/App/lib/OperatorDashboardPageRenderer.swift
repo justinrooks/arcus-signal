@@ -1,147 +1,99 @@
 import Foundation
 
 enum OperatorDashboardPageRenderer {
-    static func render(snapshot: OperatorDashboardSnapshotResponse) -> String {
-        """
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Arcus Signal Operator Dashboard</title>
-          <style>
-            \(styles)
-          </style>
-        </head>
-        <body>
-          <main class="shell">
-            <header class="masthead">
-              <div>
-                <h1>Arcus Signal</h1>
-                <p>Operational Dashboard</p>
-              </div>
-              <div class="masthead-meta">
-                <div class="masthead-status">
-                  <span id="connection-status" class="status-dot \(initialStatusClass(for: snapshot))" aria-hidden="true"></span>
-                  <span id="connection-status-label" class="status-label \(initialStatusClass(for: snapshot))">\(initialStatusLabel(for: snapshot))</span>
-                  <span id="snapshot-age">Snapshot \(escape(formatDuration(max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt))))) ) ago</span>
-                </div>
-                <div><a href="/v1/metrics">JSON API ↗</a></div>
-              </div>
-            </header>
+    enum Page: String, CaseIterable {
+        case overview, models, installations, nws, delivery
+        var path: String { self == .overview ? "/dashboard" : "/dashboard/\(rawValue)" }
+        var title: String {
+            switch self {
+            case .overview: "Overview"
+            case .models: "Model Pipeline"
+            case .installations: "Usage & Installations"
+            case .nws: "NWS Activity"
+            case .delivery: "Delivery"
+            }
+        }
+        var subtitle: String {
+            switch self {
+            case .overview: "The system, at a glance."
+            case .models: "Is the expected model artifact ready, and what is blocking it?"
+            case .installations: "Foreground activity, growth, and coarse operational presence."
+            case .nws: "Recent weather activity, lifecycle, and hazard context."
+            case .delivery: "Delivery outcomes, candidate coverage, and reasons a push did not send."
+            }
+        }
+    }
 
-            <section class="section">
-              <div class="section-header"><h2>Red Lights</h2><div class="subtle">At-a-glance service health</div></div>
-              <div class="grid">
-                \(slot("ingest-card", content: ingestCard(snapshot.redLights.ingestFreshness)))
-                \(slot("pipeline-backlog-card", content: pipelineBacklogCard(snapshot.redLights.pipelineBacklogAge)))
-                \(slot("stuck-claimed-card", content: stuckClaimedCard(snapshot.redLights.stuckClaimedRows)))
-                \(slot("stale-series-card", content: staleSeriesCard(snapshot.redLights.staleActiveSeriesCount)))
-              </div>
-            </section>
+    static func render(snapshot: OperatorDashboardSnapshotResponse, page: Page = .overview, environment: String = "") -> String {
+        let age = max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt)))
+        let live = age <= OperatorDashboardConfig.fastRefreshIntervalSeconds * 2
+        return shell(page: page, environment: environment, status: live ? "live" : "stale", age: "Snapshot \(formatDuration(age)) ago", content: pageContent(snapshot, page: page), script: liveUpdateScript(
+            pollIntervalMilliseconds: pollIntervalMilliseconds,
+            initialGeneratedAtMilliseconds: Int(snapshot.generatedAt.timeIntervalSince1970 * 1_000),
+            freshnessThresholdMilliseconds: freshnessThresholdMilliseconds,
+            initialSnapshotAgeMilliseconds: age * 1_000
+        ))
+    }
 
-            <section class="section model-pipeline-section">
-              <div class="section-header"><h2>Model Pipeline</h2><div class="subtle">GRIB readiness and artifact flow</div></div>
-              <div class="model-pipeline-grid">
-                \(slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(snapshot.modelArtifacts.pressureArtifactReadiness)))
-                \(slot("pressure-artifact-catalog-card", content: pressureArtifactCatalogCard(snapshot.modelArtifacts.pressureArtifactCatalog)))
-                \(slot("recent-pressure-artifacts-table", content: recentPressureArtifactsTable(snapshot.modelArtifacts.recentPressureArtifacts)))
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header"><h2>Installations / Usage</h2><div class="subtle">Registered footprint and explicit activity</div></div>
-              <div class="grid growth-primary-grid">
-                \(slot("known-installations-card", content: knownInstallationsCard(snapshot.growthUsage.installationGrowth)))
-                \(slot("active-today-card", content: activeTodayCard(snapshot.growthUsage.installationActivity)))
-                \(slot("active-this-month-card", content: activeThisMonthCard(snapshot.growthUsage.installationActivity)))
-                \(slot("new-installations-card", content: newInstallationsCard(snapshot.growthUsage.installationGrowth)))
-              </div>
-              <div class="growth-secondary">\(slot("recent-server-activity-card", content: recentServerActivityCard(snapshot.growthUsage.installationGrowth)))</div>
-              <div class="installation-detail-grid section-table">
-                \(slot("installation-activity-state-table", content: installationActivityStateTable(snapshot.growthUsage.installationActivity)))
-                \(slot("installation-footprint-table", content: installationFootprintTable(snapshot.growthUsage.installationFootprint, refreshedAt: snapshot.growthUsage.installationActivity.refreshedAt)))
-              </div>
-              <div class="section-table">\(slot("installation-growth-table", content: installationGrowthTable(snapshot.growthUsage.installationGrowth)))</div>
-            </section>
-
-            <section class="section">
-              <div class="section-header"><h2>NWS / Alert Activity</h2><div class="subtle">Recent severe-weather activity and geography</div></div>
-              <div class="stack">
-                \(slot("touched-series-table", content: touchedSeriesTable(snapshot.operatorContext.lastTouchedSeries)))
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header"><h2>Delivery / Targeting</h2><div class="subtle">Primary delivery and coverage signals</div></div>
-              <div class="operational-kpi-grid">
-                \(slot("latency-card", content: latencyCard(snapshot.deliveryKPIs.endToEndAlertLatency)))
-                \(slot("apns-success-card", content: apnsSuccessCard(snapshot.deliveryKPIs.apnsDeliverySuccessRate)))
-                \(slot("coverage-card", content: coverageCard(snapshot.audienceTargeting.freshTargetableInstallationCoverage)))
-                \(slot("h3-card", content: h3Card(snapshot.audienceTargeting.alertsWithGeographyAndH3Success)))
-              </div>
-              <div class="operational-kpi-secondary">
-                \(slot("noop-card", content: noOpCard(snapshot.deliveryKPIs.sendNoOpRateByReason)))
-                \(slot("zero-candidate-card", content: zeroCandidateCard(snapshot.deliveryKPIs.zeroCandidateRevisionRate)))
-              </div>
-            </section>
-
-            <section class="section">
-              <div class="section-header"><h2>Operator Context</h2></div>
-              <div class="stack">
-                \(slot("recent-debug-table", content: recentDebugTable(snapshot.operatorContext.recentNotificationDebugEntries)))
-              </div>
-            </section>
-          </main>
-          \(liveUpdateScript(
-              pollIntervalMilliseconds: pollIntervalMilliseconds,
-              initialGeneratedAtMilliseconds: Int(snapshot.generatedAt.timeIntervalSince1970 * 1_000),
-              freshnessThresholdMilliseconds: freshnessThresholdMilliseconds,
-              initialSnapshotAgeMilliseconds: initialSnapshotAgeMilliseconds(for: snapshot)
-          ))
-        </body>
-        </html>
+    static func shell(page: Page, environment: String, status: String, age: String, content: String, script: String) -> String {
+        let navigation = Page.allCases.enumerated().map { index, destination in
+            "<a href=\"\(destination.path)\"\(destination == page ? " aria-current=\"page\"" : "")><span class=\"nav-index\">0\(index + 1)</span>\(destination.title)</a>"
+        }.joined()
+        let environmentLabel = environment.isEmpty ? "" : "<span class=\"environment\">\(escape(environment.uppercased()))</span>"
+        return """
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>\(page.title) · Arcus Signal</title><style>\(styles)</style></head>
+        <body class="control\(page == .overview ? "" : " detail-page")"><a class="skip" href="#main">Skip to content</a>
+        <div class="app"><header class="masthead"><a class="wordmark" href="/dashboard">Arcus Signal\(environmentLabel)</a>
+        <div class="telemetry" aria-label="Snapshot connection"><span id="connection-status" class="status-dot \(status)" aria-hidden="true"></span><span id="connection-status-label" class="status-label \(status)">\(status.uppercased())</span><span id="snapshot-age">\(escape(age))</span><a href="/v1/metrics">JSON API ↗</a></div></header>
+        <nav class="primary-nav" aria-label="Primary">\(navigation)<div class="sidebar-note"><strong>Arcus operations</strong>Worker-computed snapshot<br>Coarse location only</div></nav>
+        <main id="main"><div class="page-head"><div>\(page == .overview ? "" : "<div class=\"breadcrumbs\"><a href=\"/dashboard\">Overview</a> / \(page.title)</div>")<h1>\(page.title)</h1><p>\(page.subtitle)</p></div></div>
+        <div id="freshness-notice" class="freshness-notice" role="status" aria-live="polite"\(status == "live" || status == "unavailable" ? " hidden" : "")>\(status == "stale" ? "Snapshot is stale. Showing the last available data; current system health is not confirmed." : "")</div>
+        <div class="\(page == .overview ? "overview-grid" : "detail-grid")">\(content)</div></main>
+        <footer class="page-footer"><span>Arcus Signal · Operational Dashboard</span><span>All times UTC · canonical worker snapshot</span></footer></div>\(script)
+        </body></html>
         """
     }
-static func renderUnavailable(renderedAt: Date = .now) -> String {
-        """
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Arcus Signal Operator Dashboard</title>
-          <style>
-            \(unavailableStyles)
-          </style>
-        </head>
-        <body>
-          <section class="panel">
-            <h1>Dashboard Snapshot Unavailable</h1>
-            <p>The API process has not received a worker-computed dashboard snapshot yet. The page will keep checking for a fresh snapshot in the background.</p>
-            <p>Rendered \(escape(formatDate(renderedAt)))</p>
-            <p><a href="/v1/metrics">Try the JSON API</a></p>
-          </section>
-          \(unavailablePollingScript(pollIntervalMilliseconds: pollIntervalMilliseconds))
-        </body>
-        </html>
-        """
+
+    static func pageContent(_ s: OperatorDashboardSnapshotResponse, page: Page) -> String {
+        switch page {
+        case .overview:
+            return controlModule("health-overview", "health", healthOverview(s.redLights))
+                + controlModule("model-overview", "model", modelOverview(s.modelArtifacts))
+                + controlModule("usage-overview", "usage", usageOverview(s.growthUsage))
+                + controlModule("footprint-overview", "footprint", footprintOverview(s.growthUsage))
+                + controlModule("geography-overview", "geography", geographyOverview(s.growthUsage.installationActivity))
+                + controlModule("nws-overview", "nws", nwsOverview(s.operatorContext.lastTouchedSeries))
+                + controlModule("delivery-overview", "delivery", deliveryOverview(s.deliveryKPIs, s.audienceTargeting))
+        case .models:
+            return controlModule("model-overview", "model", modelOverview(s.modelArtifacts, detail: true))
+                + detailModule("Catalog diagnostics", slot("pressure-artifact-catalog-card", content: pressureArtifactCatalogCard(s.modelArtifacts.pressureArtifactCatalog)))
+                + detailModule("Recent pressure artifacts", slot("recent-pressure-artifacts-table", content: recentPressureArtifactsTable(s.modelArtifacts.recentPressureArtifacts)) + "<details><summary>Selected artifact evidence</summary>" + slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(s.modelArtifacts.pressureArtifactReadiness)) + "</details>", wide: true)
+        case .installations:
+            return controlModule("usage-overview", "usage", usageOverview(s.growthUsage, detail: true))
+                + detailModule("Server activity", slot("recent-server-activity-card", content: recentServerActivityCard(s.growthUsage.installationGrowth)) + slot("known-installations-card", content: knownInstallationsCard(s.growthUsage.installationGrowth)))
+                + controlModule("footprint-overview", "footprint wide", footprintOverview(s.growthUsage, detail: true))
+                + controlModule("geography-overview", "geography", geographyOverview(s.growthUsage.installationActivity, detail: true))
+                + detailModule("Monthly installation growth", slot("installation-growth-table", content: installationGrowthTable(s.growthUsage.installationGrowth)))
+        case .nws:
+            return controlModule("health-overview", "health wide", healthOverview(s.redLights))
+                + detailModule("Stale series context", "<p id=\"stale\" class=\"detail-copy\">The snapshot supplies the stale-series count, not the affected identities. The recently touched series below are not necessarily the stale ones.</p>", wide: true)
+                + detailModule("Hazard and revision context", slot("touched-series-table", content: touchedSeriesTable(s.operatorContext.lastTouchedSeries)), wide: true)
+        case .delivery:
+            return controlModule("delivery-overview", "delivery", deliveryOverview(s.deliveryKPIs, s.audienceTargeting, detail: true))
+                + detailModule("APNs outcomes & latency", slot("apns-success-card", content: apnsSuccessCard(s.deliveryKPIs.apnsDeliverySuccessRate)) + slot("latency-card", content: latencyCard(s.deliveryKPIs.endToEndAlertLatency)))
+                + detailModule("Targeting coverage", slot("coverage-card", content: coverageCard(s.audienceTargeting.freshTargetableInstallationCoverage)) + slot("h3-card", content: h3Card(s.audienceTargeting.alertsWithGeographyAndH3Success)))
+                + detailModule("Send decisions", slot("noop-card", content: noOpCard(s.deliveryKPIs.sendNoOpRateByReason)) + slot("zero-candidate-card", content: zeroCandidateCard(s.deliveryKPIs.zeroCandidateRevisionRate)))
+                + detailModule("Recent notification context", slot("recent-debug-table", content: recentDebugTable(s.operatorContext.recentNotificationDebugEntries)), wide: true)
+        }
+    }
+
+    static func renderUnavailable(renderedAt: Date = .now, page: Page = .overview, environment: String = "") -> String {
+        shell(page: page, environment: environment, status: "unavailable", age: "No snapshot", content: """
+        <section class="module wide unavailable"><h1>Dashboard Snapshot Unavailable</h1><p class="detail-copy">The API process has not received a worker-computed dashboard snapshot yet. This page will keep checking for a fresh snapshot.</p><p class="module-note">Rendered \(escape(formatDate(renderedAt)))</p><p><a href="/v1/metrics">Try the JSON API ↗</a></p></section>
+        """, script: unavailablePollingScript(pollIntervalMilliseconds: pollIntervalMilliseconds, recoveryPath: page.path))
     }
 
     private static let pollIntervalMilliseconds = max(15, OperatorDashboardConfig.fastRefreshIntervalSeconds / 2) * 1_000
     private static let freshnessThresholdMilliseconds = OperatorDashboardConfig.fastRefreshIntervalSeconds * 2 * 1_000
-
-    private static func initialSnapshotAgeMilliseconds(for snapshot: OperatorDashboardSnapshotResponse) -> Int {
-        max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt) * 1_000))
-    }
-
-    private static func initialStatusClass(for snapshot: OperatorDashboardSnapshotResponse) -> String {
-        snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt) <= TimeInterval(OperatorDashboardConfig.fastRefreshIntervalSeconds * 2)
-            ? "live"
-            : "stale"
-    }
-
-    private static func initialStatusLabel(for snapshot: OperatorDashboardSnapshotResponse) -> String {
-        initialStatusClass(for: snapshot).uppercased()
-    }
 }

@@ -270,7 +270,7 @@ struct OperatorDashboardTests {
 
         #expect(response.growthUsage.installationFootprint.count == 1)
         #expect(response.growthUsage.installationFootprint[0].presenceAgeSeconds == 300)
-        #expect(html.contains("Installation Footprint"))
+        #expect(html.contains("Installation footprint"))
         #expect(html.contains("Larimer County, CO"))
         #expect(!html.contains("apnsDeviceToken"))
         #expect(!html.contains("h3Cell"))
@@ -304,7 +304,7 @@ struct OperatorDashboardTests {
         #expect(response.redLights.staleActiveSeriesCount.status == .healthy)
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response)
-        #expect(html.components(separatedBy: "health-card health-healthy").count == 4)
+        #expect(html.components(separatedBy: "health-item health-healthy").count == 4)
     }
 
     @Test("red light statuses require refresh evidence")
@@ -333,7 +333,7 @@ struct OperatorDashboardTests {
         #expect(response.redLights.staleActiveSeriesCount.status == .unknown)
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response)
-        #expect(html.components(separatedBy: "health-card health-unknown").count == 5)
+        #expect(html.components(separatedBy: "health-item health-unknown").count == 5)
         #expect(html.components(separatedBy: "], '', metric.status);").count == 5)
     }
 
@@ -503,119 +503,70 @@ struct OperatorDashboardTests {
         }
     }
 
-    @Test("dashboard page renders core sections from snapshot")
+    @Test("Control Room routes retain operational surfaces and ordinary navigation")
     func dashboardPageRendersSnapshot() async throws {
         try await withApp { app in
             app.operatorDashboardSnapshotStore = StubSnapshotStore(snapshot: makeSnapshot())
+            let expected: [OperatorDashboardPageRenderer.Page: [String]] = [
+                .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Weld / Morgan, CO", "61.0%", "74 / 100"],
+                .models: ["pressure-artifact-catalog-card", "pressure-artifact-readiness-card", "recent-pressure-artifacts-table"],
+                .installations: ["recent-server-activity-card", "known-installations-card", "installation-growth-table", "footprint-overview", "geography-overview", "April 2026"],
+                .nws: ["health-overview", "touched-series-table", "COC005, COC013", "OBSERVED", "CONSIDERABLE", "urn:oid:series-1"],
+                .delivery: ["delivery-overview", "apns-success-card", "latency-card", "coverage-card", "h3-card", "noop-card", "zero-candidate-card", "recent-debug-table"]
+            ]
+            for page in OperatorDashboardPageRenderer.Page.allCases {
+                try await app.testing().test(.GET, page.path, afterResponse: { res async in
+                    #expect(res.status == .ok)
+                    #expect(res.headers.contentType == .html)
+                    let html = res.body.string
+                    let markup = html.components(separatedBy: "<script>").first ?? ""
+                    #expect(markup.contains("class=\"control"))
+                    #expect(markup.contains("href=\"\(page.path)\" aria-current=\"page\""))
+                    #expect(markup.contains("id=\"snapshot-age\""))
+                    #expect(markup.contains("aria-live=\"polite\""))
+                    for token in expected[page] ?? [] { #expect(markup.contains(token)) }
+                    for destination in OperatorDashboardPageRenderer.Page.allCases {
+                        #expect(markup.contains("href=\"\(destination.path)\""))
+                    }
+                    for token in ["fetch('/v1/metrics'", "disconnectAfterFailures = 2", "freshnessThresholdMs = 60000", "abortController.abort()", "snapshot.renderedAt", "performance.now()", "window.setTimeout(fetchSnapshot, nextDelay)", "window.setInterval(updateStatus, 1_000)", "state.consecutiveFailures += 1", "state.consecutiveFailures = 0", "focusedSummary", "openDetails"] {
+                        #expect(html.contains(token))
+                    }
+                    if page == .overview {
+                        #expect(markup.contains("health-item health-critical"))
+                        #expect(markup.contains("health-item health-warning"))
+                        #expect(markup.contains("health-item health-unknown"))
+                        #expect(markup.contains("5 freshest production rows · last 90 days"))
+                        #expect(!markup.contains("id=\"recent-debug-table\""))
+                        #expect(!markup.contains("id=\"recent-pressure-artifacts-table\""))
+                    }
+                    #expect(!html.contains("http-equiv=\"refresh\""))
+                    #expect(!html.contains("apnsDeviceToken"))
+                })
+            }
+        }
+    }
 
-            try await app.testing().test(.GET, "dashboard", afterResponse: { res async in
-                #expect(res.status == .ok)
-                #expect(res.headers.contentType == .html)
-                #expect(res.body.string.contains("Red Lights"))
-                #expect(res.body.string.contains("health-card health-critical"))
-                #expect(res.body.string.contains("health-card health-warning"))
-                #expect(res.body.string.contains("health-card health-unknown"))
-                #expect(res.body.string.contains("class=\"health-status\">Critical</span>"))
-                #expect(res.body.string.contains("prefers-reduced-motion: reduce"))
-                #expect(res.body.string.contains(":focus-visible"))
-                #expect(res.body.string.contains("flex-wrap: wrap"))
-                #expect(res.body.string.contains("@media (min-width: 721px) and (max-width: 900px)"))
-                #expect(res.body.string.contains("grid-template-columns: minmax(112px, 28%) 1fr"))
-                #expect(res.body.string.contains("content: attr(data-label)"))
-                #expect(res.body.string.contains("footprint-table-wrap"))
-                #expect(res.body.string.contains("role=\"region\" aria-label=\"Installation footprint\" tabindex=\"0\""))
-                #expect(res.body.string.contains("footprint-table-wrap:focus-visible"))
-                #expect(res.body.string.contains("Freshest presence first"))
-                #expect(res.body.string.components(separatedBy: "], '', metric.status);").count == 5)
-                #expect(res.body.string.contains("Model Pipeline"))
-                #expect(res.body.string.contains("Delivery / Targeting"))
-                #expect(res.body.string.contains("Installations / Usage"))
-                #expect(res.body.string.contains("growth-primary-grid"))
-                #expect(res.body.string.contains("class=\"growth-secondary\""))
-                #expect(res.body.string.contains("installation-detail-grid"))
-                #expect(res.body.string.contains("Known Installations"))
-                #expect(res.body.string.contains("New This Month"))
-                #expect(res.body.string.contains("Seen Last 24h — Server Activity"))
-                #expect(res.body.string.contains("Operational activity, not DAU"))
-                #expect(res.body.string.contains("Active Today"))
-                #expect(res.body.string.contains("Active This Month"))
-                #expect(res.body.string.contains("Active Installations by State"))
-                #expect(res.body.string.contains("Current/last-known operational state"))
-                #expect(res.body.string.contains("installationActivity"))
-                #expect(res.body.string.contains("id=\"active-today-card\""))
-                #expect(res.body.string.contains("id=\"installation-activity-state-table\""))
-                #expect(res.body.string.contains("renderInstallationActivityStateTable(snapshot.growthUsage.installationActivity)"))
-                #expect(res.body.string.contains("Monthly Installation Growth"))
-                #expect(res.body.string.contains("April 2026"))
-                #expect(res.body.string.contains("Primary delivery and coverage signals"))
-                #expect(res.body.string.contains("radial-gradient(circle at top right" ) == false)
-                #expect(res.body.string.contains("metric-details"))
-                #expect(res.body.string.contains("Recent pressure artifacts"))
-                #expect(res.body.string.contains("<th>Updated</th>"))
-                #expect(res.body.string.contains("data-label=\"Updated\""))
-                #expect(liveFunction("function renderRecentPressureArtifactsTable(metric)", until: "function renderRecentDebugRow", in: res.body.string).contains("<th>Updated</th>"))
-                #expect(liveFunction("function renderPressureArtifactRow(entry)", until: "function renderRecentPressureArtifactsTable", in: res.body.string).contains("data-label=\"Updated\""))
-                #expect(liveFunction("function renderPressureArtifactRow(entry)", until: "function renderRecentPressureArtifactsTable", in: res.body.string).contains("formatDate(entry.updatedAt)"))
-                #expect(liveFunction("function renderRecentDebugTable(metric)", until: "function renderTouchedSeriesRow", in: res.body.string).contains("<div class=\"table-wrap\">") )
-                #expect(liveFunction("function renderTouchedSeriesTable(metric)", until: "function seriesStateClass", in: res.body.string).contains("<div class=\"table-wrap\">") )
-                #expect(res.body.string.contains("Fresh targetable coverage"))
-                #expect(res.body.string.contains("61.0%"))
-                #expect(res.body.string.contains("Eligible ≤24h 74 / 100"))
-                #expect(res.body.string.range(of: "Red Lights")!.lowerBound < res.body.string.range(of: "Model Pipeline")!.lowerBound)
-                #expect(res.body.string.range(of: "Model Pipeline")!.lowerBound < res.body.string.range(of: "Installations / Usage")!.lowerBound)
-                #expect(res.body.string.range(of: "Installations / Usage")!.lowerBound < res.body.string.range(of: "NWS / Alert Activity")!.lowerBound)
-                #expect(res.body.string.range(of: "NWS / Alert Activity")!.lowerBound < res.body.string.range(of: "Delivery / Targeting")!.lowerBound)
-                #expect(res.body.string.range(of: "Delivery / Targeting")!.lowerBound < res.body.string.range(of: "Operator Context")!.lowerBound)
-                #expect(res.body.string.contains("NWS / Alert Activity"))
-                #expect(res.body.string.contains("Recent severe-weather activity and geography"))
-                #expect(res.body.string.contains("Weld / Morgan, CO"))
-                #expect(res.body.string.contains("UGC: COC005, COC013"))
-                #expect(res.body.string.contains("Operator Context"))
-                #expect(res.body.string.contains("Arcus Signal"))
-                #expect(res.body.string.contains("Operational Dashboard"))
-                #expect(res.body.string.contains("connection-status-label"))
-                #expect(res.body.string.contains(".status-label.disconnected { color: var(--danger); }"))
-                #expect(res.body.string.contains(".status-dot.disconnected { color: var(--danger); }"))
-                #expect(res.body.string.contains("id=\"snapshot-age\">Snapshot "))
-                #expect(res.body.string.contains("LIVE"))
-                #expect(res.body.string.contains("STALE"))
-                #expect(res.body.string.contains("DISCONNECTED"))
-                #expect(res.body.string.contains("disconnectAfterFailures = 2"))
-                #expect(res.body.string.contains("freshnessThresholdMs = 60000"))
-                #expect(res.body.string.contains("requestTimeoutMs"))
-                #expect(res.body.string.contains("abortController.abort()"))
-                #expect(res.body.string.contains("snapshot.renderedAt"))
-                #expect(res.body.string.contains("performance.now()"))
-                #expect(res.body.string.contains("Tornado Warning"))
-                #expect(res.body.string.contains("Tornado detection"))
-                #expect(res.body.string.contains("Tornado damage threat"))
-                #expect(res.body.string.contains("ugc_codes") == false)
-                #expect(res.body.string.contains("COC005, COC013"))
-                #expect(res.body.string.contains("OBSERVED"))
-                #expect(res.body.string.contains("CONSIDERABLE"))
-                #expect(res.body.string.contains("class=\"pill accent\">active"))
-                #expect(res.body.string.contains("class=\"danger\">OBSERVED"))
-                #expect(res.body.string.contains("class=\"danger\">CONSIDERABLE"))
-                #expect(res.body.string.contains("seriesStateClass(entry.state)"))
-                #expect(res.body.string.contains("tornadoThreatClass(entry.tornadoDamageThreat)"))
-                #expect(res.body.string.contains("urn:oid:series-1"))
-                #expect(res.body.string.contains("fetch('/v1/metrics'"))
-                #expect(res.body.string.contains("window.setTimeout(fetchSnapshot, nextDelay)"))
-                #expect(res.body.string.contains("The page polls the canonical") == false)
-                #expect(res.body.string.contains("window.setInterval(updateStatus, 1_000)"))
-                #expect(res.body.string.contains("state.consecutiveFailures += 1"))
-                #expect(res.body.string.contains("state.consecutiveFailures = 0"))
-                #expect(res.body.string.components(separatedBy: "Eligible ≤24h").count >= 3)
-                #expect(res.body.string.contains("Excluded &gt;24h"))
-                #expect(res.body.string.contains("Excluded >24h"))
-                #expect(res.body.string.contains("74 / 100"))
-                #expect(res.body.string.contains(">13<"))
-                #expect(res.body.string.contains("candidateQueryEligibleInstallationCount"))
-                #expect(res.body.string.contains("candidateQueryEligibleInstallationCount"))
-                #expect(res.body.string.contains("hardStalePresenceCount"))
-                #expect(res.body.string.contains("hero-rendered-at") == false)
-                #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
-            })
+    @Test("optional browser fixtures use the production renderer and canonical response")
+    func exportBrowserFixtures() throws {
+        guard let directory = ProcessInfo.processInfo.environment["DASHBOARD_BROWSER_OUTPUT"] else { return }
+        let output = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let response: OperatorDashboardSnapshotResponse
+        if let input = ProcessInfo.processInfo.environment["DASHBOARD_BROWSER_SNAPSHOT"] {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            response = try decoder.decode(OperatorDashboardSnapshotResponse.self, from: Data(contentsOf: URL(fileURLWithPath: input)))
+        } else {
+            response = .init(snapshot: makeSnapshot(), renderedAt: makeSnapshot().generatedAt)
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(response).write(to: output.appendingPathComponent("snapshot.json"))
+        for page in OperatorDashboardPageRenderer.Page.allCases {
+            try OperatorDashboardPageRenderer.render(snapshot: response, page: page, environment: "local verification")
+                .write(to: output.appendingPathComponent("\(page.rawValue).html"), atomically: true, encoding: .utf8)
+            try OperatorDashboardPageRenderer.renderUnavailable(page: page)
+                .write(to: output.appendingPathComponent("unavailable-\(page.rawValue).html"), atomically: true, encoding: .utf8)
         }
     }
 
@@ -639,15 +590,17 @@ struct OperatorDashboardTests {
         try await withApp { app in
             app.operatorDashboardSnapshotStore = StubSnapshotStore(snapshot: nil)
 
-            try await app.testing().test(.GET, "dashboard", afterResponse: { res async in
+            for page in OperatorDashboardPageRenderer.Page.allCases {
+              try await app.testing().test(.GET, page.path, afterResponse: { res async in
                 #expect(res.status == .serviceUnavailable)
                 #expect(res.body.string.contains("Dashboard Snapshot Unavailable"))
-                #expect(res.body.string.contains("window.location.replace('/dashboard')"))
+                #expect(res.body.string.contains("window.location.replace('\(page.path)')"))
                 #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
-                #expect(res.body.string.contains("font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"))
-                #expect(res.body.string.contains("a:focus-visible"))
-                #expect(res.body.string.contains("@media (max-width: 430px)"))
-            })
+                #expect(res.body.string.contains("class=\"control"))
+                #expect(res.body.string.contains(":focus-visible"))
+                #expect(res.body.string.contains("@media (max-width: 560px)"))
+              })
+            }
         }
     }
 }

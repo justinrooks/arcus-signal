@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "arcus-signal",
+    "repository": "justinrooks/arcus-signal"
+  },
+  "capabilities": {
+    "repository-preflight": {
+      "skill": "arcus-repo-preflight",
+      "script": "tools/repo_preflight.sh"
+    },
+    "focused-validation": {
+      "skill": "arcus-focused-validation",
+      "script": "tools/test_lane.sh"
+    },
+    "issue-context": {
+      "skill": "arcus-issue-context",
+      "script": "tools/issue_context.sh"
+    },
+    "diff-scope": {
+      "skill": "arcus-diff-scope",
+      "script": "tools/diff_scope.sh"
+    }
+  }
+}

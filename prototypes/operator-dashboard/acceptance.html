@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Arcus prototype layout checks</title><link rel="icon" href="data:,"><style>
+body{margin:24px;color:#172b30;background:#f3f5f5;font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif}button{padding:12px;background:white;border:1px solid #879b95;border-radius:6px;font:inherit;cursor:pointer}a{color:#206e64}pre{white-space:pre-wrap;font-size:12px}iframe{display:block;height:900px;border:1px solid #879b95;margin-top:24px}#stage{overflow:auto}h1{font-size:24px}button:focus-visible{outline:3px solid #206e64;outline-offset:3px}
+</style></head><body><h1>Prototype layout checks</h1><p>Runs inside Safari against local documents. Checks overflow, bounded footprint, ordinary navigation, disclosures, state previews, and document links. Visual inspection is separate.</p><button id="run">Run checks</button> <a href="quiet/index.html">Back to prototypes</a><p id="summary" role="status">Ready.</p><pre id="failures"></pre><details><summary>Full check log</summary><pre id="results">Ready.</pre></details><div id="stage"></div><script>
+const results=document.querySelector('#results'),stage=document.querySelector('#stage');
+document.querySelector('#run').addEventListener('click',async()=>{
+ const button=document.querySelector('#run');button.disabled=true;results.textContent='Running…\n';document.querySelector('#summary').textContent='Running…';document.querySelector('#failures').textContent='';let failures=0,checks=0;
+ function check(ok,message){checks++;if(!ok){failures++;document.querySelector('#failures').textContent+='FAIL '+message+'\n';}results.textContent+=(ok?'PASS ':'FAIL ')+message+'\n';}
+ for(const direction of ['quiet','editorial','control']){
+  for(const width of [390,768,1280,1440]){
+   const frame=document.createElement('iframe');frame.title=direction+' '+width;frame.style.width=width+'px';
+   const loaded=new Promise(resolve=>frame.addEventListener('load',resolve,{once:true}));frame.src=direction+'/index.html';stage.replaceChildren(frame);await loaded;
+   const doc=frame.contentDocument,win=frame.contentWindow;await doc.fonts.ready;
+   const label=direction+' @ '+width;
+   check(doc.documentElement.scrollWidth<=doc.documentElement.clientWidth,label+' no page overflow');
+   const clipped=[...doc.querySelectorAll('.module,td,.primary-nav,.health-item')].filter(el=>el.scrollWidth>el.clientWidth+1);
+   check(!clipped.length,label+' no component content overflow ('+clipped.length+')');
+   check(doc.querySelectorAll('.footprint tbody tr').length===5,label+' exactly five footprint rows');
+   check(doc.querySelectorAll('.primary-nav a').length===5,label+' five ordinary navigation links');
+   const disclosure=doc.querySelector('.health details');disclosure.open=true;check(disclosure.open,label+' native health disclosure');disclosure.open=false;
+   const select=doc.querySelector('#scenario');
+   for(const state of ['stale','offline','empty']){select.value=state;select.dispatchEvent(new win.Event('change'));check(doc.body.dataset.scenario===state,label+' '+state+' preview');if(state==='offline')check(doc.querySelector('.connection').textContent.includes('Disconnected'),label+' disconnected label');if(state==='empty')check(win.getComputedStyle(doc.querySelector('.footprint .empty-sensitive')).display==='none',label+' empty footprint does not show old rows');}
+  }
+  for(const page of ['index','models','installations','nws','delivery']){
+   const response=await fetch(direction+'/'+page+'.html');const html=await response.text();check(response.ok,direction+'/'+page+' HTTP '+response.status);
+   const parsed=new DOMParser().parseFromString(html,'text/html');
+   for(const link of parsed.querySelectorAll('a[href]')){
+    const target=new URL(link.getAttribute('href'),new URL(direction+'/'+page+'.html',location));
+    if(target.origin!==location.origin){check(false,'unexpected external link '+target);continue;}
+    const resource=await fetch(target);check(resource.ok,'link '+target.pathname+target.hash);
+    if(target.hash){const linked=new DOMParser().parseFromString(await resource.text(),'text/html');check(Boolean(linked.getElementById(decodeURIComponent(target.hash.slice(1)))),'anchor '+target.hash);}
+   }
+  }
+ }
+ stage.replaceChildren();document.querySelector('#summary').textContent='COMPLETE: '+checks+' checks; '+failures+' failures.';button.disabled=false;
+});
+</script></body></html>
