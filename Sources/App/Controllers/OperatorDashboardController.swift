@@ -5,6 +5,11 @@ struct OperatorDashboardController: RouteCollection {
         let metrics = routes.grouped("v1")
         metrics.get("metrics", use: metricsSnapshot)
         routes.get("dashboard", use: dashboard)
+        for page in OperatorDashboardPageRenderer.Page.allCases where page != .overview {
+            routes.get("dashboard", PathComponent(stringLiteral: page.rawValue)) { req async throws -> Response in
+                try await dashboard(req: req, page: page)
+            }
+        }
     }
 
     func metricsSnapshot(req: Request) async throws -> OperatorDashboardSnapshotResponse {
@@ -16,18 +21,22 @@ struct OperatorDashboardController: RouteCollection {
     }
 
     func dashboard(req: Request) async throws -> Response {
+        try await dashboard(req: req, page: .overview)
+    }
+
+    private func dashboard(req: Request, page: OperatorDashboardPageRenderer.Page) async throws -> Response {
         if let snapshot = try await req.application.operatorDashboardSnapshotStore.load(on: req.db) {
             return htmlResponse(
                 status: .ok,
                 html: OperatorDashboardPageRenderer.render(
-                    snapshot: .init(snapshot: snapshot, renderedAt: .now)
+                    snapshot: .init(snapshot: snapshot, renderedAt: .now), page: page, environment: req.application.environment.name
                 )
             )
         }
 
         return htmlResponse(
             status: .serviceUnavailable,
-            html: OperatorDashboardPageRenderer.renderUnavailable()
+            html: OperatorDashboardPageRenderer.renderUnavailable(page: page, environment: req.application.environment.name)
         )
     }
 

@@ -73,31 +73,7 @@ extension OperatorDashboardPageRenderer {
             return `<details class="diagnostic-disclosure"><summary class="${className}">${escapedValue}</summary><div class="diagnostic-full">${escapedValue}</div></details>`;
           }
 
-          function formatDate(value) {
-            const date = parseDateValue(value);
-            if (!date) {
-              return 'n/a';
-            }
-            const now = new Date();
-            const dateDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-            const nowDayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-            const dayDifference = Math.floor((nowDayStart - dateDayStart) / 86_400_000);
-            const hour = date.getHours();
-            const minute = pad(date.getMinutes());
-            const isPM = hour >= 12;
-            const twelveHour = hour % 12 === 0 ? 12 : hour % 12;
-            const timeText = `${twelveHour}:${minute} ${isPM ? 'PM' : 'AM'}`;
-
-            if (dayDifference <= 0) {
-              return `Today ${timeText}`;
-            }
-
-            if (dayDifference === 1) {
-              return `Yesterday ${timeText}`;
-            }
-
-            return `${dayDifference} days ago ${timeText}`;
-          }
+          function formatDate(value) { return controlTime(value); }
 
           function formatMonth(value) {
             const date = parseDateValue(value);
@@ -172,6 +148,11 @@ extension OperatorDashboardPageRenderer {
             if (ageNode) {
               ageNode.textContent = formatSnapshotAge(ageMs);
             }
+            const notice = document.getElementById('freshness-notice');
+            if (notice) {
+              notice.hidden = status === 'LIVE';
+              notice.textContent = disconnected ? 'Connection lost. Showing the last available snapshot; polling continues.' : (stale ? 'Snapshot is stale. Values below are last known, not current.' : '');
+            }
           }
 
           function formatByteSize(value) {
@@ -219,49 +200,20 @@ extension OperatorDashboardPageRenderer {
             return codes.join(', ');
           }
 
+          function renderDefinitionRows(lines) {
+            return lines.map(line => '<div><dt>'+escapeHtml(line.label)+'</dt><dd>'+escapeHtml(line.value)+'</dd></div>').join('');
+          }
           function renderCard(title, primary, refreshedAt, lines, primaryClass = '', status = null, showDetails = true) {
-            const primaryClassSuffix = primaryClass ? ` ${primaryClass}` : '';
-            const healthClassSuffix = status ? ` health-card health-${status}` : '';
-            const statusDot = status
-              ? '<span class="health-dot" aria-hidden="true"></span>'
-              : '';
-            const statusText = status
-              ? `<span class="health-status">${escapeHtml(status.charAt(0).toUpperCase() + status.slice(1))}</span>`
-              : '';
-            const summary = lines.length > 0 ? `${lines[0].label}: ${lines[0].value}` : '';
-            const details = showDetails ? lines.slice(1) : [];
-            const expanded = status === 'warning' || status === 'critical' || status === 'unknown';
-            const detailMarkup = details.length === 0 ? '' : (
-              '<details class="metric-details"' + (expanded ? ' open' : '') + '>' +
-                '<summary>Details</summary><ul class="meta-list">' +
-                details.map((line) => `<li><span>${escapeHtml(line.label)}</span><strong>${escapeHtml(line.value)}</strong></li>`).join('') +
-                '</ul></details>'
-            );
-            return `
-              <div class="card${healthClassSuffix}">
-                <div class="card-heading"><h3>${escapeHtml(title)}</h3><span class="health-indicator">${statusText}${statusDot}</span></div>
-                <div class="primary${primaryClassSuffix}">${escapeHtml(primary)}</div>
-                ${summary ? `<div class="metric-summary">${escapeHtml(summary)}</div>` : ''}
-                ${detailMarkup}
-              </div>
-            `;
+            const suffix = primaryClass ? ' '+primaryClass : '';
+            return '<div class="card"><dl class="definition-list"><div><dt>'+escapeHtml(title)+'</dt><dd class="primary'+suffix+'">'+escapeHtml(primary)+'</dd></div>'+renderDefinitionRows(lines)+'</dl><p class="module-note">Refreshed '+escapeHtml(formatDate(refreshedAt))+'</p></div>';
           }
 
           function renderCompactMetricCard(title, primary, refreshedAt, summary, details, primaryClass = '', expanded = false) {
-            const primaryClassSuffix = primaryClass ? ' ' + primaryClass : '';
-            const detailMarkup = details.length === 0 ? '' : (
-              '<details class="metric-details"' + (expanded ? ' open' : '') + '>' +
-                '<summary>Details</summary><ul class="meta-list">' +
-                details.map((line) => '<li><span>' + escapeHtml(line.label) + '</span><strong>' + escapeHtml(line.value) + '</strong></li>').join('') +
-                '</ul></details>'
-            );
-            return '<div class="card compact-card">' +
-              '<div class="card-heading"><h3>' + escapeHtml(title) + '</h3></div>' +
-              '<div class="primary' + primaryClassSuffix + '">' + escapeHtml(primary) + '</div>' +
-              (summary ? '<div class="metric-summary">' + escapeHtml(summary) + '</div>' : '') +
-              '<div class="subtle">Refreshed ' + escapeHtml(formatDate(refreshedAt)) + '</div>' +
-              detailMarkup +
-              '</div>';
+            const suffix = primaryClass ? ' '+primaryClass : '';
+            const remainingRows = renderDefinitionRows(details.slice(3));
+            const disclosure = remainingRows ? '<details class="metric-details"'+(expanded?' open':'')+'><summary>More diagnostics</summary><dl class="definition-list">'+remainingRows+'</dl></details>' : '';
+            return '<div class="card compact-card"><dl class="definition-list"><div><dt>'+escapeHtml(title)+'</dt><dd class="primary'+suffix+'">'+escapeHtml(primary)+'</dd></div>'+renderDefinitionRows(details.slice(0,3))+'</dl>'+
+              (summary?'<p class="module-note">'+escapeHtml(summary)+'</p>':'')+disclosure+'<p class="module-note">Refreshed '+escapeHtml(formatDate(refreshedAt))+'</p></div>';
           }
 
           function renderIngestCard(metric) {
@@ -699,10 +651,7 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderTouchedSeriesRow(entry) {
-            const stateCodes = Array.isArray(entry.ugcCodes)
-              ? [...new Set(entry.ugcCodes.map((code) => String(code).slice(0, 2).toUpperCase()).filter((code) => /^[A-Z]{2}$/.test(code)))]
-              : [];
-            const area = entry.areaDescription || (stateCodes.length > 0 ? 'Areas in ' + stateCodes.join(', ') : 'Unknown area');
+            const area = controlAreaDescription(entry);
             return `
               <tr>
                 <td data-label="Touched">${escapeHtml(formatDate(entry.touchedAt))}</td>
@@ -797,12 +746,11 @@ extension OperatorDashboardPageRenderer {
               return;
             }
 
-            node.classList.add('is-updating');
+            const openDetails = [...node.querySelectorAll('details')].map(element => element.open);
+            const focusedSummary = [...node.querySelectorAll('summary')].indexOf(document.activeElement);
             node.innerHTML = html;
-            if (options && options.streamRows) {
-              streamRows(node, options.streamDelayStepMs ?? 32);
-            }
-            window.requestAnimationFrame(() => node.classList.remove('is-updating'));
+            node.querySelectorAll('details').forEach((element, index) => { element.open = openDetails[index] ?? false; });
+            if (focusedSummary >= 0) node.querySelectorAll('summary')[focusedSummary]?.focus({ preventScroll: true });
           }
 
           function updateSlot(id, key, html, options) {
@@ -814,7 +762,101 @@ extension OperatorDashboardPageRenderer {
             swapHTML(id, html, options);
           }
 
+
+          function controlTime(value) {
+            const date = parseDateValue(value);
+            return date ? date.toISOString().replace(/\.\d{3}Z$/, 'Z').replace('T', ' ').replace(':00Z', ' UTC').replace('Z', ' UTC') : 'n/a';
+          }
+          function controlAreaDescription(entry) {
+            const area = (entry.areaDescription ?? '').trim();
+            const states = [...new Set((entry.ugcCodes ?? []).map(code => String(code).slice(0,2).toUpperCase()).filter(code => /^[A-Z]{2}$/.test(code)))];
+            if (area) {
+              const suffix = area.split(',').at(-1).trim();
+              return /^[A-Z]{2}$/.test(suffix) || states.length === 0 ? area : area + ', ' + states.join(', ');
+            }
+            return states.length ? 'Areas in ' + states.join(', ') : 'Unknown area';
+          }
+          function controlHead(title, subtitle, page) {
+            return '<div class="module-head"><div><h2>'+escapeHtml(title)+'</h2><p>'+escapeHtml(subtitle)+'</p></div>'+(page ? '<a href="/dashboard/'+page+'">Inspect ↗</a>' : '')+'</div>';
+          }
+          function controlStat(label, value, context) {
+            return '<div><span class="stat-label">'+escapeHtml(label)+'</span><strong class="stat-value">'+escapeHtml(value)+'</strong><span class="stat-unit">'+escapeHtml(context)+'</span></div>';
+          }
+          function controlHealthItem(title, value, status, summary, details = '') {
+            return '<div class="health-item health-'+escapeHtml(status)+'"><h3>'+escapeHtml(title)+'</h3><div class="health-reading"><strong>'+escapeHtml(value)+'</strong><span class="health-status">'+escapeHtml(status.charAt(0).toUpperCase()+status.slice(1))+'</span></div><p>'+escapeHtml(summary)+'</p>'+(details ? '<details class="health-details"><summary>Details</summary><div class="detail-copy">'+escapeHtml(details)+'</div></details>' : '')+'</div>';
+          }
+          function renderHealthOverview(r) {
+            const i=r.ingestFreshness,b=r.pipelineBacklogAge,c=r.stuckClaimedRows,s=r.staleActiveSeriesCount;
+            const findings=[];
+            if(c.status==='critical') findings.push(c.count+' stuck claims');
+            if(s.status==='warning') findings.push(s.count+' stale active series');
+            const unknown=[i,b,c,s].filter(m=>m.status==='unknown').length;
+            const headline=findings.length ? findings.join(' · ')+' need review' : 'No classified red lights · '+unknown+' unknown signals';
+            const tone=c.status==='critical'?'danger':(findings.length?'warning':'muted');
+            const destination=c.status==='critical'?'delivery':'nws',title=c.status==='critical'?'Delivery':'NWS Activity';
+            return '<div class="health-top '+(findings.length?'':'neutral')+'"><div><div class="health-label">Red Lights</div><strong class="'+tone+'">'+escapeHtml(headline)+'</strong></div><a href="/dashboard/'+destination+'">Inspect '+title+' ↗</a></div><div class="health-rail">'+
+              controlHealthItem('Ingest freshness',formatDuration(i.timeSinceLastSuccessfulSweepSeconds),i.status,i.recentSuccessCount+' successes / '+i.recentFailureCount+' failures','No server health threshold is defined. Last success: '+controlTime(i.lastSuccessfulSweepAt)+'. Last attempt: '+controlTime(i.lastAttemptAt)+'. Last failure: '+controlTime(i.lastFailureAt)+'. Error: '+(i.lastFailureMessage??'none')+'.')+
+              controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). Pending queue handoffs, not delivery completions.')+
+              controlHealthItem('Stuck claims',String(c.count),c.status,'Claim age threshold: '+formatDuration(c.thresholdSeconds),'Oldest claim: '+formatDuration(c.oldestClaimedAgeSeconds)+' ('+controlTime(c.oldestClaimedCreatedAt)+').')+
+              controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+'</div>';
+          }
+          function renderModelOverview(m, detail) {
+            const r=m.pressureArtifactReadiness,c=m.pressureArtifactCatalog;
+            const outcome=r.selectionOutcome==='exact'?'READY':(r.selectionOutcome??'NO DATA').toUpperCase();
+            const tone=({exact:'accent',stale:'warn',unavailable:'danger'})[r.selectionOutcome]??'muted';
+            const catalog=[['Ready',c.readyCount],['Warming',c.warmingCount],['Pending',c.pendingCount],['Failed',c.failedCount]];
+            const counts=catalog.map(([name,count])=>'<div><strong>'+(c.refreshedAt?count:'n/a')+'</strong><span>'+name+'</span></div>').join('');
+            const track=c.refreshedAt?catalog.filter(([,count])=>count>0).map(([name,count])=>'<i class="catalog-'+name.toLowerCase()+'" style="flex:'+Number(count)+'"></i>').join(''):'';
+            return controlHead('Model Pipeline','HRRR · pressure artifacts',detail?null:'models')+
+              '<div class="model-current"><span class="ready-mark '+tone+'" aria-hidden="true">'+(r.selectionOutcome==='exact'?'✓':'—')+'</span><div><div class="artifact-title">'+(r.selectionOutcome==='exact'?'Current artifact ready':'Pressure artifact '+escapeHtml(outcome.toLowerCase()))+'</div><div class="artifact-sub">'+escapeHtml(controlTime(r.runTime))+' / F'+escapeHtml(r.forecastHour??'—')+' · valid '+escapeHtml(controlTime(r.validTime))+'</div></div><span class="badge '+tone+'">'+escapeHtml(outcome)+'</span></div><div class="catalog">'+counts+'</div><div class="catalog-track" aria-hidden="true">'+track+'</div><p class="module-note">Checked '+escapeHtml(controlTime(r.lastCheckedAt??r.updatedAt))+' · '+(c.refreshedAt?c.stuckWarmingCount+' stuck warming · '+c.expiredCount+' expired catalog rows':'Catalog unavailable')+'</p>'+
+              [r.readinessReason,r.errorSummary,c.stuckReason].filter(v=>v!==null&&v!==undefined).map(v=>'<p class="module-note warning">'+escapeHtml(v)+'</p>').join('');
+          }
+          function renderUsageOverview(g, detail) {
+            const growth=g.installationGrowth,activity=g.installationActivity;
+            return controlHead('Usage & Installations','Explicit foreground activity · UTC windows',detail?null:'installations')+
+              '<div class="usage-metrics">'+controlStat('Known',growth.refreshedAt?growth.knownInstallationCount:'n/a','installations')+
+              controlStat('Today',activity.refreshedAt?activity.dailyActiveInstallationCount:'n/a','DAU')+
+              controlStat('This month',activity.refreshedAt?activity.monthlyActiveInstallationCount:'n/a','MAU')+
+              controlStat('New this month',growth.refreshedAt?growth.newThisMonthCount:'n/a',growth.monthlyGrowth.length?formatMonth(growth.monthlyGrowth[growth.monthlyGrowth.length-1].monthStart):'n/a')+
+              '</div><div class="usage-foot"><span><strong>'+(growth.refreshedAt?growth.currentlySubscribedCount:'n/a')+'</strong> subscribed</span><span class="muted">Activity updated '+escapeHtml(controlTime(activity.refreshedAt))+'</span></div><p class="module-note">Installations, not people. Background contact is not DAU.</p>';
+          }
+          function renderFootprintOverview(g, detail) {
+            const rows=g.installationFootprint.slice(0,5).map(e=>'<tr><td data-label="Location"><strong>'+escapeHtml(e.locationLabel)+'</strong><small>'+(e.isActive?'Active':'Inactive')+' · '+(e.isSubscribed?'subscribed':'unsubscribed')+'</small></td><td data-label="App / auth">'+escapeHtml(e.appVersion)+'<small>'+escapeHtml(e.locationAuth)+'</small></td><td data-label="Presence age" class="mono">'+escapeHtml(formatDuration(e.presenceAgeSeconds))+'</td><td data-label="Candidate eligibility"><span class="eligibility '+(e.candidateQueryEligible?'good':'muted')+'">'+(e.candidateQueryEligible?'Eligible':'Not eligible')+'</span>'+(e.ineligibilityReason!==null&&e.ineligibilityReason!==undefined?'<small>'+escapeHtml(e.ineligibilityReason)+'</small>':'')+'</td></tr>').join('');
+            const body=rows?'<div class="table-wrap footprint-table-wrap" role="region" aria-label="Installation footprint" tabindex="0"><table><thead><tr><th>Coarse location</th><th>App / auth</th><th>Presence</th><th>Candidate</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="empty">No production presence rows in the last 90 days.</p>';
+            return controlHead('Installation footprint','5 freshest production rows · last 90 days',detail?null:'installations')+body+'<p class="module-note">Presence freshness, not app-open history · updated '+escapeHtml(controlTime(g.installationActivity.refreshedAt))+'</p>';
+          }
+          function renderGeographyOverview(a, detail) {
+            const maximum=Math.max(1,...a.stateBreakdown.map(e=>e.activeTodayCount));
+            const rows=a.stateBreakdown.map(e=>'<tr><td class="state-label"><div class="state-bar"><span>'+escapeHtml(e.state)+'</span><i style="--count:'+(Number(e.activeTodayCount)/maximum*8)+'" aria-hidden="true"></i></div></td><td class="num">'+e.activeTodayCount+'</td><td class="num">'+e.activeThisMonthCount+'</td></tr>').join('');
+            const body=rows?'<table class="state-table"><thead><tr><th>State</th><th class="num">Today</th><th class="num">Month</th></tr></thead><tbody>'+rows+'</tbody></table>':'<p class="empty">'+(a.refreshedAt?'No foreground activity this month.':'Activity data unavailable.')+'</p>';
+            return controlHead('Where usage is attributed','Current / last-known state',detail?null:'installations')+body+'<p class="geo-note">Not location at app open · Unknown stays visible</p>';
+          }
+          function renderNWSOverview(n) {
+            const rows=n.entries.map(e=>{
+              const area=controlAreaDescription(e);
+              const threats=[e.tornadoDetection,e.tornadoDamageThreat].filter(v=>v!==null&&v!==undefined).map(v=>'<span class="'+tornadoThreatClass(v)+'">'+escapeHtml(v)+'</span>').join(' · ');
+              return '<div class="weather-row"><time class="weather-time" title="'+escapeHtml(controlTime(e.touchedAt))+'" datetime="'+escapeHtml(parseDateValue(e.touchedAt).toISOString().replace(/\.\d{3}Z$/, 'Z'))+'">'+escapeHtml(controlTime(e.touchedAt).slice(11,16))+'</time><div><div class="weather-event">'+escapeHtml(e.eventName)+'</div><div class="weather-place">'+escapeHtml(area)+'</div><div class="weather-threat">'+threats+'</div></div><span class="weather-lifecycle">'+escapeHtml(e.state)+'</span></div>';
+            }).join('');
+            return controlHead('NWS Activity','Five most recently touched series · UTC','nws')+(rows?'<div class="weather-list">'+rows+'</div>':'<p class="empty">No recently touched series.</p>')+'<p class="module-note">Recent activity is a bounded sample, not a national alert census.</p>';
+          }
+          function renderDeliveryOverview(d,a,detail) {
+            const l=d.endToEndAlertLatency,p=d.apnsDeliverySuccessRate,c=a.freshTargetableInstallationCoverage,h=a.alertsWithGeographyAndH3Success;
+            return controlHead('Delivery & Targeting',p.windowHours+'h APNs window · current coverage',detail?null:'delivery')+
+              '<div class="delivery-metrics">'+controlStat('Alert latency · p95',formatDuration(l.p95Seconds),l.successfulRevisionCount+' successful revisions · '+l.windowHours+'h')+
+              controlStat('APNs success',formatPercent(p.successRate),p.sentCount+' sent / '+(p.sentCount+p.failedCount)+' outcomes')+
+              controlStat('Fresh coverage',formatPercent(c.targetableRate),c.targetableInstallationCount+' / '+c.activeSubscribedInstallationCount+' active subscribed')+
+              controlStat('Geography → H3',formatPercent(h.successRate),h.successfulConversionCount+' / '+h.geometryBearingRevisionCount+' geometry revisions · '+h.windowHours+'h')+
+              '</div><details><summary>Coverage & delivery context</summary><div class="detail-copy">Candidate-query eligible: '+c.candidateQueryEligibleInstallationCount+' / '+c.activeSubscribedInstallationCount+' (presence ≤'+formatDuration(c.hardStalePresenceThresholdSeconds)+'); fresh targetable: '+c.targetableInstallationCount+' / '+c.activeSubscribedInstallationCount+'. These are distinct measures. APNs acceptance does not prove an alert was seen.</div></details>';
+          }
           function applySnapshot(snapshot) {
+            const detail = document.body.classList.contains('detail-page');
+            updateSlot('health-overview', JSON.stringify(snapshot.redLights), renderHealthOverview(snapshot.redLights));
+            updateSlot('model-overview', JSON.stringify(snapshot.modelArtifacts), renderModelOverview(snapshot.modelArtifacts, detail));
+            updateSlot('usage-overview', JSON.stringify(snapshot.growthUsage), renderUsageOverview(snapshot.growthUsage, detail));
+            updateSlot('footprint-overview', JSON.stringify(snapshot.growthUsage), renderFootprintOverview(snapshot.growthUsage, detail));
+            updateSlot('geography-overview', JSON.stringify(snapshot.growthUsage.installationActivity), renderGeographyOverview(snapshot.growthUsage.installationActivity, detail));
+            updateSlot('nws-overview', JSON.stringify(snapshot.operatorContext.lastTouchedSeries), renderNWSOverview(snapshot.operatorContext.lastTouchedSeries));
+            updateSlot('delivery-overview', JSON.stringify([snapshot.deliveryKPIs, snapshot.audienceTargeting]), renderDeliveryOverview(snapshot.deliveryKPIs, snapshot.audienceTargeting, detail));
             updateSlot('ingest-card', refreshKey(snapshot.redLights.ingestFreshness.refreshedAt), renderIngestCard(snapshot.redLights.ingestFreshness));
             updateSlot('pipeline-backlog-card', refreshKey(snapshot.redLights.pipelineBacklogAge.refreshedAt), renderPipelineBacklogCard(snapshot.redLights.pipelineBacklogAge));
             updateSlot('stuck-claimed-card', refreshKey(snapshot.redLights.stuckClaimedRows.refreshedAt), renderStuckClaimedCard(snapshot.redLights.stuckClaimedRows));
@@ -952,7 +994,7 @@ extension OperatorDashboardPageRenderer {
         """#
     }
 
-    static func unavailablePollingScript(pollIntervalMilliseconds: Int) -> String {
+    static func unavailablePollingScript(pollIntervalMilliseconds: Int, recoveryPath: String = "/dashboard") -> String {
         #"""
         <script>
         (function() {
@@ -966,7 +1008,7 @@ extension OperatorDashboardPageRenderer {
               });
 
               if (response.ok) {
-                window.location.replace('/dashboard');
+                window.location.replace('\#(recoveryPath)');
               }
             } catch (_) {
             }

@@ -559,27 +559,9 @@ extension OperatorDashboardPageRenderer {
         lines: [(String, String)]
     ) -> String {
         let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
-        let cardClass = status.map { "card health-card health-\($0.rawValue)" } ?? "card"
-        let statusDot = status.map { _ in
-            "<span class=\"health-dot\" aria-hidden=\"true\"></span>"
-        } ?? ""
-        let statusText = status.map { "<span class=\"health-status\">\(escape($0.rawValue.capitalized))</span>" } ?? ""
-        let isExpanded = status == .warning || status == .critical || status == .unknown
-        let summary = lines.first.map { "\($0.0): \($0.1)" }
-        let details = showDetails ? lines.dropFirst().map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined() : ""
-        let disclosure = details.isEmpty ? "" : """
-          <details class="metric-details"\(isExpanded ? " open" : "")>
-            <summary>Details</summary>
-            <ul class="meta-list">\(details)</ul>
-          </details>
-        """
+        let rows = lines.map { "<div><dt>\(escape($0.0))</dt><dd>\(escape($0.1))</dd></div>" }.joined()
         return """
-        <div class="\(cardClass)">
-          <div class="card-heading"><h3>\(escape(title))</h3><span class="health-indicator">\(statusText)\(statusDot)</span></div>
-          <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
-          \(summary.map { "<div class=\"metric-summary\">\(escape($0))</div>" } ?? "")
-          \(disclosure)
-        </div>
+        <div class="card"><dl class="definition-list"><div><dt>\(escape(title))</dt><dd class="primary\(primaryClassAttribute)">\(escape(primary))</dd></div>\(rows)</dl><p class="module-note">Refreshed \(escape(maybeDate(refreshedAt)))</p></div>
         """
     }
 
@@ -593,22 +575,11 @@ extension OperatorDashboardPageRenderer {
         expanded: Bool = false
     ) -> String {
         let primaryClassAttribute = primaryClass.map { " \($0)" } ?? ""
-        let disclosure = details.isEmpty ? "" : """
-          <details class="metric-details"\(expanded ? " open" : "")>
-            <summary>Details</summary>
-            <ul class="meta-list">
-              \(details.map { "<li><span>\(escape($0.0))</span><strong>\(escape($0.1))</strong></li>" }.joined())
-            </ul>
-          </details>
-        """
+        let visibleRows = details.prefix(3).map { "<div><dt>\(escape($0.0))</dt><dd>\(escape($0.1))</dd></div>" }.joined()
+        let remainingRows = details.dropFirst(3).map { "<div><dt>\(escape($0.0))</dt><dd>\(escape($0.1))</dd></div>" }.joined()
+        let disclosure = remainingRows.isEmpty ? "" : "<details class=\"metric-details\"\(expanded ? " open" : "")><summary>More diagnostics</summary><dl class=\"definition-list\">\(remainingRows)</dl></details>"
         return """
-        <div class="card compact-card">
-          <div class="card-heading"><h3>\(escape(title))</h3></div>
-          <div class="primary\(primaryClassAttribute)">\(escape(primary))</div>
-          \(summary.map { "<div class=\"metric-summary\">\(escape($0))</div>" } ?? "")
-          <div class="subtle">Refreshed \(escape(maybeDate(refreshedAt)))</div>
-          \(disclosure)
-        </div>
+        <div class="card compact-card"><dl class="definition-list"><div><dt>\(escape(title))</dt><dd class="primary\(primaryClassAttribute)">\(escape(primary))</dd></div>\(visibleRows)</dl>\(summary.map { "<p class=\"module-note\">\(escape($0))</p>" } ?? "")\(disclosure)<p class="module-note">Refreshed \(escape(maybeDate(refreshedAt)))</p></div>
         """
     }
 
@@ -696,24 +667,7 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func formatDate(_ date: Date) -> String {
-        let calendar = Calendar.current
-        let now = Date()
-        let dayDifference = calendar.dateComponents(
-            [.day],
-            from: calendar.startOfDay(for: date),
-            to: calendar.startOfDay(for: now)
-        ).day ?? 0
-
-        let timeText = DateFormatter.dashboardTimeFormatter.string(from: date)
-        if dayDifference <= 0 {
-            return "Today \(timeText)"
-        }
-
-        if dayDifference == 1 {
-            return "Yesterday \(timeText)"
-        }
-
-        return "\(dayDifference) days ago \(timeText)"
+        controlTime(date)
     }
 
     static func formatPercent(_ value: Double) -> String {
