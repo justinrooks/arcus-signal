@@ -8,6 +8,10 @@
     "repository-preflight": {
       "skill": "arcus-repo-preflight",
       "script": "tools/repo_preflight.sh"
+    },
+    "focused-validation": {
+      "skill": "arcus-focused-validation",
+      "script": "tools/test_lane.sh"
     }
   }
 }

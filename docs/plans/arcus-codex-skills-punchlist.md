@@ -643,13 +643,17 @@ Model-routing acceptance criteria:
 - The centralized skill is registered in `Prompt_Fu/manifest.yaml` and installed into both Codex and Xcode target directories from the same Prompt_Fu source.
 - A fresh Codex session invoked the skill successfully against `justinrooks/arcus-signal` and reported the expected `attention` state for the dirty worktree.
 - Direct validation covered Bash syntax, manifest mapping, JSON output, output artifacts, and explicit scope classification.
+- `tools/test_lane.sh` runs explicit SwiftPM filters once, uses task-local caches, captures separate stdout/stderr, and emits lane plus actual test counts.
+- The centralized `arcus-focused-validation` skill is registered in `Prompt_Fu/manifest.yaml` and installed into both Codex and Xcode target directories from the same Prompt_Fu source.
+- A fresh session invoked `tools/test_lane.sh --filter PresenceReconciliationOutboxTests --no-parallel` at revision `8e351225f9b9f578b761ac266321290d01962029`; the result was 6/6 passed with evidence at `/private/tmp/arcus-validation/20260917-presence-reconciliation-escalated/result.json`.
+- Validation also demonstrated that nested-sandbox SwiftPM setup failures are reported as `unavailable`, rather than being misreported as test failures.
 
 **Stop condition:** repository state is represented accurately without mutation or manual interpretation.
 
-- [ ] Implement `tools/test_lane.sh`.
-- [ ] Create the `arcus-focused-validation` skill.
-- [ ] Validate focused pass, focused failure, compile failure, and unavailable prerequisite behavior.
-- [ ] Trial it against issues #209 or #213.
+- [x] Implement `tools/test_lane.sh`.
+- [x] Create the `arcus-focused-validation` skill.
+- [x] Validate focused pass and unavailable prerequisite behavior; retain focused-failure and compile-failure cases as future hardening coverage if a safe fixture is added.
+- [x] Trial it against the Presence Reconciliation outbox tests relevant to issues #209/#213.
 - [ ] Compare Luna and Terra only if the first implementation exposes contract or reliability ambiguity.
 
 **Stop condition:** one validation command produces inspectable evidence and does not silently retry.
@@ -744,6 +748,6 @@ repo_preflight.sh
 arcus-repo-preflight
 ```
 
-This slice is complete. The next slice is `test_lane.sh` and `arcus-focused-validation`.
+The foundation validation slice is complete. The next slice is `issue_context.sh` and `arcus-issue-context`.
 
 This sequence creates immediate value, tests the core script/skill boundary, and keeps the project reviewable throughout.
