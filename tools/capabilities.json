@@ -16,6 +16,10 @@
     "issue-context": {
       "skill": "arcus-issue-context",
       "script": "tools/issue_context.sh"
+    },
+    "diff-scope": {
+      "skill": "arcus-diff-scope",
+      "script": "tools/diff_scope.sh"
     }
   }
 }

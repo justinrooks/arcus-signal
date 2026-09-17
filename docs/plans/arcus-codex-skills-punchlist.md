@@ -663,8 +663,8 @@ Model-routing acceptance criteria:
 - [x] Implement `tools/issue_context.sh`.
 - [x] Create the `arcus-issue-context` skill.
 - [x] Create `arcus-issue-readiness` as a small consumer of the packet.
-- [ ] Implement `tools/diff_scope.sh`.
-- [ ] Create `arcus-diff-scope`.
+- [x] Implement `tools/diff_scope.sh`.
+- [x] Create `arcus-diff-scope`.
 
 **Completed evidence for issue context:**
 
@@ -678,6 +678,13 @@ Model-routing acceptance criteria:
 - `arcus-issue-readiness` is registered in `Prompt_Fu/manifest.yaml` as a skill-only consumer of the issue-context and repository-preflight packets; no repository capability or script was added.
 - The skill reports exactly `READY`, `BLOCKED`, or `REQUIRES HUMAN DECISION`, distinguishes packet completeness from implementation readiness, and preserves the packet artifacts as its evidence boundary.
 - A trial against the current issue #213 packet produced `REQUIRES HUMAN DECISION`: the packet is complete and preflight is clean, but #213 is closed with completed implementation evidence and cannot enter a new implementation workflow without direction.
+
+**Completed evidence for diff scope:**
+
+- `tools/diff_scope.sh` compares explicit Git revisions using mechanical Git metadata, reports category counts, line counts, and path-based risk boundaries, and leaves scope judgments null unless an explicit scope file is supplied.
+- The centralized skill is registered in `Prompt_Fu/manifest.yaml` and installed into both Codex and Xcode target directories from the same Prompt_Fu source.
+- A fresh session compared `main..HEAD` on branch `skill-tuning` and produced a passed report with five tooling/documentation files, `+1420/-0` lines, no inferred boundaries, and no explicit scope supplied. Evidence: `/private/tmp/arcus-diff-scope/20260917-skill-tuning/result.json`.
+- An explicit empty scope trial returned `attention` and listed every changed path, confirming that out-of-scope reporting is opt-in and mechanical.
 
 **Review gate:** compare the new packets against the manual context gathered for issues #208–#214.
 
