@@ -52,7 +52,7 @@ struct OperatorDashboardTargetableCoverageTests {
 
     private func seedInstallation(
         token: String = "token",
-        apnsEnvironment: APNsEnvironment = .sandbox,
+        apnsEnvironment: APNsEnvironment = .prod,
         locationAuth: LocationAuth = .always,
         isActive: Bool = true,
         isSubscribed: Bool = true,
@@ -134,6 +134,12 @@ struct OperatorDashboardTargetableCoverageTests {
             try await seedInstallation(lastSeenAt: now, capturedAt: nil, on: database)
             try await seedInstallation(isActive: false, lastSeenAt: now, capturedAt: now, on: database)
             try await seedInstallation(isSubscribed: false, lastSeenAt: now, capturedAt: now, on: database)
+            try await seedInstallation(
+                apnsEnvironment: .sandbox,
+                lastSeenAt: now,
+                capturedAt: now,
+                on: database
+            )
 
             guard let sql = database as? any SQLDatabase else {
                 throw Abort(.internalServerError, reason: "Database is not SQLDatabase")

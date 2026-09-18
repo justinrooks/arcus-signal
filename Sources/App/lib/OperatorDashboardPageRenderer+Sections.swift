@@ -64,8 +64,8 @@ extension OperatorDashboardPageRenderer {
     static func knownInstallationsCard(_ metric: InstallationGrowthMetricResponse) -> String {
         let previousMonthTotal = metric.monthlyGrowth.dropLast().last?.cumulativeInstallationCount
         return card(
-            title: "Known Installations",
-            primary: "\(metric.knownInstallationCount)",
+            title: "Current Installations",
+            primary: "\(metric.currentInstallationCount)",
             refreshedAt: metric.refreshedAt,
             lines: [
                 ("Through last month", previousMonthTotal.map(String.init) ?? "n/a"),
@@ -93,7 +93,7 @@ extension OperatorDashboardPageRenderer {
             refreshedAt: metric.refreshedAt,
             showDetails: false,
             lines: [
-                ("Share of known", maybePercent(metric.seenLast24HoursRate)),
+                ("Share of current", maybePercent(metric.seenLast24HoursRate)),
                 ("Interpretation", "Operational activity, not DAU")
             ]
         )
@@ -166,7 +166,7 @@ extension OperatorDashboardPageRenderer {
             : """
               <div class="table-wrap">
                 <table class="stream-table inline-mobile-table">
-                  <thead><tr><th>Month</th><th>New installations</th><th>Cumulative total</th></tr></thead>
+                  <thead><tr><th>Month</th><th>New installations</th><th>Cumulative registrations</th></tr></thead>
                   <tbody>
                     \(metric.monthlyGrowth.map(installationGrowthRow).joined())
                   </tbody>
@@ -190,7 +190,7 @@ extension OperatorDashboardPageRenderer {
         <tr>
           <td data-label="Month">\(escape(formatMonth(entry.monthStart)))</td>
           <td data-label="New installations">\(entry.newInstallationCount)</td>
-          <td data-label="Cumulative total">\(entry.cumulativeInstallationCount)</td>
+          <td data-label="Cumulative registrations">\(entry.cumulativeInstallationCount)</td>
         </tr>
         """
     }
