@@ -317,6 +317,8 @@ public struct StoredMonthlyInstallationGrowth: Codable, Sendable {
 
 public struct StoredInstallationGrowthMetric: Codable, Sendable {
     public var knownInstallationCount: Int
+    public var currentInstallationCount: Int
+    public var dormantInstallationCount: Int
     public var newThisMonthCount: Int
     public var currentlySubscribedCount: Int
     public var seenLast24HoursCount: Int
@@ -324,16 +326,43 @@ public struct StoredInstallationGrowthMetric: Codable, Sendable {
 
     public init(
         knownInstallationCount: Int = 0,
+        currentInstallationCount: Int = 0,
+        dormantInstallationCount: Int = 0,
         newThisMonthCount: Int = 0,
         currentlySubscribedCount: Int = 0,
         seenLast24HoursCount: Int = 0,
         monthlyGrowth: [StoredMonthlyInstallationGrowth] = []
     ) {
         self.knownInstallationCount = knownInstallationCount
+        self.currentInstallationCount = currentInstallationCount
+        self.dormantInstallationCount = dormantInstallationCount
         self.newThisMonthCount = newThisMonthCount
         self.currentlySubscribedCount = currentlySubscribedCount
         self.seenLast24HoursCount = seenLast24HoursCount
         self.monthlyGrowth = monthlyGrowth
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case knownInstallationCount
+        case currentInstallationCount
+        case dormantInstallationCount
+        case newThisMonthCount
+        case currentlySubscribedCount
+        case seenLast24HoursCount
+        case monthlyGrowth
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            knownInstallationCount: try container.decodeIfPresent(Int.self, forKey: .knownInstallationCount) ?? 0,
+            currentInstallationCount: try container.decodeIfPresent(Int.self, forKey: .currentInstallationCount) ?? 0,
+            dormantInstallationCount: try container.decodeIfPresent(Int.self, forKey: .dormantInstallationCount) ?? 0,
+            newThisMonthCount: try container.decodeIfPresent(Int.self, forKey: .newThisMonthCount) ?? 0,
+            currentlySubscribedCount: try container.decodeIfPresent(Int.self, forKey: .currentlySubscribedCount) ?? 0,
+            seenLast24HoursCount: try container.decodeIfPresent(Int.self, forKey: .seenLast24HoursCount) ?? 0,
+            monthlyGrowth: try container.decodeIfPresent([StoredMonthlyInstallationGrowth].self, forKey: .monthlyGrowth) ?? []
+        )
     }
 }
 
@@ -1284,6 +1313,8 @@ public struct MonthlyInstallationGrowthResponse: Content, Sendable {
 public struct InstallationGrowthMetricResponse: Content, Sendable {
     public var refreshedAt: Date?
     public var knownInstallationCount: Int
+    public var currentInstallationCount: Int
+    public var dormantInstallationCount: Int
     public var newThisMonthCount: Int
     public var currentlySubscribedCount: Int
     public var seenLast24HoursCount: Int
@@ -1293,6 +1324,8 @@ public struct InstallationGrowthMetricResponse: Content, Sendable {
     init(refreshedAt: Date?, metric: StoredInstallationGrowthMetric) {
         self.refreshedAt = refreshedAt
         self.knownInstallationCount = metric.knownInstallationCount
+        self.currentInstallationCount = metric.currentInstallationCount
+        self.dormantInstallationCount = metric.dormantInstallationCount
         self.newThisMonthCount = metric.newThisMonthCount
         self.currentlySubscribedCount = metric.currentlySubscribedCount
         self.seenLast24HoursCount = metric.seenLast24HoursCount

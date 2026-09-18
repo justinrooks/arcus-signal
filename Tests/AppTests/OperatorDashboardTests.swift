@@ -109,6 +109,8 @@ struct OperatorDashboardTests {
             ),
             installationGrowth: .init(
                 knownInstallationCount: 40,
+                currentInstallationCount: 36,
+                dormantInstallationCount: 4,
                 newThisMonthCount: 4,
                 currentlySubscribedCount: 31,
                 seenLast24HoursCount: 27,
@@ -240,6 +242,8 @@ struct OperatorDashboardTests {
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.growthUsage.installationGrowth.seenLast24HoursRate ?? 0) - 0.675) < 0.0001)
+        #expect(response.growthUsage.installationGrowth.currentInstallationCount == 36)
+        #expect(response.growthUsage.installationGrowth.dormantInstallationCount == 4)
         #expect(response.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
         #expect(response.growthUsage.installationActivity.monthlyActiveInstallationCount == 38)
         #expect(response.growthUsage.installationActivity.stateBreakdown.last?.state == "Unknown")
@@ -489,6 +493,8 @@ struct OperatorDashboardTests {
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDetection == "OBSERVED")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.tornadoDamageThreat == "CONSIDERABLE")
                 #expect(payload.growthUsage.installationGrowth.knownInstallationCount == 40)
+                #expect(payload.growthUsage.installationGrowth.currentInstallationCount == 36)
+                #expect(payload.growthUsage.installationGrowth.dormantInstallationCount == 4)
                 #expect(payload.growthUsage.installationGrowth.currentlySubscribedCount == 31)
                 #expect(payload.growthUsage.installationGrowth.monthlyGrowth.last?.cumulativeInstallationCount == 40)
                 #expect(payload.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
@@ -510,7 +516,7 @@ struct OperatorDashboardTests {
             let expected: [OperatorDashboardPageRenderer.Page: [String]] = [
                 .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Weld / Morgan, CO", "61.0%", "74 / 100"],
                 .models: ["pressure-artifact-catalog-card", "pressure-artifact-readiness-card", "recent-pressure-artifacts-table"],
-                .installations: ["recent-server-activity-card", "known-installations-card", "installation-growth-table", "footprint-overview", "geography-overview", "April 2026"],
+                .installations: ["recent-server-activity-card", "known-installations-card", "installation-growth-table", "footprint-overview", "geography-overview", "April 2026", "Dormant 180d+"],
                 .nws: ["health-overview", "touched-series-table", "COC005, COC013", "OBSERVED", "CONSIDERABLE", "urn:oid:series-1"],
                 .delivery: ["delivery-overview", "apns-success-card", "latency-card", "coverage-card", "h3-card", "noop-card", "zero-candidate-card", "recent-debug-table"]
             ]
@@ -538,6 +544,12 @@ struct OperatorDashboardTests {
                         #expect(markup.contains("5 freshest production rows · last 90 days"))
                         #expect(!markup.contains("id=\"recent-debug-table\""))
                         #expect(!markup.contains("id=\"recent-pressure-artifacts-table\""))
+                    }
+                    if page == .installations {
+                        #expect(markup.contains("<dt>Dormant 180d+</dt><dd>4</dd>"))
+                        let liveKnownCard = liveFunction("function renderKnownInstallationsCard", until: "function renderNewInstallationsCard", in: html)
+                        #expect(liveKnownCard.contains("Dormant 180d+"))
+                        #expect(liveKnownCard.contains("metric.dormantInstallationCount"))
                     }
                     #expect(!html.contains("http-equiv=\"refresh\""))
                     #expect(!html.contains("apnsDeviceToken"))

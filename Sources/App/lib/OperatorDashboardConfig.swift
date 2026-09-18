@@ -9,6 +9,7 @@ public enum OperatorDashboardConfig {
 
     public static let installationFreshnessThresholdSeconds = 24 * 60 * 60
     public static let presenceFreshnessThresholdSeconds = 6 * 60 * 60
+    public static let installationDormancyThresholdSeconds = 180 * 24 * 60 * 60
 
     public static let fastRefreshIntervalSeconds = 30
     public static let standardRefreshIntervalSeconds = 60

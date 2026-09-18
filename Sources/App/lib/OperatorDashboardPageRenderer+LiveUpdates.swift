@@ -254,7 +254,8 @@ extension OperatorDashboardPageRenderer {
               : null;
             return renderCard('Known Installations', String(metric.knownInstallationCount), metric.refreshedAt, [
               { label: 'Through last month', value: previousMonth ? String(previousMonth.cumulativeInstallationCount) : 'n/a' },
-              { label: 'Currently subscribed', value: String(metric.currentlySubscribedCount) }
+              { label: 'Currently subscribed', value: String(metric.currentlySubscribedCount) },
+              { label: 'Dormant 180d+', value: String(metric.dormantInstallationCount) }
             ]);
           }
 

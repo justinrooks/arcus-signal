@@ -450,11 +450,13 @@ struct OperatorDashboardSnapshotRefresher {
     }
 
     func loadInstallationGrowth(on sql: any SQLDatabase, now: Date) async throws -> StoredInstallationGrowthMetric {
+        let dormancyCutoff = now.addingTimeInterval(-Double(OperatorDashboardConfig.installationDormancyThresholdSeconds))
         let rows = try await sql.raw("""
             WITH bounds AS (
                 SELECT
                     date_trunc('month', \(bind: now) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS current_month_start,
-                    \(bind: now) AS observed_at
+                    \(bind: now) AS observed_at,
+                    \(bind: dormancyCutoff) AS dormancy_cutoff
             ),
             months AS (
                 SELECT generate_series(
@@ -479,16 +481,42 @@ struct OperatorDashboardSnapshotRefresher {
                 FROM device_installations, bounds
                 WHERE created_at < current_month_start - INTERVAL '11 months'
             ),
+            latest_foreground_activity AS (
+                SELECT installation_id, MAX(created_at) AS last_activity_at
+                FROM installation_activity_daily
+                GROUP BY installation_id
+            ),
+            communication AS (
+                SELECT
+                    i.*,
+                    GREATEST(
+                        COALESCE(i.last_seen_at, '-infinity'::timestamptz),
+                        COALESCE(a.last_activity_at, '-infinity'::timestamptz)
+                    ) AS last_communication_at
+                FROM device_installations i
+                LEFT JOIN latest_foreground_activity a
+                  ON a.installation_id = i.installation_id
+            ),
             current_state AS (
                 SELECT
                     COUNT(*) AS known_installation_count,
+                    COUNT(*) FILTER (
+                        WHERE apns_environment = 'prod'
+                          AND is_active = TRUE
+                          AND last_communication_at >= dormancy_cutoff
+                    ) AS current_installation_count,
+                    COUNT(*) FILTER (
+                        WHERE apns_environment = 'prod'
+                          AND is_active = TRUE
+                          AND last_communication_at < dormancy_cutoff
+                    ) AS dormant_installation_count,
                     COUNT(*) FILTER (
                         WHERE is_active = TRUE AND is_subscribed = TRUE
                     ) AS currently_subscribed_count,
                     COUNT(*) FILTER (
                         WHERE last_seen_at >= observed_at - INTERVAL '24 hours'
                     ) AS seen_last_24_hours_count
-                FROM device_installations, bounds
+                FROM communication, bounds
             )
             SELECT
                 monthly_new.month_start AS "monthStart",
@@ -498,6 +526,8 @@ struct OperatorDashboardSnapshotRefresher {
                         + SUM(monthly_new.new_installation_count) OVER (ORDER BY monthly_new.month_start)
                 )::BIGINT AS "cumulativeInstallationCount",
                 current_state.known_installation_count AS "knownInstallationCount",
+                current_state.current_installation_count AS "currentInstallationCount",
+                current_state.dormant_installation_count AS "dormantInstallationCount",
                 current_state.currently_subscribed_count AS "currentlySubscribedCount",
                 current_state.seen_last_24_hours_count AS "seenLast24HoursCount"
             FROM monthly_new
@@ -512,6 +542,8 @@ struct OperatorDashboardSnapshotRefresher {
 
         return .init(
             knownInstallationCount: Int(currentMonth.knownInstallationCount),
+            currentInstallationCount: Int(currentMonth.currentInstallationCount),
+            dormantInstallationCount: Int(currentMonth.dormantInstallationCount),
             newThisMonthCount: Int(currentMonth.newInstallationCount),
             currentlySubscribedCount: Int(currentMonth.currentlySubscribedCount),
             seenLast24HoursCount: Int(currentMonth.seenLast24HoursCount),
@@ -1095,6 +1127,8 @@ private struct InstallationGrowthRow: Decodable {
     let newInstallationCount: Int64
     let cumulativeInstallationCount: Int64
     let knownInstallationCount: Int64
+    let currentInstallationCount: Int64
+    let dormantInstallationCount: Int64
     let currentlySubscribedCount: Int64
     let seenLast24HoursCount: Int64
 }
