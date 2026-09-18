@@ -103,3 +103,63 @@ Expected ports:
 - In `development`/`testing`, DB config defaults to local Postgres values with a warning when `DATABASE_URL` is absent.
 - In non-dev environments, missing `REDIS_URL` is an immediate startup failure.
 - In non-dev environments, missing `DATABASE_URL` is an immediate startup failure.
+
+<!-- graft:start -->
+## Graft — Repository Context
+
+Arcus-Signal has a local structural context graph under `graft/`. Use Graft as a navigation and impact-analysis aid, not as a source of truth.
+
+For intended system behavior and architectural invariants, follow `docs/architecture.md`. For actual runtime behavior, verify the relevant implementation and focused tests.
+
+### When to use Graft
+
+Use Graft when a task is unfamiliar, cross-cutting, or requires tracing relationships across multiple files, especially:
+
+* ingest → persistence → targeting → notification flows
+* queue and outbox orchestration
+* model/revision relationships
+* notification routing and delivery
+* locating ownership of an unfamiliar behavior
+* determining callers, dependencies, or blast radius before a change
+
+For a small task with a known file, symbol, or focused slice, go directly to the relevant source and tests. Do not add a Graft query merely because Graft is available.
+
+### Recommended workflow
+
+Start broad only when necessary:
+
+`graft ask "<question>" --source`
+
+Treat the results as ranked leads. Identify the likely architectural spine, then verify the important behavior in the referenced source and tests.
+
+Prefer a small number of targeted follow-up queries over repeatedly rephrasing the same question.
+
+Use:
+
+* `graft callers <symbol>` for callers and dependency/blast-radius questions.
+* `graft callers <symbol> --direction out` for dependencies used by a symbol.
+* `graft skeleton <file>` when only a file's API surface is needed.
+* `graft grep "<pattern>"` when every indexed occurrence matters.
+* normal repository search for unindexed content, documentation, configuration, or when a direct literal search is simpler.
+
+Use `--full` only when the normal source excerpts do not contain enough context. Otherwise prefer the smaller default spans.
+
+### Verification
+
+Do not treat a Graft result, generated summary, or top-ranked node as authoritative by itself.
+
+Before changing production behavior:
+
+1. verify the relevant implementation;
+2. inspect focused tests covering the behavior;
+3. check `docs/architecture.md` when an architectural invariant or pipeline boundary is involved.
+
+Open as much surrounding source as needed to understand invariants, error handling, transaction boundaries, concurrency, or lifecycle behavior. Token savings are useful, but correctness comes first.
+
+### Keeping the graph current
+
+Graft queries normally refresh the structural graph against working-tree changes automatically.
+
+Use `graft check` when graph freshness is in doubt. Run `graft build` manually only when the graph needs rebuilding or troubleshooting; do not rebuild reflexively after every edit.
+
+<!-- graft:end -->
