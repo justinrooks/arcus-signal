@@ -29,7 +29,14 @@ struct OperatorDashboardInstallationGrowthTests {
                             created_at TIMESTAMPTZ NOT NULL,
                             last_seen_at TIMESTAMPTZ NOT NULL,
                             is_active BOOLEAN NOT NULL,
-                            is_subscribed BOOLEAN NOT NULL
+                            is_subscribed BOOLEAN NOT NULL,
+                            apns_environment TEXT NOT NULL DEFAULT 'prod'
+                        ) ON COMMIT DROP
+                    """).run()
+                    try await sql.raw("""
+                        CREATE TEMPORARY TABLE installation_activity_daily (
+                            installation_id UUID NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL
                         ) ON COMMIT DROP
                     """).run()
                     try await test(database)
@@ -57,19 +64,22 @@ struct OperatorDashboardInstallationGrowthTests {
         lastSeenAt: Date,
         isActive: Bool = true,
         isSubscribed: Bool = true,
+        apnsEnvironment: String = "prod",
+        installationID: UUID = UUID(),
         on database: any Database
-    ) async throws {
+    ) async throws -> UUID {
         guard let sql = database as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
 
         try await sql.raw("""
             INSERT INTO device_installations
-                (installation_id, created_at, last_seen_at, is_active, is_subscribed)
+                (installation_id, created_at, last_seen_at, is_active, is_subscribed, apns_environment)
             VALUES
-                (\(bind: UUID()), \(bind: createdAt), \(bind: lastSeenAt),
-                 \(bind: isActive), \(bind: isSubscribed))
+                (\(bind: installationID), \(bind: createdAt), \(bind: lastSeenAt),
+                 \(bind: isActive), \(bind: isSubscribed), \(bind: apnsEnvironment))
         """).run()
+        return installationID
     }
 
     @Test("growth aggregate respects UTC month boundaries and cumulative totals")
@@ -111,6 +121,8 @@ struct OperatorDashboardInstallationGrowthTests {
                 .loadInstallationGrowth(on: sql, now: now)
 
             #expect(metric.knownInstallationCount == 5)
+            #expect(metric.currentInstallationCount == 4)
+            #expect(metric.dormantInstallationCount == 0)
             #expect(metric.newThisMonthCount == 2)
             #expect(metric.currentlySubscribedCount == 3)
             #expect(metric.seenLast24HoursCount == 3)
@@ -123,5 +135,92 @@ struct OperatorDashboardInstallationGrowthTests {
             #expect(metric.monthlyGrowth.last?.newInstallationCount == 2)
             #expect(metric.monthlyGrowth.last?.cumulativeInstallationCount == 5)
         }
+    }
+
+    @Test("current and dormant counts use the newest operational or foreground communication")
+    func currentAndDormantCountsUseEffectiveCommunication() async throws {
+        try await withApp { database in
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            let old = now.addingTimeInterval(-Double(OperatorDashboardConfig.installationDormancyThresholdSeconds) - 1)
+            let exact = now.addingTimeInterval(-Double(OperatorDashboardConfig.installationDormancyThresholdSeconds))
+            let oldWithRecentActivity = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
+            let recentWithOldActivity = try await seedInstallation(createdAt: old, lastSeenAt: now, on: database)
+            let latestActivityMakesCurrent = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
+            _ = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
+            _ = try await seedInstallation(createdAt: old, lastSeenAt: exact, on: database)
+            let dormantWithMultipleActivities = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
+            _ = try await seedInstallation(createdAt: old, lastSeenAt: old, apnsEnvironment: "sandbox", on: database)
+            _ = try await seedInstallation(createdAt: old, lastSeenAt: old, isActive: false, on: database)
+            try await sql.raw("""
+                INSERT INTO installation_activity_daily (installation_id, created_at)
+                VALUES (\(bind: oldWithRecentActivity), \(bind: now))
+            """).run()
+            try await sql.raw("""
+                INSERT INTO installation_activity_daily (installation_id, created_at)
+                VALUES (\(bind: recentWithOldActivity), \(bind: old))
+            """).run()
+            try await sql.raw("""
+                INSERT INTO installation_activity_daily (installation_id, created_at)
+                VALUES
+                    (\(bind: latestActivityMakesCurrent), \(bind: old)),
+                    (\(bind: latestActivityMakesCurrent), \(bind: now.addingTimeInterval(-1))),
+                    (\(bind: dormantWithMultipleActivities), \(bind: old)),
+                    (\(bind: dormantWithMultipleActivities), \(bind: old.addingTimeInterval(-1)))
+            """).run()
+
+            let metric = try await OperatorDashboardSnapshotRefresher()
+                .loadInstallationGrowth(on: sql, now: now)
+
+            #expect(metric.currentInstallationCount == 4)
+            #expect(metric.dormantInstallationCount == 2)
+        }
+    }
+
+    @Test("new communication moves a dormant installation into current")
+    func newCommunicationMovesDormantInstallationIntoCurrent() async throws {
+        try await withApp { database in
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            let old = now.addingTimeInterval(-Double(OperatorDashboardConfig.installationDormancyThresholdSeconds) - 1)
+            let installationID = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
+
+            let dormantMetric = try await OperatorDashboardSnapshotRefresher()
+                .loadInstallationGrowth(on: sql, now: now)
+            #expect(dormantMetric.currentInstallationCount == 0)
+            #expect(dormantMetric.dormantInstallationCount == 1)
+
+            try await sql.raw("""
+                INSERT INTO installation_activity_daily (installation_id, created_at)
+                VALUES (\(bind: installationID), \(bind: now))
+            """).run()
+
+            let currentMetric = try await OperatorDashboardSnapshotRefresher()
+                .loadInstallationGrowth(on: sql, now: now)
+            #expect(currentMetric.currentInstallationCount == 1)
+            #expect(currentMetric.dormantInstallationCount == 0)
+        }
+    }
+
+    @Test("stored growth metric decodes legacy snapshots without new fields")
+    func storedGrowthMetricDecodesLegacySnapshots() throws {
+        let data = Data("""
+        {
+          "knownInstallationCount": 7,
+          "newThisMonthCount": 2,
+          "currentlySubscribedCount": 5,
+          "seenLast24HoursCount": 3,
+          "monthlyGrowth": []
+        }
+        """.utf8)
+
+        let metric = try JSONDecoder().decode(StoredInstallationGrowthMetric.self, from: data)
+
+        #expect(metric.knownInstallationCount == 7)
+        #expect(metric.currentInstallationCount == 0)
+        #expect(metric.dormantInstallationCount == 0)
+        #expect(metric.monthlyGrowth.isEmpty)
     }
 }

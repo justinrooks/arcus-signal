@@ -69,7 +69,8 @@ extension OperatorDashboardPageRenderer {
             refreshedAt: metric.refreshedAt,
             lines: [
                 ("Through last month", previousMonthTotal.map(String.init) ?? "n/a"),
-                ("Currently subscribed", "\(metric.currentlySubscribedCount)")
+                ("Currently subscribed", "\(metric.currentlySubscribedCount)"),
+                ("Dormant 180d+", "\(metric.dormantInstallationCount)")
             ]
         )
     }
