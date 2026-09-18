@@ -4,6 +4,7 @@ import Foundation
 public enum NotificationSendAttemptOutcome: String, Codable, Sendable {
     case delivered
     case noOp = "no_op"
+    case retrying
     case failed
 }
 

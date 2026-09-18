@@ -56,7 +56,11 @@ public struct DispatchAgent {
                     reason: reason
                 )
                 
-                try await sendQueue.dispatch(NotificationSendJob.self, pl)
+                try await sendQueue.dispatch(
+                    NotificationSendJob.self,
+                    pl,
+                    maxRetryCount: NotificationSendJob.maximumRetryCount
+                )
                 row.availableAt = Date()
                 row.lastError = nil
                 row.attempts += 1

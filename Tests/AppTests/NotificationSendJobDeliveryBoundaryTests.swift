@@ -1,10 +1,12 @@
 @testable import App
+import APNSCore
 import Fluent
 import FluentSQL
 import Foundation
 import Queues
 import Testing
 import Vapor
+import XCTQueues
 import ArcusCore
 
 @Suite("Notification send job delivery boundary", .serialized)
@@ -144,9 +146,17 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 freshness_state TEXT NOT NULL,
                 status TEXT,
                 apns_error_code TEXT,
+                retry_owner_id TEXT,
+                retry_generation INTEGER NOT NULL DEFAULT 0,
                 completed_at TIMESTAMP,
                 created TIMESTAMP NOT NULL
             );
+            """).run()
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+              ADD COLUMN IF NOT EXISTS retry_owner_id TEXT,
+              ADD COLUMN IF NOT EXISTS retry_generation INTEGER NOT NULL DEFAULT 0;
             """).run()
 
         try await sql.raw("""
@@ -214,12 +224,16 @@ struct NotificationSendJobDeliveryBoundaryTests {
             """).run()
     }
 
-    private func makeQueueContext(app: Application) -> QueueContext {
-        QueueContext(
+    private func makeQueueContext(app: Application, jobID: JobIdentifier? = nil) -> QueueContext {
+        var logger = app.logger
+        if let jobID {
+            logger[metadataKey: "job_id"] = .string(jobID.string)
+        }
+        return QueueContext(
             queueName: QueueName(string: "test-send"),
             configuration: app.queues.configuration,
             application: app,
-            logger: app.logger,
+            logger: logger,
             on: app.eventLoopGroup.any()
         )
     }
@@ -231,7 +245,12 @@ struct NotificationSendJobDeliveryBoundaryTests {
         )!
     }
 
-    private func seedInstallation(id: UUID, locationAuth: LocationAuth, on db: any Database) async throws {
+    private func seedInstallation(
+        id: UUID,
+        locationAuth: LocationAuth,
+        apnsToken: String = "token",
+        on db: any Database
+    ) async throws {
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
@@ -241,10 +260,13 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 (installation_id, apns_device_token, apns_environment, platform, os_version, app_version,
                  build_number, location_auth, is_active, is_subscribed, created_at, updated_at, last_seen_at)
             VALUES
-                (\(bind: id), 'token', 'sandbox', 'iOS', '26.0', '1.0.0', '100',
+                (\(bind: id), \(bind: apnsToken), 'sandbox', 'iOS', '26.0', '1.0.0', '100',
                  \(bind: locationAuth.rawValue), TRUE, TRUE, NOW(), NOW(), NOW())
             ON CONFLICT (installation_id) DO UPDATE
-            SET location_auth = EXCLUDED.location_auth
+            SET location_auth = EXCLUDED.location_auth,
+                apns_device_token = EXCLUDED.apns_device_token,
+                is_active = TRUE,
+                is_subscribed = TRUE
             """).run()
     }
 
@@ -310,9 +332,15 @@ struct NotificationSendJobDeliveryBoundaryTests {
         installationID: UUID,
         h3Cell: Int64,
         capturedAt: Date,
+        apnsToken: String = "token",
         on db: any Database
     ) async throws {
-        try await seedInstallation(id: installationID, locationAuth: .always, on: db)
+        try await seedInstallation(
+            id: installationID,
+            locationAuth: .always,
+            apnsToken: apnsToken,
+            on: db
+        )
         try await seedH3Presence(
             installationID: installationID,
             h3Cell: h3Cell,
@@ -354,11 +382,12 @@ struct NotificationSendJobDeliveryBoundaryTests {
     private func makeCandidate(
         id: UUID,
         auth: LocationAuth,
-        capturedAt: Date
+        capturedAt: Date,
+        apnsToken: String = "token"
     ) -> NotificationCandidate {
         NotificationCandidate(
             id: id,
-            apnsToken: "token",
+            apnsToken: apnsToken,
             apnsEnvironment: "sandbox",
             locationAuthRaw: auth.rawValue,
             capturedAt: capturedAt,
@@ -384,6 +413,7 @@ struct NotificationSendJobDeliveryBoundaryTests {
 
         #expect(payload.seriesId == seriesID)
         #expect(payload.installationId == nil)
+        #expect(payload.deliveryAttemptId == nil)
     }
 
     @Test("stale candidates are blocked before ledger and persist one stale miss across retries")
@@ -685,8 +715,8 @@ struct NotificationSendJobDeliveryBoundaryTests {
         }
     }
 
-    @Test("generic sender failure persists one failed claimed delivery")
-    func genericSenderFailurePersistsFailedClaim() async throws {
+    @Test("unknown transport failure persists one retrying claimed delivery")
+    func transportFailurePersistsRetryingClaim() async throws {
         try await withIntegrationTestApplication(
             setup: .directPostgres,
             prepare: { app in try await bootstrapTables(on: app.db) }
@@ -717,7 +747,8 @@ struct NotificationSendJobDeliveryBoundaryTests {
 
             #expect(summary.claimedCount == 1)
             #expect(summary.sentCount == 0)
-            #expect(summary.failedCount == 1)
+            #expect(summary.failedCount == 0)
+            #expect(summary.retryableFailureCount == 1)
             #expect(summary.noOpReason == nil)
 
             let ledger = try #require(try await NotificationLedgerModel.query(on: app.db)
@@ -725,10 +756,877 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 .filter(\.$series.$id == seriesID)
                 .filter(\.$revisionUrn == revisionUrn)
                 .first())
-            #expect(ledger.status == "failed")
-            #expect(ledger.completedAt != nil)
+            #expect(ledger.status == "retrying")
+            #expect(ledger.completedAt == nil)
+            #expect(ledger.apnsErrorCode == APNsDeliveryFailureClassifier.transportErrorCode)
+        }
+    }
+
+    @Test("transient failure retries the same ledger row and later succeeds")
+    func transientFailureRetriesSameLedgerRow() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let token = "retry-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                token: [.transportFailure, .success]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:retry-success-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: installationID,
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: token,
+                on: app.db
+            )
+
+            do {
+                try await job.dequeue(context, payload)
+                Issue.record("Expected the transient failure to request a queue retry")
+            } catch is NotificationDeliveryRetryableError {
+                // Expected.
+            }
+
+            let retrying = try #require(
+                try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$deviceInstallation.$id == installationID)
+                    .filter(\.$series.$id == seriesID)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .first()
+            )
+            let ledgerID = try #require(retrying.id)
+            #expect(retrying.status == "retrying")
+            #expect(retrying.completedAt == nil)
+
+            try await job.dequeue(context, payload)
+
+            let sent = try #require(try await NotificationLedgerModel.find(ledgerID, on: app.db))
+            let attempts = try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .sort(\.$attemptedAt, .ascending)
+                .all()
+            #expect(sent.status == "sent")
+            #expect(sent.completedAt != nil)
+            #expect(sent.apnsErrorCode == nil)
+            #expect(attempts.map(\.outcome) == [
+                NotificationSendAttemptOutcome.retrying.rawValue,
+                NotificationSendAttemptOutcome.delivered.rawValue
+            ])
+            #expect(await sender.sentTokens == [token, token])
+        }
+    }
+
+    @Test("a distinct job cannot consume another job's retrying delivery")
+    func distinctJobCannotConsumeOwnedRetryingDelivery() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let token = "owned-retry-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                token: [.transportFailure, .success]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:owned-retry-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let originalPayload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+            let duplicatePayload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: installationID,
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: token,
+                on: app.db
+            )
+
+            do {
+                try await job.dequeue(context, originalPayload)
+                Issue.record("Expected the transient failure to request a queue retry")
+            } catch is NotificationDeliveryRetryableError {
+                // Expected.
+            }
+
+            try await job.dequeue(context, duplicatePayload)
+            #expect(await sender.sentTokens == [token])
+
+            try await job.dequeue(context, originalPayload)
+            #expect(await sender.sentTokens == [token, token])
+        }
+    }
+
+    @Test("a queue retry with no owned delivery does not discover new candidates")
+    func preClaimQueueRetryDoesNotDiscoverCandidates() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in
+                app.queues.use(.test)
+                try await bootstrapTables(on: app.db)
+            }
+        ) { app in
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:preclaim-retry-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+            let jobID = JobIdentifier()
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: installationID,
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                on: app.db
+            )
+
+            app.queues.test.jobs[jobID] = JobData(
+                payload: Array(try JSONEncoder().encode(payload)),
+                maxRetryCount: NotificationSendJob.maximumRetryCount,
+                jobName: NotificationSendJob.name,
+                delayUntil: nil,
+                queuedAt: .now,
+                attempts: 1
+            )
+
+            try await job.dequeue(makeQueueContext(app: app, jobID: jobID), payload)
+
+            let ledgerCount = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .count()
+            #expect(ledgerCount == 0)
+            #expect(await sender.sendCount == 0)
+        }
+    }
+
+    @Test("retry sends only prior retrying deliveries and excludes newly eligible installations")
+    func retryExcludesNewlyEligibleInstallations() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let retryToken = "prior-retrying-token"
+            let newToken = "newly-eligible-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                retryToken: [.transportFailure, .success],
+                newToken: [.success]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:retry-scope-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let retryingInstallationID = UUID()
+            let newlyEligibleInstallationID = UUID()
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: retryingInstallationID,
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: retryToken,
+                on: app.db
+            )
+
+            do {
+                try await job.dequeue(context, payload)
+                Issue.record("Expected the transient failure to request a queue retry")
+            } catch is NotificationDeliveryRetryableError {
+                // Expected.
+            }
+
+            try await seedH3Candidate(
+                installationID: newlyEligibleInstallationID,
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: newToken,
+                on: app.db
+            )
+            try await job.dequeue(context, payload)
+
+            let newLedgerCount = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == newlyEligibleInstallationID)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .count()
+            #expect(newLedgerCount == 0)
+            #expect(await sender.sentTokens == [retryToken, retryToken])
+        }
+    }
+
+    @Test("mixed success and retryable failure records retry telemetry without resending success")
+    func mixedSuccessAndRetryableFailureTelemetry() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let sentToken = "mixed-sent-token"
+            let retryToken = "mixed-retry-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                sentToken: [.success],
+                retryToken: [.transportFailure, .success]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:mixed-retry-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: UUID(),
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: sentToken,
+                on: app.db
+            )
+            try await seedH3Candidate(
+                installationID: UUID(),
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: retryToken,
+                on: app.db
+            )
+
+            do {
+                try await job.dequeue(context, payload)
+                Issue.record("Expected the retryable member of the batch to request a queue retry")
+            } catch is NotificationDeliveryRetryableError {
+                // Expected.
+            }
+
+            let firstAttempt = try #require(
+                try await NotificationSendAttemptModel.query(on: app.db)
+                    .filter(\.$series.$id == seriesID)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .first()
+            )
+            #expect(firstAttempt.outcome == NotificationSendAttemptOutcome.retrying.rawValue)
+            #expect(firstAttempt.sentCount == 1)
+            #expect(firstAttempt.failedCount == 0)
+
+            try await job.dequeue(context, payload)
+
+            let sentTokens = await sender.sentTokens
+            #expect(sentTokens.filter { $0 == sentToken }.count == 1)
+            #expect(sentTokens.filter { $0 == retryToken }.count == 2)
+        }
+    }
+
+    @Test("ledger completion failure after an APNs success is not classified or resent")
+    func sentCompletionFailureDoesNotRetryAPNsDelivery() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            guard let sql = app.db as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:sent-completion-failure-\(UUID().uuidString.lowercased())"
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new
+            )
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: .now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: .now
+            )
+
+            try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await sql.raw("DROP TRIGGER IF EXISTS test_reject_notification_sent ON notification_ledger").run()
+            try await sql.raw("DROP FUNCTION IF EXISTS test_reject_notification_sent()").run()
+            try await sql.raw("""
+                CREATE FUNCTION test_reject_notification_sent() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.status = 'sent' THEN
+                        RAISE EXCEPTION 'injected sent completion failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """).run()
+            try await sql.raw("""
+                CREATE TRIGGER test_reject_notification_sent
+                BEFORE UPDATE ON notification_ledger
+                FOR EACH ROW EXECUTE FUNCTION test_reject_notification_sent();
+                """).run()
+
+            var completionFailed = false
+            do {
+                _ = try await job.dispatchNotifications(
+                    to: [candidate],
+                    with: payload,
+                    and: series,
+                    using: context
+                )
+            } catch {
+                completionFailed = true
+            }
+
+            try await sql.raw("DROP TRIGGER IF EXISTS test_reject_notification_sent ON notification_ledger").run()
+            try await sql.raw("DROP FUNCTION IF EXISTS test_reject_notification_sent()").run()
+
+            #expect(completionFailed)
+            let ledger = try #require(
+                try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$deviceInstallation.$id == installationID)
+                    .filter(\.$series.$id == seriesID)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .first()
+            )
+            #expect(ledger.status == "claimed")
+            #expect(ledger.apnsErrorCode == nil)
+
+            let secondSummary = try await job.dispatchNotifications(
+                to: [candidate],
+                with: payload,
+                and: series,
+                using: context
+            )
+            #expect(secondSummary.claimedCount == 0)
+            #expect(await sender.sendCount == 1)
+        }
+    }
+
+    @Test("terminal APNs request failure does not deactivate the installation")
+    func terminalRequestFailureKeepsInstallationActive() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:terminal-request"
+            let token = "terminal-request-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                token: [.apns(status: 400, reason: "PayloadTooLarge")]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: .now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: .now,
+                apnsToken: token
+            )
+
+            try await seedInstallation(
+                id: installationID,
+                locationAuth: .always,
+                apnsToken: token,
+                on: app.db
+            )
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            let summary = try await job.dispatchNotifications(
+                to: [candidate],
+                with: .init(seriesId: seriesID, revisionUrn: revisionUrn, mode: .h3, reason: .new),
+                and: series,
+                using: makeQueueContext(app: app)
+            )
+
+            let installation = try #require(
+                try await DeviceInstallationModel.find(installationID, on: app.db)
+            )
+            #expect(summary.failedCount == 1)
+            #expect(summary.retryableFailureCount == 0)
+            #expect(installation.isActive)
+        }
+    }
+
+    @Test("invalid token failure deactivates the matching installation without retry")
+    func invalidTokenFailureDeactivatesMatchingInstallation() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:invalid-token"
+            let token = "invalid-device-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                token: [.apns(status: 410, reason: "Unregistered")]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: .now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: .now,
+                apnsToken: token
+            )
+
+            try await seedInstallation(
+                id: installationID,
+                locationAuth: .always,
+                apnsToken: token,
+                on: app.db
+            )
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            let summary = try await job.dispatchNotifications(
+                to: [candidate],
+                with: .init(seriesId: seriesID, revisionUrn: revisionUrn, mode: .h3, reason: .new),
+                and: series,
+                using: makeQueueContext(app: app)
+            )
+
+            let installation = try #require(
+                try await DeviceInstallationModel.find(installationID, on: app.db)
+            )
+            #expect(summary.failedCount == 1)
+            #expect(summary.retryableFailureCount == 0)
+            #expect(installation.isActive == false)
+        }
+    }
+
+    @Test("invalid-token ledger failure and endpoint deactivation roll back together")
+    func invalidTokenFailureIsAtomic() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            guard let sql = app.db as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:invalid-token-atomic-\(UUID().uuidString.lowercased())"
+            let token = "invalid-token-atomic"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                token: [.apns(status: 410, reason: "Unregistered")]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: .now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: .now,
+                apnsToken: token
+            )
+
+            try await seedInstallation(
+                id: installationID,
+                locationAuth: .always,
+                apnsToken: token,
+                on: app.db
+            )
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await sql.raw("DROP TRIGGER IF EXISTS test_reject_token_deactivation ON device_installations").run()
+            try await sql.raw("DROP FUNCTION IF EXISTS test_reject_token_deactivation()").run()
+            try await sql.raw("""
+                CREATE FUNCTION test_reject_token_deactivation() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.is_active = FALSE THEN
+                        RAISE EXCEPTION 'injected token deactivation failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """).run()
+            try await sql.raw("""
+                CREATE TRIGGER test_reject_token_deactivation
+                BEFORE UPDATE ON device_installations
+                FOR EACH ROW EXECUTE FUNCTION test_reject_token_deactivation();
+                """).run()
+
+            var atomicUpdateFailed = false
+            do {
+                _ = try await job.dispatchNotifications(
+                    to: [candidate],
+                    with: .init(seriesId: seriesID, revisionUrn: revisionUrn, mode: .h3, reason: .new),
+                    and: series,
+                    using: makeQueueContext(app: app)
+                )
+            } catch {
+                atomicUpdateFailed = true
+            }
+
+            try await sql.raw("DROP TRIGGER IF EXISTS test_reject_token_deactivation ON device_installations").run()
+            try await sql.raw("DROP FUNCTION IF EXISTS test_reject_token_deactivation()").run()
+
+            #expect(atomicUpdateFailed)
+            let installation = try #require(
+                try await DeviceInstallationModel.find(installationID, on: app.db)
+            )
+            let ledger = try #require(
+                try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$deviceInstallation.$id == installationID)
+                    .filter(\.$series.$id == seriesID)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .first()
+            )
+            #expect(installation.isActive)
+            #expect(ledger.status == "claimed")
             #expect(ledger.apnsErrorCode == nil)
         }
+    }
+
+    @Test("invalid token failure deactivates only the installation still holding that token")
+    func invalidTokenFailureHonorsTokenRotation() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:token-rotation"
+            let oldToken = "old-token"
+            let replacementToken = "replacement-token"
+            let sender = RotatingTokenFailureSender(
+                installationID: installationID,
+                replacementToken: replacementToken
+            )
+            let job = NotificationSendJob(sender: sender)
+            let series = makeSeries(id: seriesID, revisionUrn: revisionUrn, now: .now)
+            let candidate = makeCandidate(
+                id: installationID,
+                auth: .always,
+                capturedAt: .now,
+                apnsToken: oldToken
+            )
+
+            try await seedInstallation(
+                id: installationID,
+                locationAuth: .always,
+                apnsToken: oldToken,
+                on: app.db
+            )
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            let summary = try await job.dispatchNotifications(
+                to: [candidate],
+                with: .init(seriesId: seriesID, revisionUrn: revisionUrn, mode: .h3, reason: .new),
+                and: series,
+                using: makeQueueContext(app: app)
+            )
+
+            let installation = try #require(
+                try await DeviceInstallationModel.find(installationID, on: app.db)
+            )
+            let ledger = try #require(
+                try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$deviceInstallation.$id == installationID)
+                    .filter(\.$series.$id == seriesID)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .first()
+            )
+            #expect(summary.failedCount == 1)
+            #expect(ledger.status == "failed")
+            #expect(ledger.apnsErrorCode == "Unregistered")
+            #expect(installation.apnsDeviceToken == replacementToken)
+            #expect(installation.isActive)
+        }
+    }
+
+    @Test("retrying delivery that becomes unsubscribed is terminalized without another send")
+    func retryingDeliveryBecomesIneligible() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let token = "ineligible-retry-token"
+            let sender = ScriptedNotificationSender(outcomesByToken: [
+                token: [.transportFailure, .success]
+            ])
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:retry-ineligible-\(UUID().uuidString.lowercased())"
+            let h3Cell = makeUniqueH3Cell()
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new,
+                installationId: installationID
+            )
+
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: h3Cell, on: app.db)
+            try await seedH3Candidate(
+                installationID: installationID,
+                h3Cell: h3Cell,
+                capturedAt: .now,
+                apnsToken: token,
+                on: app.db
+            )
+
+            do {
+                try await job.dequeue(context, payload)
+                Issue.record("Expected the transient failure to request a queue retry")
+            } catch is NotificationDeliveryRetryableError {
+                // Expected.
+            }
+
+            let installation = try #require(
+                try await DeviceInstallationModel.find(installationID, on: app.db)
+            )
+            installation.isSubscribed = false
+            try await installation.update(on: app.db)
+
+            try await job.dequeue(context, payload)
+
+            let ledger = try #require(
+                try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$deviceInstallation.$id == installationID)
+                    .filter(\.$series.$id == seriesID)
+                    .filter(\.$revisionUrn == revisionUrn)
+                    .first()
+            )
+            #expect(ledger.status == "failed")
+            #expect(ledger.apnsErrorCode == "RetryIneligibleCandidate")
+            #expect(await sender.sentTokens == [token])
+        }
+    }
+
+    @Test("concurrent retry reclaim has one database winner")
+    func concurrentRetryReclaimHasOneWinner() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let store = NotificationDeliveryStore()
+            let installationID = UUID()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:concurrent-retry-reclaim"
+            let retryOwnerID = UUID().uuidString
+            try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            let claim = try await store.claim(
+                installationID: installationID,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new,
+                freshnessState: .fresh,
+                retryOwnerID: retryOwnerID,
+                on: app.db
+            )
+            try await store.markRetrying(
+                claimID: claim.id,
+                retryOwnerID: retryOwnerID,
+                retryGeneration: claim.retryGeneration,
+                apnsErrorCode: APNsDeliveryFailureClassifier.transportErrorCode,
+                on: app.db
+            )
+            let delivery = try #require(
+                try await store.loadRetryingDeliveries(
+                    seriesID: seriesID,
+                    revisionUrn: revisionUrn,
+                    installationID: installationID,
+                    retryOwnerID: retryOwnerID,
+                    on: app.db
+                ).first
+            )
+
+            async let first = store.reclaimRetrying(
+                delivery,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                retryOwnerID: retryOwnerID,
+                freshnessState: .fresh,
+                on: app.db
+            )
+            async let second = store.reclaimRetrying(
+                delivery,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                retryOwnerID: retryOwnerID,
+                freshnessState: .fresh,
+                on: app.db
+            )
+            let results = try await [first, second]
+
+            #expect(results.filter(\.inserted).count == 1)
+
+            let winning = results.first { $0.inserted }
+            let winningClaim = try #require(winning)
+            try await store.markRetrying(
+                claimID: winningClaim.id,
+                retryOwnerID: retryOwnerID,
+                retryGeneration: winningClaim.retryGeneration,
+                apnsErrorCode: APNsDeliveryFailureClassifier.transportErrorCode,
+                on: app.db
+            )
+
+            let staleReclaim = try await store.reclaimRetrying(
+                delivery,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                retryOwnerID: retryOwnerID,
+                freshnessState: .fresh,
+                on: app.db
+            )
+            #expect(staleReclaim.inserted == false)
+
+            let staleTerminalized = try await store.completeRetryingFailure(
+                delivery,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                retryOwnerID: retryOwnerID,
+                apnsErrorCode: "StaleRetryWorker",
+                on: app.db
+            )
+            #expect(staleTerminalized == false)
+
+            let nextGeneration = try #require(
+                try await store.loadRetryingDeliveries(
+                    seriesID: seriesID,
+                    revisionUrn: revisionUrn,
+                    installationID: installationID,
+                    retryOwnerID: retryOwnerID,
+                    on: app.db
+                ).first
+            )
+            #expect(nextGeneration.retryGeneration == delivery.retryGeneration + 1)
+            let freshReclaim = try await store.reclaimRetrying(
+                nextGeneration,
+                seriesID: seriesID,
+                revisionUrn: revisionUrn,
+                retryOwnerID: retryOwnerID,
+                freshnessState: .fresh,
+                on: app.db
+            )
+            #expect(freshReclaim.inserted)
+        }
+    }
+
+    @Test("retry exhaustion is scoped to the constrained installation")
+    func retryExhaustionIsScoped() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let store = NotificationDeliveryStore()
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:retry-exhaustion"
+            let firstInstallationID = UUID()
+            let secondInstallationID = UUID()
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID,
+                revisionUrn: revisionUrn,
+                mode: .h3,
+                reason: .new,
+                installationId: firstInstallationID
+            )
+            let retryOwnerID = try #require(payload.deliveryAttemptId?.uuidString)
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            for installationID in [firstInstallationID, secondInstallationID] {
+                try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
+                let claim = try await store.claim(
+                    installationID: installationID,
+                    seriesID: seriesID,
+                    revisionUrn: revisionUrn,
+                    mode: .h3,
+                    reason: .new,
+                    freshnessState: .fresh,
+                    retryOwnerID: retryOwnerID,
+                    on: app.db
+                )
+                try await store.markRetrying(
+                    claimID: claim.id,
+                    retryOwnerID: retryOwnerID,
+                    retryGeneration: claim.retryGeneration,
+                    apnsErrorCode: APNsDeliveryFailureClassifier.transportErrorCode,
+                    on: app.db
+                )
+            }
+
+            try await NotificationSendJob(sender: RecordingNotificationSender()).error(
+                makeQueueContext(app: app),
+                NotificationDeliveryRetryableError.retryableFailures(1),
+                payload
+            )
+
+            let rows = try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$series.$id == seriesID)
+                .filter(\.$revisionUrn == revisionUrn)
+                .all()
+            #expect(rows.first { $0.$deviceInstallation.id == firstInstallationID }?.status == "failed")
+            #expect(rows.first { $0.$deviceInstallation.id == secondInstallationID }?.status == "retrying")
+        }
+    }
+
+    @Test("notification retry policy is bounded and capped")
+    func retryPolicyIsBounded() {
+        let policy = NotificationSendRetryPolicy()
+        let job = NotificationSendJob(sender: RecordingNotificationSender())
+
+        #expect(policy.maximumRetryCount == 3)
+        #expect((1...4).map(job.nextRetryIn(attempt:)) == [30, 120, 300, 300])
+        #expect(NotificationSendJob.maximumRetryCount == policy.maximumRetryCount)
     }
 
     @Test("dequeue persists inactive series no-op without resolving candidates or sending")
@@ -897,6 +1795,78 @@ private actor GatedRecordingNotificationSender: NotificationSender {
             }
         }
     }
+}
+
+private enum ScriptedSenderOutcome: Sendable {
+    case success
+    case transportFailure
+    case apns(status: Int, reason: String)
+}
+
+private actor ScriptedNotificationSender: NotificationSender {
+    private var outcomesByToken: [String: [ScriptedSenderOutcome]]
+    private(set) var sentTokens: [String] = []
+
+    init(outcomesByToken: [String: [ScriptedSenderOutcome]]) {
+        self.outcomesByToken = outcomesByToken
+    }
+
+    func sendNotification(
+        app _: Application,
+        with _: AlertDetails,
+        hotAlertPayload _: HotAlertAPNsPayload,
+        to device: String,
+        environment _: APNsEnvironment
+    ) async throws {
+        sentTokens.append(device)
+        var outcomes = outcomesByToken[device] ?? []
+        let outcome = outcomes.isEmpty ? .success : outcomes.removeFirst()
+        outcomesByToken[device] = outcomes
+
+        switch outcome {
+        case .success:
+            return
+        case .transportFailure:
+            throw ScriptedTransportFailure()
+        case let .apns(status, reason):
+            throw try makeTestAPNSError(status: status, reason: reason)
+        }
+    }
+}
+
+private struct RotatingTokenFailureSender: NotificationSender {
+    let installationID: UUID
+    let replacementToken: String
+
+    func sendNotification(
+        app: Application,
+        with _: AlertDetails,
+        hotAlertPayload _: HotAlertAPNsPayload,
+        to _: String,
+        environment _: APNsEnvironment
+    ) async throws {
+        guard let sql = app.db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        try await sql.raw("""
+            UPDATE device_installations
+            SET apns_device_token = \(bind: replacementToken),
+                is_active = TRUE,
+                updated_at = NOW()
+            WHERE installation_id = \(bind: installationID)
+            """).run()
+        throw try makeTestAPNSError(status: 410, reason: "Unregistered")
+    }
+}
+
+private struct ScriptedTransportFailure: Error {}
+
+private func makeTestAPNSError(status: Int, reason: String) throws -> APNSError {
+    let response = try JSONDecoder().decode(
+        APNSErrorResponse.self,
+        from: Data(#"{"reason":"\#(reason)"}"#.utf8)
+    )
+    return APNSError(responseStatus: status, apnsResponse: response)
 }
 
 private struct ThrowingNotificationSender: NotificationSender {

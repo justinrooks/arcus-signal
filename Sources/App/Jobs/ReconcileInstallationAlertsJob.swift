@@ -213,7 +213,8 @@ struct ReconcileInstallationAlertsJob: AsyncJob {
                         mode: match.mode,
                         reason: match.reason,
                         installationId: payload.installationId
-                    )
+                    ),
+                    maxRetryCount: NotificationSendJob.maximumRetryCount
                 )
                 dispatchedCount += 1
             }

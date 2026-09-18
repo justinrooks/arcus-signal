@@ -94,3 +94,28 @@ struct AddApnsErrorCodeToNotificationLedger: AsyncMigration {
         try await db.schema(NotificationLedgerModel.schema).deleteField("apns_error_code").update()
     }
 }
+
+struct AddRetryStateToNotificationLedger: AsyncMigration {
+    func prepare(on db: any Database) async throws {
+        guard let sql = db as? any SQLDatabase else {
+            try await db.schema(NotificationLedgerModel.schema)
+                .field("retry_owner_id", .string)
+                .field("retry_generation", .int, .required, .sql(.default(0)))
+                .update()
+            return
+        }
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+              ADD COLUMN IF NOT EXISTS retry_owner_id TEXT,
+              ADD COLUMN IF NOT EXISTS retry_generation INTEGER NOT NULL DEFAULT 0;
+            """).run()
+    }
+
+    func revert(on db: any Database) async throws {
+        try await db.schema(NotificationLedgerModel.schema)
+            .deleteField("retry_owner_id")
+            .deleteField("retry_generation")
+            .update()
+    }
+}

@@ -61,6 +61,8 @@ struct NotificationLedgerFreshnessPersistenceTests {
                 freshness_state TEXT NOT NULL,
                 status TEXT,
                 apns_error_code TEXT,
+                retry_owner_id TEXT,
+                retry_generation INTEGER NOT NULL DEFAULT 0,
                 completed_at TIMESTAMP,
                 created TIMESTAMP NOT NULL
             );
@@ -84,6 +86,12 @@ struct NotificationLedgerFreshnessPersistenceTests {
         try await sql.raw("""
             ALTER TABLE notification_ledger
             ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
+            """).run()
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+              ADD COLUMN IF NOT EXISTS retry_owner_id TEXT,
+              ADD COLUMN IF NOT EXISTS retry_generation INTEGER NOT NULL DEFAULT 0;
             """).run()
 
         try await sql.raw("""

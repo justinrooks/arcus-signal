@@ -27,6 +27,7 @@ authoritative installation/presence transition
   -> installation-constrained send queue handoff
   -> delivery-eligible installation (fresh or degraded) -> ledger claim
   -> candidate-specific copy composition -> APNs send and ledger completion
+  -> retryable APNs/transport failure -> retrying ledger state -> bounded send-queue retry
 ```
 
 The arrows are distinct boundaries. A durable intent, successful queue enqueue, job completion, APNs completion, debug copy, and attempt telemetry are not interchangeable evidence.
@@ -55,7 +56,7 @@ Each match is handed to the existing send lane as a `NotificationSendJob` constr
 
 ### Queue retries and replay limits
 
-Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `ReconcileInstallationAlertsJob` is explicitly retryable because rediscovery and constrained send dispatch converge on the ledger identity; `PressureArtifactFailureCompletionJob` separately uses its configured completion schedule on the `model-artifacts` lane. Outbox drain attempts and reconciliation retries are not substitutes for general queue replay or APNs retry.
+Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `NotificationSendJob` is an explicit exception: every producer dispatches it with three retries using capped delays of 30, 120, and 300 seconds. A retry processes only ledger rows already marked `retrying` and owned by that queue job, atomically reclaims each row with a retry-generation compare-and-swap, and revalidates current installation, subscription, targeting, and location-freshness eligibility before APNs delivery. A queue retry that failed before creating an owned retry row does not perform fresh candidate discovery. `ReconcileInstallationAlertsJob` is also explicitly retryable because rediscovery and constrained send dispatch converge on the ledger identity; `PressureArtifactFailureCompletionJob` separately uses its configured completion schedule on the `model-artifacts` lane. Outbox drain attempts and reconciliation retries remain distinct from APNs delivery retries.
 
 ## Candidate selection, claim, and APNs delivery
 
@@ -65,13 +66,15 @@ For a delivery-eligible candidate (`fresh` or `degraded`), [`NotificationDeliver
 
 After a successful claim, [`NotificationEngine.buildNotification(...)`](../Sources/App/Infrastructure/Notifications/NotificationEngine.swift) builds candidate-specific title, subtitle, and body; the send job then sends APNs using that candidate’s environment. [`NotificationDebugModel`](../Sources/App/Models/Notification/NotificationDebugModel.swift) records the composed preview/candidate copy for diagnostics. [`NotificationSendAttemptModel`](../Sources/App/Models/Notification/NotificationSendAttemptModel.swift) records a send-job attempt summary. Neither is the dispatch-intent outbox or an APNs-delivery guarantee.
 
-On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the claimed ledger row. On APNs failure, `completeFailed(...)` records `failed` and any APNs error code. Delivery is sequential within the job.
+On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the claimed ledger row. Classified terminal failures use `completeFailed(...)` to record `failed` and the APNs error code. Delivery is sequential within the job.
+
+APNs service throttling, service/server failures, shutdown/idle responses, and transport failures with unknown token validity transition the claim to non-terminal `retrying` and throw a dedicated job error after attempt telemetry is recorded. A retry atomically transitions only the owning job's matching `retrying` generation back to `claimed`; concurrent or stale retry attempts therefore have one database winner. Non-retryable request/provider failures become terminal `failed`. Responses proving that the exact device token is invalid or unregistered atomically complete the ledger failure and conditionally deactivate the installation, but only while it still stores the token that failed, so a late response cannot deactivate a replacement token. Retry exhaustion terminalizes only the queue job's remaining owned `retrying` rows.
 
 ## Guarantees and explicit gaps
 
 - The ledger provides a database-enforced, at-most-one claim boundary for `(installation_id, series_id, revision_urn)`.
-- It does **not** guarantee exactly-once APNs delivery or eventual delivery. A process loss or cancellation after a claim can leave it `claimed`; an unknown APNs outcome cannot safely be inferred from the claim; failed rows are terminal today.
-- APNs retry/backoff and failure classification, queue replay after consumer failure, abandoned-claim recovery, and a stored-payload redesign are deferred reliability work. They are not implemented by the outboxes, ledger, Swift concurrency, or `Sendable`.
+- It does **not** guarantee exactly-once APNs delivery or eventual delivery. A process loss or cancellation after a claim can leave it `claimed`; an unknown APNs outcome cannot safely be inferred from the claim; exhausted or terminally classified rows remain `failed`.
+- Bounded APNs retry covers classified transient send outcomes only. General queue replay after consumer failure, abandoned-claim recovery, and a stored-payload redesign remain deferred reliability work. They are not implemented by the outboxes, ledger, Swift concurrency, or `Sendable`.
 
 ## Deployment and client-retirement gate
 
