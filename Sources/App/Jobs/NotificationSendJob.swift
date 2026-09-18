@@ -19,7 +19,32 @@ struct DispatchNotificationsResult {
     let claimedCount: Int
     let sentCount: Int
     let failedCount: Int
+    let retryableFailureCount: Int
     let noOpReason: NotificationSendNoOpReason?
+}
+
+struct NotificationSendRetryPolicy: Sendable, Equatable {
+    static let defaultDelaysSeconds = [30, 120, 300]
+
+    let delaysSeconds: [Int]
+
+    init(delaysSeconds: [Int] = defaultDelaysSeconds) {
+        self.delaysSeconds = delaysSeconds.isEmpty
+            || delaysSeconds.count > Self.defaultDelaysSeconds.count
+            || delaysSeconds.contains(where: { $0 <= 0 })
+            ? Self.defaultDelaysSeconds
+            : delaysSeconds
+    }
+
+    var maximumRetryCount: Int { delaysSeconds.count }
+
+    func delaySeconds(forAttempt attempt: Int) -> Int {
+        delaysSeconds[min(max(0, attempt - 1), delaysSeconds.count - 1)]
+    }
+}
+
+enum NotificationDeliveryRetryableError: Error, Sendable {
+    case retryableFailures(Int)
 }
 
 enum NotificationCandidateDeliveryDisposition: Sendable, Equatable {
@@ -45,30 +70,37 @@ public struct NotificationSendJobPayload: Codable, Sendable {
     let mode: NotificationTargetMode
     let reason: NotificationReason
     let installationId: UUID?
+    let deliveryAttemptId: UUID?
     
     init(
         seriesId: UUID,
         revisionUrn: String,
         mode: NotificationTargetMode,
         reason: NotificationReason,
-        installationId: UUID? = nil
+        installationId: UUID? = nil,
+        deliveryAttemptId: UUID? = UUID()
     ) {
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
         self.mode = mode
         self.reason = reason
         self.installationId = installationId
+        self.deliveryAttemptId = deliveryAttemptId
     }
 }
 
 public struct NotificationSendJob: AsyncJob {
     public typealias Payload = NotificationSendJobPayload
+    static let retryPolicy = NotificationSendRetryPolicy()
+    static var maximumRetryCount: Int { retryPolicy.maximumRetryCount }
+
     private let sender: any NotificationSender
     private let engine: NotificationEngine
     private let freshnessPolicy: LocationFreshnessPolicy
     private let missedDecisionStore: NotificationMissedDecisionStore
     private let candidateStore: NotificationCandidateStore
     private let deliveryStore: NotificationDeliveryStore
+    private let failureClassifier: APNsDeliveryFailureClassifier
 
     public init() {
         self.sender = APNsClient()
@@ -77,6 +109,7 @@ public struct NotificationSendJob: AsyncJob {
         self.missedDecisionStore = NotificationMissedDecisionStore()
         self.candidateStore = NotificationCandidateStore()
         self.deliveryStore = NotificationDeliveryStore()
+        self.failureClassifier = APNsDeliveryFailureClassifier()
     }
 
     init(
@@ -85,7 +118,8 @@ public struct NotificationSendJob: AsyncJob {
         freshnessPolicy: LocationFreshnessPolicy = LocationFreshnessPolicy(),
         missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore(),
         candidateStore: NotificationCandidateStore = NotificationCandidateStore(),
-        deliveryStore: NotificationDeliveryStore = NotificationDeliveryStore()
+        deliveryStore: NotificationDeliveryStore = NotificationDeliveryStore(),
+        failureClassifier: APNsDeliveryFailureClassifier = APNsDeliveryFailureClassifier()
     ) {
         self.sender = sender
         self.engine = engine
@@ -93,6 +127,7 @@ public struct NotificationSendJob: AsyncJob {
         self.missedDecisionStore = missedDecisionStore
         self.candidateStore = candidateStore
         self.deliveryStore = deliveryStore
+        self.failureClassifier = failureClassifier
     }
 
     func deliveryDisposition(
@@ -134,6 +169,8 @@ public struct NotificationSendJob: AsyncJob {
     }
     
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
+        let retryOwnerID = retryOwnerID(context: context, payload: payload)
+        let queueFailureCount = try await queueFailureCount(context: context)
         context.logger.info(
             "NotificationSendJob started",
             metadata: [
@@ -155,6 +192,14 @@ public struct NotificationSendJob: AsyncJob {
             .first()
         
         guard let series, series.currentRevisionUrn == payload.revisionUrn else {
+            let failedRetryCount = try await deliveryStore.failRetryingDeliveries(
+                seriesID: payload.seriesId,
+                revisionUrn: payload.revisionUrn,
+                installationID: payload.installationId,
+                retryOwnerID: retryOwnerID,
+                apnsErrorCode: "RetryIneligibleStaleRevision",
+                on: context.application.db
+            )
             context.logger.warning(
                 "Current revision urn doesn't match payload revision. No notification sent",
                 metadata: [
@@ -165,7 +210,7 @@ public struct NotificationSendJob: AsyncJob {
                     "reason": .string("\(String.init(reflecting: payload.reason))")
                 ]
             )
-            await recordAttempt(
+            try await finishAttempt(
                 context: context,
                 payload: payload,
                 attemptedAt: attemptedAt,
@@ -175,8 +220,9 @@ public struct NotificationSendJob: AsyncJob {
                     staleMissedCount: 0,
                     claimedCount: 0,
                     sentCount: 0,
-                    failedCount: 0,
-                    noOpReason: .staleRevisionMismatch
+                    failedCount: failedRetryCount,
+                    retryableFailureCount: 0,
+                    noOpReason: failedRetryCount == 0 ? .staleRevisionMismatch : nil
                 )
             )
             return
@@ -198,7 +244,95 @@ public struct NotificationSendJob: AsyncJob {
                     "reason": .string(payload.reason.rawValue)
                 ]
             )
-            await recordAttempt(
+            let failedRetryCount = try await deliveryStore.failRetryingDeliveries(
+                seriesID: payload.seriesId,
+                revisionUrn: payload.revisionUrn,
+                installationID: payload.installationId,
+                retryOwnerID: retryOwnerID,
+                apnsErrorCode: "RetryIneligibleSeriesLifecycle",
+                on: context.application.db
+            )
+            try await finishAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: .init(
+                    candidateResolutionReached: false,
+                    candidateCount: 0,
+                    staleMissedCount: 0,
+                    claimedCount: 0,
+                    sentCount: 0,
+                    failedCount: failedRetryCount,
+                    retryableFailureCount: 0,
+                    noOpReason: failedRetryCount == 0 ? noOpReason : nil
+                )
+            )
+            return
+        }
+
+        let presenceCutoff = attemptedAt.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+
+        let retryingDeliveries = try await deliveryStore.loadRetryingDeliveries(
+            seriesID: payload.seriesId,
+            revisionUrn: payload.revisionUrn,
+            installationID: payload.installationId,
+            retryOwnerID: retryOwnerID,
+            on: context.application.db
+        )
+        if !retryingDeliveries.isEmpty {
+            let summary = try await dispatchRetryingNotifications(
+                retryingDeliveries,
+                with: payload,
+                and: series,
+                capturedAtOrAfter: presenceCutoff,
+                retryOwnerID: retryOwnerID,
+                using: context
+            )
+            try await finishAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: summary
+            )
+            return
+        }
+
+        if try await deliveryStore.hasRetryInFlight(
+            seriesID: payload.seriesId,
+            revisionUrn: payload.revisionUrn,
+            installationID: payload.installationId,
+            retryOwnerID: retryOwnerID,
+            on: context.application.db
+        ) {
+            try await finishAttempt(
+                context: context,
+                payload: payload,
+                attemptedAt: attemptedAt,
+                summary: .init(
+                    candidateResolutionReached: true,
+                    candidateCount: 0,
+                    staleMissedCount: 0,
+                    claimedCount: 0,
+                    sentCount: 0,
+                    failedCount: 0,
+                    retryableFailureCount: 0,
+                    noOpReason: .allCandidatesPreviouslyClaimed
+                )
+            )
+            return
+        }
+
+        if queueFailureCount > 0 {
+            context.logger.info(
+                "Queue retry has no owned retrying deliveries. No notification sent",
+                metadata: [
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn),
+                    "retryOwnerId": .string(retryOwnerID),
+                    "queueFailureCount": .stringConvertible(queueFailureCount)
+                ]
+            )
+            try await finishAttempt(
                 context: context,
                 payload: payload,
                 attemptedAt: attemptedAt,
@@ -209,13 +343,12 @@ public struct NotificationSendJob: AsyncJob {
                     claimedCount: 0,
                     sentCount: 0,
                     failedCount: 0,
-                    noOpReason: noOpReason
+                    retryableFailureCount: 0,
+                    noOpReason: .allCandidatesPreviouslyClaimed
                 )
             )
             return
         }
-
-        let presenceCutoff = attemptedAt.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
         
         // if mode is h3 and we have cells
         // right now we aren't falling back to zones... but maybe we should?
@@ -227,7 +360,7 @@ public struct NotificationSendJob: AsyncJob {
                         "seriesId": .string(payload.seriesId.uuidString)
                     ]
                 )
-                await recordAttempt(
+                try await finishAttempt(
                     context: context,
                     payload: payload,
                     attemptedAt: attemptedAt,
@@ -238,6 +371,7 @@ public struct NotificationSendJob: AsyncJob {
                         claimedCount: 0,
                         sentCount: 0,
                         failedCount: 0,
+                        retryableFailureCount: 0,
                         noOpReason: .missingGeolocation
                     )
                 )
@@ -256,9 +390,10 @@ public struct NotificationSendJob: AsyncJob {
                 to: h3Candidates,
                 with: payload,
                 and: series,
+                retryOwnerID: retryOwnerID,
                 using: context
             )
-            await recordAttempt(
+            try await finishAttempt(
                 context: context,
                 payload: payload,
                 attemptedAt: attemptedAt,
@@ -277,9 +412,10 @@ public struct NotificationSendJob: AsyncJob {
                 to: ugcCandidates,
                 with: payload,
                 and: series,
+                retryOwnerID: retryOwnerID,
                 using: context
             )
-            await recordAttempt(
+            try await finishAttempt(
                 context: context,
                 payload: payload,
                 attemptedAt: attemptedAt,
@@ -299,22 +435,152 @@ public struct NotificationSendJob: AsyncJob {
     }
     
     public func error(_ context: QueueContext, _ error: any Error, _ payload: Payload) async throws {
-        context.logger.error(
-            "NotificationSendJob failed.",
-            metadata: ["error": .string(String(describing: error))]
+        let retryOwnerID = retryOwnerID(context: context, payload: payload)
+        let failedCount = try await deliveryStore.failRetryingDeliveries(
+            seriesID: payload.seriesId,
+            revisionUrn: payload.revisionUrn,
+            installationID: payload.installationId,
+            retryOwnerID: retryOwnerID,
+            apnsErrorCode: "RetryExhausted",
+            on: context.application.db
         )
-        // TODO: handle this and throw it back in the pile for reprocessing
+        context.logger.error(
+            "NotificationSendJob exhausted retries.",
+            metadata: [
+                "errorType": .string(String(describing: type(of: error))),
+                "failedDeliveryCount": .stringConvertible(failedCount),
+                "maximumRetryCount": .stringConvertible(Self.maximumRetryCount)
+            ]
+        )
+    }
+
+    public func nextRetryIn(attempt: Int) -> Int {
+        Self.retryPolicy.delaySeconds(forAttempt: attempt)
     }
 }
 
 
 extension NotificationSendJob {
+    func retryOwnerID(
+        context: QueueContext,
+        payload: NotificationSendJobPayload
+    ) -> String {
+        if let deliveryAttemptID = payload.deliveryAttemptId {
+            return deliveryAttemptID.uuidString
+        }
+        if case let .string(jobID)? = context.logger[metadataKey: "job_id"] {
+            return jobID
+        }
+        return "legacy:\(payload.seriesId.uuidString):\(payload.revisionUrn):\(payload.installationId?.uuidString ?? "all")"
+    }
+
+    func queueFailureCount(context: QueueContext) async throws -> Int {
+        guard case let .string(jobID)? = context.logger[metadataKey: "job_id"] else {
+            return 0
+        }
+        let data = try await context.queues(context.queueName)
+            .get(JobIdentifier(string: jobID))
+            .get()
+        return data.attempts ?? 0
+    }
+
+    func dispatchRetryingNotifications(
+        _ deliveries: [NotificationRetryDelivery],
+        with payload: NotificationSendJobPayload,
+        and series: ArcusSeriesModel,
+        capturedAtOrAfter cutoff: Date,
+        retryOwnerID: String,
+        using context: QueueContext
+    ) async throws -> DispatchNotificationsResult {
+        var candidates: [NotificationCandidate] = []
+        var deliveriesByInstallation: [UUID: NotificationRetryDelivery] = [:]
+        var ineligibleCount = 0
+
+        for delivery in deliveries {
+            let matches: [NotificationCandidate]
+            switch payload.mode {
+            case .h3:
+                if let geolocation = series.geolocation, !geolocation.h3Cells.isEmpty {
+                    matches = try await candidateStore.loadH3Candidates(
+                        cells: geolocation.h3Cells,
+                        capturedAtOrAfter: cutoff,
+                        installationId: delivery.installationID,
+                        on: context.application.db
+                    )
+                } else {
+                    matches = []
+                }
+            case .ugc:
+                matches = try await candidateStore.loadUGCCandidates(
+                    ugcCodes: series.ugcCodes,
+                    capturedAtOrAfter: cutoff,
+                    installationId: delivery.installationID,
+                    on: context.application.db
+                )
+            }
+
+            guard let candidate = matches.first else {
+                let terminalized = try await deliveryStore.completeRetryingFailure(
+                    delivery,
+                    seriesID: payload.seriesId,
+                    revisionUrn: payload.revisionUrn,
+                    retryOwnerID: retryOwnerID,
+                    apnsErrorCode: "RetryIneligibleCandidate",
+                    on: context.application.db
+                )
+                if terminalized {
+                    ineligibleCount += 1
+                }
+                continue
+            }
+
+            candidates.append(candidate)
+            deliveriesByInstallation[candidate.id] = delivery
+        }
+
+        guard !candidates.isEmpty else {
+            return .init(
+                candidateResolutionReached: true,
+                candidateCount: deliveries.count,
+                staleMissedCount: 0,
+                claimedCount: 0,
+                sentCount: 0,
+                failedCount: ineligibleCount,
+                retryableFailureCount: 0,
+                noOpReason: ineligibleCount == 0 ? .allCandidatesPreviouslyClaimed : nil
+            )
+        }
+
+        let dispatched = try await dispatchNotifications(
+            to: candidates,
+            with: payload,
+            and: series,
+            retryingDeliveriesByInstallation: deliveriesByInstallation,
+            retryOwnerID: retryOwnerID,
+            using: context
+        )
+
+        return .init(
+            candidateResolutionReached: true,
+            candidateCount: deliveries.count,
+            staleMissedCount: dispatched.staleMissedCount,
+            claimedCount: dispatched.claimedCount,
+            sentCount: dispatched.sentCount,
+            failedCount: dispatched.failedCount + ineligibleCount,
+            retryableFailureCount: dispatched.retryableFailureCount,
+            noOpReason: ineligibleCount == 0 ? dispatched.noOpReason : nil
+        )
+    }
+
     func dispatchNotifications(
         to candidates: [NotificationCandidate],
         with payload: NotificationSendJobPayload,
         and series: ArcusSeriesModel,
+        retryingDeliveriesByInstallation: [UUID: NotificationRetryDelivery] = [:],
+        retryOwnerID: String? = nil,
         using context: QueueContext
     ) async throws -> DispatchNotificationsResult {
+        let retryOwnerID = retryOwnerID ?? self.retryOwnerID(context: context, payload: payload)
         guard candidates.count > 0 else {
             let preview = engine.buildPreviewNotification(for: series, with: payload)
             await saveNotificationDebugSnapshot(
@@ -345,6 +611,7 @@ extension NotificationSendJob {
                 claimedCount: 0,
                 sentCount: 0,
                 failedCount: 0,
+                retryableFailureCount: 0,
                 noOpReason: .zeroCandidates
             )
         }
@@ -353,9 +620,11 @@ extension NotificationSendJob {
         var claimedCount = 0
         var sentCount = 0
         var failedCount = 0
+        var retryableFailureCount = 0
 
         let evaluatedAt = Date()
         for candidate in candidates {
+            let retryingDelivery = retryingDeliveriesByInstallation[candidate.id]
             let disposition = deliveryDisposition(
                 for: candidate,
                 evaluatedAt: evaluatedAt
@@ -364,6 +633,21 @@ extension NotificationSendJob {
             let freshnessDecision: LocationFreshnessDecision
             switch disposition {
             case let .skipStale(staleDecision):
+                if let retryingDelivery {
+                    let terminalized = try await deliveryStore.completeRetryingFailure(
+                        retryingDelivery,
+                        seriesID: payload.seriesId,
+                        revisionUrn: payload.revisionUrn,
+                        retryOwnerID: retryOwnerID,
+                        apnsErrorCode: "RetryIneligibleStaleLocation",
+                        on: context.application.db
+                    )
+                    if terminalized {
+                        failedCount += 1
+                    }
+                    continue
+                }
+
                 let insertResult = try await missedDecisionStore.insertStaleMissDecision(
                     .init(
                         installationID: candidate.id,
@@ -402,15 +686,28 @@ extension NotificationSendJob {
                 freshnessDecision = deliveryDecision
             }
 
-            let claim = try await deliveryStore.claim(
-                installationID: candidate.id,
-                seriesID: payload.seriesId,
-                revisionUrn: payload.revisionUrn,
-                mode: payload.mode,
-                reason: payload.reason,
-                freshnessState: freshnessDecision.state,
-                on: context.application.db
-            )
+            let claim: LedgerClaimResult
+            if let retryingDelivery {
+                claim = try await deliveryStore.reclaimRetrying(
+                    retryingDelivery,
+                    seriesID: payload.seriesId,
+                    revisionUrn: payload.revisionUrn,
+                    retryOwnerID: retryOwnerID,
+                    freshnessState: freshnessDecision.state,
+                    on: context.application.db
+                )
+            } else {
+                claim = try await deliveryStore.claim(
+                    installationID: candidate.id,
+                    seriesID: payload.seriesId,
+                    revisionUrn: payload.revisionUrn,
+                    mode: payload.mode,
+                    reason: payload.reason,
+                    freshnessState: freshnessDecision.state,
+                    retryOwnerID: retryOwnerID,
+                    on: context.application.db
+                )
+            }
             
             guard claim.inserted else {
                 continue
@@ -436,9 +733,9 @@ extension NotificationSendJob {
                 using: context
             )
 
+            let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
             do {
                 // Use per-installation APNs environment so sandbox/prod tokens route correctly.
-                let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
                 try await sender.sendNotification(
                     app: context.application,
                     with: alert,
@@ -449,39 +746,6 @@ extension NotificationSendJob {
                     to: candidate.apnsToken,
                     environment: apnsEnvironment
                 )
-
-                try await deliveryStore.completeSent(
-                    claimID: claim.id,
-                    on: context.application.db
-                )
-                sentCount += 1
-                
-                context.logger.info(
-                    "Notification sent to device",
-                    metadata: [
-                        "installationId": .string(candidate.id.uuidString),
-                        "seriesId": .string(payload.seriesId.uuidString),
-                        "revisionUrn": .string(payload.revisionUrn)
-                    ]
-                )
-            } catch let error as APNSError {
-                context.logger.error("APNS rejected request: \(error.reason.debugDescription)")
-                
-                // TODO: figure out retries
-                // At least we aren't dropping them now
-                let apnsErrorCode: String
-                if let reason = error.reason {
-                    apnsErrorCode = reason.errorDescription
-                } else {
-                    apnsErrorCode = error.reason.debugDescription
-                }
-
-                try await deliveryStore.completeFailed(
-                    claimID: claim.id,
-                    apnsErrorCode: apnsErrorCode,
-                    on: context.application.db
-                )
-                failedCount += 1
             } catch {
                 context.logger.error(
                     "APNs send failed",
@@ -492,19 +756,55 @@ extension NotificationSendJob {
                         "error": .string(String(describing: error))
                     ]
                 )
-                // TODO: figure out retries
-                // At least we aren't dropping them now
-                try await deliveryStore.completeFailed(
-                    claimID: claim.id,
-                    apnsErrorCode: nil,
-                    on: context.application.db
-                )
-                failedCount += 1
+
+                switch failureClassifier.classify(error) {
+                case .retryable(let code):
+                    try await deliveryStore.markRetrying(
+                        claimID: claim.id,
+                        retryOwnerID: retryOwnerID,
+                        retryGeneration: claim.retryGeneration,
+                        apnsErrorCode: code,
+                        on: context.application.db
+                    )
+                    retryableFailureCount += 1
+                case .terminal(let code):
+                    try await deliveryStore.completeFailed(
+                        claimID: claim.id,
+                        apnsErrorCode: code,
+                        on: context.application.db
+                    )
+                    failedCount += 1
+                case .invalidToken(let code):
+                    try await deliveryStore.completeInvalidTokenFailure(
+                        claimID: claim.id,
+                        installationID: candidate.id,
+                        failedToken: candidate.apnsToken,
+                        apnsErrorCode: code,
+                        on: context.application.db
+                    )
+                    failedCount += 1
+                }
+                continue
             }
+
+            try await deliveryStore.completeSent(
+                claimID: claim.id,
+                on: context.application.db
+            )
+            sentCount += 1
+
+            context.logger.info(
+                "Notification sent to device",
+                metadata: [
+                    "installationId": .string(candidate.id.uuidString),
+                    "seriesId": .string(payload.seriesId.uuidString),
+                    "revisionUrn": .string(payload.revisionUrn)
+                ]
+            )
         }
 
         let noOpReason: NotificationSendNoOpReason?
-        if sentCount == 0 && failedCount == 0 {
+        if sentCount == 0 && failedCount == 0 && retryableFailureCount == 0 {
             if staleMissedCount > 0 && claimedCount == 0 {
                 noOpReason = .allCandidatesStaleLocation
             } else {
@@ -521,8 +821,29 @@ extension NotificationSendJob {
             claimedCount: claimedCount,
             sentCount: sentCount,
             failedCount: failedCount,
+            retryableFailureCount: retryableFailureCount,
             noOpReason: noOpReason
         )
+    }
+
+    func finishAttempt(
+        context: QueueContext,
+        payload: NotificationSendJobPayload,
+        attemptedAt: Date,
+        summary: DispatchNotificationsResult
+    ) async throws {
+        await recordAttempt(
+            context: context,
+            payload: payload,
+            attemptedAt: attemptedAt,
+            summary: summary
+        )
+
+        if summary.retryableFailureCount > 0 {
+            throw NotificationDeliveryRetryableError.retryableFailures(
+                summary.retryableFailureCount
+            )
+        }
     }
 
     func saveNotificationDebugSnapshot(
@@ -587,6 +908,8 @@ extension NotificationSendJob {
         let outcome: NotificationSendAttemptOutcome
         if summary.noOpReason != nil {
             outcome = .noOp
+        } else if summary.retryableFailureCount > 0 {
+            outcome = .retrying
         } else if summary.sentCount > 0 {
             outcome = .delivered
         } else {

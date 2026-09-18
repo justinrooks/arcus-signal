@@ -84,6 +84,8 @@ struct NotificationMissedDecisionPersistenceTests {
                 reason TEXT NOT NULL,
                 freshness_state TEXT NOT NULL,
                 status TEXT,
+                retry_owner_id TEXT,
+                retry_generation INTEGER NOT NULL DEFAULT 0,
                 created TIMESTAMP NOT NULL
             );
             """).run()
@@ -91,6 +93,12 @@ struct NotificationMissedDecisionPersistenceTests {
         try await sql.raw("""
             ALTER TABLE notification_ledger
             ADD COLUMN IF NOT EXISTS freshness_state TEXT NOT NULL DEFAULT 'fresh';
+            """).run()
+
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+              ADD COLUMN IF NOT EXISTS retry_owner_id TEXT,
+              ADD COLUMN IF NOT EXISTS retry_generation INTEGER NOT NULL DEFAULT 0;
             """).run()
     }
 

@@ -195,6 +195,42 @@ struct InstallationAlertReconciliationJobTests {
                     await capture.firstDispatch(jobName: NotificationSendJob.name)
                 )
                 #expect(event.queueName == ArcusQueueLane.send.rawValue)
+                #expect(event.maxRetryCount == NotificationSendJob.maximumRetryCount)
+            }
+        }
+    }
+
+    @Test("alert-driven notification dispatch uses the bounded send retry policy")
+    func alertDrivenDispatchUsesBoundedSendRetries() async throws {
+        try await withApp { app in
+            let capture = ReconciliationDispatchCapture()
+            app.queues.add(capture)
+
+            let county = "county-\(UUID().uuidString.lowercased())"
+            let alert = try await seedActiveAlert(county: county, on: app.db)
+            let outbox = try #require(
+                try await ArcusNotificationOutboxModel.query(on: app.db)
+                    .filter(\.$series.$id == alert.seriesId)
+                    .filter(\.$revisionUrn == alert.revisionUrn)
+                    .first()
+            )
+            outbox.state = "ready"
+            outbox.attempts = 0
+            try await outbox.update(on: app.db)
+
+            _ = try await DispatchAgent.dispatchPendingNotificationJobs(
+                context: context(for: app),
+                mode: NotificationTargetMode.ugc.rawValue
+            )
+
+            let event = try #require(
+                await capture.firstDispatch(jobName: NotificationSendJob.name)
+            )
+            #expect(event.queueName == ArcusQueueLane.send.rawValue)
+            #expect(event.maxRetryCount == NotificationSendJob.maximumRetryCount)
+
+            if let series = try await ArcusSeriesModel.find(alert.seriesId, on: app.db) {
+                try await series.delete(on: app.db)
             }
         }
     }

@@ -120,6 +120,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(FixIsSubscribedToDeviceInstallation())
     app.migrations.add(UpdateArcusSeriesConstraints())
     app.migrations.add(AddApnsErrorCodeToNotificationLedger())
+    app.migrations.add(AddRetryStateToNotificationLedger())
     app.migrations.add(AddCAPParamFields())
     app.migrations.add(CreateNotificationDebug())
     app.migrations.add(CreateIngestSweepRuns())
