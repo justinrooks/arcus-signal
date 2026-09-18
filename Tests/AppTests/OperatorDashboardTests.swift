@@ -241,7 +241,7 @@ struct OperatorDashboardTests {
         #expect(abs((response.deliveryKPIs.apnsDeliverySuccessRate.successRate ?? 0) - 0.8) < 0.0001)
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
-        #expect(abs((response.growthUsage.installationGrowth.seenLast24HoursRate ?? 0) - 0.675) < 0.0001)
+        #expect(abs((response.growthUsage.installationGrowth.seenLast24HoursRate ?? 0) - 0.75) < 0.0001)
         #expect(response.growthUsage.installationGrowth.currentInstallationCount == 36)
         #expect(response.growthUsage.installationGrowth.dormantInstallationCount == 4)
         #expect(response.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
@@ -546,8 +546,16 @@ struct OperatorDashboardTests {
                         #expect(!markup.contains("id=\"recent-pressure-artifacts-table\""))
                     }
                     if page == .installations {
+                        #expect(markup.contains("Current Installations"))
+                        #expect(markup.contains("Cumulative registrations"))
+                        #expect(markup.contains("Share of current"))
+                        #expect(!markup.contains("Known Installations"))
+                        #expect(!markup.contains("Cumulative total"))
+                        #expect(!markup.contains("Share of known"))
                         #expect(markup.contains("<dt>Dormant 180d+</dt><dd>4</dd>"))
                         let liveKnownCard = liveFunction("function renderKnownInstallationsCard", until: "function renderNewInstallationsCard", in: html)
+                        #expect(liveKnownCard.contains("Current Installations"))
+                        #expect(liveKnownCard.contains("metric.currentInstallationCount"))
                         #expect(liveKnownCard.contains("Dormant 180d+"))
                         #expect(liveKnownCard.contains("metric.dormantInstallationCount"))
                     }

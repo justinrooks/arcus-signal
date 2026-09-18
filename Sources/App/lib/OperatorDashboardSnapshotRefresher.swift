@@ -359,6 +359,7 @@ struct OperatorDashboardSnapshotRefresher {
             FROM device_installations i
             LEFT JOIN device_presence p
               ON p.installation_id = i.installation_id
+            WHERE i.apns_environment = 'prod'
         """).first(decoding: TargetableCoverageRow.self)
 
         return .init(
@@ -474,12 +475,14 @@ struct OperatorDashboardSnapshotRefresher {
                 LEFT JOIN device_installations i
                   ON i.created_at >= months.month_start
                  AND i.created_at < months.month_start + INTERVAL '1 month'
+                 AND i.apns_environment = 'prod'
                 GROUP BY months.month_start
             ),
             prior_total AS (
                 SELECT COUNT(*) AS count
                 FROM device_installations, bounds
                 WHERE created_at < current_month_start - INTERVAL '11 months'
+                  AND apns_environment = 'prod'
             ),
             latest_foreground_activity AS (
                 SELECT installation_id, MAX(created_at) AS last_activity_at
@@ -499,7 +502,9 @@ struct OperatorDashboardSnapshotRefresher {
             ),
             current_state AS (
                 SELECT
-                    COUNT(*) AS known_installation_count,
+                    COUNT(*) FILTER (
+                        WHERE apns_environment = 'prod'
+                    ) AS known_installation_count,
                     COUNT(*) FILTER (
                         WHERE apns_environment = 'prod'
                           AND is_active = TRUE
@@ -511,10 +516,16 @@ struct OperatorDashboardSnapshotRefresher {
                           AND last_communication_at < dormancy_cutoff
                     ) AS dormant_installation_count,
                     COUNT(*) FILTER (
-                        WHERE is_active = TRUE AND is_subscribed = TRUE
+                        WHERE apns_environment = 'prod'
+                          AND is_active = TRUE
+                          AND last_communication_at >= dormancy_cutoff
+                          AND is_subscribed = TRUE
                     ) AS currently_subscribed_count,
                     COUNT(*) FILTER (
-                        WHERE last_seen_at >= observed_at - INTERVAL '24 hours'
+                        WHERE apns_environment = 'prod'
+                          AND is_active = TRUE
+                          AND last_communication_at >= dormancy_cutoff
+                          AND last_seen_at >= observed_at - INTERVAL '24 hours'
                     ) AS seen_last_24_hours_count
                 FROM communication, bounds
             )

@@ -89,9 +89,12 @@ struct OperatorDashboardInstallationGrowthTests {
                 throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
             }
             let activityCutoff = now.addingTimeInterval(-24 * 60 * 60)
+            let dormant = now.addingTimeInterval(
+                -Double(OperatorDashboardConfig.installationDormancyThresholdSeconds) - 1
+            )
             try await seedInstallation(
                 createdAt: date("2025-04-30T23:59:59Z"),
-                lastSeenAt: activityCutoff.addingTimeInterval(-1),
+                lastSeenAt: dormant,
                 on: database
             )
             try await seedInstallation(
@@ -116,15 +119,21 @@ struct OperatorDashboardInstallationGrowthTests {
                 lastSeenAt: now,
                 on: database
             )
+            try await seedInstallation(
+                createdAt: date("2026-04-08T11:59:59Z"),
+                lastSeenAt: now,
+                apnsEnvironment: "sandbox",
+                on: database
+            )
 
             let metric = try await OperatorDashboardSnapshotRefresher()
                 .loadInstallationGrowth(on: sql, now: now)
 
             #expect(metric.knownInstallationCount == 5)
-            #expect(metric.currentInstallationCount == 4)
-            #expect(metric.dormantInstallationCount == 0)
+            #expect(metric.currentInstallationCount == 3)
+            #expect(metric.dormantInstallationCount == 1)
             #expect(metric.newThisMonthCount == 2)
-            #expect(metric.currentlySubscribedCount == 3)
+            #expect(metric.currentlySubscribedCount == 2)
             #expect(metric.seenLast24HoursCount == 3)
             #expect(metric.monthlyGrowth.count == 12)
             #expect(metric.monthlyGrowth.first?.monthStart == date("2025-05-01T00:00:00Z"))
@@ -151,8 +160,8 @@ struct OperatorDashboardInstallationGrowthTests {
             _ = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
             _ = try await seedInstallation(createdAt: old, lastSeenAt: exact, on: database)
             let dormantWithMultipleActivities = try await seedInstallation(createdAt: old, lastSeenAt: old, on: database)
-            _ = try await seedInstallation(createdAt: old, lastSeenAt: old, apnsEnvironment: "sandbox", on: database)
-            _ = try await seedInstallation(createdAt: old, lastSeenAt: old, isActive: false, on: database)
+            _ = try await seedInstallation(createdAt: old, lastSeenAt: now, apnsEnvironment: "sandbox", on: database)
+            _ = try await seedInstallation(createdAt: old, lastSeenAt: now, isActive: false, on: database)
             try await sql.raw("""
                 INSERT INTO installation_activity_daily (installation_id, created_at)
                 VALUES (\(bind: oldWithRecentActivity), \(bind: now))
@@ -175,6 +184,8 @@ struct OperatorDashboardInstallationGrowthTests {
 
             #expect(metric.currentInstallationCount == 4)
             #expect(metric.dormantInstallationCount == 2)
+            #expect(metric.currentlySubscribedCount == 4)
+            #expect(metric.seenLast24HoursCount == 1)
         }
     }
 

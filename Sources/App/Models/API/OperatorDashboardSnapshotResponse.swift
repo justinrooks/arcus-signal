@@ -1331,7 +1331,7 @@ public struct InstallationGrowthMetricResponse: Content, Sendable {
         self.seenLast24HoursCount = metric.seenLast24HoursCount
         self.seenLast24HoursRate = OperatorDashboardCalculations.rate(
             numerator: metric.seenLast24HoursCount,
-            denominator: metric.knownInstallationCount
+            denominator: metric.currentInstallationCount
         )
         self.monthlyGrowth = metric.monthlyGrowth.map {
             .init(

@@ -252,7 +252,7 @@ extension OperatorDashboardPageRenderer {
             const previousMonth = metric.monthlyGrowth.length > 1
               ? metric.monthlyGrowth[metric.monthlyGrowth.length - 2]
               : null;
-            return renderCard('Known Installations', String(metric.knownInstallationCount), metric.refreshedAt, [
+            return renderCard('Current Installations', String(metric.currentInstallationCount), metric.refreshedAt, [
               { label: 'Through last month', value: previousMonth ? String(previousMonth.cumulativeInstallationCount) : 'n/a' },
               { label: 'Currently subscribed', value: String(metric.currentlySubscribedCount) },
               { label: 'Dormant 180d+', value: String(metric.dormantInstallationCount) }
@@ -268,7 +268,7 @@ extension OperatorDashboardPageRenderer {
 
           function renderRecentServerActivityCard(metric) {
             return renderCard('Seen Last 24h — Server Activity', String(metric.seenLast24HoursCount), metric.refreshedAt, [
-              { label: 'Share of known', value: formatPercent(metric.seenLast24HoursRate) },
+              { label: 'Share of current', value: formatPercent(metric.seenLast24HoursRate) },
               { label: 'Interpretation', value: 'Operational activity, not DAU' }
             ], '', null, false);
           }
@@ -326,13 +326,13 @@ extension OperatorDashboardPageRenderer {
               : `
                 <div class="table-wrap">
                   <table class="stream-table inline-mobile-table">
-                    <thead><tr><th>Month</th><th>New installations</th><th>Cumulative total</th></tr></thead>
+                    <thead><tr><th>Month</th><th>New installations</th><th>Cumulative registrations</th></tr></thead>
                     <tbody>
                       ${rows.map((entry) => `
                         <tr>
                           <td data-label="Month">${escapeHtml(formatMonth(entry.monthStart))}</td>
                           <td data-label="New installations">${escapeHtml(entry.newInstallationCount)}</td>
-                          <td data-label="Cumulative total">${escapeHtml(entry.cumulativeInstallationCount)}</td>
+                          <td data-label="Cumulative registrations">${escapeHtml(entry.cumulativeInstallationCount)}</td>
                         </tr>
                       `).join('')}
                     </tbody>
@@ -815,7 +815,7 @@ extension OperatorDashboardPageRenderer {
           function renderUsageOverview(g, detail) {
             const growth=g.installationGrowth,activity=g.installationActivity;
             return controlHead('Usage & Installations','Explicit foreground activity · UTC windows',detail?null:'installations')+
-              '<div class="usage-metrics">'+controlStat('Known',growth.refreshedAt?growth.knownInstallationCount:'n/a','installations')+
+              '<div class="usage-metrics">'+controlStat('Current',growth.refreshedAt?growth.currentInstallationCount:'n/a','installations')+
               controlStat('Today',activity.refreshedAt?activity.dailyActiveInstallationCount:'n/a','DAU')+
               controlStat('This month',activity.refreshedAt?activity.monthlyActiveInstallationCount:'n/a','MAU')+
               controlStat('New this month',growth.refreshedAt?growth.newThisMonthCount:'n/a',growth.monthlyGrowth.length?formatMonth(growth.monthlyGrowth[growth.monthlyGrowth.length-1].monthStart):'n/a')+
