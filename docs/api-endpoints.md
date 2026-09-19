@@ -144,6 +144,7 @@ Privacy/logging note:
   - `fire` (optional)
   - `h3` (optional, must be `> 0` when present)
 - At least one of `ugc`, `fire`, `h3` is required.
+- Collection results include alerts that are active at evaluation time, plus alerts in `expired` or `ended` state whose known terminal time falls within the previous hour. Active rows whose known `expires` or `ends` time has passed are excluded. Other terminal and historical states are excluded.
 - Response: `200 OK` JSON array of alert payloads.
 - Error: `400 Bad Request` when no filter is provided or `h3 <= 0`.
 
@@ -165,7 +166,7 @@ curl -i "http://localhost:8080/api/v1/alerts?ugc=COC001"
   - `h3` (optional, must be `> 0` when present)
 - Lookup modes:
   - Targeted lookup: provide `id` only (plus optional `sent`) to fetch exactly one current alert by `arcus_series.id`.
-  - Collection lookup: provide one or more of `county`, `forecast`, `fire`, `h3`.
+  - Collection lookup: provide one or more of `county`, `forecast`, `fire`, `h3`. Results include alerts that are active at evaluation time, plus `expired` or `ended` alerts whose known terminal time falls within the previous hour. Active rows whose known `expires` or `ends` time has passed, and older terminal history, are excluded.
   - `id` is mutually exclusive with `county`, `forecast`, `fire`, `h3`.
 - Response: `200 OK` JSON array of alert payloads.
 - Error:

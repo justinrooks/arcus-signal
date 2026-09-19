@@ -1,4 +1,5 @@
 @testable import App
+import FluentSQL
 import Foundation
 import Testing
 import Vapor
@@ -39,6 +40,11 @@ struct AlertsControllerTests {
 
     private func seedSeries(
         id: UUID,
+        state: EventState = .active,
+        expires: Date? = nil,
+        ends: Date? = nil,
+        ugcCodes: [String] = ["COC031"],
+        h3Cells: [Int64] = [617700169958293503],
         on app: Application
     ) async throws {
         let now = isoDate("2026-05-21T18:00:00Z")
@@ -51,19 +57,19 @@ struct AlertsControllerTests {
             currentRevisionSent: now,
             messageType: NWSAlertMessageType.alert.rawValue,
             contentFingerprint: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-            state: EventState.active.rawValue,
+            state: state.rawValue,
             created: now,
             updated: now,
             sent: now,
             effective: now,
             onset: nil,
-            expires: nil,
-            ends: nil,
+            expires: expires,
+            ends: ends,
             lastSeenActive: now,
             severity: EventSeverity.severe.rawValue,
             urgency: EventUrgency.immediate.rawValue,
             certainty: EventCertainty.observed.rawValue,
-            ugcCodes: ["COC031"],
+            ugcCodes: ugcCodes,
             areaDesc: "Denver County",
             senderName: "NWS Boulder CO",
             headline: "Tornado Warning issued",
@@ -77,11 +83,64 @@ struct AlertsControllerTests {
             series: id,
             geometry: .point(lon: -104.9903, lat: 39.7392),
             geometryHash: "geom-hash",
-            h3Cells: [617700169958293503],
+            h3Cells: h3Cells,
             h3Resolution: 8,
             h3Hash: "h3-hash"
         )
         try await geolocation.save(on: app.db)
+    }
+
+    @Test("collection lookup returns active and recent terminal alerts only")
+    func collectionLookupBoundsLifecycleWindow() async throws {
+        try await withApp { app in
+            let now = isoDate("2026-05-21T18:00:00Z")
+            let oneHourAgo = now.addingTimeInterval(-60 * 60)
+            let collectionUGC = ["COC262"]
+
+            let active = UUID()
+            let activeExpired = UUID()
+            let activeEnded = UUID()
+            let recentlyExpired = UUID()
+            let cutoffExpired = UUID()
+            let oldExpired = UUID()
+            let recentlyEnded = UUID()
+            let cutoffEnded = UUID()
+            let oldEnded = UUID()
+            let cancelled = UUID()
+            let cancelledInError = UUID()
+            let geographyMismatch = UUID()
+
+            try await seedSeries(id: active, ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: activeExpired, expires: now.addingTimeInterval(-1), ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: activeEnded, ends: now.addingTimeInterval(-1), ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: recentlyExpired, state: .expired, expires: now.addingTimeInterval(-30 * 60), ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: cutoffExpired, state: .expired, expires: oneHourAgo, ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: oldExpired, state: .expired, expires: now.addingTimeInterval(-2 * 60 * 60), ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: recentlyEnded, state: .ended, ends: now.addingTimeInterval(-30 * 60), ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: cutoffEnded, state: .ended, ends: oneHourAgo, ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: oldEnded, state: .ended, ends: now.addingTimeInterval(-2 * 60 * 60), ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: cancelled, state: .cancelled, ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: cancelledInError, state: .cancelled_in_error, ugcCodes: collectionUGC, on: app)
+            try await seedSeries(id: geographyMismatch, ugcCodes: ["COC999"], on: app)
+
+            let sql = try #require(app.db as? any SQLDatabase)
+            let rows = try await loadAlertSeries(
+                sql: sql,
+                ugcCodes: collectionUGC,
+                h3: nil,
+                evaluatedAt: now
+            )
+            let ids = Set(rows.map(\.id))
+
+            #expect(ids == [active, recentlyExpired, cutoffExpired, recentlyEnded, cutoffEnded])
+            #expect(!ids.contains(activeExpired))
+            #expect(!ids.contains(activeEnded))
+            #expect(!ids.contains(oldExpired))
+            #expect(!ids.contains(oldEnded))
+            #expect(!ids.contains(cancelled))
+            #expect(!ids.contains(cancelledInError))
+            #expect(!ids.contains(geographyMismatch))
+        }
     }
 
     @Test("GET /api/v2/alerts supports targeted series UUID lookup")
