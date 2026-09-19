@@ -104,6 +104,16 @@ Services:
 
 The worker uses Vapor Queues scheduled jobs to dispatch `IngestNWSAlertsJob` every 60 seconds (`minutely().at(0)`).
 
+## Releases
+
+Arcus Signal server versions use stable SemVer tags in the form `vMAJOR.MINOR.PATCH` (for example, `v1.1.0`). Publishing a non-prerelease GitHub Release is the production container build boundary; pull requests, merges to `main`, and raw tag pushes do not publish production images.
+
+Each release builds the exact release tag and publishes one image containing both the `Run` API and `RunWorker` worker. The immutable `vMAJOR.MINOR.PATCH` image tag is authoritative. The same image is also tagged with its source revision for traceability, while `latest` is only a convenience pointer to the most recently published stable release.
+
+The release version and full source revision are stored in the runtime image as `ARCUS_SIGNAL_VERSION` and `ARCUS_SIGNAL_REVISION`, along with corresponding OCI image labels. Local Compose builds retain the Dockerfile defaults `development` and `unknown` when release metadata is absent.
+
+Publishing an image does not deploy it. Production deployment remains a separate, explicit operation.
+
 ## Endpoint Docs
 
 Detailed endpoint behavior, validation rules, and examples are documented in [docs/api-endpoints.md](docs/api-endpoints.md).
