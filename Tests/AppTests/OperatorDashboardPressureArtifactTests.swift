@@ -146,7 +146,7 @@ struct OperatorDashboardPressureArtifactTests {
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let artifacts = snapshot.modelArtifacts
             let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
-            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models, buildInfo: .init(version: "development", revision: nil))
 
             #expect(snapshot.schemaVersion == OperatorDashboardStoredSnapshot.currentSchemaVersion)
             #expect(artifacts.pressureArtifactCatalog.totalRowCount == 7)
@@ -278,7 +278,7 @@ struct OperatorDashboardPressureArtifactTests {
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let readiness = snapshot.modelArtifacts.pressureArtifactReadiness
             let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
-            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models, buildInfo: .init(version: "development", revision: nil))
 
             #expect(readiness.selectionOutcome == .stale)
             #expect(readiness.status == PressureArtifactCatalogStatus.ready.rawValue)
@@ -335,7 +335,7 @@ struct OperatorDashboardPressureArtifactTests {
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let readiness = snapshot.modelArtifacts.pressureArtifactReadiness
             let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
-            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models, buildInfo: .init(version: "development", revision: nil))
 
             #expect(readiness.selectionOutcome == .unavailable)
             #expect(readiness.status == PressureArtifactCatalogStatus.ready.rawValue)
@@ -373,7 +373,7 @@ struct OperatorDashboardPressureArtifactTests {
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let readiness = snapshot.modelArtifacts.pressureArtifactReadiness
             let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
-            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models, buildInfo: .init(version: "development", revision: nil))
 
             #expect(readiness.selectionOutcome == .unavailable)
             #expect(readiness.status == PressureArtifactCatalogStatus.ready.rawValue)
@@ -437,7 +437,7 @@ struct OperatorDashboardPressureArtifactTests {
 
             let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
             let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
-            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models, buildInfo: .init(version: "development", revision: nil))
             let body = try JSONEncoder().encode(response)
 
             #expect(response.modelArtifacts.pressureArtifactReadiness.selectionOutcome == .unavailable)
@@ -638,7 +638,7 @@ struct OperatorDashboardPressureArtifactTests {
 
         for testCase in cases {
             let response = OperatorDashboardSnapshotResponse(snapshot: testCase.snapshot, renderedAt: testCase.snapshot.generatedAt)
-            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models)
+            let html = OperatorDashboardPageRenderer.render(snapshot: response, page: .models, buildInfo: .init(version: "development", revision: nil))
 
             #expect(response.modelArtifacts.pressureArtifactReadiness.selectionOutcome == testCase.snapshot.modelArtifacts.pressureArtifactReadiness.selectionOutcome)
             #expect(html.contains(testCase.expectedPrimary))

@@ -14,6 +14,8 @@ public enum AppRuntimeMode: String, Sendable {
 }
 
 public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
+    app.arcusSignalBuildInfo = .resolved()
+
     if mode == .worker {
         try await configureAPNs(on: app)
     }

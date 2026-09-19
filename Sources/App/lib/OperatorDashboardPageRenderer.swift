@@ -24,10 +24,15 @@ enum OperatorDashboardPageRenderer {
         }
     }
 
-    static func render(snapshot: OperatorDashboardSnapshotResponse, page: Page = .overview, environment: String = "") -> String {
+    static func render(
+        snapshot: OperatorDashboardSnapshotResponse,
+        page: Page = .overview,
+        environment: String = "",
+        buildInfo: ArcusSignalBuildInfo
+    ) -> String {
         let age = max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt)))
         let live = age <= OperatorDashboardConfig.fastRefreshIntervalSeconds * 2
-        return shell(page: page, environment: environment, status: live ? "live" : "stale", age: "Snapshot \(formatDuration(age)) ago", content: pageContent(snapshot, page: page), script: liveUpdateScript(
+        return shell(page: page, environment: environment, buildInfo: buildInfo, status: live ? "live" : "stale", age: "Snapshot \(formatDuration(age)) ago", content: pageContent(snapshot, page: page), script: liveUpdateScript(
             pollIntervalMilliseconds: pollIntervalMilliseconds,
             initialGeneratedAtMilliseconds: Int(snapshot.generatedAt.timeIntervalSince1970 * 1_000),
             freshnessThresholdMilliseconds: freshnessThresholdMilliseconds,
@@ -35,7 +40,7 @@ enum OperatorDashboardPageRenderer {
         ))
     }
 
-    static func shell(page: Page, environment: String, status: String, age: String, content: String, script: String) -> String {
+    static func shell(page: Page, environment: String, buildInfo: ArcusSignalBuildInfo, status: String, age: String, content: String, script: String) -> String {
         let navigation = Page.allCases.enumerated().map { index, destination in
             "<a href=\"\(destination.path)\"\(destination == page ? " aria-current=\"page\"" : "")><span class=\"nav-index\">0\(index + 1)</span>\(destination.title)</a>"
         }.joined()
@@ -44,7 +49,7 @@ enum OperatorDashboardPageRenderer {
         <!doctype html>
         <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>\(page.title) · Arcus Signal</title><style>\(styles)</style></head>
         <body class="control\(page == .overview ? "" : " detail-page")"><a class="skip" href="#main">Skip to content</a>
-        <div class="app"><header class="masthead"><a class="wordmark" href="/dashboard">Arcus Signal\(environmentLabel)</a>
+        <div class="app"><header class="masthead"><a class="wordmark" href="/dashboard">Arcus Signal\(environmentLabel) · \(escape(buildInfo.version))</a>
         <div class="telemetry" aria-label="Snapshot connection"><span id="connection-status" class="status-dot \(status)" aria-hidden="true"></span><span id="connection-status-label" class="status-label \(status)">\(status.uppercased())</span><span id="snapshot-age">\(escape(age))</span><a href="/v1/metrics">JSON API ↗</a></div></header>
         <nav class="primary-nav" aria-label="Primary">\(navigation)<div class="sidebar-note"><strong>Arcus operations</strong>Worker-computed snapshot<br>Coarse location only</div></nav>
         <main id="main"><div class="page-head"><div>\(page == .overview ? "" : "<div class=\"breadcrumbs\"><a href=\"/dashboard\">Overview</a> / \(page.title)</div>")<h1>\(page.title)</h1><p>\(page.subtitle)</p></div></div>
@@ -88,8 +93,8 @@ enum OperatorDashboardPageRenderer {
         }
     }
 
-    static func renderUnavailable(renderedAt: Date = .now, page: Page = .overview, environment: String = "") -> String {
-        shell(page: page, environment: environment, status: "unavailable", age: "No snapshot", content: """
+    static func renderUnavailable(renderedAt: Date = .now, page: Page = .overview, environment: String = "", buildInfo: ArcusSignalBuildInfo) -> String {
+        shell(page: page, environment: environment, buildInfo: buildInfo, status: "unavailable", age: "No snapshot", content: """
         <section class="module wide unavailable"><h1>Dashboard Snapshot Unavailable</h1><p class="detail-copy">The API process has not received a worker-computed dashboard snapshot yet. This page will keep checking for a fresh snapshot.</p><p class="module-note">Rendered \(escape(formatDate(renderedAt)))</p><p><a href="/v1/metrics">Try the JSON API ↗</a></p></section>
         """, script: unavailablePollingScript(pollIntervalMilliseconds: pollIntervalMilliseconds, recoveryPath: page.path))
     }
