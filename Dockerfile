@@ -93,6 +93,12 @@ RUN [ -d /build/Resources ] && { mv /build/Resources ./Resources && chmod -R a-w
 # Run image
 # ================================
 FROM ubuntu:noble
+ARG ARCUS_SIGNAL_VERSION=development
+ARG ARCUS_SIGNAL_REVISION=unknown
+
+LABEL org.opencontainers.image.source="https://github.com/justinrooks/arcus-signal" \
+      org.opencontainers.image.version="${ARCUS_SIGNAL_VERSION}" \
+      org.opencontainers.image.revision="${ARCUS_SIGNAL_REVISION}"
 
 # Make sure all system packages are up to date, and install only essential packages.
 RUN export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
@@ -128,6 +134,8 @@ RUN mkdir -p /app/storage/storm-setup \
 
 # Provide configuration needed by the built-in crash reporter and some sensible default behaviors.
 ENV SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=./swift-backtrace-static
+ENV ARCUS_SIGNAL_VERSION=${ARCUS_SIGNAL_VERSION} \
+    ARCUS_SIGNAL_REVISION=${ARCUS_SIGNAL_REVISION}
 
 # Ensure all further commands run as the vapor user
 USER vapor:vapor
