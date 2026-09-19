@@ -216,6 +216,31 @@ struct OperatorDashboardTests {
         )
     }
 
+    @Test("build info resolves release metadata and truthful fallbacks")
+    func buildInfoResolvesMetadata() {
+        #expect(ArcusSignalBuildInfo.resolved(from: [
+            "ARCUS_SIGNAL_VERSION": "v1.1.0",
+            "ARCUS_SIGNAL_REVISION": "abc123"
+        ]) == .init(version: "v1.1.0", revision: "abc123"))
+        #expect(ArcusSignalBuildInfo.resolved(from: [
+            "ARCUS_SIGNAL_VERSION": "v1.1.0",
+            "ARCUS_SIGNAL_REVISION": "unknown"
+        ]) == .init(version: "v1.1.0", revision: nil))
+        #expect(ArcusSignalBuildInfo.resolved(from: [:]) == .init(version: "development", revision: nil))
+    }
+
+    @Test("dashboard renders build version for normal and unavailable states")
+    func dashboardRendersBuildVersionForAllStates() {
+        let buildInfo = ArcusSignalBuildInfo(version: "v1.1.0", revision: "abc123")
+        let response = OperatorDashboardSnapshotResponse(snapshot: makeSnapshot(), renderedAt: makeSnapshot().generatedAt)
+
+        let rendered = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: buildInfo)
+        let unavailable = OperatorDashboardPageRenderer.renderUnavailable(buildInfo: buildInfo)
+
+        #expect(rendered.contains("Arcus Signal · v1.1.0"))
+        #expect(unavailable.contains("Arcus Signal · v1.1.0"))
+    }
+
     @Test("dashboard geography adds state context from UGC")
     func dashboardGeographyAddsStateContext() {
         #expect(operatorDashboardAreaDescription(areaDescription: "Denver County", ugcCodes: ["COC031"]) == "Denver County, CO")
@@ -270,7 +295,7 @@ struct OperatorDashboardTests {
             ]
         )
         let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: snapshot.generatedAt)
-        let html = OperatorDashboardPageRenderer.render(snapshot: response)
+        let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "development", revision: nil))
 
         #expect(response.growthUsage.installationFootprint.count == 1)
         #expect(response.growthUsage.installationFootprint[0].presenceAgeSeconds == 300)
@@ -307,7 +332,7 @@ struct OperatorDashboardTests {
         #expect(response.redLights.stuckClaimedRows.status == .healthy)
         #expect(response.redLights.staleActiveSeriesCount.status == .healthy)
 
-        let html = OperatorDashboardPageRenderer.render(snapshot: response)
+        let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "development", revision: nil))
         #expect(html.components(separatedBy: "health-item health-healthy").count == 4)
     }
 
@@ -336,7 +361,7 @@ struct OperatorDashboardTests {
         #expect(response.redLights.stuckClaimedRows.status == .unknown)
         #expect(response.redLights.staleActiveSeriesCount.status == .unknown)
 
-        let html = OperatorDashboardPageRenderer.render(snapshot: response)
+        let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "development", revision: nil))
         #expect(html.components(separatedBy: "health-item health-unknown").count == 5)
         #expect(html.components(separatedBy: "], '', metric.status);").count == 5)
     }
@@ -513,6 +538,7 @@ struct OperatorDashboardTests {
     func dashboardPageRendersSnapshot() async throws {
         try await withApp { app in
             app.operatorDashboardSnapshotStore = StubSnapshotStore(snapshot: makeSnapshot())
+            app.arcusSignalBuildInfo = .init(version: "v9.9.9", revision: "route-test")
             let expected: [OperatorDashboardPageRenderer.Page: [String]] = [
                 .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Weld / Morgan, CO", "61.0%", "74 / 100"],
                 .models: ["pressure-artifact-catalog-card", "pressure-artifact-readiness-card", "recent-pressure-artifacts-table"],
@@ -525,6 +551,7 @@ struct OperatorDashboardTests {
                     #expect(res.status == .ok)
                     #expect(res.headers.contentType == .html)
                     let html = res.body.string
+                    #expect(html.contains("v9.9.9"))
                     let markup = html.components(separatedBy: "<script>").first ?? ""
                     #expect(markup.contains("class=\"control"))
                     #expect(markup.contains("href=\"\(page.path)\" aria-current=\"page\""))
@@ -583,9 +610,9 @@ struct OperatorDashboardTests {
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(response).write(to: output.appendingPathComponent("snapshot.json"))
         for page in OperatorDashboardPageRenderer.Page.allCases {
-            try OperatorDashboardPageRenderer.render(snapshot: response, page: page, environment: "local verification")
+            try OperatorDashboardPageRenderer.render(snapshot: response, page: page, environment: "local verification", buildInfo: .init(version: "development", revision: nil))
                 .write(to: output.appendingPathComponent("\(page.rawValue).html"), atomically: true, encoding: .utf8)
-            try OperatorDashboardPageRenderer.renderUnavailable(page: page)
+            try OperatorDashboardPageRenderer.renderUnavailable(page: page, buildInfo: .init(version: "development", revision: nil))
                 .write(to: output.appendingPathComponent("unavailable-\(page.rawValue).html"), atomically: true, encoding: .utf8)
         }
     }
@@ -594,10 +621,12 @@ struct OperatorDashboardTests {
     func dashboardStatusUsesServerFreshness() {
         let generatedAt = isoDate("2026-04-10T12:00:00Z")
         let fresh = OperatorDashboardPageRenderer.render(
-            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt)
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt),
+            buildInfo: .init(version: "development", revision: nil)
         )
         let stale = OperatorDashboardPageRenderer.render(
-            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(61))
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(61)),
+            buildInfo: .init(version: "development", revision: nil)
         )
 
         #expect(fresh.contains("class=\"status-label live\">LIVE"))
@@ -609,11 +638,13 @@ struct OperatorDashboardTests {
     func dashboardPageUnavailableWithoutSnapshot() async throws {
         try await withApp { app in
             app.operatorDashboardSnapshotStore = StubSnapshotStore(snapshot: nil)
+            app.arcusSignalBuildInfo = .init(version: "v9.9.9", revision: "unavailable-route-test")
 
             for page in OperatorDashboardPageRenderer.Page.allCases {
               try await app.testing().test(.GET, page.path, afterResponse: { res async in
                 #expect(res.status == .serviceUnavailable)
                 #expect(res.body.string.contains("Dashboard Snapshot Unavailable"))
+                #expect(res.body.string.contains("v9.9.9"))
                 #expect(res.body.string.contains("window.location.replace('\(page.path)')"))
                 #expect(res.body.string.contains("http-equiv=\"refresh\"") == false)
                 #expect(res.body.string.contains("class=\"control"))
@@ -639,8 +670,8 @@ struct OperatorDashboardTests {
             )
         }
         let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: snapshot.generatedAt)
-        let overview = OperatorDashboardPageRenderer.render(snapshot: response, page: .overview)
-        let detail = OperatorDashboardPageRenderer.render(snapshot: response, page: .nws)
+        let overview = OperatorDashboardPageRenderer.render(snapshot: response, page: .overview, buildInfo: .init(version: "development", revision: nil))
+        let detail = OperatorDashboardPageRenderer.render(snapshot: response, page: .nws, buildInfo: .init(version: "development", revision: nil))
         let overviewMarkup = overview.components(separatedBy: "<script>").first ?? ""
 
         #expect(overviewMarkup.components(separatedBy: "<div class=\"weather-row\">").count - 1 == OperatorDashboardConfig.touchedSeriesOverviewLimit)

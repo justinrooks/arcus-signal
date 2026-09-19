@@ -29,14 +29,21 @@ struct OperatorDashboardController: RouteCollection {
             return htmlResponse(
                 status: .ok,
                 html: OperatorDashboardPageRenderer.render(
-                    snapshot: .init(snapshot: snapshot, renderedAt: .now), page: page, environment: req.application.environment.name
+                    snapshot: .init(snapshot: snapshot, renderedAt: .now),
+                    page: page,
+                    environment: req.application.environment.name,
+                    buildInfo: req.application.arcusSignalBuildInfo
                 )
             )
         }
 
         return htmlResponse(
             status: .serviceUnavailable,
-            html: OperatorDashboardPageRenderer.renderUnavailable(page: page, environment: req.application.environment.name)
+            html: OperatorDashboardPageRenderer.renderUnavailable(
+                page: page,
+                environment: req.application.environment.name,
+                buildInfo: req.application.arcusSignalBuildInfo
+            )
         )
     }
 

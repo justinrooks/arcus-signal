@@ -34,6 +34,11 @@ extension Application {
         get { storage[AirQualityProviderKey.self]! }
         set { storage[AirQualityProviderKey.self] = newValue }
     }
+
+    var arcusSignalBuildInfo: ArcusSignalBuildInfo {
+        get { storage[ArcusSignalBuildInfoKey.self]! }
+        set { storage[ArcusSignalBuildInfoKey.self] = newValue }
+    }
 }
 
 private struct WorkerScheduledJobNamesKey: StorageKey {
@@ -42,4 +47,8 @@ private struct WorkerScheduledJobNamesKey: StorageKey {
 
 private struct AirQualityProviderKey: StorageKey {
     typealias Value = any AirQualityCurrentProviding
+}
+
+private struct ArcusSignalBuildInfoKey: StorageKey {
+    typealias Value = ArcusSignalBuildInfo
 }
