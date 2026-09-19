@@ -493,13 +493,18 @@ extension OperatorDashboardPageRenderer {
             """
         }
 
+        let capNotice = metric.entries.count == OperatorDashboardConfig.touchedSeriesDetailLimit
+            ? "<p class=\"module-note\">Showing the \(OperatorDashboardConfig.touchedSeriesDetailLimit) most recently touched series from the last \(OperatorDashboardConfig.touchedSeriesDetailWindowHours) hours.</p>"
+            : ""
+
         return """
         <div class="card table-card">
           <div class="table-card__header">
-            <h3>Last 5 touched series</h3>
+            <h3>Touched series · last \(OperatorDashboardConfig.touchedSeriesDetailWindowHours) hours</h3>
             <div class="subtle">Refreshed \(escape(maybeDate(metric.refreshedAt)))</div>
           </div>
           \(body)
+          \(capNotice)
         </div>
         """
     }

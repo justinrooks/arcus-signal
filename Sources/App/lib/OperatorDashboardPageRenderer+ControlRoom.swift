@@ -87,7 +87,7 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func nwsOverview(_ n: LastTouchedSeriesResponse) -> String {
-        let rows: String = n.entries.map { e -> String in
+        let rows: String = n.entries.prefix(OperatorDashboardConfig.touchedSeriesOverviewLimit).map { e -> String in
             let area = operatorDashboardAreaDescription(areaDescription: e.areaDescription, ugcCodes: e.ugcCodes) ?? "Unknown area"
             let threats = [e.tornadoDetection, e.tornadoDamageThreat].compactMap { $0 }.map { "<span class=\"\(tornadoThreatClass($0))\">\(escape($0))</span>" }.joined(separator: " · ")
             return "<div class=\"weather-row\"><time class=\"weather-time\" title=\"\(escape(controlTime(e.touchedAt)))\" datetime=\"\(ISO8601DateFormatter().string(from: e.touchedAt))\">\(String(controlTime(e.touchedAt).dropFirst(11).prefix(5)))</time><div><div class=\"weather-event\">\(escape(e.eventName))</div><div class=\"weather-place\">\(escape(area))</div><div class=\"weather-threat\">\(threats)</div></div><span class=\"weather-lifecycle\">\(escape(e.state))</span></div>"

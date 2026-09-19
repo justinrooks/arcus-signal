@@ -66,7 +66,7 @@ struct OperatorDashboardSnapshotRefresher {
             snapshot.stuckClaimedRows = try await loadStuckClaimedRows(on: app.db, now: now)
             snapshot.modelArtifacts = try await loadPressureArtifactCatalog(on: app, sql: sql, now: now)
             snapshot.recentNotificationDebugEntries = try await loadRecentNotificationDebugEntries(on: sql)
-            snapshot.touchedSeries = try await loadTouchedSeries(on: sql)
+            snapshot.touchedSeries = try await loadTouchedSeries(on: sql, now: now)
             snapshot.fastRefreshedAt = now
         }
 
@@ -1019,7 +1019,8 @@ struct OperatorDashboardSnapshotRefresher {
         }
     }
 
-    private func loadTouchedSeries(on sql: any SQLDatabase) async throws -> [StoredTouchedSeriesEntry] {
+    func loadTouchedSeries(on sql: any SQLDatabase, now: Date) async throws -> [StoredTouchedSeriesEntry] {
+        let cutoff = now.addingTimeInterval(-Double(OperatorDashboardConfig.touchedSeriesDetailWindowHours) * 60 * 60)
         let rows = try await sql.raw("""
             WITH latest_revision AS (
                 SELECT series_id, MAX(received) AS latest_revision_received_at
@@ -1044,8 +1045,12 @@ struct OperatorDashboardSnapshotRefresher {
             FROM arcus_series s
             LEFT JOIN latest_revision l
               ON l.series_id = s.id
+            WHERE GREATEST(
+                COALESCE(l.latest_revision_received_at, TIMESTAMP 'epoch'),
+                COALESCE(s.updated, TIMESTAMP 'epoch')
+            ) >= \(bind: cutoff)
             ORDER BY "touchedAt" DESC, s.id ASC
-            LIMIT \(bind: OperatorDashboardConfig.touchedSeriesLimit)
+            LIMIT \(bind: OperatorDashboardConfig.touchedSeriesDetailLimit)
         """).all(decoding: TouchedSeriesRow.self)
 
         return rows.map {

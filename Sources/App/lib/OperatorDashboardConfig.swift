@@ -16,7 +16,9 @@ public enum OperatorDashboardConfig {
     public static let slowRefreshIntervalSeconds = 5 * 60
 
     public static let recentNotificationDebugLimit = 5
-    public static let touchedSeriesLimit = 5
+    public static let touchedSeriesOverviewLimit = 5
+    public static let touchedSeriesDetailWindowHours = 12
+    public static let touchedSeriesDetailLimit = 250
     public static let topFailureReasonLimit = 3
     public static let installationFootprintLimit = 5
     public static let installationFootprintMaxAgeSeconds = 90 * 24 * 60 * 60

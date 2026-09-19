@@ -234,4 +234,81 @@ struct OperatorDashboardTargetableCoverageTests {
             #expect(entries.last?.capturedAt == now.addingTimeInterval(-4 * 60))
         }
     }
+
+    @Test("touched series uses the rolling detail window and hard cap")
+    func touchedSeriesUsesRollingDetailWindowAndHardCap() async throws {
+        try await withApp { database in
+            let testNow = Date()
+            let prefix = UUID().uuidString.lowercased()
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            for index in 0...250 {
+                let seriesID = UUID()
+                let touchedAt = testNow.addingTimeInterval(-Double(index))
+                try await ArcusSeriesModel(
+                    id: seriesID,
+                    source: "nws",
+                    event: "NWS \(index)",
+                    sourceURL: "https://example.test/\(prefix)/\(index)",
+                    currentRevisionUrn: "urn:oid:\(prefix)-\(index)",
+                    currentRevisionSent: touchedAt,
+                    messageType: "Alert",
+                    contentFingerprint: String(repeating: "a", count: 63) + String(index % 16, radix: 16),
+                    state: "active",
+                    updated: touchedAt,
+                    sent: touchedAt,
+                    effective: touchedAt,
+                    onset: touchedAt,
+                    expires: testNow.addingTimeInterval(3_600),
+                    ends: nil,
+                    lastSeenActive: touchedAt,
+                    severity: "Severe",
+                    urgency: "Immediate",
+                    certainty: "Observed",
+                    ugcCodes: ["COC031"]
+                ).create(on: database)
+                try await sql.raw(
+                    "UPDATE arcus_series SET updated = \(bind: touchedAt) WHERE id = \(bind: seriesID)"
+                ).run()
+            }
+
+            let oldSeriesID = UUID()
+            let oldTouchedAt = testNow.addingTimeInterval(
+                -Double(OperatorDashboardConfig.touchedSeriesDetailWindowHours * 60 * 60) - 1
+            )
+            try await ArcusSeriesModel(
+                id: oldSeriesID,
+                source: "nws",
+                event: "Outside window",
+                sourceURL: "https://example.test/\(prefix)/old",
+                currentRevisionUrn: "urn:oid:\(prefix)-old",
+                currentRevisionSent: oldTouchedAt,
+                messageType: "Alert",
+                contentFingerprint: String(repeating: "b", count: 64),
+                state: "active",
+                updated: oldTouchedAt,
+                sent: oldTouchedAt,
+                effective: oldTouchedAt,
+                onset: oldTouchedAt,
+                expires: testNow.addingTimeInterval(3_600),
+                ends: nil,
+                lastSeenActive: oldTouchedAt,
+                severity: "Severe",
+                urgency: "Immediate",
+                certainty: "Observed",
+                ugcCodes: ["COC031"]
+            ).create(on: database)
+            try await sql.raw(
+                "UPDATE arcus_series SET updated = \(bind: oldTouchedAt) WHERE id = \(bind: oldSeriesID)"
+            ).run()
+
+            let entries = try await OperatorDashboardSnapshotRefresher()
+                .loadTouchedSeries(on: sql, now: testNow)
+            #expect(entries.count == OperatorDashboardConfig.touchedSeriesDetailLimit)
+            #expect(entries.first?.eventName == "NWS 0")
+            #expect(entries.last?.eventName == "NWS 249")
+            #expect(entries.contains { $0.eventName == "Outside window" } == false)
+        }
+    }
 }
