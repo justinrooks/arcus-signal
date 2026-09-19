@@ -698,10 +698,11 @@ extension OperatorDashboardPageRenderer {
             return `
               <div class="card table-card">
                 <div class="table-card__header">
-                  <h3>Last 5 touched series</h3>
-                  <div class="subtle">Refreshed ${escapeHtml(formatDate(metric.refreshedAt))}</div>
-                </div>
-                ${body}
+              <h3>Touched series · last \#(OperatorDashboardConfig.touchedSeriesDetailWindowHours) hours</h3>
+              <div class="subtle">Refreshed ${escapeHtml(formatDate(metric.refreshedAt))}</div>
+            </div>
+            ${body}
+            ${metric.entries.length === \#(OperatorDashboardConfig.touchedSeriesDetailLimit) ? '<p class="module-note">Showing the \#(OperatorDashboardConfig.touchedSeriesDetailLimit) most recently touched series from the last \#(OperatorDashboardConfig.touchedSeriesDetailWindowHours) hours.</p>' : ''}
               </div>
             `;
           }
@@ -833,7 +834,8 @@ extension OperatorDashboardPageRenderer {
             return controlHead('Where usage is attributed','Current / last-known state',detail?null:'installations')+body+'<p class="geo-note">Not location at app open · Unknown stays visible</p>';
           }
           function renderNWSOverview(n) {
-            const rows=n.entries.map(e=>{
+            const overviewEntries=n.entries.slice(0,\#(OperatorDashboardConfig.touchedSeriesOverviewLimit));
+            const rows=overviewEntries.map(e=>{
               const area=controlAreaDescription(e);
               const threats=[e.tornadoDetection,e.tornadoDamageThreat].filter(v=>v!==null&&v!==undefined).map(v=>'<span class="'+tornadoThreatClass(v)+'">'+escapeHtml(v)+'</span>').join(' · ');
               return '<div class="weather-row"><time class="weather-time" title="'+escapeHtml(controlTime(e.touchedAt))+'" datetime="'+escapeHtml(parseDateValue(e.touchedAt).toISOString().replace(/\.\d{3}Z$/, 'Z'))+'">'+escapeHtml(controlTime(e.touchedAt).slice(11,16))+'</time><div><div class="weather-event">'+escapeHtml(e.eventName)+'</div><div class="weather-place">'+escapeHtml(area)+'</div><div class="weather-threat">'+threats+'</div></div><span class="weather-lifecycle">'+escapeHtml(e.state)+'</span></div>';

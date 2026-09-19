@@ -623,4 +623,30 @@ struct OperatorDashboardTests {
             }
         }
     }
+
+    @Test("NWS detail keeps the full snapshot while Overview stays bounded")
+    func nwsDetailKeepsFullSnapshotWhileOverviewStaysBounded() {
+        var snapshot = makeSnapshot()
+        snapshot.touchedSeries += (0..<248).map { index in
+            .init(
+                seriesID: UUID(),
+                eventName: "Additional \(index)",
+                state: "active",
+                currentRevisionUrn: "urn:oid:additional-\(index)",
+                touchedAt: isoDate("2026-04-10T11:00:00Z"),
+                latestRevisionReceivedAt: nil,
+                seriesUpdatedAt: nil
+            )
+        }
+        let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: snapshot.generatedAt)
+        let overview = OperatorDashboardPageRenderer.render(snapshot: response, page: .overview)
+        let detail = OperatorDashboardPageRenderer.render(snapshot: response, page: .nws)
+        let overviewMarkup = overview.components(separatedBy: "<script>").first ?? ""
+
+        #expect(overviewMarkup.components(separatedBy: "<div class=\"weather-row\">").count - 1 == OperatorDashboardConfig.touchedSeriesOverviewLimit)
+        #expect(detail.contains("Touched series · last 12 hours"))
+        #expect(detail.contains("Showing the 250 most recently touched series from the last 12 hours."))
+        #expect(detail.contains("slice(0,5)"))
+        #expect(detail.contains("length === 250"))
+    }
 }
