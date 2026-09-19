@@ -40,13 +40,13 @@ struct AlertsController: RouteCollection {
 
     func indexV1(req: Request) async throws -> Response {
         let query = try req.query.decode(AlertLookupQueryV1.self)
-        let rows = try await loadAlertSeriesV1(matching: query, on: req.db)
+        let rows = try await loadAlertSeriesV1(matching: query, evaluatedAt: Date(), on: req.db)
         return try encodePayloadResponse(rows: rows)
     }
 
     func indexV2(req: Request) async throws -> Response {
         let query = try req.query.decode(AlertLookupQueryV2.self)
-        let rows = try await loadAlertSeriesV2(matching: query, on: req.db)
+        let rows = try await loadAlertSeriesV2(matching: query, evaluatedAt: Date(), on: req.db)
         return try encodePayloadResponse(rows: rows)
     }
 
@@ -61,6 +61,7 @@ struct AlertsController: RouteCollection {
 
 private func loadAlertSeriesV1(
     matching query: AlertLookupQueryV1,
+    evaluatedAt: Date,
     on database: any Database
 ) async throws -> [AlertSeriesRow] {
     guard let sql = database as? any SQLDatabase else {
@@ -77,11 +78,12 @@ private func loadAlertSeriesV1(
         throw Abort(.badRequest, reason: "At least one of ugc, fire, or h3 is required")
     }
 
-    return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: query.h3)
+    return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: query.h3, evaluatedAt: evaluatedAt)
 }
 
 private func loadAlertSeriesV2(
     matching query: AlertLookupQueryV2,
+    evaluatedAt: Date,
     on database: any Database
 ) async throws -> [AlertSeriesRow] {
     guard let sql = database as? any SQLDatabase else {
@@ -92,7 +94,7 @@ private func loadAlertSeriesV2(
     case .targeted(let id, let sent):
         return try await loadAlertSeries(sql: sql, id: id, sent: sent)
     case .collection(let ugcCodes, let h3):
-        return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: h3)
+        return try await loadAlertSeries(sql: sql, ugcCodes: ugcCodes, h3: h3, evaluatedAt: evaluatedAt)
     }
 }
 
@@ -129,10 +131,11 @@ private func parseLookupModeV2(_ query: AlertLookupQueryV2) throws -> AlertLooku
     return .collection(ugcCodes: ugcCodes, h3: query.h3)
 }
 
-private func loadAlertSeries(
+func loadAlertSeries(
     sql: any SQLDatabase,
     ugcCodes: [String],
-    h3: Int64?
+    h3: Int64?,
+    evaluatedAt: Date
 ) async throws -> [AlertSeriesRow] {
 
     var matchClauses: [SQLQueryString] = ugcCodes.map { code in
@@ -145,18 +148,28 @@ private func loadAlertSeries(
         )
     }
 
-    // TODO: Investigate this more. Removing the filter for state = active and replaced it
-    // it was replaced with state <> cancelled in error. We want to send all the watches
-    // and warnings we have to the device and let the device determine display. It is at
-    // the edge and has the most accurate knowledge of time and location, so allow it to
-    // do its job and determine if the alert should be shown. We have different issues if
-    // its a cancelled in error state.
+    let recentTerminalCutoff = evaluatedAt.addingTimeInterval(-60 * 60)
+
     return try await sql.raw("""
         SELECT \(AlertSeriesRow.sqlSelectColumns())
         FROM \(ident: ArcusSeriesModel.schema) AS \(ident: "s")
         LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
           ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
         WHERE \(ident: "s").\(ident: "state") <> \(bind: EventState.cancelled_in_error.rawValue)
+          AND (
+              (\(ident: "s").\(ident: "state") = \(bind: EventState.active.rawValue)
+               AND (\(ident: "s").\(ident: "expires") IS NULL OR \(ident: "s").\(ident: "expires") > \(bind: evaluatedAt))
+               AND (\(ident: "s").\(ident: "ends") IS NULL OR \(ident: "s").\(ident: "ends") > \(bind: evaluatedAt))
+              )
+              OR (\(ident: "s").\(ident: "state") = \(bind: EventState.expired.rawValue)
+                  AND \(ident: "s").\(ident: "expires") IS NOT NULL
+                  AND \(ident: "s").\(ident: "expires") <= \(bind: evaluatedAt)
+                  AND \(ident: "s").\(ident: "expires") >= \(bind: recentTerminalCutoff))
+              OR (\(ident: "s").\(ident: "state") = \(bind: EventState.ended.rawValue)
+                  AND \(ident: "s").\(ident: "ends") IS NOT NULL
+                  AND \(ident: "s").\(ident: "ends") <= \(bind: evaluatedAt)
+                  AND \(ident: "s").\(ident: "ends") >= \(bind: recentTerminalCutoff))
+          )
           AND (\(matchClauses.joined(separator: " OR ")))
         ORDER BY \(ident: "s").\(ident: "ends") DESC NULLS LAST,
                  \(ident: "s").\(ident: "sent") DESC NULLS LAST,
