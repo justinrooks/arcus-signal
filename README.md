@@ -114,6 +114,16 @@ The release version and full source revision are stored in the runtime image as 
 
 Publishing an image does not deploy it. Production deployment remains a separate, explicit operation.
 
+### Production deployment
+
+After publishing a stable GitHub Release and waiting for its versioned GHCR image to succeed:
+
+1. SSH to the Arcus Signal server.
+2. Run `./install v1.1.0` with the release version to deploy.
+3. Verify API and worker health.
+
+The installer pulls the requested version before starting the application and uses that same image tag for both API and worker. To select an older available image version, run the same command with its tag, for example `./install v1.0.3`. This selects the container version only; it does not guarantee that database migrations are safely reversible.
+
 ## Endpoint Docs
 
 Detailed endpoint behavior, validation rules, and examples are documented in [docs/api-endpoints.md](docs/api-endpoints.md).

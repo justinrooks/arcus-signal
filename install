@@ -4,22 +4,34 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$repo_root"
 
+usage() {
+  echo "Usage: ./install vMAJOR.MINOR.PATCH" >&2
+}
+
+if [[ $# -ne 1 || ! "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  usage
+  exit 64
+fi
+
+release_tag="$1"
+compose=(sudo env "ARCUS_SIGNAL_IMAGE_TAG=$release_tag" docker compose --env-file .env)
+
 echo "Pulling latest repo changes..."
 git pull --ff-only
 
-echo "Pulling latest image from github..."
-sudo docker compose --env-file .env pull api worker
+echo "Pulling Arcus Signal $release_tag image from GitHub..."
+"${compose[@]}" pull api worker
 
 echo "Starting database and queue dependencies..."
-sudo docker compose --env-file .env up -d postgres redis
+"${compose[@]}" up -d postgres redis
 
 echo "Running database migrations..."
-sudo docker compose --env-file .env run --rm api ./Run migrate --env development --yes
+"${compose[@]}" run --rm api ./Run migrate --env development --yes
 
 echo "Verifying packaged wgrib2 binary..."
-sudo docker compose --env-file .env run --rm api test -x /usr/local/bin/wgrib2
+"${compose[@]}" run --rm api test -x /usr/local/bin/wgrib2
 
 echo "Starting api/worker from pulled images..."
-sudo docker compose --env-file .env up -d --no-build api worker
+"${compose[@]}" up -d --no-build api worker
 
 echo "Done."
