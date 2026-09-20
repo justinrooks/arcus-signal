@@ -20,6 +20,13 @@
     "diff-scope": {
       "skill": "arcus-diff-scope",
       "script": "tools/diff_scope.sh"
+    },
+    "release-context": {
+      "skill": "signal-release",
+      "script": "tools/release-context.sh"
+    },
+    "github-release-publisher": {
+      "skill": "github-release-publisher"
     }
   }
 }
