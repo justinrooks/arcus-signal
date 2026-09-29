@@ -21,16 +21,8 @@ public struct DispatchAgent {
         mode: String,
         limit: Int = 250
     ) async throws -> DispatchDrainResult {
-        let now = Date()
-        let pendingRows = try await ArcusNotificationOutboxModel.query(on: context.application.db)
-            .group(.and) { group in
-                group.filter(\.$state == "ready")
-                     .filter(\.$mode == mode) // Lock this dispatcher to only send ready ugc notification msgs
-                     .filter(\.$availableAt <= now)
-            }
-            .sort(\.$availableAt, .ascending)
-            .limit(limit)
-            .all()
+        let store = NotificationDispatchOutboxStore()
+        let pendingRows = try await store.claim(mode: mode, limit: limit, on: context.application.db)
 
         guard !pendingRows.isEmpty else {
             return .init(dispatched: 0, failed: 0)
@@ -50,7 +42,7 @@ public struct DispatchAgent {
                 }
                 
                 let pl: NotificationSendJobPayload = .init(
-                    seriesId: row.$series.id,
+                    seriesId: row.seriesId,
                     revisionUrn: row.revisionUrn,
                     mode: mode,
                     reason: reason
@@ -61,34 +53,25 @@ public struct DispatchAgent {
                     pl,
                     maxRetryCount: NotificationSendJob.maximumRetryCount
                 )
-                row.availableAt = Date()
-                row.lastError = nil
-                row.attempts += 1
-                row.state = "done" // Mark as done since we've sent it to the queue
-                
-                try await row.update(on: context.application.db)
-                dispatched += 1
             } catch {
                 failed += 1
-                row.attempts += 1
-                row.lastError = String(reflecting: error)
-                
-                if row.attempts >= 3 {
-                    row.state = "dead" // Mark is as dead after 3 retries
-                }
-                
-                try? await row.update(on: context.application.db)
+                _ = try await store.complete(row, error: String(reflecting: error), on: context.application.db)
 
                 context.logger.error(
                     "Failed to dispatch notifcation job from outbox.",
                     metadata: [
-                        "outboxId": .string(row.id?.uuidString ?? "unknown"),
+                        "outboxId": .string(row.id.uuidString),
                         "revisionUrn": .string(row.revisionUrn),
                         "error": .string(String(reflecting: error)),
                         "mode": .string(mode)
                     ]
                 )
+                continue
             }
+            // Persistence failure after enqueue leaves the lease for recovery;
+            // it must not count a second, failed queue-handoff attempt.
+            _ = try await store.complete(row, on: context.application.db)
+            dispatched += 1
         }
 
         return .init(dispatched: dispatched, failed: failed)
@@ -169,7 +152,7 @@ public struct DispatchAgent {
         }
     }
 
-    private static func handleExistingNotificationDispatchOutbox(
+    static func handleExistingNotificationDispatchOutbox(
         _ existing: ArcusNotificationOutboxModel,
         revisionUrn: String,
         reason: NotificationReason,
@@ -191,16 +174,11 @@ public struct DispatchAgent {
             return false
         }
 
-        let shouldResetForDispatch = existing.state != "ready" || existing.availableAt > .now || existing.reason != reason.rawValue
+        let shouldResetForDispatch = try await NotificationDispatchOutboxStore().resetForReplay(
+            id: existing.requireID(), reason: reason, on: database
+        )
 
         if shouldResetForDispatch {
-            existing.state = "ready"
-            existing.reason = reason.rawValue
-            existing.attempts = 0
-            existing.lastError = nil
-            existing.availableAt = .now
-            try await existing.update(on: database)
-
             logger.info(
                 "Notification dispatch re-queued for revision.",
                 metadata: [
