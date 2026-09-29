@@ -133,6 +133,16 @@ struct HRRRPressureArtifactProbeServiceTests {
         }
     }
 
+    @Test("dispatch failure preserves a worker-owned warming claim")
+    func dispatchFailurePreservesWorkerOwnedWarmingClaim() async throws {
+        try await assertDispatchFailurePreservesWorkerState(.warming)
+    }
+
+    @Test("dispatch failure preserves a completed ready artifact")
+    func dispatchFailurePreservesCompletedReadyArtifact() async throws {
+        try await assertDispatchFailurePreservesWorkerState(.ready)
+    }
+
     @Test("probe cancellation leaves catalog state untouched and does not enqueue work")
     func probeCancellationLeavesCatalogStateUntouchedAndDoesNotEnqueueWork() async throws {
         try await withApp { app, _ in
@@ -565,6 +575,45 @@ struct HRRRPressureArtifactProbeServiceTests {
 }
 
 private extension HRRRPressureArtifactProbeServiceTests {
+    func assertDispatchFailurePreservesWorkerState(_ state: ProbeWorkerAdvance) async throws {
+        try await withApp { app, _ in
+            let surfaceCandidate = makeSurfaceCandidate()
+            let pressureCandidate = makePressureCandidate(from: surfaceCandidate)
+            let payload = makePayload(from: pressureCandidate)
+            let dispatchError = ProbeWarmJobDispatcherError.dispatchFailed
+            let dispatcher = AdvancingThrowingWarmJobDispatcher(state: state, error: dispatchError)
+            let service = makeService(
+                remoteChecker: ProbeStubHrrrRemoteObjectChecking(
+                    availableURLs: [makeIdxURL(for: pressureCandidate).absoluteString: true]
+                ),
+                dispatcher: dispatcher,
+                blockingWorkExecutor: makePressureArtifactBlockingWorkExecutor(application: app),
+                runResolution: HrrrRunResolution(targetValidTime: surfaceCandidate.validTime, candidates: [surfaceCandidate]),
+                now: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13)
+            )
+
+            await #expect(throws: ProbeWarmJobDispatcherError.self) {
+                try await service.probe(on: app, logger: app.logger)
+            }
+
+            let row = try #require(try await PressureArtifactCatalogModel.find(
+                runTime: payload.runTime,
+                forecastHour: payload.forecastHour,
+                product: payload.product,
+                fieldSetVersion: payload.fieldSetVersion,
+                on: app.db
+            ))
+
+            #expect(row.status == state.status)
+            #expect(row.source == .aws)
+            #expect(row.errorSummary == state.errorSummary)
+            #expect(row.localPath == state.localPath)
+            #expect(row.byteSize == state.byteSize)
+            #expect(row.claimToken == state.claimToken)
+            #expect(row.leaseExpiresAt == state.leaseExpiresAt)
+        }
+    }
+
     func withApp(test: (Application, any PressureArtifactBlockingWorkExecuting) async throws -> Void) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
             let app = try await Application.make(.testing)
@@ -758,6 +807,81 @@ private final class CancellingProbeHrrrRemoteObjectChecking: HrrrRemoteObjectChe
 
 private enum ProbeWarmJobDispatcherError: Error {
     case dispatchFailed
+}
+
+private enum ProbeWorkerAdvance: Sendable, Equatable {
+    case warming
+    case ready
+
+    var status: PressureArtifactCatalogStatus {
+        switch self {
+        case .warming: .warming
+        case .ready: .ready
+        }
+    }
+
+    var localPath: String? {
+        switch self {
+        case .warming: "/tmp/worker-warming.grib2"
+        case .ready: "/tmp/worker-ready.grib2"
+        }
+    }
+
+    var byteSize: Int64? { self == .ready ? 128 : nil }
+
+    var claimToken: UUID? { self == .warming ? UUID(uuidString: "11111111-1111-4111-8111-111111111111") : nil }
+
+    var leaseExpiresAt: Date? {
+        self == .warming ? Date(timeIntervalSince1970: 1_780_560_000) : nil
+    }
+
+    var errorSummary: String? { nil }
+}
+
+private struct AdvancingThrowingWarmJobDispatcher: PressureArtifactWarmJobDispatching {
+    let state: ProbeWorkerAdvance
+    let error: ProbeWarmJobDispatcherError
+
+    func dispatch(
+        _ payload: PressureArtifactWarmJobPayload,
+        to queueName: QueueName,
+        on application: Application
+    ) async throws {
+        _ = queueName
+        let row = try await PressureArtifactCatalogModel.find(
+            runTime: payload.runTime,
+            forecastHour: payload.forecastHour,
+            product: payload.product,
+            fieldSetVersion: payload.fieldSetVersion,
+            on: application.db
+        )
+        guard let row, row.status == .pending else {
+            Issue.record("Expected the probe's pending row before the worker advanced it.")
+            throw error
+        }
+
+        row.status = .warming
+        row.source = .aws
+        row.errorSummary = nil
+        row.localPath = state == .warming ? state.localPath : nil
+        row.byteSize = nil
+        row.claimToken = state.claimToken ?? UUID()
+        row.leaseExpiresAt = state.leaseExpiresAt ?? Date(timeIntervalSince1970: 1_780_560_000)
+        try await row.update(on: application.db)
+
+        if state == .ready {
+            let markedReady = try await PressureArtifactCatalogStore().markReady(
+                payload: payload,
+                claimToken: try #require(row.claimToken),
+                localPath: try #require(state.localPath),
+                byteSize: try #require(state.byteSize),
+                on: application.db
+            )
+            #expect(markedReady)
+        }
+
+        throw error
+    }
 }
 
 private struct ThrowingWarmJobDispatcher: PressureArtifactWarmJobDispatching {

@@ -494,6 +494,7 @@ struct PressureArtifactCatalogStore: Sendable {
               AND forecast_hour = \(bind: payload.forecastHour)
               AND product = \(bind: payload.product.rawValue)
               AND field_set_version = \(bind: payload.fieldSetVersion.rawValue)
+              AND status = \(bind: PressureArtifactCatalogStatus.pending.rawValue)
             RETURNING id
             """)
             .first()
