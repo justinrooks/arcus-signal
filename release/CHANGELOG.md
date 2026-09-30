@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Reliability
+
+- Notification outbox draining now claims rows atomically, uses leases for recovery, fences completion and replay updates against stale workers, and persists queue-handoff failures with bounded backoff.
+<!-- evidence: 3d6cda7 -->
+- Pressure-artifact probe failures now update only pending catalog rows, preserving artifacts already claimed or completed by workers.
+<!-- evidence: cb193a8 -->
+
+### Operations
+
+- Pressure-artifact cleanup now prunes eligible failed and expired catalog records after 60 days, and the operator dashboard reports the retention period.
+<!-- evidence: b3ae674, 3ba5412 -->
+- Dashboard snapshot freshness is now page-specific: Overview tolerates three minutes while Model Pipeline and other detail pages use fifteen minutes; polling cadence is unchanged.
+<!-- evidence: 3ba5412, fba6df4 -->
+
 ## v1.0.0
 
 ### Features

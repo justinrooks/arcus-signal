@@ -1,5 +1,17 @@
 # Release Notes
 
+## Unreleased
+
+## Overview
+
+This draft collects the server and operator improvements committed since v1.0.0. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- Notification outbox dispatch now uses atomic claims and lease fencing to recover safely from concurrent workers and queue-handoff failures.
+- Pressure-artifact processing protects worker-claimed and completed records from late probe failures, and cleanup removes eligible terminal catalog records after 60 days.
+- Operator dashboard freshness thresholds now match each page: three minutes for Overview and fifteen minutes for Model Pipeline and other detail pages.
+
 ## v1.0.0
 
 ## Overview
