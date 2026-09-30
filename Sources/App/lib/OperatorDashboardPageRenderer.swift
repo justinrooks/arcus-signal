@@ -30,13 +30,15 @@ enum OperatorDashboardPageRenderer {
         environment: String = "",
         buildInfo: ArcusSignalBuildInfo
     ) -> String {
-        let age = max(0, Int(snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt)))
-        let live = age <= OperatorDashboardConfig.fastRefreshIntervalSeconds * 2
+        let ageSeconds = max(0, snapshot.renderedAt.timeIntervalSince(snapshot.generatedAt))
+        let age = Int(ageSeconds)
+        let ageMilliseconds = Int((ageSeconds * 1_000).rounded(.up))
+        let live = ageSeconds <= Double(OperatorDashboardConfig.snapshotFreshnessThresholdSeconds)
         return shell(page: page, environment: environment, buildInfo: buildInfo, status: live ? "live" : "stale", age: "Snapshot \(formatDuration(age)) ago", content: pageContent(snapshot, page: page), script: liveUpdateScript(
             pollIntervalMilliseconds: pollIntervalMilliseconds,
             initialGeneratedAtMilliseconds: Int(snapshot.generatedAt.timeIntervalSince1970 * 1_000),
             freshnessThresholdMilliseconds: freshnessThresholdMilliseconds,
-            initialSnapshotAgeMilliseconds: age * 1_000
+            initialSnapshotAgeMilliseconds: ageMilliseconds
         ))
     }
 
@@ -100,5 +102,5 @@ enum OperatorDashboardPageRenderer {
     }
 
     private static let pollIntervalMilliseconds = max(15, OperatorDashboardConfig.fastRefreshIntervalSeconds / 2) * 1_000
-    private static let freshnessThresholdMilliseconds = OperatorDashboardConfig.fastRefreshIntervalSeconds * 2 * 1_000
+    private static let freshnessThresholdMilliseconds = OperatorDashboardConfig.snapshotFreshnessThresholdSeconds * 1_000
 }
