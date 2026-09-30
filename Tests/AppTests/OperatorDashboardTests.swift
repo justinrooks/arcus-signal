@@ -593,6 +593,32 @@ struct OperatorDashboardTests {
                         #expect(html.contains("findings.push('Ingest delayed')"))
                         #expect(!html.contains("No server health threshold is defined"))
                     }
+                    if page == .delivery {
+                        #expect(OperatorDashboardConfig.recentNotificationDebugLimit == 30)
+                        #expect(markup.contains("data-debug-filter=\"all\""))
+                        #expect(markup.contains("data-debug-filter=\"targeted\""))
+                        #expect(markup.contains("data-debug-filter=\"preview\""))
+                        #expect(markup.contains("data-record-kind=\"candidate\""))
+                        #expect(markup.contains("data-record-kind=\"preview_no_candidates\""))
+                        #expect(markup.contains("Take shelter now"))
+                        #expect(markup.contains("Avoid flooded roads"))
+                        #expect(markup.contains("new / candidate"))
+                        #expect(markup.contains("update / preview_no_candidates"))
+                        #expect(!markup.contains("diagnostic-disclosure"))
+                        let targetedPosition = markup.range(of: "Tornado Warning</div>")?.lowerBound
+                        let previewPosition = markup.range(of: "Flash Flood Warning - Update</strong>")?.lowerBound
+                        if let targetedPosition, let previewPosition {
+                            #expect(targetedPosition < previewPosition)
+                        } else {
+                            Issue.record("Expected both notification rows in the rendered Delivery table")
+                        }
+                        #expect(html.contains("debugFilter: 'all'"))
+                        #expect(html.contains("state.debugFilter = button.dataset.debugFilter"))
+                        #expect(html.contains("state.debugFilter"))
+                        #expect(html.contains("applyDebugFilter(document.getElementById('recent-debug-table'), state.debugFilter)"))
+                        #expect(html.contains("kind === 'candidate'"))
+                        #expect(html.contains("kind === 'preview_no_candidates'"))
+                    }
                     for destination in OperatorDashboardPageRenderer.Page.allCases {
                         #expect(markup.contains("href=\"\(destination.path)\""))
                     }
