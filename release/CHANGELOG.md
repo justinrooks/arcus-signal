@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## v1.1.0
+
+### Reliability
+
+- Notification outbox draining now claims rows atomically, uses leases for recovery, fences completion and replay updates against stale workers, and persists queue-handoff failures with bounded backoff.
+<!-- evidence: 3d6cda7 -->
+- Pressure-artifact probe failures now update only pending catalog rows, preserving artifacts already claimed or completed by workers.
+<!-- evidence: cb193a8 -->
+
+### Operations
+
+- Pressure-artifact cleanup now prunes eligible failed and expired catalog records after 60 days, and the operator dashboard reports the retention period.
+<!-- evidence: b3ae674, 3ba5412 -->
+- Dashboard snapshot freshness is now page-specific: Overview tolerates three minutes while Model Pipeline and other detail pages use fifteen minutes; polling cadence is unchanged.
+<!-- evidence: 3ba5412, fba6df4 -->
+- Ingest freshness now reports healthy, warning, or unknown based on the age of the last successful sweep, with a 105-second healthy threshold; delayed ingestion is surfaced in the dashboard.
+<!-- evidence: 627700f -->
+- Delivery diagnostics now show the 30 newest notification attempts with key details inline and All / Targeted / Preview filters based on persisted record kind; the selection persists across live refreshes.
+<!-- evidence: aa0865e -->
 
 ## v1.0.0
 
