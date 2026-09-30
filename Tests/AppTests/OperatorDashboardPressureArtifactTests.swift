@@ -33,6 +33,60 @@ struct OperatorDashboardPressureArtifactTests {
         try await sql.raw("DELETE FROM pressure_artifact_catalog;").run()
     }
 
+    private func clearIngestRuns(source: String, on db: any Database) async throws {
+        try await IngestSweepRunModel.query(on: db)
+            .filter(\.$source == source)
+            .delete()
+    }
+
+    @Test("ingest freshness retains a successful sweep outside the recent attempt window")
+    func ingestFreshnessRetainsOlderSuccess() async throws {
+        try await withApp { app in
+            let now = makeUTCDate(year: 2026, month: 10, day: 1, hour: 0)
+            let source = "issue-294-test-\(UUID().uuidString)"
+            let successfulAt = now.addingTimeInterval(-120)
+            try await clearIngestRuns(source: source, on: app.db)
+            do {
+                try await IngestSweepRunModel(
+                    source: source,
+                    status: .succeeded,
+                    startedAt: successfulAt.addingTimeInterval(-1),
+                    completedAt: successfulAt
+                ).create(on: app.db)
+
+                for age in 1...OperatorDashboardConfig.ingestRecentAttemptLimit {
+                    let completedAt = now.addingTimeInterval(-Double(age))
+                    try await IngestSweepRunModel(
+                        source: source,
+                        status: .failed,
+                        startedAt: completedAt.addingTimeInterval(-1),
+                        completedAt: completedAt,
+                        errorMessage: "test failure"
+                    ).create(on: app.db)
+                }
+
+                try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+
+                let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+                #expect(snapshot.ingestFreshness.recentFailureCount == OperatorDashboardConfig.ingestRecentAttemptLimit)
+                #expect(snapshot.ingestFreshness.lastSuccessfulCompletedAt == successfulAt)
+                #expect(
+                    IngestFreshnessMetricResponse(
+                        refreshedAt: snapshot.fastRefreshedAt,
+                        renderedAt: now,
+                        metric: snapshot.ingestFreshness
+                    ).status == .warning
+                )
+            } catch {
+                try? await clearIngestRuns(source: source, on: app.db)
+                throw error
+            }
+
+            try await clearIngestRuns(source: source, on: app.db)
+            #expect(try await IngestSweepRunModel.query(on: app.db).filter(\.$source == source).count() == 0)
+        }
+    }
+
     @Test("fast refresh selects an exact usable pressure artifact and preserves catalog views")
     func fastRefreshSelectsAnExactUsablePressureArtifactAndPreservesCatalogViews() async throws {
         try await withApp { app in

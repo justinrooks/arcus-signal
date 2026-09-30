@@ -4,6 +4,7 @@ public enum OperatorDashboardConfig {
     public static let rollingWindowHours = 24
 
     public static let ingestRecentAttemptLimit = 60
+    public static let ingestFreshnessHealthyThresholdSeconds = 105
     public static let claimedStuckThresholdSeconds = 5 * 60
     public static let staleActiveSeriesGraceSeconds = 15 * 60
 
