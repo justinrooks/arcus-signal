@@ -78,6 +78,11 @@ struct PressureArtifactCleanupService: PressureArtifactCleaning, @unchecked Send
             on: application.db,
             logger: logger
         )
+        try await catalogStore.pruneTerminalArtifacts(
+            before: now.addingTimeInterval(-60 * 24 * 60 * 60),
+            now: now,
+            on: application.db
+        )
     }
 }
 

@@ -8,6 +8,115 @@ import Vapor
 
 @Suite("Pressure artifact cleanup service", .serialized)
 struct PressureArtifactCleanupServiceTests {
+    @Test("terminal retention uses valid time with a strict 60-day cutoff", arguments: [
+        PressureArtifactCatalogStatus.failed, .expired
+    ])
+    func terminalRetentionCutoff(status: PressureArtifactCatalogStatus) async throws {
+        try await withApp { app, rootURL, executor in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let cutoff = now.addingTimeInterval(-60 * 24 * 60 * 60)
+            let old = PressureArtifactCatalogModel(
+                runTime: cutoff.addingTimeInterval(-1), forecastHour: 0,
+                validTime: cutoff.addingTimeInterval(-1), product: .wrfprsf, status: status,
+                lastCheckedAt: now
+            )
+            let boundary = PressureArtifactCatalogModel(
+                runTime: cutoff, forecastHour: 0, validTime: cutoff, product: .wrfprsf, status: status,
+                lastCheckedAt: cutoff.addingTimeInterval(-86_400)
+            )
+            let recent = PressureArtifactCatalogModel(
+                runTime: cutoff.addingTimeInterval(1), forecastHour: 0,
+                validTime: cutoff.addingTimeInterval(1), product: .wrfprsf, status: status
+            )
+            for row in [old, boundary, recent] {
+                try await row.create(on: app.db)
+            }
+            try await backdateRow(boundary, updatedAt: cutoff.addingTimeInterval(-86_400), on: app.db)
+
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: executor)
+            try await service.cleanup(on: app, logger: app.logger)
+
+            #expect(try await PressureArtifactCatalogModel.find(old.id, on: app.db) == nil)
+            #expect(try await PressureArtifactCatalogModel.find(boundary.id, on: app.db) != nil)
+            #expect(try await PressureArtifactCatalogModel.find(recent.id, on: app.db) != nil)
+        }
+    }
+
+    @Test("retention preserves file metadata, claims, leases, and nonterminal rows")
+    func retentionSafety() async throws {
+        try await withApp { app, _, _ in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let cutoff = now.addingTimeInterval(-60 * 24 * 60 * 60)
+            let cases: [(PressureArtifactCatalogStatus, String?, Int64?, UUID?, Date?, Bool)] = [
+                (.expired, "/cache/file.grib2", nil, nil, nil, false),
+                (.expired, nil, 0, nil, nil, false),
+                (.expired, nil, nil, UUID(), now.addingTimeInterval(60), false),
+                (.expired, nil, nil, UUID(), nil, false),
+                (.expired, nil, nil, UUID(), now.addingTimeInterval(-1), false),
+                (.expired, nil, nil, nil, now.addingTimeInterval(60), false),
+                (.failed, nil, nil, UUID(), now.addingTimeInterval(60), false),
+                (.failed, nil, nil, nil, now.addingTimeInterval(60), false),
+                (.failed, nil, nil, UUID(), nil, false),
+                (.failed, nil, nil, UUID(), now.addingTimeInterval(-1), true),
+                (.failed, nil, nil, UUID(), now, true),
+                (.pending, nil, nil, nil, nil, false),
+                (.warming, nil, nil, nil, nil, false),
+                (.ready, nil, nil, nil, nil, false)
+            ]
+            var seeded: [(PressureArtifactCatalogModel, Bool)] = []
+            for (index, entry) in cases.enumerated() {
+                let (status, path, size, token, lease, shouldDelete) = entry
+                let validTime = cutoff.addingTimeInterval(-Double(index + 1))
+                let row = PressureArtifactCatalogModel(
+                    runTime: validTime, forecastHour: 0, validTime: validTime,
+                    product: .wrfprsf, status: status, localPath: path, byteSize: size,
+                    claimToken: token, leaseExpiresAt: lease
+                )
+                try await row.create(on: app.db)
+                seeded.append((row, shouldDelete))
+            }
+
+            try await PressureArtifactCatalogStore().pruneTerminalArtifacts(
+                before: cutoff, now: now, on: app.db
+            )
+
+            for (row, shouldDelete) in seeded {
+                let refreshed = try await PressureArtifactCatalogModel.find(row.id, on: app.db)
+                #expect((refreshed == nil) == shouldDelete)
+                if let refreshed {
+                    #expect(refreshed.status == row.status)
+                    #expect(refreshed.localPath == row.localPath)
+                    #expect(refreshed.byteSize == row.byteSize)
+                    #expect(refreshed.claimToken == row.claimToken)
+                    #expect(refreshed.leaseExpiresAt == row.leaseExpiresAt)
+                }
+            }
+        }
+    }
+
+    @Test("old expired catalog rows are pruned after physical cleanup completes")
+    func retentionFollowsPhysicalCleanup() async throws {
+        try await withApp { app, rootURL, executor in
+            let now = makeUTCDate(year: 2026, month: 6, day: 3, hour: 22)
+            let service = makeService(rootURL: rootURL, now: now, blockingWorkExecutor: executor)
+            let file = makeTempRegularFile(in: rootURL, name: "old.grib2", contents: Data("old".utf8))
+            let row = try await seedRow(
+                on: app.db, status: .expired, validTime: now.addingTimeInterval(-61 * 86_400),
+                localPath: file.path, byteSize: 3
+            )
+
+            // The physical cleanup grace period still protects an old artifact.
+            try await service.cleanup(on: app, logger: app.logger)
+            #expect(try await PressureArtifactCatalogModel.find(row.id, on: app.db) != nil)
+            #expect(FileManager.default.fileExists(atPath: file.path))
+
+            try await backdateRow(row, updatedAt: now.addingTimeInterval(-7_200), on: app.db)
+            try await service.cleanup(on: app, logger: app.logger)
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+            #expect(try await PressureArtifactCatalogModel.find(row.id, on: app.db) == nil)
+        }
+    }
+
     @Test("cleanup routes filesystem work through the blocking executor")
     func cleanupRoutesFilesystemWorkThroughTheBlockingExecutor() async throws {
         try await withApp { app, rootURL, blockingWorkExecutor in
