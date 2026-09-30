@@ -4,6 +4,39 @@ import Foundation
 import Vapor
 
 struct PressureArtifactCatalogStore: Sendable {
+    func pruneTerminalArtifacts(
+        before cutoff: Date,
+        now: Date,
+        on database: any Database
+    ) async throws {
+        guard let sql = database as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+
+        // Recheck lifecycle and ownership in the DELETE itself so a concurrent
+        // warming or cleanup claim cannot be removed from a stale snapshot.
+        try await sql.raw("""
+            DELETE FROM pressure_artifact_catalog
+            WHERE valid_time < \(bind: cutoff)
+              AND (
+                (
+                  status = \(bind: PressureArtifactCatalogStatus.failed.rawValue)
+                  AND (
+                    (claim_token IS NULL AND lease_expires_at IS NULL)
+                    OR lease_expires_at <= \(bind: now)
+                  )
+                )
+                OR (
+                  status = \(bind: PressureArtifactCatalogStatus.expired.rawValue)
+                  AND local_path IS NULL
+                  AND byte_size IS NULL
+                  AND claim_token IS NULL
+                  AND lease_expires_at IS NULL
+                )
+              )
+            """).run()
+    }
+
     func expireReadyArtifacts(
         before cutoff: Date,
         on database: any Database
