@@ -790,6 +790,7 @@ extension OperatorDashboardPageRenderer {
           function renderHealthOverview(r) {
             const i=r.ingestFreshness,b=r.pipelineBacklogAge,c=r.stuckClaimedRows,s=r.staleActiveSeriesCount;
             const findings=[];
+            if(i.status==='warning') findings.push('Ingest delayed');
             if(c.status==='critical') findings.push(c.count+' stuck claims');
             if(s.status==='warning') findings.push(s.count+' stale active series');
             const unknown=[i,b,c,s].filter(m=>m.status==='unknown').length;
@@ -797,7 +798,7 @@ extension OperatorDashboardPageRenderer {
             const tone=c.status==='critical'?'danger':(findings.length?'warning':'muted');
             const destination=c.status==='critical'?'delivery':'nws',title=c.status==='critical'?'Delivery':'NWS Activity';
             return '<div class="health-top '+(findings.length?'':'neutral')+'"><div><div class="health-label">Red Lights</div><strong class="'+tone+'">'+escapeHtml(headline)+'</strong></div><a href="/dashboard/'+destination+'">Inspect '+title+' ↗</a></div><div class="health-rail">'+
-              controlHealthItem('Ingest freshness',formatDuration(i.timeSinceLastSuccessfulSweepSeconds),i.status,i.recentSuccessCount+' successes / '+i.recentFailureCount+' failures','No server health threshold is defined. Last success: '+controlTime(i.lastSuccessfulSweepAt)+'. Last attempt: '+controlTime(i.lastAttemptAt)+'. Last failure: '+controlTime(i.lastFailureAt)+'. Error: '+(i.lastFailureMessage??'none')+'.')+
+              controlHealthItem('Ingest freshness',formatDuration(i.timeSinceLastSuccessfulSweepSeconds),i.status,i.recentSuccessCount+' successes / '+i.recentFailureCount+' failures','Last success: '+controlTime(i.lastSuccessfulSweepAt)+'. Last attempt: '+controlTime(i.lastAttemptAt)+'. Last failure: '+controlTime(i.lastFailureAt)+'. Error: '+(i.lastFailureMessage??'none')+'.')+
               controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). Pending queue handoffs, not delivery completions.')+
               controlHealthItem('Stuck claims',String(c.count),c.status,'Claim age threshold: '+formatDuration(c.thresholdSeconds),'Oldest claim: '+formatDuration(c.oldestClaimedAgeSeconds)+' ('+controlTime(c.oldestClaimedCreatedAt)+').')+
               controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+'</div>';

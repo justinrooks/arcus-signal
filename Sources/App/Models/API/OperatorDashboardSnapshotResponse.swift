@@ -1116,8 +1116,14 @@ public struct IngestFreshnessMetricResponse: Content, Sendable {
     public var lastFailureMessage: String?
 
     init(refreshedAt: Date?, renderedAt: Date, metric: StoredIngestFreshnessMetric) {
-        // Ingest runs minutely, but no operational freshness threshold is defined.
-        self.status = .unknown
+        if let lastSuccessfulCompletedAt = metric.lastSuccessfulCompletedAt, refreshedAt != nil {
+            self.status = renderedAt.timeIntervalSince(lastSuccessfulCompletedAt)
+                <= Double(OperatorDashboardConfig.ingestFreshnessHealthyThresholdSeconds)
+                ? .healthy
+                : .warning
+        } else {
+            self.status = .unknown
+        }
         self.refreshedAt = refreshedAt
         self.lastSuccessfulSweepAt = metric.lastSuccessfulCompletedAt
         self.timeSinceLastSuccessfulSweepSeconds = OperatorDashboardCalculations.ageSeconds(

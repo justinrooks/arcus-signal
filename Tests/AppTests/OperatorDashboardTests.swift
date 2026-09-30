@@ -258,7 +258,7 @@ struct OperatorDashboardTests {
         )
 
         #expect(response.redLights.ingestFreshness.timeSinceLastSuccessfulSweepSeconds == 300)
-        #expect(response.redLights.ingestFreshness.status == .unknown)
+        #expect(response.redLights.ingestFreshness.status == .warning)
         #expect(response.redLights.pipelineBacklogAge.oldestPendingTargetDispatchAgeSeconds == 360)
         #expect(response.redLights.pipelineBacklogAge.status == .unknown)
         #expect(response.redLights.stuckClaimedRows.status == .critical)
@@ -327,13 +327,43 @@ struct OperatorDashboardTests {
             renderedAt: snapshot.generatedAt
         )
 
-        #expect(response.redLights.ingestFreshness.status == .unknown)
+        #expect(response.redLights.ingestFreshness.status == .warning)
         #expect(response.redLights.pipelineBacklogAge.status == .healthy)
         #expect(response.redLights.stuckClaimedRows.status == .healthy)
         #expect(response.redLights.staleActiveSeriesCount.status == .healthy)
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "development", revision: nil))
         #expect(html.components(separatedBy: "health-item health-healthy").count == 4)
+    }
+
+    @Test("ingest freshness uses the configured 105 second threshold")
+    func ingestFreshnessUsesConfiguredThreshold() {
+        let renderedAt = isoDate("2026-04-10T12:00:00Z")
+        let refreshedAt = renderedAt
+
+        func response(successAgeSeconds: Int?) -> IngestFreshnessMetricResponse {
+            .init(
+                refreshedAt: refreshedAt,
+                renderedAt: renderedAt,
+                metric: .init(
+                    lastSuccessfulCompletedAt: successAgeSeconds.map {
+                        renderedAt.addingTimeInterval(-Double($0))
+                    }
+                )
+            )
+        }
+
+        #expect(OperatorDashboardConfig.ingestFreshnessHealthyThresholdSeconds == 105)
+        #expect(response(successAgeSeconds: 105).status == .healthy)
+        #expect(response(successAgeSeconds: 106).status == .warning)
+        #expect(response(successAgeSeconds: nil).status == .unknown)
+        #expect(
+            IngestFreshnessMetricResponse(
+                refreshedAt: nil,
+                renderedAt: renderedAt,
+                metric: .init(lastSuccessfulCompletedAt: renderedAt)
+            ).status == .unknown
+        )
     }
 
     @Test("red light statuses require refresh evidence")
@@ -558,6 +588,11 @@ struct OperatorDashboardTests {
                     #expect(markup.contains("id=\"snapshot-age\""))
                     #expect(markup.contains("aria-live=\"polite\""))
                     for token in expected[page] ?? [] { #expect(markup.contains(token)) }
+                    if page == .overview {
+                        #expect(markup.contains("Ingest delayed"))
+                        #expect(html.contains("findings.push('Ingest delayed')"))
+                        #expect(!html.contains("No server health threshold is defined"))
+                    }
                     for destination in OperatorDashboardPageRenderer.Page.allCases {
                         #expect(markup.contains("href=\"\(destination.path)\""))
                     }

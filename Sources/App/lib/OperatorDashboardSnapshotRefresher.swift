@@ -103,7 +103,15 @@ struct OperatorDashboardSnapshotRefresher {
             .limit(OperatorDashboardConfig.ingestRecentAttemptLimit)
             .all()
 
-        let lastSuccessful = recentRuns.first { $0.status == IngestSweepRunStatus.succeeded.rawValue }
+        let lastSuccessful: IngestSweepRunModel?
+        if let recentSuccess = recentRuns.first(where: { $0.status == IngestSweepRunStatus.succeeded.rawValue }) {
+            lastSuccessful = recentSuccess
+        } else {
+            lastSuccessful = try await IngestSweepRunModel.query(on: database)
+                .filter(\.$status == IngestSweepRunStatus.succeeded.rawValue)
+                .sort(\.$completedAt, .descending)
+                .first()
+        }
         let lastFailure = recentRuns.first { $0.status == IngestSweepRunStatus.failed.rawValue }
 
         return .init(
