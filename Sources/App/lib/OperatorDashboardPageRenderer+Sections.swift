@@ -431,12 +431,17 @@ extension OperatorDashboardPageRenderer {
         """
     }
 
-    static func recentDebugTable(_ metric: RecentNotificationDebugEntriesResponse) -> String {
+    static func recentDebugTable(_ metric: RecentNotificationDebugEntriesResponse, selectedFilter: String = "all") -> String {
         let body: String
         if metric.entries.isEmpty {
             body = #"<div class="empty">No recent notification debug entries.</div>"#
         } else {
             body = """
+            <div class="debug-filter" role="group" aria-label="Notification kind">
+              <button type="button" data-debug-filter="all" aria-pressed="\(selectedFilter == "all")">All</button>
+              <button type="button" data-debug-filter="targeted" aria-pressed="\(selectedFilter == "targeted")">Targeted</button>
+              <button type="button" data-debug-filter="preview" aria-pressed="\(selectedFilter == "preview")">Preview</button>
+            </div>
             <div class="table-wrap">
             <table class="stream-table inline-mobile-table">
               <thead>
@@ -452,6 +457,7 @@ extension OperatorDashboardPageRenderer {
                 \(metric.entries.map(renderDebugRow).joined())
               </tbody>
             </table>
+            <div class="empty debug-filter-empty" hidden>No notification entries match this filter.</div>
             </div>
             """
         }
@@ -511,7 +517,7 @@ extension OperatorDashboardPageRenderer {
 
     static func renderDebugRow(_ entry: RecentNotificationDebugEntryResponse) -> String {
         """
-        <tr>
+        <tr data-record-kind="\(escape(entry.recordKind))">
           <td data-label="Time">\(escape(formatDate(entry.createdAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
@@ -519,16 +525,16 @@ extension OperatorDashboardPageRenderer {
           </td>
           <td data-label="Mode / reason">
             <span class="pill">\(escape(entry.mode))</span>
-            \(diagnosticDisclosure("\(entry.reason) / \(entry.recordKind)"))
+            <div>\(escape(entry.reason)) / \(escape(entry.recordKind))</div>
           </td>
           <td data-label="Message">
             <div><strong>\(escape(entry.title))</strong></div>
             <div class="subtle">\(escape(entry.subtitle))</div>
-            \(diagnosticDisclosure(entry.body))
+            <div>\(escape(entry.body))</div>
           </td>
           <td data-label="Outcome">
             <div>\(escape(entry.ledgerStatus ?? "preview"))</div>
-            \(diagnosticDisclosure(entry.apnsErrorCode ?? "none"))
+            <div>\(escape(entry.apnsErrorCode ?? "none"))</div>
           </td>
         </tr>
         """

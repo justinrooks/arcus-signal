@@ -18,7 +18,7 @@ public enum OperatorDashboardConfig {
     public static let overviewSnapshotFreshnessThresholdSeconds = 3 * 60
     public static let snapshotFreshnessThresholdSeconds = 15 * 60
 
-    public static let recentNotificationDebugLimit = 5
+    public static let recentNotificationDebugLimit = 30
     public static let touchedSeriesOverviewLimit = 5
     public static let touchedSeriesDetailWindowHours = 12
     public static let touchedSeriesDetailLimit = 250

@@ -22,6 +22,7 @@ extension OperatorDashboardPageRenderer {
             snapshotAgeAnchorMs: performance.now(),
             consecutiveFailures: 0,
             refreshKeys: Object.create(null),
+            debugFilter: 'all',
             timerHandle: null
           };
 
@@ -595,7 +596,7 @@ extension OperatorDashboardPageRenderer {
 
           function renderRecentDebugRow(entry) {
             return `
-              <tr>
+              <tr data-record-kind="${escapeHtml(entry.recordKind)}">
                 <td data-label="Time">${escapeHtml(formatDate(entry.createdAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
@@ -603,22 +604,22 @@ extension OperatorDashboardPageRenderer {
                 </td>
                 <td data-label="Mode / reason">
                   <span class="pill">${escapeHtml(entry.mode)}</span>
-                  ${diagnosticDisclosure(`${entry.reason} / ${entry.recordKind}`)}
+                  <div>${escapeHtml(entry.reason)} / ${escapeHtml(entry.recordKind)}</div>
                 </td>
                 <td data-label="Message">
                   <div><strong>${escapeHtml(entry.title)}</strong></div>
                   <div class="subtle">${escapeHtml(entry.subtitle)}</div>
-                  ${diagnosticDisclosure(entry.body)}
+                  <div>${escapeHtml(entry.body)}</div>
                 </td>
                 <td data-label="Outcome">
                   <div>${escapeHtml(entry.ledgerStatus ?? 'preview')}</div>
-                  ${diagnosticDisclosure(entry.apnsErrorCode ?? 'none')}
+                  <div>${escapeHtml(entry.apnsErrorCode ?? 'none')}</div>
                 </td>
               </tr>
             `;
           }
 
-          function renderRecentDebugTable(metric) {
+          function renderRecentDebugTable(metric, selectedFilter = 'all') {
             const body = !Array.isArray(metric.entries) || metric.entries.length === 0
               ? '<div class="empty">No recent notification debug entries.</div>'
               : `
@@ -637,6 +638,7 @@ extension OperatorDashboardPageRenderer {
                     ${metric.entries.map(renderRecentDebugRow).join('')}
                   </tbody>
                 </table>
+                <div class="empty debug-filter-empty" hidden>No notification entries match this filter.</div>
                 </div>
               `;
 
@@ -646,6 +648,13 @@ extension OperatorDashboardPageRenderer {
                   <h3>Recent notification debug entries</h3>
                   <div class="subtle">Refreshed ${escapeHtml(formatDate(metric.refreshedAt))}</div>
                 </div>
+                ${Array.isArray(metric.entries) && metric.entries.length > 0 ? `
+                  <div class="debug-filter" role="group" aria-label="Notification kind">
+                    <button type="button" data-debug-filter="all" aria-pressed="${selectedFilter === 'all'}">All</button>
+                    <button type="button" data-debug-filter="targeted" aria-pressed="${selectedFilter === 'targeted'}">Targeted</button>
+                    <button type="button" data-debug-filter="preview" aria-pressed="${selectedFilter === 'preview'}">Preview</button>
+                  </div>
+                ` : ''}
                 ${body}
               </div>
             `;
@@ -763,6 +772,33 @@ extension OperatorDashboardPageRenderer {
             state.refreshKeys[id] = key;
             swapHTML(id, html, options);
           }
+
+          function applyDebugFilter(container, filter) {
+            if (!container) return;
+            const rows = [...container.querySelectorAll('[data-record-kind]')];
+            let visibleCount = 0;
+            rows.forEach((row) => {
+              const kind = row.dataset.recordKind;
+              const visible = filter === 'all' || (filter === 'targeted' && kind === 'candidate') || (filter === 'preview' && kind === 'preview_no_candidates');
+              row.hidden = !visible;
+              if (visible) visibleCount += 1;
+            });
+            container.querySelectorAll('[data-debug-filter]').forEach((button) => {
+              button.setAttribute('aria-pressed', String(button.dataset.debugFilter === filter));
+            });
+            const empty = container.querySelector('.debug-filter-empty');
+            if (empty) empty.hidden = visibleCount > 0;
+          }
+
+          document.addEventListener('click', function(event) {
+            const button = event.target.closest('[data-debug-filter]');
+            if (!button) return;
+            const container = button.closest('.card');
+            if (container) {
+              state.debugFilter = button.dataset.debugFilter;
+              applyDebugFilter(container, state.debugFilter);
+            }
+          });
 
 
           function controlTime(value) {
@@ -913,9 +949,13 @@ extension OperatorDashboardPageRenderer {
             updateSlot(
               'recent-debug-table',
               refreshKey(snapshot.operatorContext.recentNotificationDebugEntries.refreshedAt),
-              renderRecentDebugTable(snapshot.operatorContext.recentNotificationDebugEntries),
+              renderRecentDebugTable(
+                snapshot.operatorContext.recentNotificationDebugEntries,
+                state.debugFilter
+              ),
               { streamRows: true, streamDelayStepMs: 26 }
             );
+            applyDebugFilter(document.getElementById('recent-debug-table'), state.debugFilter);
             updateSlot(
               'touched-series-table',
               refreshKey(snapshot.operatorContext.lastTouchedSeries.refreshedAt),

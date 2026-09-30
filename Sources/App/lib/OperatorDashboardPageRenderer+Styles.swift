@@ -21,6 +21,10 @@ button, select { background: var(--surface); border: 1px solid var(--line); bord
 :where(a,button,summary,select):focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 button:hover, select:hover { border-color: var(--muted); }
 button:active { background: var(--surface-soft); }
+.debug-filter { display:flex; gap:6px; margin:0 0 10px; }
+.debug-filter button { padding:5px 10px; border-radius:6px; color:var(--muted); }
+.debug-filter button[aria-pressed="true"] { color:var(--ink); border-color:var(--accent); background:var(--surface-soft); }
+.debug-filter-empty { margin-top:10px; }
 h1,h2,h3,p { margin: 0; text-wrap: pretty; }
 h1 { font-size: 30px; letter-spacing: -.045em; line-height: 1.15; font-weight: 600; }
 h2 { font-size: 17px; font-weight: 600; letter-spacing: -.025em; }
