@@ -14,6 +14,7 @@ public enum OperatorDashboardConfig {
     public static let fastRefreshIntervalSeconds = 30
     public static let standardRefreshIntervalSeconds = 60
     public static let slowRefreshIntervalSeconds = 5 * 60
+    public static let overviewSnapshotFreshnessThresholdSeconds = 3 * 60
     public static let snapshotFreshnessThresholdSeconds = 15 * 60
 
     public static let recentNotificationDebugLimit = 5
