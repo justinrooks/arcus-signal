@@ -540,7 +540,7 @@ struct OperatorDashboardTests {
             app.operatorDashboardSnapshotStore = StubSnapshotStore(snapshot: makeSnapshot())
             app.arcusSignalBuildInfo = .init(version: "v9.9.9", revision: "route-test")
             let expected: [OperatorDashboardPageRenderer.Page: [String]] = [
-                .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Weld / Morgan, CO", "61.0%", "74 / 100"],
+                .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Pressure artifact catalog history retained for 60 days", "Weld / Morgan, CO", "61.0%", "74 / 100"],
                 .models: ["pressure-artifact-catalog-card", "pressure-artifact-readiness-card", "recent-pressure-artifacts-table"],
                 .installations: ["recent-server-activity-card", "known-installations-card", "installation-growth-table", "footprint-overview", "geography-overview", "April 2026", "Dormant 180d+"],
                 .nws: ["health-overview", "touched-series-table", "COC005, COC013", "OBSERVED", "CONSIDERABLE", "urn:oid:series-1"],
@@ -561,7 +561,7 @@ struct OperatorDashboardTests {
                     for destination in OperatorDashboardPageRenderer.Page.allCases {
                         #expect(markup.contains("href=\"\(destination.path)\""))
                     }
-                    for token in ["fetch('/v1/metrics'", "disconnectAfterFailures = 2", "freshnessThresholdMs = 60000", "abortController.abort()", "snapshot.renderedAt", "performance.now()", "window.setTimeout(fetchSnapshot, nextDelay)", "window.setInterval(updateStatus, 1_000)", "state.consecutiveFailures += 1", "state.consecutiveFailures = 0", "focusedSummary", "openDetails"] {
+                    for token in ["fetch('/v1/metrics'", "disconnectAfterFailures = 2", "freshnessThresholdMs = 900000", "abortController.abort()", "snapshot.renderedAt", "performance.now()", "window.setTimeout(fetchSnapshot, nextDelay)", "window.setInterval(updateStatus, 1_000)", "state.consecutiveFailures += 1", "state.consecutiveFailures = 0", "focusedSummary", "openDetails"] {
                         #expect(html.contains(token))
                     }
                     if page == .overview {
@@ -620,18 +620,27 @@ struct OperatorDashboardTests {
     @Test("dashboard status is server-freshness based")
     func dashboardStatusUsesServerFreshness() {
         let generatedAt = isoDate("2026-04-10T12:00:00Z")
-        let fresh = OperatorDashboardPageRenderer.render(
-            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt),
+        let atThreshold = OperatorDashboardPageRenderer.render(
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(Double(OperatorDashboardConfig.snapshotFreshnessThresholdSeconds))),
             buildInfo: .init(version: "development", revision: nil)
         )
-        let stale = OperatorDashboardPageRenderer.render(
-            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(61)),
+        let justBeyondThreshold = OperatorDashboardPageRenderer.render(
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(Double(OperatorDashboardConfig.snapshotFreshnessThresholdSeconds) + 0.0005)),
+            buildInfo: .init(version: "development", revision: nil)
+        )
+        let beyondThreshold = OperatorDashboardPageRenderer.render(
+            snapshot: .init(snapshot: makeSnapshot(), renderedAt: generatedAt.addingTimeInterval(Double(OperatorDashboardConfig.snapshotFreshnessThresholdSeconds + 1))),
             buildInfo: .init(version: "development", revision: nil)
         )
 
-        #expect(fresh.contains("class=\"status-label live\">LIVE"))
-        #expect(stale.contains("class=\"status-label stale\">STALE"))
-        #expect(stale.contains("Date.now() - state.lastGeneratedAtMs") == false)
+        #expect(atThreshold.contains("class=\"status-label live\">LIVE"))
+        #expect(beyondThreshold.contains("class=\"status-label stale\">STALE"))
+        #expect(atThreshold.contains("freshnessThresholdMs = 900000"))
+        #expect(atThreshold.contains("ageMs > freshnessThresholdMs"))
+        #expect(atThreshold.contains("snapshotAgeMs: 900000"))
+        #expect(justBeyondThreshold.contains("class=\"status-label stale\">STALE"))
+        #expect(justBeyondThreshold.contains("snapshotAgeMs: 900001"))
+        #expect(atThreshold.contains("Date.now() - state.lastGeneratedAtMs") == false)
     }
 
     @Test("dashboard page returns unavailable shell without snapshot")

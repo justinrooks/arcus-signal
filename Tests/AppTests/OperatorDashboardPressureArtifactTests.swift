@@ -588,6 +588,8 @@ struct OperatorDashboardPressureArtifactTests {
                 #expect(res.body.string.contains("20 B"))
                 #expect(res.body.string.contains("FH 9"))
                 #expect(res.body.string.contains("Newest catalog row is failed"))
+                #expect(res.body.string.contains("Pressure artifact catalog history retained for 60 days"))
+                #expect(res.body.string.components(separatedBy: "Pressure artifact catalog history retained for 60 days").count - 1 == 2)
                 #expect(res.body.string.contains("localPath") == false)
                 #expect(res.body.string.contains("renderPressureArtifactOutcome"))
                 #expect(res.body.string.contains("renderPressureArtifactOutcomeClass"))
