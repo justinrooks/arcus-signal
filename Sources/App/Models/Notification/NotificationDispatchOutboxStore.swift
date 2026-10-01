@@ -9,6 +9,7 @@ struct NotificationDispatchClaim: Decodable, Sendable {
     let revisionUrn: String
     let mode: String
     let reason: String
+    let sourceTargetExecutionId: UUID?
     // Preserve PostgreSQL timestamp precision for the completion fence.
     let lease: String
 }
@@ -41,6 +42,7 @@ struct NotificationDispatchOutboxStore {
                 WHERE outbox.id = eligible.id
                 RETURNING outbox.id, outbox.series_id AS "seriesId",
                           outbox.revision_urn AS "revisionUrn", outbox.mode, outbox.reason,
+                          outbox.source_target_execution_id AS "sourceTargetExecutionId",
                           outbox.available_at::text AS lease,
                           eligible.available_at AS previous_availability
             )

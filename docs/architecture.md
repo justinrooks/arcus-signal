@@ -96,6 +96,66 @@ withholds a revision's sample while any original claim lacks timing, rather than
 a later known attempt as the first. Thus incomplete or abandoned original deliveries
 can reduce sample coverage without fabricating a start or affecting delivery authority.
 
+### Persisted stage timing
+
+`target_pipeline_timings` records each identified target queue execution. A new
+optional `targetExecutionId` is generated at each Redis handoff, retained on replay,
+and keys the paired target boundaries. It is indexed by series/revision:
+`queued_at` is captured immediately before Redis dispatch, `started_at` at dequeue,
+and `h3_completed_at` captured after successful coverage persistence, before
+notification intent creation in the same transaction. The captured completion is
+written after the transaction commits, so a timing-storage failure cannot roll back
+coverage or notification intent. UGC-only paths have no target row; point/cover-failure fallback retains a
+target start but has no completed H3 stage. A failed first execution remains incomplete
+rather than acquiring a completion from replay. The unique notification intent
+records its creating target execution in immutable `source_target_execution_id`.
+Duplicates and outbox replay cannot overwrite that association. Direct ingest UGC
+intents retain nil; target-originated UGC fallback retains its execution identity
+without fabricating an H3 completion. This is correlation, not delivery authority.
+
+`notification_pipeline_timings` records the initial execution of each explicitly
+alert-driven, unconstrained send payload. Its `delivery_attempt_id` is the existing
+payload identity and matches `LOWER(notification_ledger.retry_owner_id)` when
+cast to PostgreSQL UUID text (Swift UUID strings use uppercase). `queued_at`
+is captured at notification Redis handoff, `started_at` at dequeue, and
+`candidate_resolution_completed_at` immediately after the H3/UGC candidate query,
+before freshness gating, ledger claims, copy composition, or APNs. Zero-candidate
+queries persist this boundary too, with no fabricated APNs endpoint. Reconciliation,
+unknown-origin payloads, and queue retries cannot create initial execution evidence;
+replay of the same payload cannot overwrite or fill missing first-execution stages.
+
+Reuse `alert_revisions.received`, target and notification outbox `created` timestamps
+for durable intent creation, and the existing qualifying ledger APNs boundary. Outbox
+`dispatched`/`updated`/`completed` describe handoff acknowledgement or mutable state,
+so they cannot replace the captured queue-entry/execution boundaries: a consumer can
+start before the producer records acknowledgement. New queued payload fields are
+optional for compatibility; missing historical queue-entry times remain unknown.
+
+For the first qualifying APNs ledger row, join its retry owner to its notification
+stage row, then join that row's `source_target_execution_id` to the target timing's
+`execution_id`. Never substitute another target execution by revision. The selected
+H3 intent can come from a faster concurrent duplicate rather than the first starter.
+Missing identity or timing leaves the target duration unavailable. Derive:
+
+| Duration | Persisted boundaries |
+|---|---|
+| Initial handoff | revision receipt → applicable target/send queue entry (outbox creation additionally separates intent delay) |
+| Target queue wait | target queue entry → target start |
+| H3/target processing | target start → H3 completion |
+| Notification handoff | H3 completion → send queue entry; for direct UGC, revision receipt → send queue entry |
+| Notification queue wait | send queue entry → send start |
+| Candidate resolution | send start → candidate resolution completion |
+| Notification preparation/APNs handoff | candidate resolution completion → first qualifying ledger APNs start |
+| Total pipeline | revision receipt → first qualifying ledger APNs start |
+
+Use the existing primary-sample completeness rules when choosing the first APNs row.
+Keep that row's execution stages together; independent minima across send attempts
+can splice unrelated H3/UGC paths. For zero-candidate analysis, use stage rows directly
+without requiring a ledger join. Missing boundaries yield unavailable durations,
+and UGC's H3 duration is not applicable. Timing rows cascade with series deletion. Stage writes are best-effort operational
+evidence: failures warn and allow delivery to continue, leaving boundaries unavailable.
+They do not grant delivery authority or change APNs retry behavior.
+
 ## Guarantees and explicit gaps
 
 - The ledger provides a database-enforced, at-most-one claim boundary for `(installation_id, series_id, revision_urn)`.

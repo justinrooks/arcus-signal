@@ -78,6 +78,8 @@ public struct NotificationSendJobPayload: Codable, Sendable {
     let deliveryAttemptId: UUID?
     // Absent on legacy queued payloads; never infer their provenance from elapsed time.
     let origin: NotificationDeliveryOrigin?
+    let queuedAt: Date?
+    let sourceTargetExecutionId: UUID?
     
     init(
         seriesId: UUID,
@@ -86,7 +88,9 @@ public struct NotificationSendJobPayload: Codable, Sendable {
         reason: NotificationReason,
         installationId: UUID? = nil,
         deliveryAttemptId: UUID? = UUID(),
-        origin: NotificationDeliveryOrigin? = .alertDriven
+        origin: NotificationDeliveryOrigin? = .alertDriven,
+        queuedAt: Date? = nil,
+        sourceTargetExecutionId: UUID? = nil
     ) {
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
@@ -95,6 +99,8 @@ public struct NotificationSendJobPayload: Codable, Sendable {
         self.installationId = installationId
         self.deliveryAttemptId = deliveryAttemptId
         self.origin = origin
+        self.queuedAt = queuedAt
+        self.sourceTargetExecutionId = sourceTargetExecutionId
     }
 }
 
@@ -178,6 +184,7 @@ public struct NotificationSendJob: AsyncJob {
     }
     
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
+        let startedAt = Date()
         let retryOwnerID = retryOwnerID(context: context, payload: payload)
         let queueFailureCount = try await queueFailureCount(context: context)
         context.logger.info(
@@ -189,7 +196,13 @@ public struct NotificationSendJob: AsyncJob {
                 "reason": .string("\(String.init(reflecting: payload.reason))")
             ]
         )
-        let attemptedAt = Date()
+        let attemptedAt = startedAt
+        let timingStore = PipelineStageTimingStore()
+        let timingOwner = queueFailureCount == 0
+            ? await timingStore.record("notification started", logger: context.logger) {
+                try await timingStore.startNotification(payload, at: startedAt, on: context.application.db)
+            } ?? false
+            : false
         
         // Grab the associated series, revisions, & geometry
         let series = try await ArcusSeriesModel.query(on: context.application.db)
@@ -236,6 +249,7 @@ public struct NotificationSendJob: AsyncJob {
             )
             return
         }
+
 
         if let noOpReason = deliveryNoOpReason(
             for: series,
@@ -395,6 +409,12 @@ public struct NotificationSendJob: AsyncJob {
                 on: context.application.db
             )
             
+            if timingOwner {
+                let resolvedAt = Date()
+                _ = await timingStore.record("candidate resolution completed", logger: context.logger) {
+                    try await timingStore.completeCandidateResolution(payload, at: resolvedAt, on: context.application.db)
+                }
+            }
             let summary = try await dispatchNotifications(
                 to: h3Candidates,
                 with: payload,
@@ -417,6 +437,12 @@ public struct NotificationSendJob: AsyncJob {
                 on: context.application.db
             )
 
+            if timingOwner {
+                let resolvedAt = Date()
+                _ = await timingStore.record("candidate resolution completed", logger: context.logger) {
+                    try await timingStore.completeCandidateResolution(payload, at: resolvedAt, on: context.application.db)
+                }
+            }
             let summary = try await dispatchNotifications(
                 to: ugcCandidates,
                 with: payload,

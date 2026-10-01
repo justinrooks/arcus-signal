@@ -160,6 +160,10 @@ struct NotificationSendJobDeliveryBoundaryTests {
             """).run()
 
         try await AddNotificationDeliveryProvenance().prepare(on: db)
+        if try await sql.raw("SELECT to_regclass('notification_outbox') IS NULL AS missing").first()?.decode(column: "missing", as: Bool.self) == true {
+            try await CreateNotificationOutbox().prepare(on: db)
+        }
+        try await CreatePipelineStageTimings().prepare(on: db)
 
         try await sql.raw("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_ledger_identity
@@ -846,6 +850,8 @@ struct NotificationSendJobDeliveryBoundaryTests {
             let firstBoundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db))
             #expect(firstBoundary.origin == NotificationDeliveryOrigin.alertDriven.rawValue)
             #expect(firstBoundary.startedAt != nil)
+            let firstStages = try #require(try await loadPipelineTiming(payload, on: app.db))
+            #expect(try #require(firstStages.resolvedAt) <= #require(firstBoundary.startedAt))
 
             try await job.dequeue(context, payload)
 
@@ -865,6 +871,7 @@ struct NotificationSendJobDeliveryBoundaryTests {
             #expect(await sender.sentTokens == [token, token])
             let retriedBoundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db))
             #expect(retriedBoundary.startedAt == firstBoundary.startedAt)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == firstStages)
         }
     }
 
@@ -1846,6 +1853,153 @@ struct NotificationSendJobDeliveryBoundaryTests {
         }
     }
 
+    private struct PipelineTiming: Decodable, Equatable {
+        let queuedAt: Date?
+        let startedAt: Date
+        let resolvedAt: Date?
+    }
+
+    private func loadPipelineTiming(_ payload: NotificationSendJobPayload, on db: any Database) async throws -> PipelineTiming? {
+        let sql = try #require(db as? any SQLDatabase)
+        return try await sql.raw("""
+            SELECT queued_at AS "queuedAt", started_at AS "startedAt",
+                   candidate_resolution_completed_at AS "resolvedAt"
+            FROM notification_pipeline_timings WHERE delivery_attempt_id = \(bind: payload.deliveryAttemptId)
+            """).first(decoding: PipelineTiming.self)
+    }
+
+    @Test("H3 and UGC zero-candidate jobs persist resolution before any APNs endpoint", arguments: [NotificationTargetMode.h3, .ugc])
+    func zeroCandidatePipelineTiming(mode: NotificationTargetMode) async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:pipeline-zero-\(UUID())"
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            if mode == .h3 {
+                // A reserved, unmatched test cell keeps this path independent of other fixtures.
+                try await seedGeolocation(seriesID: seriesID, h3Cell: 42, on: app.db)
+            }
+            let queuedAt = Date(timeIntervalSince1970: 1_000)
+            let payload = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revisionUrn,
+                mode: mode, reason: .new, queuedAt: queuedAt)
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            try await job.dequeue(makeQueueContext(app: app), payload)
+            let timing = try #require(try await loadPipelineTiming(payload, on: app.db))
+            #expect(timing.queuedAt == queuedAt)
+            #expect(try #require(timing.resolvedAt) >= timing.startedAt)
+            #expect(await sender.sendCount == 0)
+            try await job.dequeue(makeQueueContext(app: app), payload)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == timing)
+            let reconciliation = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revisionUrn,
+                mode: mode, reason: .new, installationId: UUID(), origin: .presenceReconciliation)
+            try await job.dequeue(makeQueueContext(app: app), reconciliation)
+            #expect(try await loadPipelineTiming(reconciliation, on: app.db) == nil)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == timing)
+            try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+        }
+    }
+
+    @Test("send timing storage failures allow initial delivery and preserve missing stages on retry", arguments: ["INSERT", "UPDATE"])
+    func sendTimingWriteFailure(operation: String) async throws {
+        try await withIntegrationTestApplication(setup: .directPostgres, prepare: { app in
+            app.queues.use(.test)
+            try await bootstrapTables(on: app.db)
+        }) { app in
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:send-timing-failure-\(UUID())"
+            let installationID = UUID()
+            let cell = makeUniqueH3Cell()
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedGeolocation(seriesID: seriesID, h3Cell: cell, on: app.db)
+            try await seedH3Candidate(installationID: installationID, h3Cell: cell, capturedAt: .now, on: app.db)
+            let payload = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revisionUrn, mode: .h3, reason: .new)
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            try await withPipelineTimingWriteFailure(table: "notification_pipeline_timings", operation: operation, seriesID: seriesID, on: app.db) {
+                try await job.dequeue(makeQueueContext(app: app), payload)
+            }
+            #expect(await sender.sendCount == 1)
+            let timing = try await loadPipelineTiming(payload, on: app.db)
+            if operation == "INSERT" { #expect(timing == nil) }
+            else { #expect(timing != nil && timing?.resolvedAt == nil) }
+            let jobID = JobIdentifier()
+            app.queues.test.jobs[jobID] = JobData(payload: Array(try JSONEncoder().encode(payload)),
+                maxRetryCount: NotificationSendJob.maximumRetryCount, jobName: NotificationSendJob.name,
+                delayUntil: nil, queuedAt: .now, attempts: 1)
+            try await job.dequeue(makeQueueContext(app: app, jobID: jobID), payload)
+            #expect(await sender.sendCount == 1)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == timing)
+            try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+            try await DeviceInstallationModel.find(installationID, on: app.db)?.delete(on: app.db)
+        }
+    }
+
+    @Test("a first series decode failure retains start evidence without later resolution backfill")
+    func firstSeriesLoadFailureTiming() async throws {
+        try await withIntegrationTestApplication(setup: .directPostgres, prepare: { app in
+            app.queues.use(.test)
+            try await bootstrapTables(on: app.db)
+        }) { app in
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:series-decode-failure-\(UUID())"
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            let sql = try #require(app.db as? any SQLDatabase)
+            try await sql.raw("UPDATE arcus_series SET geometry = '{}'::jsonb WHERE id = \(bind: seriesID)").run()
+            let payload = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revisionUrn,
+                mode: .ugc, reason: .new, queuedAt: Date(timeIntervalSince1970: 1_000))
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            do {
+                try await job.dequeue(makeQueueContext(app: app), payload)
+                Issue.record("Expected malformed geometry to fail initial series decoding")
+            } catch {
+                // The timing row must already exist before this query/decode failure.
+            }
+            let stages = try #require(try await loadPipelineTiming(payload, on: app.db))
+            #expect(stages.queuedAt == payload.queuedAt)
+            #expect(stages.resolvedAt == nil)
+            try await sql.raw("UPDATE arcus_series SET geometry = NULL WHERE id = \(bind: seriesID)").run()
+            let jobID = JobIdentifier()
+            app.queues.test.jobs[jobID] = JobData(payload: Array(try JSONEncoder().encode(payload)),
+                maxRetryCount: NotificationSendJob.maximumRetryCount, jobName: NotificationSendJob.name,
+                delayUntil: nil, queuedAt: .now, attempts: 1)
+            try await job.dequeue(makeQueueContext(app: app, jobID: jobID), payload)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == stages)
+            #expect(await sender.sendCount == 0)
+            try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+        }
+    }
+
+    @Test("pipeline stage persistence rejects unknown origin and preserves incomplete first execution")
+    func incompletePipelineTiming() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:pipeline-first-\(UUID())"
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            let store = PipelineStageTimingStore()
+            let start = Date(timeIntervalSince1970: 2_000)
+            let payload = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revisionUrn, mode: .ugc, reason: .new)
+            #expect(try await store.startNotification(payload, at: start, on: app.db))
+            #expect(try await store.startNotification(payload, at: start.addingTimeInterval(300), on: app.db) == false)
+            let timing = try #require(try await loadPipelineTiming(payload, on: app.db))
+            #expect(timing.startedAt == start)
+            #expect(timing.queuedAt == nil)
+            #expect(timing.resolvedAt == nil)
+            let legacy = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revisionUrn, mode: .ugc, reason: .new, origin: nil)
+            #expect(try await store.startNotification(legacy, on: app.db) == false)
+            #expect(try await loadPipelineTiming(legacy, on: app.db) == nil)
+            try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+        }
+    }
+
     @Test("dequeue persists stale revision mismatch without resolving candidates or sending")
     func dequeuePersistsStaleRevisionMismatchWithoutResolvingCandidatesOrSending() async throws {
         try await withIntegrationTestApplication(
@@ -1892,6 +2046,10 @@ struct NotificationSendJobDeliveryBoundaryTests {
             #expect(attempt.sentCount == 0)
             #expect(attempt.failedCount == 0)
             #expect(await sender.sendCount == 0)
+            let stages = try #require(try await loadPipelineTiming(payload, on: app.db))
+            #expect(stages.resolvedAt == nil)
+            try await job.dequeue(context, payload)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == stages)
         }
     }
 }

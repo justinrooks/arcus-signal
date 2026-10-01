@@ -238,7 +238,7 @@ private extension IngestNWSAlertsJob {
     }
 }
 
-private extension IngestNWSAlertsJob {
+extension IngestNWSAlertsJob {
     func dispatchPendingTargetJobs(
         context: QueueContext,
         limit: Int = 250
@@ -259,7 +259,11 @@ private extension IngestNWSAlertsJob {
 
         for row in pendingRows {
             do {
-                try await targetQueue.dispatch(TargetEventRevisionJob.self, row.payload)
+                let payload = TargetEventRevisionPayload(
+                    seriesId: row.payload.seriesId, revisionUrn: row.payload.revisionUrn,
+                    geometry: row.payload.geometry, reason: row.payload.reason, queuedAt: Date()
+                )
+                try await targetQueue.dispatch(TargetEventRevisionJob.self, payload)
                 row.dispatched = Date()
                 row.lastError = nil
                 row.attemptCount += 1
