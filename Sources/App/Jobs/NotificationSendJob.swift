@@ -64,6 +64,11 @@ public enum NotificationReason: String, Codable, Sendable {
     case cancelInError
 }
 
+public enum NotificationDeliveryOrigin: String, Codable, Sendable {
+    case alertDriven
+    case presenceReconciliation
+}
+
 public struct NotificationSendJobPayload: Codable, Sendable {
     let seriesId: UUID
     let revisionUrn: String
@@ -71,6 +76,8 @@ public struct NotificationSendJobPayload: Codable, Sendable {
     let reason: NotificationReason
     let installationId: UUID?
     let deliveryAttemptId: UUID?
+    // Absent on legacy queued payloads; never infer their provenance from elapsed time.
+    let origin: NotificationDeliveryOrigin?
     
     init(
         seriesId: UUID,
@@ -78,7 +85,8 @@ public struct NotificationSendJobPayload: Codable, Sendable {
         mode: NotificationTargetMode,
         reason: NotificationReason,
         installationId: UUID? = nil,
-        deliveryAttemptId: UUID? = UUID()
+        deliveryAttemptId: UUID? = UUID(),
+        origin: NotificationDeliveryOrigin? = .alertDriven
     ) {
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
@@ -86,6 +94,7 @@ public struct NotificationSendJobPayload: Codable, Sendable {
         self.reason = reason
         self.installationId = installationId
         self.deliveryAttemptId = deliveryAttemptId
+        self.origin = origin
     }
 }
 
@@ -705,6 +714,7 @@ extension NotificationSendJob {
                     reason: payload.reason,
                     freshnessState: freshnessDecision.state,
                     retryOwnerID: retryOwnerID,
+                    origin: payload.origin,
                     on: context.application.db
                 )
             }
@@ -734,15 +744,19 @@ extension NotificationSendJob {
             )
 
             let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
+            let hotAlertPayload = HotAlertAPNsPayload(
+                arcusAlertId: payload.seriesId.uuidString,
+                revisionSent: series.currentRevisionSent
+            )
+            // No database await separates capture from sender invocation. Persist the
+            // captured start with the outcome, including a thrown first request.
+            let firstAttemptStartedAt: Date? = retryingDelivery == nil ? Date() : nil
             do {
                 // Use per-installation APNs environment so sandbox/prod tokens route correctly.
                 try await sender.sendNotification(
                     app: context.application,
                     with: alert,
-                    hotAlertPayload: .init(
-                        arcusAlertId: payload.seriesId.uuidString,
-                        revisionSent: series.currentRevisionSent
-                    ),
+                    hotAlertPayload: hotAlertPayload,
                     to: candidate.apnsToken,
                     environment: apnsEnvironment
                 )
@@ -764,6 +778,7 @@ extension NotificationSendJob {
                         retryOwnerID: retryOwnerID,
                         retryGeneration: claim.retryGeneration,
                         apnsErrorCode: code,
+                        firstAttemptStartedAt: firstAttemptStartedAt,
                         on: context.application.db
                     )
                     retryableFailureCount += 1
@@ -771,6 +786,7 @@ extension NotificationSendJob {
                     try await deliveryStore.completeFailed(
                         claimID: claim.id,
                         apnsErrorCode: code,
+                        firstAttemptStartedAt: firstAttemptStartedAt,
                         on: context.application.db
                     )
                     failedCount += 1
@@ -780,6 +796,7 @@ extension NotificationSendJob {
                         installationID: candidate.id,
                         failedToken: candidate.apnsToken,
                         apnsErrorCode: code,
+                        firstAttemptStartedAt: firstAttemptStartedAt,
                         on: context.application.db
                     )
                     failedCount += 1
@@ -789,6 +806,7 @@ extension NotificationSendJob {
 
             try await deliveryStore.completeSent(
                 claimID: claim.id,
+                firstAttemptStartedAt: firstAttemptStartedAt,
                 on: context.application.db
             )
             sentCount += 1

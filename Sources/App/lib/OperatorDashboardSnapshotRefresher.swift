@@ -175,22 +175,24 @@ struct OperatorDashboardSnapshotRefresher {
         )
     }
 
-    private func loadEndToEndLatency(on sql: any SQLDatabase, now: Date) async throws -> StoredEndToEndLatencyMetric {
+    func loadEndToEndLatency(on sql: any SQLDatabase, now: Date) async throws -> StoredEndToEndLatencyMetric {
         let windowStart = now.addingTimeInterval(-Double(OperatorDashboardConfig.rollingWindowHours * 60 * 60))
         let row = try await sql.raw("""
-            WITH first_success AS (
-                SELECT revision_urn, MIN(completed_at) AS first_completed_at
+            WITH first_attempt AS (
+                SELECT revision_urn, MIN(first_apns_attempt_started_at) AS first_started_at
                 FROM notification_ledger
-                WHERE status = 'sent'
-                  AND completed_at IS NOT NULL
+                WHERE delivery_origin = 'alertDriven'
                 GROUP BY revision_urn
+                -- Pending or abandoned original claims make the first start uncertain.
+                -- Withhold the revision rather than substitute a later known attempt.
+                HAVING BOOL_AND(first_apns_attempt_started_at IS NOT NULL)
             ),
             windowed AS (
-                SELECT EXTRACT(EPOCH FROM (f.first_completed_at - r.received)) AS latency_seconds
-                FROM first_success f
+                SELECT EXTRACT(EPOCH FROM (f.first_started_at - r.received)) AS latency_seconds
+                FROM first_attempt f
                 JOIN alert_revisions r ON r.revision_urn = f.revision_urn
                 WHERE r.received >= \(bind: windowStart)
-                  AND f.first_completed_at >= r.received
+                  AND f.first_started_at >= r.received
             )
             SELECT COUNT(*) AS "successfulRevisionCount",
                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_seconds) AS "p95Seconds"

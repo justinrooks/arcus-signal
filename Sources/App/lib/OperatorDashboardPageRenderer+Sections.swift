@@ -241,12 +241,12 @@ extension OperatorDashboardPageRenderer {
 
     static func latencyCard(_ metric: EndToEndLatencyMetricResponse) -> String {
         compactMetricCard(
-            title: "End-to-end alert latency p95",
+            title: "Alert pipeline latency p95",
             primary: maybeDuration(metric.p95Seconds.flatMap { Int($0.rounded()) }),
             refreshedAt: metric.refreshedAt,
             details: [
                 ("Window", "\(metric.windowHours)h"),
-                ("Successful revisions", "\(metric.successfulRevisionCount)")
+                ("Sampled revisions", "\(metric.successfulRevisionCount)")
             ]
         )
     }

@@ -159,6 +159,8 @@ struct NotificationSendJobDeliveryBoundaryTests {
               ADD COLUMN IF NOT EXISTS retry_generation INTEGER NOT NULL DEFAULT 0;
             """).run()
 
+        try await AddNotificationDeliveryProvenance().prepare(on: db)
+
         try await sql.raw("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_ledger_identity
             ON notification_ledger (installation_id, series_id, revision_urn);
@@ -236,6 +238,22 @@ struct NotificationSendJobDeliveryBoundaryTests {
             logger: logger,
             on: app.eventLoopGroup.any()
         )
+    }
+
+    private struct APNsBoundary: Decodable {
+        let origin: String?
+        let startedAt: Date?
+        let completedAt: Date?
+    }
+
+    private func loadBoundary(installationID: UUID, seriesID: UUID, on db: any Database) async throws -> APNsBoundary? {
+        let sql = try #require(db as? any SQLDatabase)
+        return try await sql.raw("""
+            SELECT delivery_origin AS origin,
+                   first_apns_attempt_started_at AS "startedAt", completed_at AS "completedAt"
+            FROM notification_ledger
+            WHERE installation_id = \(bind: installationID) AND series_id = \(bind: seriesID)
+            """).first(decoding: APNsBoundary.self)
     }
 
     private func makeUniqueH3Cell() -> Int64 {
@@ -414,6 +432,7 @@ struct NotificationSendJobDeliveryBoundaryTests {
         #expect(payload.seriesId == seriesID)
         #expect(payload.installationId == nil)
         #expect(payload.deliveryAttemptId == nil)
+        #expect(payload.origin == nil)
     }
 
     @Test("stale candidates are blocked before ledger and persist one stale miss across retries")
@@ -672,6 +691,10 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 )
             )
             await sender.waitForFirstSend()
+            let senderEnteredAt = Date()
+
+            // Observe the boundary while the provider call is still suspended.
+            let pendingBoundary = try? await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db)
 
             async let unconstrained: Void = job.dequeue(
                 unconstrainedContext,
@@ -685,6 +708,12 @@ struct NotificationSendJobDeliveryBoundaryTests {
             await sender.waitForSendCount(2)
             await sender.releaseFirstSend()
             _ = try await (constrained, unconstrained)
+
+            #expect(pendingBoundary?.origin == NotificationDeliveryOrigin.alertDriven.rawValue)
+            #expect(pendingBoundary?.startedAt == nil)
+            #expect(pendingBoundary?.completedAt == nil)
+            let completedBoundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db))
+            #expect(try #require(completedBoundary.startedAt) <= senderEnteredAt)
 
             let ledgerCount = try await NotificationLedgerModel.query(on: app.db)
                 .filter(\.$deviceInstallation.$id == installationID)
@@ -814,6 +843,10 @@ struct NotificationSendJobDeliveryBoundaryTests {
             #expect(retrying.status == "retrying")
             #expect(retrying.completedAt == nil)
 
+            let firstBoundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db))
+            #expect(firstBoundary.origin == NotificationDeliveryOrigin.alertDriven.rawValue)
+            #expect(firstBoundary.startedAt != nil)
+
             try await job.dequeue(context, payload)
 
             let sent = try #require(try await NotificationLedgerModel.find(ledgerID, on: app.db))
@@ -830,6 +863,138 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 NotificationSendAttemptOutcome.delivered.rawValue
             ])
             #expect(await sender.sentTokens == [token, token])
+            let retriedBoundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db))
+            #expect(retriedBoundary.startedAt == firstBoundary.startedAt)
+        }
+    }
+
+    @Test("primary latency counts one initial original-path boundary per revision regardless of delivery outcome")
+    func primaryLatencyPopulationAndCardinality() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            try await withRollbackTransaction(on: app) { db in
+                let sql = try #require(db as? any SQLDatabase)
+                let now = Date(timeIntervalSince1970: 4_000_000_000)
+                let received = now.addingTimeInterval(-60)
+                let emptyMetric = try await OperatorDashboardSnapshotRefresher().loadEndToEndLatency(on: sql, now: now)
+                #expect(emptyMetric.successfulRevisionCount == 0)
+                #expect(emptyMetric.p95Seconds == nil)
+                let seriesID = UUID()
+                let revision = "urn:oid:latency-\(UUID())"
+                try await seedSeries(id: seriesID, revisionUrn: revision, on: db)
+                try await seedRevision(seriesID: seriesID, revisionUrn: revision, on: db)
+                try await sql.raw("UPDATE alert_revisions SET received = \(bind: received) WHERE series_id = \(bind: seriesID)").run()
+
+                // Reconciliation and unknown historical successes precede the failed original
+                // request. Multiple original installations must still yield one 10s sample.
+                let fixtures: [(NotificationDeliveryOrigin?, Double?, String)] = [
+                    (.presenceReconciliation, 1, "sent"),
+                    (nil, 2, "sent"),
+                    (.alertDriven, 10, "failed"),
+                    (.alertDriven, 30, "sent"),
+                    (.alertDriven, nil, "claimed")
+                ]
+                var untimedRetryClaimID: UUID?
+                for (origin, offset, status) in fixtures {
+                    let installationID = UUID()
+                    try await seedInstallation(id: installationID, locationAuth: .always, on: db)
+                    let claim = try await NotificationDeliveryStore().claim(
+                        installationID: installationID, seriesID: seriesID, revisionUrn: revision,
+                        mode: .h3, reason: .new, freshnessState: .fresh, origin: origin, on: db
+                    )
+                    let startedAt = offset.map { received.addingTimeInterval($0) }
+                    try await sql.raw("""
+                        UPDATE notification_ledger
+                        SET first_apns_attempt_started_at = \(bind: startedAt),
+                            completed_at = \(bind: now), status = \(bind: status),
+                            retry_generation = \(bind: offset == nil ? 1 : 0)
+                        WHERE id = \(bind: claim.id)
+                        """).run()
+                    if offset == nil {
+                        // Even if initial timing was unavailable, retry generation 1
+                        // must not fabricate a boundary when the claim is reclaimed.
+                        try await NotificationDeliveryStore().completeSent(
+                            claimID: claim.id, firstAttemptStartedAt: received.addingTimeInterval(20), on: db
+                        )
+                        let boundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: db))
+                        #expect(boundary.startedAt == nil)
+                        untimedRetryClaimID = claim.id
+                    }
+                }
+
+                let reconciliationSeries = UUID()
+                let reconciliationRevision = "urn:oid:reconciliation-latency-\(UUID())"
+                let installationID = UUID()
+                try await seedSeries(id: reconciliationSeries, revisionUrn: reconciliationRevision, on: db)
+                try await seedRevision(seriesID: reconciliationSeries, revisionUrn: reconciliationRevision, on: db)
+                try await sql.raw("UPDATE alert_revisions SET received = \(bind: received) WHERE series_id = \(bind: reconciliationSeries)").run()
+                try await seedInstallation(id: installationID, locationAuth: .always, on: db)
+                let store = NotificationDeliveryStore()
+                let reconciliationClaim = try await store.claim(
+                    installationID: installationID, seriesID: reconciliationSeries,
+                    revisionUrn: reconciliationRevision, mode: .h3, reason: .new,
+                    freshnessState: .fresh, origin: .presenceReconciliation, on: db
+                )
+                try await store.completeSent(
+                    claimID: reconciliationClaim.id, firstAttemptStartedAt: received.addingTimeInterval(40), on: db
+                )
+                let uncertainMetric = try await OperatorDashboardSnapshotRefresher().loadEndToEndLatency(on: sql, now: now)
+                #expect(uncertainMetric.successfulRevisionCount == 0)
+                #expect(uncertainMetric.p95Seconds == nil)
+                // Remove the deliberately incomplete original fixture to measure the
+                // known population; an incomplete claim must never select a later start.
+                try await sql.raw("DELETE FROM notification_ledger WHERE id = \(bind: untimedRetryClaimID)").run()
+                let metric = try await OperatorDashboardSnapshotRefresher().loadEndToEndLatency(on: sql, now: now)
+                #expect(metric.successfulRevisionCount == 1)
+                #expect(metric.p95Seconds == 10)
+            }
+        }
+    }
+
+    @Test("delayed reconciliation persists its own origin and never overwrites an original boundary")
+    func delayedReconciliationBoundary() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let sql = try #require(app.db as? any SQLDatabase)
+            let seriesID = UUID()
+            let revision = "urn:oid:delayed-reconciliation-\(UUID())"
+            let originalInstallation = UUID()
+            let laterInstallation = UUID()
+            let now = Date()
+            try await seedSeries(id: seriesID, revisionUrn: revision, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revision, on: app.db)
+            try await sql.raw("UPDATE alert_revisions SET received = \(bind: now.addingTimeInterval(-3 * 60 * 60)) WHERE series_id = \(bind: seriesID)").run()
+            for id in [originalInstallation, laterInstallation] {
+                try await seedInstallation(id: id, locationAuth: .always, on: app.db)
+            }
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let series = makeSeries(id: seriesID, revisionUrn: revision, now: now)
+            let context = makeQueueContext(app: app)
+            _ = try await job.dispatchNotifications(
+                to: [makeCandidate(id: originalInstallation, auth: .always, capturedAt: now)],
+                with: .init(seriesId: seriesID, revisionUrn: revision, mode: .h3, reason: .new),
+                and: series, using: context
+            )
+            let original = try #require(try await loadBoundary(installationID: originalInstallation, seriesID: seriesID, on: app.db))
+            _ = try await job.dispatchNotifications(
+                to: [makeCandidate(id: originalInstallation, auth: .always, capturedAt: now),
+                     makeCandidate(id: laterInstallation, auth: .always, capturedAt: now)],
+                with: .init(seriesId: seriesID, revisionUrn: revision, mode: .h3, reason: .new,
+                            installationId: laterInstallation, origin: .presenceReconciliation),
+                and: series, using: context
+            )
+            let preserved = try #require(try await loadBoundary(installationID: originalInstallation, seriesID: seriesID, on: app.db))
+            let reconciled = try #require(try await loadBoundary(installationID: laterInstallation, seriesID: seriesID, on: app.db))
+            #expect(preserved.startedAt == original.startedAt)
+            #expect(preserved.origin == NotificationDeliveryOrigin.alertDriven.rawValue)
+            #expect(reconciled.origin == NotificationDeliveryOrigin.presenceReconciliation.rawValue)
+            #expect(reconciled.startedAt != nil)
+            #expect(await sender.sendCount == 2)
         }
     }
 
@@ -1144,6 +1309,10 @@ struct NotificationSendJobDeliveryBoundaryTests {
             )
             #expect(ledger.status == "claimed")
             #expect(ledger.apnsErrorCode == nil)
+            // The sender entered, but its outcome write failed atomically. A later
+            // attempt cannot be represented as this original request's timestamp.
+            let failedWriteBoundary = try #require(try await loadBoundary(installationID: installationID, seriesID: seriesID, on: app.db))
+            #expect(failedWriteBoundary.startedAt == nil)
 
             let secondSummary = try await job.dispatchNotifications(
                 to: [candidate],

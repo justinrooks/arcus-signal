@@ -30,6 +30,7 @@ struct NotificationDeliveryStore {
         reason: NotificationReason,
         freshnessState: LocationFreshnessState,
         retryOwnerID: String? = nil,
+        origin: NotificationDeliveryOrigin? = nil,
         on db: any Database
     ) async throws -> LedgerClaimResult {
         guard let sql = db as? any SQLDatabase else {
@@ -41,7 +42,7 @@ struct NotificationDeliveryStore {
         let row = try await sql.raw("""
             INSERT INTO notification_ledger
                 (id, installation_id, series_id, revision_urn, mode, reason, freshness_state,
-                 retry_owner_id, retry_generation, created, status)
+                 retry_owner_id, delivery_origin, retry_generation, created, status)
             VALUES
                 (\(bind: newID),
                  \(bind: installationID),
@@ -51,6 +52,7 @@ struct NotificationDeliveryStore {
                  \(bind: reason),
                  \(bind: freshnessState),
                  \(bind: retryOwnerID),
+                 \(bind: origin?.rawValue),
                  0,
                  NOW(),
                 'claimed')
@@ -170,6 +172,7 @@ struct NotificationDeliveryStore {
         retryOwnerID: String,
         retryGeneration: Int?,
         apnsErrorCode: String,
+        firstAttemptStartedAt: Date? = nil,
         on db: any Database
     ) async throws {
         guard let claimID, let retryGeneration else { throw Abort(.notFound) }
@@ -181,6 +184,9 @@ struct NotificationDeliveryStore {
             UPDATE notification_ledger
             SET status = 'retrying',
                 apns_error_code = \(bind: apnsErrorCode),
+                first_apns_attempt_started_at = CASE WHEN retry_generation = 0
+                    THEN COALESCE(first_apns_attempt_started_at, \(bind: firstAttemptStartedAt))
+                    ELSE first_apns_attempt_started_at END,
                 retry_generation = retry_generation + 1,
                 completed_at = NULL
             WHERE id = \(bind: claimID)
@@ -196,6 +202,7 @@ struct NotificationDeliveryStore {
 
     func completeSent(
         claimID: UUID?,
+        firstAttemptStartedAt: Date? = nil,
         on db: any Database
     ) async throws {
         guard let claimID else { return }
@@ -207,6 +214,9 @@ struct NotificationDeliveryStore {
             UPDATE notification_ledger
             SET status = 'sent',
                 apns_error_code = NULL,
+                first_apns_attempt_started_at = CASE WHEN retry_generation = 0
+                    THEN COALESCE(first_apns_attempt_started_at, \(bind: firstAttemptStartedAt))
+                    ELSE first_apns_attempt_started_at END,
                 completed_at = NOW()
             WHERE id = \(bind: claimID)
               AND status = 'claimed'
@@ -260,6 +270,7 @@ struct NotificationDeliveryStore {
     func completeFailed(
         claimID: UUID?,
         apnsErrorCode: String?,
+        firstAttemptStartedAt: Date? = nil,
         on db: any Database
     ) async throws {
         guard let claimID else { throw Abort(.notFound) }
@@ -271,6 +282,9 @@ struct NotificationDeliveryStore {
             UPDATE notification_ledger
             SET status = 'failed',
                 apns_error_code = COALESCE(\(bind: apnsErrorCode), apns_error_code),
+                first_apns_attempt_started_at = CASE WHEN retry_generation = 0
+                    THEN COALESCE(first_apns_attempt_started_at, \(bind: firstAttemptStartedAt))
+                    ELSE first_apns_attempt_started_at END,
                 completed_at = NOW()
             WHERE id = \(bind: claimID)
               AND status IN ('claimed', 'retrying')
@@ -286,12 +300,14 @@ struct NotificationDeliveryStore {
         installationID: UUID,
         failedToken: String,
         apnsErrorCode: String,
+        firstAttemptStartedAt: Date? = nil,
         on db: any Database
     ) async throws {
         try await db.transaction { transaction in
             try await completeFailed(
                 claimID: claimID,
                 apnsErrorCode: apnsErrorCode,
+                firstAttemptStartedAt: firstAttemptStartedAt,
                 on: transaction
             )
             _ = try await deactivateInstallationIfTokenMatches(

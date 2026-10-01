@@ -72,6 +72,30 @@ On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the cla
 
 APNs service throttling, service/server failures, shutdown/idle responses, and transport failures with unknown token validity transition the claim to non-terminal `retrying` and throw a dedicated job error after attempt telemetry is recorded. A retry atomically transitions only the owning job's matching `retrying` generation back to `claimed`; concurrent or stale retry attempts therefore have one database winner. Non-retryable request/provider failures become terminal `failed`. Responses proving that the exact device token is invalid or unregistered atomically complete the ledger failure and conditionally deactivate the installation, but only while it still stores the token that failed, so a late response cannot deactivate a replacement token. Retry exhaustion terminalizes only the queue job's remaining owned `retrying` rows.
 
+## Primary alert pipeline latency
+
+The primary latency sample runs from `alert_revisions.received` to the first original
+alert-driven APNs attempt boundary. Send producers explicitly identify `alertDriven`
+or `presenceReconciliation` origin in the queued payload; a winning ledger claim
+persists that origin in `delivery_origin`. Legacy payloads and historical ledger rows
+retain unknown origin and are excluded rather than heuristically classified or backfilled.
+
+The job captures `first_apns_attempt_started_at` immediately before invoking the
+sender and persists that captured value atomically with the ledger outcome, including
+failed requests. Retries cannot create or replace it. The dashboard takes the minimum
+original-path boundary per revision, giving at most one sample regardless of
+installations or H3/UGC fan-out. Reconciliation, retry delay, and provider response
+time do not contribute to its duration. Existing APNs outcome telemetry remains
+separate. The dashboard's legacy `endToEndLatency.successfulRevisionCount` JSON field
+now counts sampled revisions, including failed initial requests; its wire name is
+preserved for compatibility.
+
+An in-flight original request has no persisted boundary until its outcome is recorded.
+Process loss or outcome-write failure can leave its claim without timing. The dashboard
+withholds a revision's sample while any original claim lacks timing, rather than using
+a later known attempt as the first. Thus incomplete or abandoned original deliveries
+can reduce sample coverage without fabricating a start or affecting delivery authority.
+
 ## Guarantees and explicit gaps
 
 - The ledger provides a database-enforced, at-most-one claim boundary for `(installation_id, series_id, revision_urn)`.
