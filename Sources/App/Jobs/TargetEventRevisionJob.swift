@@ -8,17 +8,23 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
     public let revisionUrn: String
     public let geometry: GeoShape
     public let reason: NotificationReason
+    public let queuedAt: Date?
+    public let targetExecutionId: UUID?
 
     public init(
         seriesId: UUID,
         revisionUrn: String,
         geometry: GeoShape,
-        reason: NotificationReason
+        reason: NotificationReason,
+        queuedAt: Date? = nil,
+        targetExecutionId: UUID? = UUID()
     ) {
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
         self.geometry = geometry
         self.reason = reason
+        self.queuedAt = queuedAt
+        self.targetExecutionId = targetExecutionId
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -26,6 +32,8 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
         case revisionUrn
         case geometry
         case reason
+        case queuedAt
+        case targetExecutionId
     }
 
     public init(from decoder: any Decoder) throws {
@@ -34,6 +42,8 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
         self.revisionUrn = try container.decode(String.self, forKey: .revisionUrn)
         self.geometry = try container.decode(GeoShape.self, forKey: .geometry)
         self.reason = try container.decodeIfPresent(NotificationReason.self, forKey: .reason) ?? .new
+        self.queuedAt = try container.decodeIfPresent(Date.self, forKey: .queuedAt)
+        self.targetExecutionId = try container.decodeIfPresent(UUID.self, forKey: .targetExecutionId)
     }
 }
 
@@ -51,6 +61,7 @@ public struct TargetEventRevisionJob: AsyncJob {
     }
 
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
+        let startedAt = Date()
         context.logger.info(
             "TargetEventRevisionJob dequeued. Begin h3 encoding",
             metadata: [
@@ -60,9 +71,14 @@ public struct TargetEventRevisionJob: AsyncJob {
             ]
         )
 
+        let timingStore = PipelineStageTimingStore()
+        let timingOwner = await timingStore.record("target started", logger: context.logger) {
+            try await timingStore.startTarget(payload, at: startedAt, on: context.application.db)
+        } ?? false
         do {
             let coverage = try buildCoverage(payload.geometry)
             let result: TargetDispatchCompletionResult
+            let h3CompletedAt: Date?
             switch coverage {
             case .supported(let supportedCoverage):
                 context.logger.info(
@@ -74,7 +90,7 @@ public struct TargetEventRevisionJob: AsyncJob {
                         "geometryHash": .string(supportedCoverage.geometryHash)
                     ]
                 )
-                result = try await context.application.db.transaction { database in
+                h3CompletedAt = try await context.application.db.transaction { database in
                     try await persistGeolocation(
                         payload,
                         coverage: supportedCoverage,
@@ -82,12 +98,14 @@ public struct TargetEventRevisionJob: AsyncJob {
                         logger: context.logger
                     )
                 }
+                result = .succeeded
             case .unsupportedPoint:
                 context.logger.debug(
                     "No polygon geometry available; skipping H3 persistence",
                     metadata: ["seriesId": .string(payload.seriesId.uuidString)]
                 )
                 result = .unsupportedGeometry
+                h3CompletedAt = nil
             case .coverFailure(let errorDescription):
                 context.logger.warning(
                     "H3 cover computation failed; falling back to UGC notification dispatch.",
@@ -98,8 +116,14 @@ public struct TargetEventRevisionJob: AsyncJob {
                     ]
                 )
                 result = .unsupportedGeometry
+                h3CompletedAt = nil
             }
 
+            if timingOwner, let h3CompletedAt {
+                _ = await timingStore.record("H3 completed", logger: context.logger) {
+                    try await timingStore.completeTarget(payload, h3Completed: true, at: h3CompletedAt, on: context.application.db)
+                }
+            }
             try await markDispatchResult(
                 payload: payload,
                 result: result.rawValue,
@@ -113,6 +137,7 @@ public struct TargetEventRevisionJob: AsyncJob {
                     seriesId: payload.seriesId,
                     reason: payload.reason,
                     mode: .ugc,
+                    sourceTargetExecutionId: payload.targetExecutionId,
                     on: context.application.db,
                     logger: context.logger
                 ) {
@@ -180,7 +205,7 @@ private extension TargetEventRevisionJob {
         coverage: H3Coverage,
         on database: any Database,
         logger: Logger
-    ) async throws -> TargetDispatchCompletionResult {
+    ) async throws -> Date {
         if let existing = try await ArcusGeolocationModel.query(on: database)
             .filter(\.$series.$id == payload.seriesId)
             .first() {
@@ -214,18 +239,22 @@ private extension TargetEventRevisionJob {
             logger.info("Created geolocation cover", metadata: ["seriesId": .string(payload.seriesId.uuidString)])
         }
 
+        // Capture before exposing send intent; persist only after coverage commits.
+        // Timing failures must not poison the coverage/notification-intent transaction.
+        let h3CompletedAt = Date()
         if try await DispatchAgent.enqueueNotificationDispatchOutbox(
             revisionUrn: payload.revisionUrn,
             seriesId: payload.seriesId,
             reason: payload.reason,
             mode: .h3,
+            sourceTargetExecutionId: payload.targetExecutionId,
             on: database,
             logger: logger
         ) {
             logger.info("Notification job queued.", metadata: ["seriesId": .stringConvertible(payload.seriesId)])
         }
 
-        return .succeeded
+        return h3CompletedAt
     }
 
     func markDispatchResult(

@@ -226,6 +226,17 @@ struct NotificationDispatchOutboxTests {
                 let payloads = app.queues.test.all(NotificationSendJob.self).filter { $0.seriesId == series }
                 #expect(payloads.count == 1)
                 #expect(payloads.first?.mode == .ugc && payloads.first?.reason == .new)
+                let payload = try #require(payloads.first)
+                #expect(payload.origin == .alertDriven)
+                let queuedAt = try #require(payload.queuedAt)
+                // The candidate query has no codes, so no APNs dependency is reached.
+                try await NotificationSendJob().dequeue(context, payload)
+                let sql = try #require(app.db as? any SQLDatabase)
+                let persisted = try #require(try await sql.raw("""
+                    SELECT queued_at FROM notification_pipeline_timings
+                    WHERE delivery_attempt_id = \(bind: payload.deliveryAttemptId)
+                    """).first())
+                #expect(abs(try persisted.decode(column: "queued_at", as: Date.self).timeIntervalSince(queuedAt)) < 0.000_001)
                 _ = try await DispatchAgent.dispatchPendingNotificationJobs(context: context, mode: "ugc")
                 #expect(app.queues.test.all(NotificationSendJob.self).filter { $0.seriesId == series }.count == 1)
             } catch {

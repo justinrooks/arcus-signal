@@ -25,6 +25,9 @@ public final class ArcusNotificationOutboxModel: Model, @unchecked Sendable {
     
     @Field(key: "reason")
     public var reason: String //new|update|cancelled|endedAllClear
+
+    @OptionalField(key: "source_target_execution_id")
+    public var sourceTargetExecutionId: UUID?
     
     @Field(key: "state")
     public var state: String //pending|ready|processing|done|dead
@@ -55,6 +58,7 @@ public final class ArcusNotificationOutboxModel: Model, @unchecked Sendable {
         revisionUrn: String,
         mode: String,
         reason: String,
+        sourceTargetExecutionId: UUID? = nil,
         state: String,
         attempts: Int,
         lastError: String? = nil,
@@ -65,6 +69,7 @@ public final class ArcusNotificationOutboxModel: Model, @unchecked Sendable {
         self.revisionUrn = revisionUrn
         self.mode = mode
         self.reason = reason
+        self.sourceTargetExecutionId = sourceTargetExecutionId
         self.state = state
         self.attempts = attempts
         self.lastError = lastError

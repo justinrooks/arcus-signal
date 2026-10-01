@@ -46,7 +46,9 @@ public struct DispatchAgent {
                     revisionUrn: row.revisionUrn,
                     mode: mode,
                     reason: reason,
-                    origin: .alertDriven
+                    origin: .alertDriven,
+                    queuedAt: Date(),
+                    sourceTargetExecutionId: row.sourceTargetExecutionId
                 )
                 
                 try await sendQueue.dispatch(
@@ -83,6 +85,7 @@ public struct DispatchAgent {
         seriesId: UUID,
         reason: NotificationReason,
         mode: NotificationTargetMode,
+        sourceTargetExecutionId: UUID? = nil,
         on database: any Database,
         logger: Logger
     ) async throws -> Bool {
@@ -110,6 +113,7 @@ public struct DispatchAgent {
             revisionUrn: revisionUrn,
             mode: mode.rawValue,
             reason: reason.rawValue,
+            sourceTargetExecutionId: sourceTargetExecutionId,
             state: "ready",
             attempts: 0,
             availableAt: .now
@@ -158,6 +162,7 @@ public struct DispatchAgent {
         revisionUrn: String,
         reason: NotificationReason,
         mode: NotificationTargetMode,
+        sourceTargetExecutionId: UUID? = nil,
         on database: any Database,
         logger: Logger
     ) async throws -> Bool {

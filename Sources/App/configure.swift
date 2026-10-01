@@ -135,6 +135,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreatePresenceReconciliationOutbox())
     app.migrations.add(CreateInstallationActivityDaily())
     app.migrations.add(AddNotificationDeliveryProvenance())
+    app.migrations.add(CreatePipelineStageTimings())
 }
 
 private func configureAPNs(on app: Application) async throws {
