@@ -45,7 +45,8 @@ public struct DispatchAgent {
                     seriesId: row.seriesId,
                     revisionUrn: row.revisionUrn,
                     mode: mode,
-                    reason: reason
+                    reason: reason,
+                    origin: .alertDriven
                 )
                 
                 try await sendQueue.dispatch(

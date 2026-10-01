@@ -134,6 +134,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddClaimFencingToPressureArtifactCatalog())
     app.migrations.add(CreatePresenceReconciliationOutbox())
     app.migrations.add(CreateInstallationActivityDaily())
+    app.migrations.add(AddNotificationDeliveryProvenance())
 }
 
 private func configureAPNs(on app: Application) async throws {

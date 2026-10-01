@@ -248,6 +248,7 @@ struct LocationDrivenAlertReconciliationFlowTests {
                 app.queues.test.all(NotificationSendJob.self)
                     .last { $0.installationId == installationID }
             )
+            #expect(firstPayload.origin == .presenceReconciliation)
             try await deliver(firstPayload, sender: sender, on: app)
 
             let sendCountAfterEntry = app.queues.test.all(NotificationSendJob.self)

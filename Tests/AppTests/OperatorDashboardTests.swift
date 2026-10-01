@@ -588,6 +588,13 @@ struct OperatorDashboardTests {
                     #expect(markup.contains("id=\"snapshot-age\""))
                     #expect(markup.contains("aria-live=\"polite\""))
                     for token in expected[page] ?? [] { #expect(markup.contains(token)) }
+                    if page == .overview || page == .delivery {
+                        #expect(markup.contains("sampled revisions"))
+                        #expect(!markup.contains("successful revisions"))
+                        let liveDelivery = liveFunction("function renderDeliveryOverview", until: "function applySnapshot", in: html)
+                        #expect(liveDelivery.contains("sampled revisions"))
+                        #expect(!liveDelivery.contains("successful revisions"))
+                    }
                     if page == .overview {
                         #expect(markup.contains("Ingest delayed"))
                         #expect(html.contains("findings.push('Ingest delayed')"))

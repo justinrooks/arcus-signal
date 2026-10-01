@@ -393,9 +393,9 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderLatencyCard(metric) {
-            return renderCompactMetricCard('End-to-end alert latency p95', formatDuration(metric.p95Seconds === null ? null : Math.round(metric.p95Seconds)), metric.refreshedAt, null, [
+            return renderCompactMetricCard('Alert pipeline latency p95', formatDuration(metric.p95Seconds === null ? null : Math.round(metric.p95Seconds)), metric.refreshedAt, null, [
               { label: 'Window', value: `${metric.windowHours}h` },
-              { label: 'Successful revisions', value: String(metric.successfulRevisionCount) }
+              { label: 'Sampled revisions', value: String(metric.successfulRevisionCount) }
             ]);
           }
 
@@ -882,7 +882,7 @@ extension OperatorDashboardPageRenderer {
           function renderDeliveryOverview(d,a,detail) {
             const l=d.endToEndAlertLatency,p=d.apnsDeliverySuccessRate,c=a.freshTargetableInstallationCoverage,h=a.alertsWithGeographyAndH3Success;
             return controlHead('Delivery & Targeting',p.windowHours+'h APNs window · current coverage',detail?null:'delivery')+
-              '<div class="delivery-metrics">'+controlStat('Alert latency · p95',formatDuration(l.p95Seconds),l.successfulRevisionCount+' successful revisions · '+l.windowHours+'h')+
+              '<div class="delivery-metrics">'+controlStat('Alert latency · p95',formatDuration(l.p95Seconds),l.successfulRevisionCount+' sampled revisions · '+l.windowHours+'h')+
               controlStat('APNs success',formatPercent(p.successRate),p.sentCount+' sent / '+(p.sentCount+p.failedCount)+' outcomes')+
               controlStat('Fresh coverage',formatPercent(c.targetableRate),c.targetableInstallationCount+' / '+c.activeSubscribedInstallationCount+' active subscribed')+
               controlStat('Geography → H3',formatPercent(h.successRate),h.successfulConversionCount+' / '+h.geometryBearingRevisionCount+' geometry revisions · '+h.windowHours+'h')+
