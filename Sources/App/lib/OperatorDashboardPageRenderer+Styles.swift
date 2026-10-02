@@ -295,6 +295,7 @@ td small { display: block; font-size: 11px; margin-top: 2px; }
 .card-heading h3 { font-size:13px; margin-bottom:8px; }
 .card .primary { font-size:26px; font-variant-numeric:tabular-nums; }
 .definition-list .primary { font:12px var(--mono); }
+.pipeline-latency-card .definition-list .primary { font-size:26px; }
 .definition-list dt,.definition-list dd { min-width:0; overflow-wrap:anywhere; }
 .metric-summary,.subtle { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
 .meta-list { list-style:none; margin:8px 0 0; padding:0; }

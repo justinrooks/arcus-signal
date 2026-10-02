@@ -82,7 +82,15 @@ struct OperatorDashboardTests {
             endToEndLatency: .init(
                 windowHours: 24,
                 successfulRevisionCount: 22,
-                p95Seconds: 91
+                p95Seconds: 91,
+                sampleCount: 22,
+                p50Seconds: 24,
+                maxSeconds: 184,
+                targetQueueWait: .init(sampleCount: 18, p50Seconds: 4, p95Seconds: 12),
+                h3TargetProcessing: .init(),
+                notificationQueueWait: .init(sampleCount: 19, p50Seconds: 7, p95Seconds: 26),
+                candidateResolution: .init(sampleCount: 22, p50Seconds: 3, p95Seconds: 8),
+                notificationPreparation: .init(sampleCount: 22, p50Seconds: 9, p95Seconds: 45)
             ),
             apnsDelivery: .init(
                 windowHours: 24,
@@ -589,11 +597,44 @@ struct OperatorDashboardTests {
                     #expect(markup.contains("aria-live=\"polite\""))
                     for token in expected[page] ?? [] { #expect(markup.contains(token)) }
                     if page == .overview || page == .delivery {
-                        #expect(markup.contains("sampled revisions"))
-                        #expect(!markup.contains("successful revisions"))
+                        #expect(markup.contains("Pipeline latency · p95"))
+                        #expect(markup.contains("p50 24s · max 3m 4s · 22 samples · 24h"))
                         let liveDelivery = liveFunction("function renderDeliveryOverview", until: "function applySnapshot", in: html)
-                        #expect(liveDelivery.contains("sampled revisions"))
-                        #expect(!liveDelivery.contains("successful revisions"))
+                        let liveLatency = liveFunction("function renderLatencyCard", until: "function renderAPNsSuccessCard", in: html)
+                        #expect(liveLatency.contains("metric.p50Seconds"))
+                        #expect(liveLatency.contains("metric.sampleCount"))
+                        for mapping in [
+                            "['Target queue', metric.targetQueueWait]",
+                            "['H3 / target processing', metric.h3TargetProcessing]",
+                            "['Notification queue', metric.notificationQueueWait]",
+                            "['Candidate resolution', metric.candidateResolution]",
+                            "['Notification preparation / APNs handoff', metric.notificationPreparation]"
+                        ] {
+                            #expect(liveLatency.contains(mapping))
+                        }
+                        #expect(liveLatency.contains("formatDuration(value.p95Seconds)"))
+                        #expect(liveLatency.contains("String(value.sampleCount ?? 0)"))
+                        #expect(liveLatency.contains("data-label=\"p95\""))
+                        #expect(liveLatency.contains("data-label=\"Samples\""))
+                        #expect(liveDelivery.contains("sampled revisions") == false)
+                        if page == .delivery {
+                            #expect(markup.contains("<dt>Alert pipeline latency · p95</dt>"))
+                            #expect(html.contains(".pipeline-latency-card .definition-list .primary { font-size:26px; }"))
+                            #expect(markup.contains("<dt>p50</dt><dd>24s</dd>"))
+                            #expect(markup.contains("<dt>Max</dt><dd>3m 4s</dd>"))
+                            #expect(markup.contains("<dt>Samples · 24h</dt><dd>22</dd>"))
+                            #expect(markup.contains("H3 / target processing"))
+                            #expect(markup.contains("data-label=\"p95\">n/a</td><td data-label=\"Samples\">0</td>"))
+                            #expect(markup.contains("Notification preparation / APNs handoff"))
+                            for row in [
+                                "<th scope=\"row\">Target queue</th><td data-label=\"p95\">12s</td><td data-label=\"Samples\">18</td>",
+                                "<th scope=\"row\">Notification queue</th><td data-label=\"p95\">26s</td><td data-label=\"Samples\">19</td>",
+                                "<th scope=\"row\">Candidate resolution</th><td data-label=\"p95\">8s</td><td data-label=\"Samples\">22</td>",
+                                "<th scope=\"row\">Notification preparation / APNs handoff</th><td data-label=\"p95\">45s</td><td data-label=\"Samples\">22</td>"
+                            ] {
+                                #expect(markup.contains(row))
+                            }
+                        }
                     }
                     if page == .overview {
                         #expect(markup.contains("Ingest delayed"))

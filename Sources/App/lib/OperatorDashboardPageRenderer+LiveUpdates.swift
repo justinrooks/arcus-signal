@@ -393,10 +393,24 @@ extension OperatorDashboardPageRenderer {
           }
 
           function renderLatencyCard(metric) {
-            return renderCompactMetricCard('Alert pipeline latency p95', formatDuration(metric.p95Seconds === null ? null : Math.round(metric.p95Seconds)), metric.refreshedAt, null, [
-              { label: 'Window', value: `${metric.windowHours}h` },
-              { label: 'Sampled revisions', value: String(metric.successfulRevisionCount) }
-            ]);
+            const stages = [
+              ['Target queue', metric.targetQueueWait],
+              ['H3 / target processing', metric.h3TargetProcessing],
+              ['Notification queue', metric.notificationQueueWait],
+              ['Candidate resolution', metric.candidateResolution],
+              ['Notification preparation / APNs handoff', metric.notificationPreparation]
+            ];
+            const stageRows = stages.map(([label, distribution]) => {
+              const value = distribution || {};
+              return `<tr><th scope="row">${escapeHtml(label)}</th><td data-label="p95">${escapeHtml(formatDuration(value.p95Seconds))}</td><td data-label="Samples">${escapeHtml(String(value.sampleCount ?? 0))}</td></tr>`;
+            }).join('');
+            return `<div class="card compact-card pipeline-latency-card"><dl class="definition-list">`+
+              `<div><dt>Alert pipeline latency · p95</dt><dd class="primary">${escapeHtml(formatDuration(metric.p95Seconds))}</dd></div>`+
+              `<div><dt>p50</dt><dd>${escapeHtml(formatDuration(metric.p50Seconds))}</dd></div>`+
+              `<div><dt>Max</dt><dd>${escapeHtml(formatDuration(metric.maxSeconds))}</dd></div>`+
+              `<div><dt>Samples · ${escapeHtml(String(metric.windowHours))}h</dt><dd>${escapeHtml(String(metric.sampleCount ?? 0))}</dd></div></dl>`+
+              `<div class="table-wrap"><table class="stream-table inline-mobile-table"><thead><tr><th scope="col">Pipeline stage</th><th scope="col">p95</th><th scope="col">Samples</th></tr></thead><tbody>${stageRows}</tbody></table></div>`+
+              `<p class="module-note">Refreshed ${escapeHtml(formatDate(metric.refreshedAt))}</p></div>`;
           }
 
           function renderAPNsSuccessCard(metric) {
@@ -882,7 +896,7 @@ extension OperatorDashboardPageRenderer {
           function renderDeliveryOverview(d,a,detail) {
             const l=d.endToEndAlertLatency,p=d.apnsDeliverySuccessRate,c=a.freshTargetableInstallationCoverage,h=a.alertsWithGeographyAndH3Success;
             return controlHead('Delivery & Targeting',p.windowHours+'h APNs window · current coverage',detail?null:'delivery')+
-              '<div class="delivery-metrics">'+controlStat('Alert latency · p95',formatDuration(l.p95Seconds),l.successfulRevisionCount+' sampled revisions · '+l.windowHours+'h')+
+              '<div class="delivery-metrics">'+controlStat('Pipeline latency · p95',formatDuration(l.p95Seconds),'p50 '+formatDuration(l.p50Seconds)+' · max '+formatDuration(l.maxSeconds)+' · '+String(l.sampleCount ?? 0)+' samples · '+l.windowHours+'h')+
               controlStat('APNs success',formatPercent(p.successRate),p.sentCount+' sent / '+(p.sentCount+p.failedCount)+' outcomes')+
               controlStat('Fresh coverage',formatPercent(c.targetableRate),c.targetableInstallationCount+' / '+c.activeSubscribedInstallationCount+' active subscribed')+
               controlStat('Geography → H3',formatPercent(h.successRate),h.successfulConversionCount+' / '+h.geometryBearingRevisionCount+' geometry revisions · '+h.windowHours+'h')+

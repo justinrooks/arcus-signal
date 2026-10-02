@@ -240,15 +240,35 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func latencyCard(_ metric: EndToEndLatencyMetricResponse) -> String {
-        compactMetricCard(
-            title: "Alert pipeline latency p95",
-            primary: maybeDuration(metric.p95Seconds.flatMap { Int($0.rounded()) }),
-            refreshedAt: metric.refreshedAt,
-            details: [
-                ("Window", "\(metric.windowHours)h"),
-                ("Sampled revisions", "\(metric.successfulRevisionCount)")
-            ]
-        )
+        func stageRow(_ label: String, _ distribution: StoredLatencyDistribution) -> String {
+            """
+            <tr><th scope="row">\(escape(label))</th><td data-label="p95">\(escape(maybeDuration(distribution.p95Seconds.flatMap { Int($0.rounded()) })))</td><td data-label="Samples">\(distribution.sampleCount)</td></tr>
+            """
+        }
+
+        return """
+        <div class="card compact-card pipeline-latency-card">
+          <dl class="definition-list">
+            <div><dt>Alert pipeline latency · p95</dt><dd class="primary">\(escape(maybeDuration(metric.p95Seconds.flatMap { Int($0.rounded()) })))</dd></div>
+            <div><dt>p50</dt><dd>\(escape(maybeDuration(metric.p50Seconds.flatMap { Int($0.rounded()) })))</dd></div>
+            <div><dt>Max</dt><dd>\(escape(maybeDuration(metric.maxSeconds.flatMap { Int($0.rounded()) })))</dd></div>
+            <div><dt>Samples · \(metric.windowHours)h</dt><dd>\(metric.sampleCount)</dd></div>
+          </dl>
+          <div class="table-wrap">
+            <table class="stream-table inline-mobile-table">
+              <thead><tr><th scope="col">Pipeline stage</th><th scope="col">p95</th><th scope="col">Samples</th></tr></thead>
+              <tbody>
+                \(stageRow("Target queue", metric.targetQueueWait))
+                \(stageRow("H3 / target processing", metric.h3TargetProcessing))
+                \(stageRow("Notification queue", metric.notificationQueueWait))
+                \(stageRow("Candidate resolution", metric.candidateResolution))
+                \(stageRow("Notification preparation / APNs handoff", metric.notificationPreparation))
+              </tbody>
+            </table>
+          </div>
+          <p class="module-note">Refreshed \(escape(maybeDate(metric.refreshedAt)))</p>
+        </div>
+        """
     }
 
     static func apnsSuccessCard(_ metric: APNsDeliveryMetricResponse) -> String {
