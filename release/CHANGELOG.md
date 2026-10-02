@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.2.0
+
+### Reliability
+
+- Pipeline latency now measures revision receipt to the first original alert-driven APNs attempt, excluding reconciliation sends, retries, and APNs response time.
+<!-- evidence: 44fbb9f -->
+- Persisted stage timings now distinguish queue waits, target processing, candidate resolution, and notification preparation while preserving execution provenance across retries and replay.
+<!-- evidence: 5bac4cb -->
+
+### Operations
+
+- Operator snapshots now expose p50, p95, maximum, and sample count for full-pipeline latency, plus per-stage latency distributions and counts.
+<!-- evidence: cb810bb -->
+- The dashboard now presents pipeline p95 as the primary latency value and shows a compact stage p95 and sample-count breakdown, including unavailable stages.
+<!-- evidence: 0ff709d -->
+
+### Migrations
+
+- Added migration-backed delivery provenance, pipeline stage timing, and candidate-resolution count fields; historical timing is not backfilled.
+<!-- evidence: 44fbb9f, 5bac4cb, cb810bb -->
+
+### Tests / QA
+
+- Added focused regression coverage for first-attempt latency semantics, stage timing and provenance, aggregate distributions, and dashboard rendering.
+<!-- evidence: 44fbb9f, 5bac4cb, cb810bb, 0ff709d -->
+
 ## v1.1.0
 
 ### Reliability

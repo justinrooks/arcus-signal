@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.2.0
+
+## Overview
+
+Arcus Signal now measures alert-pipeline latency through the first original alert-driven APNs attempt and provides stage-level diagnostics for operators.
+
+## Highlights
+
+- The operator dashboard shows pipeline p95, p50, maximum, and sample count, with a compact p95 and sample-count breakdown for each major stage.
+- Reconciliation sends, retries, and APNs response time no longer define the primary pipeline-latency measurement.
+
+## Maintenance
+
+- Added migration-backed provenance and timing data for pipeline diagnostics. Historical timing is not backfilled.
+
 ## v1.1.0
 
 ## Overview
