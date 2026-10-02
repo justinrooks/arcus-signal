@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 7
+    public static let currentSchemaVersion = 8
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -223,14 +223,73 @@ public struct StoredEndToEndLatencyMetric: Codable, Sendable {
     public var windowHours: Int
     public var successfulRevisionCount: Int
     public var p95Seconds: Double?
+    public var sampleCount: Int
+    public var p50Seconds: Double?
+    public var maxSeconds: Double?
+    public var targetQueueWait: StoredLatencyDistribution
+    public var h3TargetProcessing: StoredLatencyDistribution
+    public var notificationQueueWait: StoredLatencyDistribution
+    public var candidateResolution: StoredLatencyDistribution
+    public var notificationPreparation: StoredLatencyDistribution
 
     public init(
         windowHours: Int = OperatorDashboardConfig.rollingWindowHours,
         successfulRevisionCount: Int = 0,
-        p95Seconds: Double? = nil
+        p95Seconds: Double? = nil,
+        sampleCount: Int? = nil,
+        p50Seconds: Double? = nil,
+        maxSeconds: Double? = nil,
+        targetQueueWait: StoredLatencyDistribution = .init(),
+        h3TargetProcessing: StoredLatencyDistribution = .init(),
+        notificationQueueWait: StoredLatencyDistribution = .init(),
+        candidateResolution: StoredLatencyDistribution = .init(),
+        notificationPreparation: StoredLatencyDistribution = .init()
     ) {
         self.windowHours = windowHours
         self.successfulRevisionCount = successfulRevisionCount
+        self.p95Seconds = p95Seconds
+        self.sampleCount = sampleCount ?? successfulRevisionCount
+        self.p50Seconds = p50Seconds
+        self.maxSeconds = maxSeconds
+        self.targetQueueWait = targetQueueWait
+        self.h3TargetProcessing = h3TargetProcessing
+        self.notificationQueueWait = notificationQueueWait
+        self.candidateResolution = candidateResolution
+        self.notificationPreparation = notificationPreparation
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case windowHours, successfulRevisionCount, p95Seconds, sampleCount, p50Seconds, maxSeconds
+        case targetQueueWait, h3TargetProcessing, notificationQueueWait, candidateResolution, notificationPreparation
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyCount = try container.decodeIfPresent(Int.self, forKey: .successfulRevisionCount) ?? 0
+        self.init(
+            windowHours: try container.decodeIfPresent(Int.self, forKey: .windowHours) ?? OperatorDashboardConfig.rollingWindowHours,
+            successfulRevisionCount: legacyCount,
+            p95Seconds: try container.decodeIfPresent(Double.self, forKey: .p95Seconds),
+            sampleCount: try container.decodeIfPresent(Int.self, forKey: .sampleCount) ?? legacyCount,
+            p50Seconds: try container.decodeIfPresent(Double.self, forKey: .p50Seconds),
+            maxSeconds: try container.decodeIfPresent(Double.self, forKey: .maxSeconds),
+            targetQueueWait: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .targetQueueWait) ?? .init(),
+            h3TargetProcessing: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .h3TargetProcessing) ?? .init(),
+            notificationQueueWait: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .notificationQueueWait) ?? .init(),
+            candidateResolution: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .candidateResolution) ?? .init(),
+            notificationPreparation: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .notificationPreparation) ?? .init()
+        )
+    }
+}
+
+public struct StoredLatencyDistribution: Codable, Sendable, Equatable {
+    public var sampleCount: Int
+    public var p50Seconds: Double?
+    public var p95Seconds: Double?
+
+    public init(sampleCount: Int = 0, p50Seconds: Double? = nil, p95Seconds: Double? = nil) {
+        self.sampleCount = sampleCount
+        self.p50Seconds = p50Seconds
         self.p95Seconds = p95Seconds
     }
 }
@@ -1213,12 +1272,28 @@ public struct EndToEndLatencyMetricResponse: Content, Sendable {
     public var windowHours: Int
     public var successfulRevisionCount: Int
     public var p95Seconds: Double?
+    public var sampleCount: Int
+    public var p50Seconds: Double?
+    public var maxSeconds: Double?
+    public var targetQueueWait: StoredLatencyDistribution
+    public var h3TargetProcessing: StoredLatencyDistribution
+    public var notificationQueueWait: StoredLatencyDistribution
+    public var candidateResolution: StoredLatencyDistribution
+    public var notificationPreparation: StoredLatencyDistribution
 
     init(refreshedAt: Date?, metric: StoredEndToEndLatencyMetric) {
         self.refreshedAt = refreshedAt
         self.windowHours = metric.windowHours
         self.successfulRevisionCount = metric.successfulRevisionCount
         self.p95Seconds = metric.p95Seconds
+        self.sampleCount = metric.sampleCount
+        self.p50Seconds = metric.p50Seconds
+        self.maxSeconds = metric.maxSeconds
+        self.targetQueueWait = metric.targetQueueWait
+        self.h3TargetProcessing = metric.h3TargetProcessing
+        self.notificationQueueWait = metric.notificationQueueWait
+        self.candidateResolution = metric.candidateResolution
+        self.notificationPreparation = metric.notificationPreparation
     }
 }
 

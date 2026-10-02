@@ -164,6 +164,7 @@ struct NotificationSendJobDeliveryBoundaryTests {
             try await CreateNotificationOutbox().prepare(on: db)
         }
         try await CreatePipelineStageTimings().prepare(on: db)
+        try await AddCandidateCountToNotificationPipelineTimings().prepare(on: db)
 
         try await sql.raw("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_ledger_identity
@@ -953,9 +954,115 @@ struct NotificationSendJobDeliveryBoundaryTests {
                 // Remove the deliberately incomplete original fixture to measure the
                 // known population; an incomplete claim must never select a later start.
                 try await sql.raw("DELETE FROM notification_ledger WHERE id = \(bind: untimedRetryClaimID)").run()
+                let secondSeriesID = UUID()
+                let secondRevision = "urn:oid:latency-second-\(UUID())"
+                let secondInstallationID = UUID()
+                try await seedSeries(id: secondSeriesID, revisionUrn: secondRevision, on: db)
+                try await seedRevision(seriesID: secondSeriesID, revisionUrn: secondRevision, on: db)
+                try await sql.raw("UPDATE alert_revisions SET received = \(bind: received) WHERE series_id = \(bind: secondSeriesID)").run()
+                try await seedInstallation(id: secondInstallationID, locationAuth: .always, on: db)
+                let secondClaim = try await NotificationDeliveryStore().claim(
+                    installationID: secondInstallationID, seriesID: secondSeriesID, revisionUrn: secondRevision,
+                    mode: .ugc, reason: .new, freshnessState: .fresh, origin: .alertDriven, on: db
+                )
+                try await NotificationDeliveryStore().completeSent(
+                    claimID: secondClaim.id, firstAttemptStartedAt: received.addingTimeInterval(30), on: db
+                )
                 let metric = try await OperatorDashboardSnapshotRefresher().loadEndToEndLatency(on: sql, now: now)
-                #expect(metric.successfulRevisionCount == 1)
-                #expect(metric.p95Seconds == 10)
+                #expect(metric.successfulRevisionCount == 2)
+                #expect(metric.sampleCount == 2)
+                #expect(metric.p50Seconds == 20)
+                #expect(metric.p95Seconds == 29)
+                #expect(metric.maxSeconds == 30)
+            }
+        }
+    }
+
+    @Test("operator latency aggregates keep first-path H3 and applicable UGC timing boundaries")
+    func pipelineStageLatencyAggregates() async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            try await withRollbackTransaction(on: app) { db in
+                let sql = try #require(db as? any SQLDatabase)
+                let now = Date(timeIntervalSince1970: 4_000_000_000)
+                let received = now.addingTimeInterval(-600)
+                let seriesID = UUID()
+                let revision = "urn:oid:stage-latency-\(UUID())"
+                try await seedSeries(id: seriesID, revisionUrn: revision, on: db)
+                try await seedRevision(seriesID: seriesID, revisionUrn: revision, on: db)
+                try await sql.raw("UPDATE alert_revisions SET received = \(bind: received) WHERE series_id = \(bind: seriesID)").run()
+
+                let targetExecutionID = UUID()
+                let attemptID = UUID()
+                try await sql.raw("""
+                    INSERT INTO target_pipeline_timings (execution_id, revision_urn, series_id, queued_at, started_at, h3_completed_at)
+                    VALUES (\(bind: targetExecutionID), \(bind: revision), \(bind: seriesID),
+                            \(bind: received.addingTimeInterval(10)), \(bind: received.addingTimeInterval(15)), \(bind: received.addingTimeInterval(25)))
+                    """).run()
+                try await sql.raw("""
+                    INSERT INTO notification_pipeline_timings
+                        (delivery_attempt_id, series_id, revision_urn, mode, queued_at, started_at, candidate_resolution_completed_at, candidate_count, source_target_execution_id)
+                    VALUES (\(bind: attemptID), \(bind: seriesID), \(bind: revision), 'h3',
+                            \(bind: received.addingTimeInterval(30)), \(bind: received.addingTimeInterval(33)),
+                            \(bind: received.addingTimeInterval(38)), 1, \(bind: targetExecutionID))
+                    """).run()
+                let installationID = UUID()
+                try await seedInstallation(id: installationID, locationAuth: .always, on: db)
+                let ledger = try await NotificationDeliveryStore().claim(
+                    installationID: installationID, seriesID: seriesID, revisionUrn: revision,
+                    mode: .h3, reason: .new, freshnessState: .fresh,
+                    origin: .alertDriven, on: db
+                )
+                // The persisted owner is the delivery attempt identity used by the timing row.
+                try await sql.raw("UPDATE notification_ledger SET retry_owner_id = \(bind: attemptID.uuidString.lowercased()) WHERE id = \(bind: ledger.id)").run()
+                try await NotificationDeliveryStore().completeSent(
+                    claimID: ledger.id, firstAttemptStartedAt: received.addingTimeInterval(43), on: db
+                )
+
+                // A target-originated UGC zero-candidate execution has a target queue wait, but no H3 completion or APNs value.
+                let ugcAttemptID = UUID()
+                let ugcTargetExecutionID = UUID()
+                try await sql.raw("""
+                    INSERT INTO target_pipeline_timings (execution_id, revision_urn, series_id, queued_at, started_at)
+                    VALUES (\(bind: ugcTargetExecutionID), \(bind: revision), \(bind: seriesID),
+                            \(bind: received.addingTimeInterval(35)), \(bind: received.addingTimeInterval(39)))
+                    """).run()
+                try await sql.raw("""
+                    INSERT INTO notification_pipeline_timings
+                        (delivery_attempt_id, series_id, revision_urn, mode, queued_at, started_at, candidate_resolution_completed_at, candidate_count, source_target_execution_id)
+                    VALUES (\(bind: ugcAttemptID), \(bind: seriesID), \(bind: revision), 'ugc',
+                            \(bind: received.addingTimeInterval(40)), \(bind: received.addingTimeInterval(41)),
+                            \(bind: received.addingTimeInterval(50)), 0, \(bind: ugcTargetExecutionID))
+                    """).run()
+
+                // A duplicate initial execution found candidates but did not own the first APNs boundary.
+                let alternateAttemptID = UUID()
+                let alternateTargetExecutionID = UUID()
+                try await sql.raw("""
+                    INSERT INTO target_pipeline_timings (execution_id, revision_urn, series_id, queued_at, started_at, h3_completed_at)
+                    VALUES (\(bind: alternateTargetExecutionID), \(bind: revision), \(bind: seriesID),
+                            \(bind: received.addingTimeInterval(60)), \(bind: received.addingTimeInterval(70)), \(bind: received.addingTimeInterval(90)))
+                    """).run()
+                try await sql.raw("""
+                    INSERT INTO notification_pipeline_timings
+                        (delivery_attempt_id, series_id, revision_urn, mode, queued_at, started_at, candidate_resolution_completed_at, candidate_count, source_target_execution_id)
+                    VALUES (\(bind: alternateAttemptID), \(bind: seriesID), \(bind: revision), 'h3',
+                            \(bind: received.addingTimeInterval(100)), \(bind: received.addingTimeInterval(110)),
+                            \(bind: received.addingTimeInterval(130)), 4, \(bind: alternateTargetExecutionID))
+                    """).run()
+
+                let metric = try await OperatorDashboardSnapshotRefresher().loadEndToEndLatency(on: sql, now: now)
+                #expect(metric.sampleCount == 1)
+                #expect(metric.p50Seconds == 43)
+                #expect(metric.p95Seconds == 43)
+                #expect(metric.maxSeconds == 43)
+                #expect(metric.targetQueueWait == .init(sampleCount: 2, p50Seconds: 4.5, p95Seconds: 4.95))
+                #expect(metric.h3TargetProcessing == .init(sampleCount: 1, p50Seconds: 10, p95Seconds: 10))
+                #expect(metric.notificationQueueWait == .init(sampleCount: 2, p50Seconds: 2, p95Seconds: 2.9))
+                #expect(metric.candidateResolution == .init(sampleCount: 2, p50Seconds: 7, p95Seconds: 8.8))
+                #expect(metric.notificationPreparation == .init(sampleCount: 1, p50Seconds: 5, p95Seconds: 5))
             }
         }
     }
@@ -1857,13 +1964,14 @@ struct NotificationSendJobDeliveryBoundaryTests {
         let queuedAt: Date?
         let startedAt: Date
         let resolvedAt: Date?
+        let candidateCount: Int?
     }
 
     private func loadPipelineTiming(_ payload: NotificationSendJobPayload, on db: any Database) async throws -> PipelineTiming? {
         let sql = try #require(db as? any SQLDatabase)
         return try await sql.raw("""
             SELECT queued_at AS "queuedAt", started_at AS "startedAt",
-                   candidate_resolution_completed_at AS "resolvedAt"
+                   candidate_resolution_completed_at AS "resolvedAt", candidate_count AS "candidateCount"
             FROM notification_pipeline_timings WHERE delivery_attempt_id = \(bind: payload.deliveryAttemptId)
             """).first(decoding: PipelineTiming.self)
     }
@@ -1891,6 +1999,7 @@ struct NotificationSendJobDeliveryBoundaryTests {
             let timing = try #require(try await loadPipelineTiming(payload, on: app.db))
             #expect(timing.queuedAt == queuedAt)
             #expect(try #require(timing.resolvedAt) >= timing.startedAt)
+            #expect(timing.candidateCount == 0)
             #expect(await sender.sendCount == 0)
             try await job.dequeue(makeQueueContext(app: app), payload)
             #expect(try await loadPipelineTiming(payload, on: app.db) == timing)
@@ -1900,6 +2009,59 @@ struct NotificationSendJobDeliveryBoundaryTests {
             #expect(try await loadPipelineTiming(reconciliation, on: app.db) == nil)
             #expect(try await loadPipelineTiming(payload, on: app.db) == timing)
             try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+        }
+    }
+
+    @Test("H3 and UGC initial executions persist nonzero candidate counts without replay overwrite", arguments: [NotificationTargetMode.h3, .ugc])
+    func nonzeroCandidatePipelineTiming(mode: NotificationTargetMode) async throws {
+        try await withIntegrationTestApplication(
+            setup: .directPostgres,
+            prepare: { app in try await bootstrapTables(on: app.db) }
+        ) { app in
+            let seriesID = UUID()
+            let revisionUrn = "urn:oid:pipeline-nonzero-\(UUID())"
+            let installationID = UUID()
+            let cell = makeUniqueH3Cell()
+            let ugcCode = "CA\(UUID().uuidString.prefix(8))"
+            let capturedAt = Date()
+            try await seedSeries(id: seriesID, revisionUrn: revisionUrn, on: app.db)
+            try await seedRevision(seriesID: seriesID, revisionUrn: revisionUrn, on: app.db)
+
+            if mode == .h3 {
+                try await seedGeolocation(seriesID: seriesID, h3Cell: cell, on: app.db)
+                try await seedH3Candidate(
+                    installationID: installationID, h3Cell: cell, capturedAt: capturedAt, on: app.db
+                )
+            } else {
+                let sql = try #require(app.db as? any SQLDatabase)
+                try await sql.raw("UPDATE arcus_series SET ugc_codes = ARRAY[\(bind: ugcCode)]::text[] WHERE id = \(bind: seriesID)").run()
+                try await seedInstallation(id: installationID, locationAuth: .always, on: app.db)
+                try await sql.raw("""
+                    INSERT INTO device_presence
+                        (installation_id, captured_at, received_at, location_age_seconds, horizontal_accuracy_meters,
+                         cell_scheme, h3_cell, h3_resolution, county, zone, fire_zone, source, created_at, updated_at,
+                         county_label, fire_zone_label)
+                    VALUES (\(bind: installationID), \(bind: capturedAt), \(bind: capturedAt), 0, 0,
+                            'ugc-only', NULL, NULL, NULL, \(bind: ugcCode), NULL, 'foreground', NOW(), NOW(), 'Test County', NULL)
+                    """).run()
+            }
+
+            let payload = NotificationSendJobPayload(
+                seriesId: seriesID, revisionUrn: revisionUrn, mode: mode, reason: .new
+            )
+            let sender = RecordingNotificationSender()
+            let job = NotificationSendJob(sender: sender)
+            let context = makeQueueContext(app: app)
+            try await job.dequeue(context, payload)
+
+            let timing = try #require(try await loadPipelineTiming(payload, on: app.db))
+            #expect(timing.resolvedAt != nil)
+            #expect(timing.candidateCount == 1)
+            #expect(await sender.sendCount == 1)
+
+            try await job.dequeue(context, payload)
+            #expect(try await loadPipelineTiming(payload, on: app.db) == timing)
+            #expect(await sender.sendCount == 1)
         }
     }
 
