@@ -136,6 +136,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateInstallationActivityDaily())
     app.migrations.add(AddNotificationDeliveryProvenance())
     app.migrations.add(CreatePipelineStageTimings())
+    app.migrations.add(AddCandidateCountToNotificationPipelineTimings())
 }
 
 private func configureAPNs(on app: Application) async throws {

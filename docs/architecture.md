@@ -88,7 +88,12 @@ installations or H3/UGC fan-out. Reconciliation, retry delay, and provider respo
 time do not contribute to its duration. Existing APNs outcome telemetry remains
 separate. The dashboard's legacy `endToEndLatency.successfulRevisionCount` JSON field
 now counts sampled revisions, including failed initial requests; its wire name is
-preserved for compatibility.
+preserved for compatibility. The primary rolling distribution exposes p50, p95, max,
+and sample count, with p95 as the operational value. Stage distributions expose p50,
+p95, and their own sample counts. Ordinary stages use the notification timing row
+associated with the first qualifying APNs boundary; duplicate executions that did not
+own that boundary are excluded. A persisted zero candidate count is the exception:
+that execution contributes only stages it reached, even without an APNs boundary.
 
 An in-flight original request has no persisted boundary until its outcome is recorded.
 Process loss or outcome-write failure can leave its claim without timing. The dashboard
@@ -118,7 +123,8 @@ alert-driven, unconstrained send payload. Its `delivery_attempt_id` is the exist
 payload identity and matches `LOWER(notification_ledger.retry_owner_id)` when
 cast to PostgreSQL UUID text (Swift UUID strings use uppercase). `queued_at`
 is captured at notification Redis handoff, `started_at` at dequeue, and
-`candidate_resolution_completed_at` immediately after the H3/UGC candidate query,
+`candidate_resolution_completed_at` with `candidate_count` immediately after the
+H3/UGC candidate query,
 before freshness gating, ledger claims, copy composition, or APNs. Zero-candidate
 queries persist this boundary too, with no fabricated APNs endpoint. Reconciliation,
 unknown-origin payloads, and queue retries cannot create initial execution evidence;

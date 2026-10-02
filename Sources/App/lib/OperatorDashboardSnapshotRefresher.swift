@@ -187,22 +187,116 @@ struct OperatorDashboardSnapshotRefresher {
                 -- Withhold the revision rather than substitute a later known attempt.
                 HAVING BOOL_AND(first_apns_attempt_started_at IS NOT NULL)
             ),
-            windowed AS (
-                SELECT EXTRACT(EPOCH FROM (f.first_started_at - r.received)) AS latency_seconds
+            primary_samples AS (
+                SELECT f.revision_urn, f.first_started_at,
+                       EXTRACT(EPOCH FROM (f.first_started_at - r.received)) AS latency_seconds
                 FROM first_attempt f
                 JOIN alert_revisions r ON r.revision_urn = f.revision_urn
                 WHERE r.received >= \(bind: windowStart)
                   AND f.first_started_at >= r.received
+            ),
+            primary_ledger AS (
+                SELECT DISTINCT ON (l.revision_urn)
+                       l.revision_urn, l.retry_owner_id, l.first_apns_attempt_started_at
+                FROM notification_ledger l
+                JOIN primary_samples p ON p.revision_urn = l.revision_urn
+                    AND p.first_started_at = l.first_apns_attempt_started_at
+                WHERE l.delivery_origin = 'alertDriven'
+                ORDER BY l.revision_urn, l.first_apns_attempt_started_at, l.id
+            ),
+            stage_samples AS (
+                SELECT
+                    CASE WHEN t.queued_at IS NOT NULL AND t.started_at >= t.queued_at
+                         THEN EXTRACT(EPOCH FROM (t.started_at - t.queued_at)) END AS target_queue_wait_seconds,
+                    CASE WHEN n.mode = 'h3' AND t.h3_completed_at IS NOT NULL AND t.h3_completed_at >= t.started_at
+                         THEN EXTRACT(EPOCH FROM (t.h3_completed_at - t.started_at)) END AS h3_processing_seconds,
+                    CASE WHEN n.queued_at IS NOT NULL AND n.started_at >= n.queued_at
+                         THEN EXTRACT(EPOCH FROM (n.started_at - n.queued_at)) END AS notification_queue_wait_seconds,
+                    CASE WHEN n.candidate_resolution_completed_at IS NOT NULL
+                                   AND n.candidate_resolution_completed_at >= n.started_at
+                         THEN EXTRACT(EPOCH FROM (n.candidate_resolution_completed_at - n.started_at)) END AS candidate_resolution_seconds,
+                    CASE WHEN p.first_apns_attempt_started_at IS NOT NULL
+                                   AND n.candidate_resolution_completed_at IS NOT NULL
+                                   AND p.first_apns_attempt_started_at >= n.candidate_resolution_completed_at
+                         THEN EXTRACT(EPOCH FROM (p.first_apns_attempt_started_at - n.candidate_resolution_completed_at)) END AS notification_preparation_seconds
+                FROM notification_pipeline_timings n
+                JOIN alert_revisions r ON r.revision_urn = n.revision_urn
+                LEFT JOIN target_pipeline_timings t ON t.execution_id = n.source_target_execution_id
+                LEFT JOIN primary_ledger p ON p.revision_urn = n.revision_urn
+                    AND n.delivery_attempt_id::text = LOWER(p.retry_owner_id)
+                WHERE r.received >= \(bind: windowStart)
+                  AND (p.first_apns_attempt_started_at IS NOT NULL OR n.candidate_count = 0)
             )
-            SELECT COUNT(*) AS "successfulRevisionCount",
-                   PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_seconds) AS "p95Seconds"
-            FROM windowed
+            SELECT
+                (SELECT COUNT(*) FROM primary_samples) AS "successfulRevisionCount",
+                (SELECT COUNT(*) FROM primary_samples) AS "sampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latency_seconds) FROM primary_samples) AS "p50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_seconds) FROM primary_samples) AS "p95Seconds",
+                (SELECT MAX(latency_seconds) FROM primary_samples) AS "maxSeconds",
+                (SELECT COUNT(target_queue_wait_seconds) FROM stage_samples) AS "targetQueueWaitSampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY target_queue_wait_seconds) FROM stage_samples) AS "targetQueueWaitP50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY target_queue_wait_seconds) FROM stage_samples) AS "targetQueueWaitP95Seconds",
+                (SELECT COUNT(h3_processing_seconds) FROM stage_samples) AS "h3TargetProcessingSampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY h3_processing_seconds) FROM stage_samples) AS "h3TargetProcessingP50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY h3_processing_seconds) FROM stage_samples) AS "h3TargetProcessingP95Seconds",
+                (SELECT COUNT(notification_queue_wait_seconds) FROM stage_samples) AS "notificationQueueWaitSampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY notification_queue_wait_seconds) FROM stage_samples) AS "notificationQueueWaitP50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY notification_queue_wait_seconds) FROM stage_samples) AS "notificationQueueWaitP95Seconds",
+                (SELECT COUNT(candidate_resolution_seconds) FROM stage_samples) AS "candidateResolutionSampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY candidate_resolution_seconds) FROM stage_samples) AS "candidateResolutionP50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY candidate_resolution_seconds) FROM stage_samples) AS "candidateResolutionP95Seconds",
+                (SELECT COUNT(notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationSampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationP50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationP95Seconds"
         """).first(decoding: LatencyAggregateRow.self)
 
+        let targetQueueWait = row.map {
+            StoredLatencyDistribution(
+                sampleCount: Int($0.targetQueueWaitSampleCount),
+                p50Seconds: $0.targetQueueWaitP50Seconds,
+                p95Seconds: $0.targetQueueWaitP95Seconds
+            )
+        } ?? .init()
+        let h3TargetProcessing = row.map {
+            StoredLatencyDistribution(
+                sampleCount: Int($0.h3TargetProcessingSampleCount),
+                p50Seconds: $0.h3TargetProcessingP50Seconds,
+                p95Seconds: $0.h3TargetProcessingP95Seconds
+            )
+        } ?? .init()
+        let notificationQueueWait = row.map {
+            StoredLatencyDistribution(
+                sampleCount: Int($0.notificationQueueWaitSampleCount),
+                p50Seconds: $0.notificationQueueWaitP50Seconds,
+                p95Seconds: $0.notificationQueueWaitP95Seconds
+            )
+        } ?? .init()
+        let candidateResolution = row.map {
+            StoredLatencyDistribution(
+                sampleCount: Int($0.candidateResolutionSampleCount),
+                p50Seconds: $0.candidateResolutionP50Seconds,
+                p95Seconds: $0.candidateResolutionP95Seconds
+            )
+        } ?? .init()
+        let notificationPreparation = row.map {
+            StoredLatencyDistribution(
+                sampleCount: Int($0.notificationPreparationSampleCount),
+                p50Seconds: $0.notificationPreparationP50Seconds,
+                p95Seconds: $0.notificationPreparationP95Seconds
+            )
+        } ?? .init()
         return .init(
             windowHours: OperatorDashboardConfig.rollingWindowHours,
             successfulRevisionCount: row.map { Int($0.successfulRevisionCount) } ?? 0,
-            p95Seconds: row?.p95Seconds
+            p95Seconds: row?.p95Seconds,
+            sampleCount: row.map { Int($0.sampleCount) } ?? 0,
+            p50Seconds: row?.p50Seconds,
+            maxSeconds: row?.maxSeconds,
+            targetQueueWait: targetQueueWait,
+            h3TargetProcessing: h3TargetProcessing,
+            notificationQueueWait: notificationQueueWait,
+            candidateResolution: candidateResolution,
+            notificationPreparation: notificationPreparation
         )
     }
 
@@ -1087,7 +1181,25 @@ private struct SingleCountRow: Decodable {
 
 private struct LatencyAggregateRow: Decodable {
     let successfulRevisionCount: Int64
+    let sampleCount: Int64
+    let p50Seconds: Double?
     let p95Seconds: Double?
+    let maxSeconds: Double?
+    let targetQueueWaitSampleCount: Int64
+    let targetQueueWaitP50Seconds: Double?
+    let targetQueueWaitP95Seconds: Double?
+    let h3TargetProcessingSampleCount: Int64
+    let h3TargetProcessingP50Seconds: Double?
+    let h3TargetProcessingP95Seconds: Double?
+    let notificationQueueWaitSampleCount: Int64
+    let notificationQueueWaitP50Seconds: Double?
+    let notificationQueueWaitP95Seconds: Double?
+    let candidateResolutionSampleCount: Int64
+    let candidateResolutionP50Seconds: Double?
+    let candidateResolutionP95Seconds: Double?
+    let notificationPreparationSampleCount: Int64
+    let notificationPreparationP50Seconds: Double?
+    let notificationPreparationP95Seconds: Double?
 }
 
 private struct DeliveryAggregateRow: Decodable {

@@ -63,17 +63,23 @@ struct PipelineStageTimingStore {
         return row != nil
     }
 
-    func completeCandidateResolution(_ payload: NotificationSendJobPayload, at now: Date = .now, on db: any Database) async throws {
+    func completeCandidateResolution(
+        _ payload: NotificationSendJobPayload,
+        candidateCount: Int,
+        at now: Date = .now,
+        on db: any Database
+    ) async throws {
         guard payload.origin == .alertDriven, payload.installationId == nil,
               let attemptID = payload.deliveryAttemptId else { return }
         guard let sql = db as? any SQLDatabase else {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
         try await sql.raw("""
-            UPDATE notification_pipeline_timings SET candidate_resolution_completed_at = \(bind: now)
+            UPDATE notification_pipeline_timings
+            SET candidate_resolution_completed_at = \(bind: now), candidate_count = \(bind: candidateCount)
             WHERE delivery_attempt_id = \(bind: attemptID) AND series_id = \(bind: payload.seriesId)
               AND revision_urn = \(bind: payload.revisionUrn) AND mode = \(bind: payload.mode.rawValue)
-              AND candidate_resolution_completed_at IS NULL
+              AND candidate_resolution_completed_at IS NULL AND candidate_count IS NULL
             """).run()
     }
 }

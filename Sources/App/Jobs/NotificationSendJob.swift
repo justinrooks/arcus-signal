@@ -412,7 +412,9 @@ public struct NotificationSendJob: AsyncJob {
             if timingOwner {
                 let resolvedAt = Date()
                 _ = await timingStore.record("candidate resolution completed", logger: context.logger) {
-                    try await timingStore.completeCandidateResolution(payload, at: resolvedAt, on: context.application.db)
+                    try await timingStore.completeCandidateResolution(
+                        payload, candidateCount: h3Candidates.count, at: resolvedAt, on: context.application.db
+                    )
                 }
             }
             let summary = try await dispatchNotifications(
@@ -440,7 +442,9 @@ public struct NotificationSendJob: AsyncJob {
             if timingOwner {
                 let resolvedAt = Date()
                 _ = await timingStore.record("candidate resolution completed", logger: context.logger) {
-                    try await timingStore.completeCandidateResolution(payload, at: resolvedAt, on: context.application.db)
+                    try await timingStore.completeCandidateResolution(
+                        payload, candidateCount: ugcCandidates.count, at: resolvedAt, on: context.application.db
+                    )
                 }
             }
             let summary = try await dispatchNotifications(
