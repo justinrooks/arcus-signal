@@ -32,6 +32,16 @@ final class SPCMesoModel: Model, @unchecked Sendable {
     init() {}
 
     init(product: MesoscaleDiscussionPayload, contentFingerprint: String, seenAt: Date) {
+        applySnapshot(product: product, contentFingerprint: contentFingerprint)
+        self.firstSeen = seenAt
+        self.lastSeen = seenAt
+    }
+
+    func isActive(asOf date: Date) -> Bool {
+        validStart <= date && date < validEnd
+    }
+
+    func applySnapshot(product: MesoscaleDiscussionPayload, contentFingerprint: String) {
         self.productKey = product.productID
         self.issueYear = product.issueYear
         self.number = product.number
@@ -49,7 +59,5 @@ final class SPCMesoModel: Model, @unchecked Sendable {
         self.hailRangeInches = product.threats?.hailRangeInches
         self.tornadoStrength = product.threats?.tornadoStrength
         self.contentFingerprint = contentFingerprint
-        self.firstSeen = seenAt
-        self.lastSeen = seenAt
     }
 }
