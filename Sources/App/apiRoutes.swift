@@ -13,6 +13,7 @@ func configureAPIRoutes(_ app: Application) throws {
     }
     try app.register(collection: NotificationsController())
     try app.register(collection: AlertsController())
+    try app.register(collection: MesosController())
     try app.register(collection: DeviceController())
     try app.register(collection: OperatorDashboardController())
     try app.register(collection: StormSetupController())
