@@ -274,3 +274,21 @@ Use:
 - `docs/postman/arcus-signal.postman_collection.json`
 
 It includes happy-path and negative-path coverage for all routes above.
+
+## `GET /v1/mesos`
+
+Also available at `/api/v1/mesos`. Returns a JSON array of ArcusCore
+`MesoscaleDiscussionPayload` values, ordered by issued time descending and stable
+product ID ascending. Dates use the default JSONEncoder representation (seconds
+since Apple's reference date), matching the alerts API.
+
+- No query: every currently active discussion, including products without geometry.
+- `h3=<signed decimal Int64>`: active discussions whose persisted resolution-8
+  cover contains the requested valid resolution-8 H3 cell. No ring or geography fallback.
+- `id=SPC-MD-<four-digit issue year>-<unpadded MD number>`: one retained canonical
+  product, including expired products, or `404` if unknown.
+- `id` and `h3` together, malformed IDs, and invalid/wrong-resolution cells return `400`.
+- Active means `validStart <= now < validEnd`; empty collections return `200` with `[]`.
+- Responses include a weak `ETag` derived from the full returned payload. Matching
+  `If-None-Match` tags (including lists and `*`) return `304` with no body. Product
+  changes and collection membership changes invalidate the validator.
