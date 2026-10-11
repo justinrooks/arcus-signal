@@ -959,6 +959,37 @@ struct AppTests {
         }
     }
 
+    @Test("SPC meso scheduler dispatches its ingest job to the ingest lane")
+    func scheduledSPCMesoDispatchUsesIngestLane() async throws {
+        try await withApp(mode: .worker) { app in
+            app.queues.use(.test)
+            let hook = DispatchCaptureHook()
+            app.queues.add(hook)
+            let context = QueueContext(
+                queueName: QueueName(string: "scheduled"),
+                configuration: app.queues.configuration,
+                application: app,
+                logger: app.logger,
+                on: app.eventLoopGroup.any()
+            )
+
+            try await DispatchIngestSPCMesoScheduledJob().run(context: context)
+
+            #expect(app.queues.test.contains(IngestSPCMesoJob.self))
+            #expect(await hook.dispatchedQueueNames().contains(ArcusQueueLane.ingest.rawValue))
+        }
+    }
+
+    @Test("SPC meso ingest schedule is registered every 10 minutes")
+    func spcMesoIngestScheduleUsesTenMinuteInterval() async throws {
+        let app = try await Application.make(.testing)
+        let schedule = registerSPCMesoIngestSchedule(on: app)
+        let current = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(schedule.nextDate(current: current) == current.addingTimeInterval(600))
+        #expect(app.workerScheduledJobNames == ["DispatchIngestSPCMesoScheduledJob"])
+        try await app.asyncShutdown()
+    }
+
     @Test("Scheduler dispatches cleanup job to model artifacts lane")
     func scheduledDispatchUsesModelArtifactsLane() async throws {
         try await withApp(mode: .worker) { app in
@@ -989,11 +1020,12 @@ struct AppTests {
     func workerBootstrapRegistersPressureArtifactProbeSchedule() async throws {
         try await withApp(mode: .worker) { app in
             #expect(app.workerScheduledJobNames.contains("DispatchIngestNWSAlertsScheduledJob"))
+            #expect(app.workerScheduledJobNames.contains("DispatchIngestSPCMesoScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("DispatchPresenceReconciliationScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("ProbeHRRRPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("CleanupPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("RefreshOperatorDashboardSnapshotScheduledJob"))
-            #expect(app.workerScheduledJobNames.count == 5)
+            #expect(app.workerScheduledJobNames.count == 6)
         }
     }
 

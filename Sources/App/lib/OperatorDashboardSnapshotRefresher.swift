@@ -99,6 +99,7 @@ struct OperatorDashboardSnapshotRefresher {
 
     private func loadIngestFreshness(on database: any Database) async throws -> StoredIngestFreshnessMetric {
         let recentRuns = try await IngestSweepRunModel.query(on: database)
+            .filter(\.$source != "spc-meso")
             .sort(\.$completedAt, .descending)
             .limit(OperatorDashboardConfig.ingestRecentAttemptLimit)
             .all()
@@ -108,6 +109,7 @@ struct OperatorDashboardSnapshotRefresher {
             lastSuccessful = recentSuccess
         } else {
             lastSuccessful = try await IngestSweepRunModel.query(on: database)
+                .filter(\.$source != "spc-meso")
                 .filter(\.$status == IngestSweepRunStatus.succeeded.rawValue)
                 .sort(\.$completedAt, .descending)
                 .first()

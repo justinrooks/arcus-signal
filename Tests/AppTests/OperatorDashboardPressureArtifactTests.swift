@@ -39,6 +39,48 @@ struct OperatorDashboardPressureArtifactTests {
             .delete()
     }
 
+    private func clearIngestRuns(runLabel: String, on db: any Database) async throws {
+        try await IngestSweepRunModel.query(on: db)
+            .filter(\.$runLabel == runLabel)
+            .delete()
+    }
+
+    @Test("SPC meso freshness does not mask an NWS ingest failure")
+    func spcMesoFreshnessDoesNotMaskNWSFailure() async throws {
+        try await withApp { app in
+            let now = Date()
+            let runLabel = "issue-279-dashboard-\(UUID().uuidString)"
+            let nwsFailureAt = now.addingTimeInterval(-120)
+            let mesoSuccessAt = now.addingTimeInterval(-30)
+            do {
+                try await IngestSweepRunModel(
+                    source: IngestNWSAlertsSource.live.rawValue,
+                    runLabel: runLabel,
+                    status: .failed,
+                    startedAt: nwsFailureAt.addingTimeInterval(-1),
+                    completedAt: nwsFailureAt,
+                    errorMessage: "test NWS failure"
+                ).create(on: app.db)
+                try await IngestSweepRunModel(
+                    source: "spc-meso",
+                    runLabel: runLabel,
+                    status: .succeeded,
+                    startedAt: mesoSuccessAt.addingTimeInterval(-1),
+                    completedAt: mesoSuccessAt
+                ).create(on: app.db)
+
+                try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+                let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+                #expect(snapshot.ingestFreshness.lastAttemptCompletedAt == nwsFailureAt)
+                #expect(snapshot.ingestFreshness.lastFailureCompletedAt == nwsFailureAt)
+            } catch {
+                try? await clearIngestRuns(runLabel: runLabel, on: app.db)
+                throw error
+            }
+            try await clearIngestRuns(runLabel: runLabel, on: app.db)
+        }
+    }
+
     @Test("ingest freshness retains a successful sweep outside the recent attempt window")
     func ingestFreshnessRetainsOlderSuccess() async throws {
         try await withApp { app in
