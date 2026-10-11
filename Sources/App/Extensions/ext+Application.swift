@@ -35,6 +35,11 @@ extension Application {
         set { storage[AirQualityProviderKey.self] = newValue }
     }
 
+    var spcMesoClient: any SPCMesoClient {
+        get { storage[SPCMesoClientKey.self] ?? SPCMesoHTTPClient(http: VaporApplicationHTTPClient(application: self)) }
+        set { storage[SPCMesoClientKey.self] = newValue }
+    }
+
     var arcusSignalBuildInfo: ArcusSignalBuildInfo {
         get { storage[ArcusSignalBuildInfoKey.self]! }
         set { storage[ArcusSignalBuildInfoKey.self] = newValue }
@@ -47,6 +52,10 @@ private struct WorkerScheduledJobNamesKey: StorageKey {
 
 private struct AirQualityProviderKey: StorageKey {
     typealias Value = any AirQualityCurrentProviding
+}
+
+private struct SPCMesoClientKey: StorageKey {
+    typealias Value = any SPCMesoClient
 }
 
 private struct ArcusSignalBuildInfoKey: StorageKey {
