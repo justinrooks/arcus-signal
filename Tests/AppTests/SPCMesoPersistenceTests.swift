@@ -30,6 +30,29 @@ struct SPCMesoPersistenceTests {
         try await app.asyncShutdown()
     }
 
+    // Failure atomicity must use real transactions: Fluent reuses an enclosing
+    // transaction instead of introducing nested savepoints.
+    private func withCoverageDatabase(_ test: @escaping @Sendable (any Database, any SQLDatabase) async throws -> Void) async throws {
+        let app = try await Application.make(.testing)
+        let keys = ["SPC-MD-1803-123", "SPC-MD-1803-124"]
+        do {
+            try await configure(app, mode: .api)
+            try await app.autoMigrate()
+            let sql = try #require(app.db as? any SQLDatabase)
+            try #require(try await SPCMesoModel.query(on: app.db).filter(\.$productKey ~~ keys).count() == 0)
+            do { try await test(app.db, sql) }
+            catch {
+                try await SPCMesoModel.query(on: app.db).filter(\.$productKey ~~ keys).delete()
+                throw error
+            }
+            try await SPCMesoModel.query(on: app.db).filter(\.$productKey ~~ keys).delete()
+        } catch {
+            try? await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
+
     private func product(year: Int = 2025, watchText: String = "80") throws -> MesoscaleDiscussionPayload {
         let url = try #require(Bundle.module.url(forResource: "meso", withExtension: "xml", subdirectory: "Fixtures/SPC"))
         var xml = try String(contentsOf: url, encoding: .utf8)
@@ -105,7 +128,7 @@ struct SPCMesoPersistenceTests {
         }
     }
 
-    @Test func geometryChangesAndRemovalInvalidateCoverage() async throws {
+    @Test func geometryChangesReplaceCoverageAndRemovalDeletesIt() async throws {
         try await withDatabase { db, _ in
             let service = SPCMesoIngestPersistence()
             let payload = try product()
@@ -123,11 +146,70 @@ struct SPCMesoPersistenceTests {
             let changed = try #require(try await SPCMesoGeolocationModel.find(geo.requireID(), on: db))
             #expect(changed.geometryHash != oldHash)
             #expect(changed.geometry != geo.geometry)
-            #expect(changed.h3Cells.isEmpty && changed.h3Resolution == nil && changed.h3Hash == nil)
+            let expected = try SPCMesoCoverage.build(for: changed.geometry)
+            #expect(changed.h3Cells == expected.cells && !changed.h3Cells.isEmpty)
+            #expect(changed.h3Resolution == 8 && changed.h3Hash == expected.h3Hash)
             let noGeometry = xml.replacingOccurrences(of: "LAT...LON 39000288 40000200 38500100 39000288", with: "")
             _ = try await service.persistFeed(Data(noGeometry.utf8), on: db, seenAt: payload.validStart.addingTimeInterval(120))
             #expect(try await SPCMesoGeolocationModel.query(on: db).filter(\.$meso.$id == id).count() == 0)
             #expect(try await SPCMesoModel.find(id, on: db) != nil)
+        }
+    }
+
+    @Test func coverageReplayBackfillAndFailureAreAtomic() async throws {
+        try await withCoverageDatabase { db, sql in
+            let xml = String(decoding: try feed(), as: UTF8.self)
+                .replacingOccurrences(of: "0550 PM CST Wed Dec 31 2025", with: "0550 PM CST Sat Dec 31 1803")
+            let payload = try #require(SPCMesoParser.parse(Data(xml.utf8)).first)
+            let service = SPCMesoIngestPersistence()
+            _ = try await service.persist([payload], on: db, seenAt: payload.validStart)
+            let row = try #require(try await SPCMesoModel.query(on: db).filter(\.$productKey == payload.productID).first())
+            let geo = try #require(try await SPCMesoGeolocationModel.query(on: db).filter(\.$meso.$id == row.requireID()).first())
+            let expected = try SPCMesoCoverage.build(for: geo.geometry)
+            #expect(geo.h3Cells == expected.cells && !geo.h3Cells.isEmpty)
+            #expect(geo.geometryHash == expected.geometryHash && geo.h3Hash == expected.h3Hash)
+            #expect(geo.h3Resolution == 8)
+            // ctid detects any geolocation rewrite, even when field values are identical.
+            struct Version: Decodable { let version: String }
+            func version() async throws -> String {
+                try #require(try await sql.raw("SELECT ctid::text AS version FROM spc_meso_geolocation WHERE id = \(bind: geo.requireID())")
+                    .first(decoding: Version.self)).version
+            }
+            let before = try await version()
+            let failing = SPCMesoIngestPersistence(buildCoverage: { _ in
+                throw SPCMesoCoverageError.generationFailed("injected failure")
+            })
+            // Completed unchanged coverage never invokes the expensive builder.
+            _ = try await failing.persist([payload], on: db, seenAt: payload.validStart.addingTimeInterval(60))
+            #expect(try await version() == before)
+            geo.h3Cells = []
+            geo.h3Hash = nil
+            geo.h3Resolution = nil
+            try await geo.update(on: db)
+            _ = try await service.persist([payload], on: db, seenAt: payload.validStart.addingTimeInterval(120))
+            let filled = try #require(try await SPCMesoGeolocationModel.find(geo.requireID(), on: db))
+            #expect(filled.h3Cells == expected.cells && filled.h3Hash == expected.h3Hash)
+            let accepted = try #require(try await SPCMesoModel.find(row.requireID(), on: db))
+            let changedXML = xml.replacingOccurrences(of: "40000200", with: "41000200")
+            var reason = ""
+            do { _ = try await failing.persistFeed(Data(changedXML.utf8), on: db, seenAt: payload.validStart.addingTimeInterval(180)) }
+            catch let error as Abort { reason = error.reason }
+            #expect(reason.contains(payload.productID) && reason.contains("injected failure"))
+            let malformedXML = xml
+                .replacingOccurrences(of: "0123", with: "0124")
+                .replacingOccurrences(of: "LAT...LON 39000288 40000200 38500100 39000288", with: "LAT...LON 39000300 41000100 41000300 39000000 39000300")
+            let malformed = try #require(SPCMesoParser.parse(Data(malformedXML.utf8)).first)
+            let changed = try #require(SPCMesoParser.parse(Data(changedXML.utf8)).first)
+            reason = ""
+            do { _ = try await service.persist([changed, malformed], on: db, seenAt: payload.validStart.addingTimeInterval(180)) }
+            catch let error as Abort { reason = error.reason }
+            #expect(reason.contains(malformed.productID) && reason.contains("invalidPolygon"))
+            #expect(try await SPCMesoModel.query(on: db).filter(\.$productKey == malformed.productID).count() == 0)
+            let retained = try #require(try await SPCMesoModel.find(row.requireID(), on: db))
+            let retainedGeo = try #require(try await SPCMesoGeolocationModel.find(geo.requireID(), on: db))
+            #expect(retained.contentFingerprint == accepted.contentFingerprint && retained.lastSeen == accepted.lastSeen)
+            #expect(retainedGeo.geometry == filled.geometry && retainedGeo.h3Cells == filled.h3Cells)
+            #expect(retainedGeo.h3Hash == filled.h3Hash && retainedGeo.geometryHash == filled.geometryHash)
         }
     }
 

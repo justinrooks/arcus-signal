@@ -14,6 +14,24 @@ Arcus Signal ingests NWS alert revisions, targets eligible installations by H3 o
 
 [`ArcusQueueLane`](../Sources/App/Worker/ArcusQueueLane.swift) defines the `ingest`, `target`, `send`, and `model-artifacts` lanes. Worker configuration applies the same `QUEUE_WORKER_COUNT` to Vapor Queues, with a minimum and default of `1`, through [`configureWorkerQueueSettings(on:)`](../Sources/App/configure.swift). Before any consumer or schedule starts, [`WorkerRuntime`](../Sources/App/Worker/WorkerRuntime.swift) atomically returns abandoned registered model-artifact jobs to waiting while preserving and reporting unknown or malformed entries; failed reconciliation shuts the worker down. After successful reconciliation, `WorkerRuntime` starts consumers for every lane.
 
+## SPC mesoscale coverage
+
+`SPCMesoIngestPersistence` accepts canonical meso snapshots and their polygon coverage
+in one PostgreSQL transaction under the existing feed-write lock. `SPCMesoCoverage`
+validates polygon input and delegates to `H3CoverageBuilder` for sorted, deduplicated
+resolution-8 cells and canonical geometry/H3 hashes. Unchanged completed coverage
+skips computation and geolocation writes; replay fills legacy rows with nil coverage
+metadata. Changed geometry replaces all coverage fields atomically. Missing geometry
+remains readable without a geolocation row. Coverage failure throws a product-specific
+error and rolls back the accepted feed, retaining the previous snapshot and cover.
+This path creates no notification dispatch or fallback targeting.
+
+H3 polyfill selects cells by their centers. Matching a location's cell therefore
+approximates the polygon boundary: a point just outside can share an included cell,
+and a point just inside can share an excluded cell. Tiny polygons can produce an
+empty cover. This deliberately differs from the app's prior exact point-in-polygon
+check; no ring expansion or broad fallback compensates for boundary misses.
+
 ## Delivery pipeline
 
 ```text
