@@ -27,7 +27,7 @@ let package = Package(
         // 📩 APNs push notifications
         .package(url: "https://github.com/vapor/apns.git", from: "5.0.0"),
         // ArcusCore
-        .package(url: "https://github.com/justinrooks/ArcusCore.git", from: "0.1.0"),
+        .package(url: "https://github.com/justinrooks/ArcusCore.git", from: "0.5.0"),
     ],
     targets: [
         .target(
