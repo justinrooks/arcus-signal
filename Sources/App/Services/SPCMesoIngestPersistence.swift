@@ -13,6 +13,12 @@ struct SPCMesoPersistResult: Sendable {
 
 /// Accepted feeds are additive. Expiry is derived from validity, never feed absence.
 struct SPCMesoIngestPersistence {
+    private let buildCoverage: @Sendable (GeoShape) throws -> H3Coverage
+
+    init(buildCoverage: @escaping @Sendable (GeoShape) throws -> H3Coverage = { try SPCMesoCoverage.build(for: $0) }) {
+        self.buildCoverage = buildCoverage
+    }
+
     func persistFeed(_ data: Data, on database: any Database, seenAt: Date) async throws -> SPCMesoPersistResult {
         // Reject the entire feed before opening a transaction or changing lastSeen.
         try await persist(SPCMesoParser.parse(data), on: database, seenAt: seenAt)
@@ -50,25 +56,25 @@ struct SPCMesoIngestPersistence {
                         stored.lastSeen = max(stored.lastSeen, seenAt)
                         try await stored.update(on: db)
                         result.unchanged += 1
-                        continue
+                    } else {
+                        // Observation time orders accepted snapshots. Equal-time
+                        // conflicts choose the lexicographically larger fingerprint
+                        // so writer/lock order cannot decide the canonical content.
+                        // Match PostgresNIO's timestamp encoding; stored Date values
+                        // are decoded microseconds, so recover their integer key.
+                        let epoch = Date(timeIntervalSince1970: 946_684_800)
+                        let incomingTime = (seenAt.timeIntervalSince(epoch) * 1_000_000).rounded(.towardZero)
+                        let storedTime = (stored.lastSeen.timeIntervalSince(epoch) * 1_000_000).rounded()
+                        guard incomingTime > storedTime ||
+                            (incomingTime == storedTime && snapshot.fingerprint > stored.contentFingerprint) else {
+                            result.ignored += 1
+                            continue
+                        }
+                        stored.applySnapshot(product: product, contentFingerprint: snapshot.fingerprint)
+                        stored.lastSeen = max(stored.lastSeen, seenAt)
+                        try await stored.update(on: db)
+                        result.updated += 1
                     }
-                    // Observation time orders accepted snapshots. Equal-time
-                    // conflicts choose the lexicographically larger fingerprint
-                    // so writer/lock order cannot decide the canonical content.
-                    // Match PostgresNIO's timestamp encoding; stored Date values
-                    // are decoded microseconds, so recover their integer key.
-                    let epoch = Date(timeIntervalSince1970: 946_684_800)
-                    let incomingTime = (seenAt.timeIntervalSince(epoch) * 1_000_000).rounded(.towardZero)
-                    let storedTime = (stored.lastSeen.timeIntervalSince(epoch) * 1_000_000).rounded()
-                    guard incomingTime > storedTime ||
-                        (incomingTime == storedTime && snapshot.fingerprint > stored.contentFingerprint) else {
-                        result.ignored += 1
-                        continue
-                    }
-                    stored.applySnapshot(product: product, contentFingerprint: snapshot.fingerprint)
-                    stored.lastSeen = max(stored.lastSeen, seenAt)
-                    try await stored.update(on: db)
-                    result.updated += 1
                 } else {
                     meso = SPCMesoModel(product: product, contentFingerprint: snapshot.fingerprint, seenAt: seenAt)
                     try await meso.create(on: db)
@@ -84,18 +90,28 @@ struct SPCMesoIngestPersistence {
                     .init(lon: $0.longitude, lat: $0.latitude)
                 }])
                 let geometryHash = try StableContentHasher.sha256Hex(of: geometry)
-                if let existing {
-                    if existing.geometryHash != geometryHash {
-                        existing.geometry = geometry
-                        existing.geometryHash = geometryHash
-                        existing.h3Cells = []
-                        existing.h3Resolution = nil
-                        existing.h3Hash = nil
-                        try await existing.update(on: db)
-                    }
+                // Replays also fill coverage for rows accepted before H3 support.
+                // The canonical feed lock serializes coverage with snapshot replacement.
+                if let existing, existing.geometryHash == geometryHash,
+                   existing.h3Resolution == 8, existing.h3Hash != nil {
+                    continue
+                }
+                let coverage: H3Coverage
+                do {
+                    coverage = try buildCoverage(geometry)
+                } catch {
+                    throw Abort(.unprocessableEntity, reason: "SPC meso H3 coverage failed for \(product.productID): \(String(reflecting: error))")
+                }
+                let location = existing ?? SPCMesoGeolocationModel(mesoID: id, geometry: geometry, geometryHash: geometryHash)
+                location.geometry = geometry
+                location.geometryHash = coverage.geometryHash
+                location.h3Cells = coverage.cells
+                location.h3Resolution = coverage.resolution
+                location.h3Hash = coverage.h3Hash
+                if existing != nil {
+                    try await location.update(on: db)
                 } else {
-                    try await SPCMesoGeolocationModel(mesoID: id, geometry: geometry, geometryHash: geometryHash)
-                        .create(on: db)
+                    try await location.create(on: db)
                 }
             }
             return result
