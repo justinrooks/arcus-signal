@@ -1,5 +1,54 @@
 # Changelog
 
+## v1.3.0
+
+### Features
+
+- Added SPC mesoscale-discussion fetching and parsing with canonical annual product identities, issuance and validity times, affected areas, discussion text, watch probability, parsed threats, and polygon coordinates.
+<!-- evidence: 5ddf2fc -->
+
+### Reliability
+
+- Accepted meso feeds now persist canonical snapshots transactionally and idempotently; feed absence does not remove products, validity determines activity, and older observations cannot replace newer content.
+<!-- evidence: b7c1863 -->
+- Meso polygon snapshots and resolution-8 H3 coverage now update atomically, skip recomputation for unchanged completed coverage, and roll back the accepted feed on coverage failure. H3 matching uses cell centers without ring expansion or geography fallback.
+<!-- evidence: db0535a -->
+
+### Operations
+
+- The worker now schedules SPC meso ingestion every ten minutes and records fetch, parse, persistence, and H3 outcomes separately from NWS ingest freshness.
+<!-- evidence: f94f8cf -->
+- Operator snapshots and Red Lights now report SPC meso ingest freshness, active product counts, latest product validity, H3 coverage, and recent failure categories.
+<!-- evidence: cd6f4db -->
+- Added Meso Activity at `/dashboard/mesos` with canonical product details and a 48-hour recent sample plus active discussions, capped at 50 with active products prioritized. Server and live rendering preserve product disclosure state by identity, and meso health diagnostics link to the page.
+<!-- evidence: 2c54ffe -->
+
+### API / Contracts
+
+- Added `GET /v1/mesos` and `/api/v1/mesos` for all active discussions, active resolution-8 H3 matches, or a retained product by stable ID, including expired products for ID lookups. Responses use the shared ArcusCore payload and the alerts API's date representation.
+<!-- evidence: d585809 -->
+- Meso reads now provide deterministic ordering, payload-derived ETags and conditional `304` responses; invalid or conflicting filters return `400`, unknown product IDs return `404`, and empty collections return `200` with `[]`.
+<!-- evidence: d585809 -->
+- Stored dashboard snapshots and `/v1/metrics` now include additive meso health and activity data while retaining decoding of older snapshots; unavailable activity remains distinct from an empty collection.
+<!-- evidence: cd6f4db, 2c54ffe -->
+
+### Migrations
+
+- Added `spc_mesos` and one-to-one `spc_meso_geolocation` storage with unique product keys and issue-year/MD-number pairs, cascading geometry deletion, H3 coverage metadata, and validity/H3 indexes.
+<!-- evidence: c18d2be -->
+
+### Tests / QA
+
+- Added focused regression coverage for SPC fetching and parsing, canonical persistence, H3 coverage and rollback, worker scheduling, meso API behavior, dashboard compatibility, and server/live rendering and disclosure parity.
+<!-- evidence: 5ddf2fc, b7c1863, db0535a, f94f8cf, d585809, cd6f4db, 2c54ffe -->
+- Recorded full-suite runs in this release range include alert-collection and dashboard fixture failures.
+<!-- evidence: c18d2be, b7c1863, d585809, cd6f4db -->
+
+### Maintenance
+
+- Updated the ArcusCore dependency to 0.5.0 for shared mesoscale-discussion payload, threat, and coordinate types.
+<!-- evidence: 5ddf2fc -->
+
 ## v1.2.0
 
 ### Reliability

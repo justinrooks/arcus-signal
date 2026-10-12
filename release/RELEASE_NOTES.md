@@ -1,5 +1,24 @@
 # Release Notes
 
+## v1.3.0
+
+## Overview
+
+Arcus Signal v1.3.0 adds canonical SPC mesoscale-discussion ingestion, persistence, H3 coverage, read APIs, and operator visibility. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- The worker ingests SPC discussions every ten minutes, retaining canonical product content and deriving activity from validity times. Accepted snapshots and H3 coverage update transactionally.
+- `GET /v1/mesos`, also available at `/api/v1/mesos`, returns all active discussions, active resolution-8 H3 matches, or a retained product by stable ID. Reads include shared payload fields, deterministic ordering, and ETag-based conditional responses.
+- Red Lights reports meso ingest freshness, active counts, product validity, coverage, and failure categories separately from NWS freshness.
+- Meso Activity at `/dashboard/mesos` exposes discussion text, affected areas, watch probability, available threats, coverage, and source links. Its 48-hour recent sample plus active discussions is capped at 50 with active products prioritized; live refresh preserves expanded products and keyboard focus by identity.
+- Dashboard snapshot additions preserve older snapshot decoding and distinguish unavailable meso activity from an empty collection.
+
+## Maintenance
+
+- Added canonical meso and geometry tables with annual identity uniqueness, H3 metadata, and validity/H3 indexes; adopted ArcusCore 0.5.0 shared meso types.
+- Added focused regression coverage across ingestion, persistence, coverage, APIs, and dashboard rendering. Recorded full-suite runs in this release range include alert-collection and dashboard fixture failures.
+
 ## v1.2.0
 
 ## Overview
