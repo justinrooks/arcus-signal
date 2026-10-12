@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 8
+    public static let currentSchemaVersion = 9
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -25,6 +25,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var slowRefreshedAt: Date?
 
     public var ingestFreshness: StoredIngestFreshnessMetric
+    public var spcMesoIngest: StoredSPCMesoIngestMetric
     public var pipelineBacklog: StoredPipelineBacklogMetric
     public var stuckClaimedRows: StoredStuckClaimedRowsMetric
     public var staleActiveSeries: StoredStaleActiveSeriesMetric
@@ -48,6 +49,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         standardRefreshedAt: Date? = nil,
         slowRefreshedAt: Date? = nil,
         ingestFreshness: StoredIngestFreshnessMetric = .init(),
+        spcMesoIngest: StoredSPCMesoIngestMetric = .init(),
         pipelineBacklog: StoredPipelineBacklogMetric = .init(),
         stuckClaimedRows: StoredStuckClaimedRowsMetric = .init(),
         staleActiveSeries: StoredStaleActiveSeriesMetric = .init(),
@@ -70,6 +72,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.standardRefreshedAt = standardRefreshedAt
         self.slowRefreshedAt = slowRefreshedAt
         self.ingestFreshness = ingestFreshness
+        self.spcMesoIngest = spcMesoIngest
         self.pipelineBacklog = pipelineBacklog
         self.stuckClaimedRows = stuckClaimedRows
         self.staleActiveSeries = staleActiveSeries
@@ -94,6 +97,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case standardRefreshedAt
         case slowRefreshedAt
         case ingestFreshness
+        case spcMesoIngest
         case pipelineBacklog
         case stuckClaimedRows
         case staleActiveSeries
@@ -119,6 +123,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.standardRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .standardRefreshedAt)
         self.slowRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .slowRefreshedAt)
         self.ingestFreshness = try container.decode(StoredIngestFreshnessMetric.self, forKey: .ingestFreshness)
+        self.spcMesoIngest = try container.decodeIfPresent(StoredSPCMesoIngestMetric.self, forKey: .spcMesoIngest) ?? .init()
         self.pipelineBacklog = try container.decode(StoredPipelineBacklogMetric.self, forKey: .pipelineBacklog)
         self.stuckClaimedRows = try container.decode(StoredStuckClaimedRowsMetric.self, forKey: .stuckClaimedRows)
         self.staleActiveSeries = try container.decode(StoredStaleActiveSeriesMetric.self, forKey: .staleActiveSeries)
@@ -168,6 +173,112 @@ public struct StoredIngestFreshnessMetric: Codable, Sendable {
         self.recentFailureCount = recentFailureCount
         self.lastFailureCompletedAt = lastFailureCompletedAt
         self.lastFailureMessage = lastFailureMessage
+    }
+}
+
+public struct StoredSPCMesoIngestMetric: Codable, Sendable {
+    public var activeProductCount: Int
+    public var activeProductsWithH3Coverage: Int
+    public var activeProductsWithoutH3Coverage: Int
+    public var latestProductKey: String?
+    public var latestProductTitle: String?
+    public var latestProductIssuedAt: Date?
+    public var latestProductValidStart: Date?
+    public var latestProductValidEnd: Date?
+    public var lastAttemptAt: Date?
+    public var lastAttemptStatus: String?
+    public var lastSuccessfulAt: Date?
+    public var recentFailureCount: Int
+    public var fetchFailureCount: Int
+    public var parseRejectionCount: Int
+    public var persistenceFailureCount: Int
+    public var h3FailureCount: Int
+    public var otherFailureCount: Int
+    public var lastFailureMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case activeProductCount
+        case activeProductsWithH3Coverage
+        case activeProductsWithoutH3Coverage
+        case latestProductKey
+        case latestProductTitle
+        case latestProductIssuedAt
+        case latestProductValidStart
+        case latestProductValidEnd
+        case lastAttemptAt
+        case lastAttemptStatus
+        case lastSuccessfulAt
+        case recentFailureCount
+        case fetchFailureCount
+        case parseRejectionCount
+        case persistenceFailureCount
+        case h3FailureCount
+        case otherFailureCount
+        case lastFailureMessage
+    }
+
+    public init(
+        activeProductCount: Int = 0,
+        activeProductsWithH3Coverage: Int = 0,
+        activeProductsWithoutH3Coverage: Int = 0,
+        latestProductKey: String? = nil,
+        latestProductTitle: String? = nil,
+        latestProductIssuedAt: Date? = nil,
+        latestProductValidStart: Date? = nil,
+        latestProductValidEnd: Date? = nil,
+        lastAttemptAt: Date? = nil,
+        lastAttemptStatus: String? = nil,
+        lastSuccessfulAt: Date? = nil,
+        recentFailureCount: Int = 0,
+        fetchFailureCount: Int = 0,
+        parseRejectionCount: Int = 0,
+        persistenceFailureCount: Int = 0,
+        h3FailureCount: Int = 0,
+        otherFailureCount: Int = 0,
+        lastFailureMessage: String? = nil
+    ) {
+        self.activeProductCount = activeProductCount
+        self.activeProductsWithH3Coverage = activeProductsWithH3Coverage
+        self.activeProductsWithoutH3Coverage = activeProductsWithoutH3Coverage
+        self.latestProductKey = latestProductKey
+        self.latestProductTitle = latestProductTitle
+        self.latestProductIssuedAt = latestProductIssuedAt
+        self.latestProductValidStart = latestProductValidStart
+        self.latestProductValidEnd = latestProductValidEnd
+        self.lastAttemptAt = lastAttemptAt
+        self.lastAttemptStatus = lastAttemptStatus
+        self.lastSuccessfulAt = lastSuccessfulAt
+        self.recentFailureCount = recentFailureCount
+        self.fetchFailureCount = fetchFailureCount
+        self.parseRejectionCount = parseRejectionCount
+        self.persistenceFailureCount = persistenceFailureCount
+        self.h3FailureCount = h3FailureCount
+        self.otherFailureCount = otherFailureCount
+        self.lastFailureMessage = lastFailureMessage
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            activeProductCount: try container.decodeIfPresent(Int.self, forKey: .activeProductCount) ?? 0,
+            activeProductsWithH3Coverage: try container.decodeIfPresent(Int.self, forKey: .activeProductsWithH3Coverage) ?? 0,
+            activeProductsWithoutH3Coverage: try container.decodeIfPresent(Int.self, forKey: .activeProductsWithoutH3Coverage) ?? 0,
+            latestProductKey: try container.decodeIfPresent(String.self, forKey: .latestProductKey),
+            latestProductTitle: try container.decodeIfPresent(String.self, forKey: .latestProductTitle),
+            latestProductIssuedAt: try container.decodeIfPresent(Date.self, forKey: .latestProductIssuedAt),
+            latestProductValidStart: try container.decodeIfPresent(Date.self, forKey: .latestProductValidStart),
+            latestProductValidEnd: try container.decodeIfPresent(Date.self, forKey: .latestProductValidEnd),
+            lastAttemptAt: try container.decodeIfPresent(Date.self, forKey: .lastAttemptAt),
+            lastAttemptStatus: try container.decodeIfPresent(String.self, forKey: .lastAttemptStatus),
+            lastSuccessfulAt: try container.decodeIfPresent(Date.self, forKey: .lastSuccessfulAt),
+            recentFailureCount: try container.decodeIfPresent(Int.self, forKey: .recentFailureCount) ?? 0,
+            fetchFailureCount: try container.decodeIfPresent(Int.self, forKey: .fetchFailureCount) ?? 0,
+            parseRejectionCount: try container.decodeIfPresent(Int.self, forKey: .parseRejectionCount) ?? 0,
+            persistenceFailureCount: try container.decodeIfPresent(Int.self, forKey: .persistenceFailureCount) ?? 0,
+            h3FailureCount: try container.decodeIfPresent(Int.self, forKey: .h3FailureCount) ?? 0,
+            otherFailureCount: try container.decodeIfPresent(Int.self, forKey: .otherFailureCount) ?? 0,
+            lastFailureMessage: try container.decodeIfPresent(String.self, forKey: .lastFailureMessage)
+        )
     }
 }
 
@@ -903,6 +1014,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
 
 public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
     public var ingestFreshness: IngestFreshnessMetricResponse
+    public var spcMesoIngest: SPCMesoIngestMetricResponse
     public var pipelineBacklogAge: PipelineBacklogMetricResponse
     public var stuckClaimedRows: StuckClaimedRowsMetricResponse
     public var staleActiveSeriesCount: StaleActiveSeriesMetricResponse
@@ -912,6 +1024,11 @@ public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
             refreshedAt: snapshot.fastRefreshedAt,
             renderedAt: renderedAt,
             metric: snapshot.ingestFreshness
+        )
+        self.spcMesoIngest = .init(
+            refreshedAt: snapshot.fastRefreshedAt,
+            renderedAt: renderedAt,
+            metric: snapshot.spcMesoIngest
         )
         self.pipelineBacklogAge = .init(
             refreshedAt: snapshot.fastRefreshedAt,
@@ -1194,6 +1311,61 @@ public struct IngestFreshnessMetricResponse: Content, Sendable {
         self.recentSuccessCount = metric.recentSuccessCount
         self.recentFailureCount = metric.recentFailureCount
         self.lastFailureAt = metric.lastFailureCompletedAt
+        self.lastFailureMessage = metric.lastFailureMessage
+    }
+}
+
+public struct SPCMesoIngestMetricResponse: Content, Sendable {
+    public var status: OperatorDashboardHealthState
+    public var refreshedAt: Date?
+    public var lastAttemptAt: Date?
+    public var lastAttemptAgeSeconds: Int?
+    public var lastAttemptStatus: String?
+    public var lastSuccessfulAt: Date?
+    public var activeProductCount: Int
+    public var activeProductsWithH3Coverage: Int
+    public var activeProductsWithoutH3Coverage: Int
+    public var latestProductKey: String?
+    public var latestProductTitle: String?
+    public var latestProductIssuedAt: Date?
+    public var latestProductValidStart: Date?
+    public var latestProductValidEnd: Date?
+    public var recentFailureCount: Int
+    public var fetchFailureCount: Int
+    public var parseRejectionCount: Int
+    public var persistenceFailureCount: Int
+    public var h3FailureCount: Int
+    public var otherFailureCount: Int
+    public var lastFailureMessage: String?
+
+    init(refreshedAt: Date?, renderedAt: Date, metric: StoredSPCMesoIngestMetric) {
+        if refreshedAt == nil || metric.lastAttemptAt == nil {
+            status = .unknown
+        } else {
+            let age = renderedAt.timeIntervalSince(metric.lastAttemptAt ?? renderedAt)
+            status = metric.lastAttemptStatus == IngestSweepRunStatus.succeeded.rawValue && age <= 600
+                ? .healthy
+                : .warning
+        }
+        self.refreshedAt = refreshedAt
+        self.lastAttemptAt = metric.lastAttemptAt
+        self.lastAttemptAgeSeconds = OperatorDashboardCalculations.ageSeconds(since: metric.lastAttemptAt, renderedAt: renderedAt)
+        self.lastAttemptStatus = metric.lastAttemptStatus
+        self.lastSuccessfulAt = metric.lastSuccessfulAt
+        self.activeProductCount = metric.activeProductCount
+        self.activeProductsWithH3Coverage = metric.activeProductsWithH3Coverage
+        self.activeProductsWithoutH3Coverage = metric.activeProductsWithoutH3Coverage
+        self.latestProductKey = metric.latestProductKey
+        self.latestProductTitle = metric.latestProductTitle
+        self.latestProductIssuedAt = metric.latestProductIssuedAt
+        self.latestProductValidStart = metric.latestProductValidStart
+        self.latestProductValidEnd = metric.latestProductValidEnd
+        self.recentFailureCount = metric.recentFailureCount
+        self.fetchFailureCount = metric.fetchFailureCount
+        self.parseRejectionCount = metric.parseRejectionCount
+        self.persistenceFailureCount = metric.persistenceFailureCount
+        self.h3FailureCount = metric.h3FailureCount
+        self.otherFailureCount = metric.otherFailureCount
         self.lastFailureMessage = metric.lastFailureMessage
     }
 }

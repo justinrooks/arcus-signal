@@ -81,6 +81,173 @@ struct OperatorDashboardPressureArtifactTests {
         }
     }
 
+    @Test("SPC meso dashboard reports cadence, active products, latest product, and failure stages")
+    func spcMesoDashboardReportsCanonicalHealth() async throws {
+        try await withApp { app in
+            let now = Date()
+            let runLabel = "issue-281-dashboard-\(UUID().uuidString)"
+            let issuedAt = now.addingTimeInterval(-120)
+            let product = MesoscaleDiscussionPayload(
+                number: 999,
+                title: "SPC MD 999",
+                sourceURL: URL(string: "https://www.spc.noaa.gov/products/md/md999.html")!,
+                issued: issuedAt,
+                validStart: now.addingTimeInterval(-60),
+                validEnd: now.addingTimeInterval(3_600),
+                areasAffected: "Colorado",
+                summary: "Dashboard fixture",
+                concerning: nil,
+                watchProbability: nil,
+                watchProbabilityText: "Unknown",
+                threats: nil,
+                coordinates: []
+            )
+            let productWithoutCoverage = MesoscaleDiscussionPayload(
+                number: 998,
+                title: "SPC MD 998",
+                sourceURL: URL(string: "https://www.spc.noaa.gov/products/md/md998.html")!,
+                issued: now.addingTimeInterval(-240),
+                validStart: now.addingTimeInterval(-60),
+                validEnd: now.addingTimeInterval(3_600),
+                areasAffected: "Colorado",
+                summary: "Coverage fixture",
+                concerning: nil,
+                watchProbability: nil,
+                watchProbabilityText: "Unknown",
+                threats: nil,
+                coordinates: []
+            )
+            let geometryFreeProduct = MesoscaleDiscussionPayload(
+                number: 997,
+                title: "SPC MD 997",
+                sourceURL: URL(string: "https://www.spc.noaa.gov/products/md/md997.html")!,
+                issued: now.addingTimeInterval(-300),
+                validStart: now.addingTimeInterval(-60),
+                validEnd: now.addingTimeInterval(3_600),
+                areasAffected: "Colorado",
+                summary: "No geometry fixture",
+                concerning: nil,
+                watchProbability: nil,
+                watchProbabilityText: "Unknown",
+                threats: nil,
+                coordinates: []
+            )
+            try await IngestSweepRunModel(
+                source: "spc-meso", runLabel: runLabel, status: .succeeded,
+                startedAt: issuedAt, completedAt: issuedAt.addingTimeInterval(5), eventCount: 1
+            ).create(on: app.db)
+            try await IngestSweepRunModel(
+                source: "spc-meso", runLabel: runLabel, status: .failed,
+                startedAt: now.addingTimeInterval(-30), completedAt: now.addingTimeInterval(-10), errorMessage: "stage=parse_reject error=malformed"
+            ).create(on: app.db)
+            try await IngestSweepRunModel(
+                source: "spc-meso", runLabel: runLabel, status: .failed,
+                startedAt: now.addingTimeInterval(-26), completedAt: now.addingTimeInterval(-20), errorMessage: "stage=fetch error=transport"
+            ).create(on: app.db)
+            try await IngestSweepRunModel(
+                source: "spc-meso", runLabel: runLabel, status: .failed,
+                startedAt: now.addingTimeInterval(-18), completedAt: now.addingTimeInterval(-15), errorMessage: "stage=persistence error=database"
+            ).create(on: app.db)
+            try await IngestSweepRunModel(
+                source: "spc-meso", runLabel: runLabel, status: .failed,
+                startedAt: now.addingTimeInterval(-9), completedAt: now.addingTimeInterval(-5), errorMessage: "stage=h3 error=coverage"
+            ).create(on: app.db)
+            let model = SPCMesoModel(product: product, contentFingerprint: "issue-281", seenAt: now)
+            try await model.create(on: app.db)
+            let missingCoverageModel = SPCMesoModel(product: productWithoutCoverage, contentFingerprint: "issue-281-missing-h3", seenAt: now)
+            try await missingCoverageModel.create(on: app.db)
+            let geometryFreeModel = SPCMesoModel(product: geometryFreeProduct, contentFingerprint: "issue-281-no-geometry", seenAt: now)
+            try await geometryFreeModel.create(on: app.db)
+            let geometry = GeoShape.polygon(rings: [[
+                .init(lon: -105, lat: 39), .init(lon: -104, lat: 39),
+                .init(lon: -104, lat: 40), .init(lon: -105, lat: 39)
+            ]])
+            let coveredGeolocation = SPCMesoGeolocationModel(
+                mesoID: try model.requireID(), geometry: geometry, geometryHash: "issue-281-geometry"
+            )
+            coveredGeolocation.h3Resolution = 8
+            coveredGeolocation.h3Hash = "issue-281-h3"
+            try await coveredGeolocation.create(on: app.db)
+            let missingGeolocation = SPCMesoGeolocationModel(
+                mesoID: try missingCoverageModel.requireID(), geometry: geometry, geometryHash: "issue-281-missing-geometry"
+            )
+            try await missingGeolocation.create(on: app.db)
+
+            do {
+                try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, forceAll: true, now: now)
+                let snapshot = try #require(try await app.operatorDashboardSnapshotStore.load(on: app.db))
+                let metric = snapshot.spcMesoIngest
+                #expect(metric.activeProductCount == 3)
+                #expect(metric.activeProductsWithH3Coverage == 1)
+                #expect(metric.activeProductsWithoutH3Coverage == 1)
+                #expect(metric.activeProductsWithH3Coverage + metric.activeProductsWithoutH3Coverage <= metric.activeProductCount)
+                #expect(metric.latestProductKey == product.productID)
+                #expect(metric.latestProductTitle == "SPC MD 999")
+                #expect(metric.latestProductIssuedAt == issuedAt)
+                #expect(metric.latestProductValidStart == product.validStart)
+                #expect(metric.latestProductValidEnd == product.validEnd)
+                #expect(metric.lastSuccessfulAt == issuedAt.addingTimeInterval(5))
+                #expect(metric.lastAttemptStatus == IngestSweepRunStatus.failed.rawValue)
+                #expect(metric.recentFailureCount == 4)
+                #expect(metric.fetchFailureCount == 1)
+                #expect(metric.parseRejectionCount == 1)
+                #expect(metric.persistenceFailureCount == 1)
+                #expect(metric.h3FailureCount == 1)
+                #expect(metric.lastFailureMessage == "stage=h3 error=coverage")
+                let response = OperatorDashboardSnapshotResponse(snapshot: snapshot, renderedAt: now)
+                #expect(response.redLights.spcMesoIngest.status == .warning)
+                #expect(response.redLights.spcMesoIngest.latestProductKey == product.productID)
+                #expect(response.redLights.spcMesoIngest.latestProductIssuedAt == issuedAt)
+                #expect(response.redLights.spcMesoIngest.latestProductValidStart == product.validStart)
+                #expect(response.redLights.spcMesoIngest.latestProductValidEnd == product.validEnd)
+                #expect(response.redLights.spcMesoIngest.lastFailureMessage == "stage=h3 error=coverage")
+                #expect(response.redLights.spcMesoIngest.activeProductsWithH3Coverage == 1)
+                #expect(response.redLights.spcMesoIngest.activeProductsWithoutH3Coverage == 1)
+                #expect(SPCMesoIngestMetricResponse(
+                    refreshedAt: now,
+                    renderedAt: now,
+                    metric: .init(lastAttemptAt: now.addingTimeInterval(-599), lastAttemptStatus: IngestSweepRunStatus.succeeded.rawValue)
+                ).status == .healthy)
+                #expect(SPCMesoIngestMetricResponse(
+                    refreshedAt: now,
+                    renderedAt: now,
+                    metric: .init(lastAttemptAt: now.addingTimeInterval(-600), lastAttemptStatus: IngestSweepRunStatus.succeeded.rawValue)
+                ).status == .healthy)
+                #expect(SPCMesoIngestMetricResponse(
+                    refreshedAt: now,
+                    renderedAt: now,
+                    metric: .init(lastAttemptAt: now.addingTimeInterval(-601), lastAttemptStatus: IngestSweepRunStatus.succeeded.rawValue)
+                ).status == .warning)
+                let html = OperatorDashboardPageRenderer.render(
+                    snapshot: response,
+                    buildInfo: ArcusSignalBuildInfo(version: "test", revision: nil)
+                )
+                #expect(html.contains("SPC meso ingest"))
+                #expect(html.contains("SPC MD 999"))
+                #expect(html.contains(product.productID))
+                #expect(html.contains("stage=h3 error=coverage"))
+                #expect(html.contains("transport/fetch 1"))
+                #expect(html.contains("parse/reject 1"))
+                #expect(html.contains("persistence 1"))
+                #expect(html.contains("H3 1"))
+                #expect(html.contains("3 active products"))
+                #expect(html.contains("Active geometry H3 coverage: 1 complete, 1 missing"))
+                #expect(html.contains("r.spcMesoIngest"))
+                #expect(html.contains("activeProductsWithH3Coverage"))
+            } catch {
+                try? await clearIngestRuns(runLabel: runLabel, on: app.db)
+                try? await SPCMesoModel.query(on: app.db).filter(\.$issueYear == product.issueYear).filter(\.$number == product.number).delete()
+                try? await SPCMesoModel.query(on: app.db).filter(\.$issueYear == productWithoutCoverage.issueYear).filter(\.$number == productWithoutCoverage.number).delete()
+                try? await SPCMesoModel.query(on: app.db).filter(\.$issueYear == geometryFreeProduct.issueYear).filter(\.$number == geometryFreeProduct.number).delete()
+                throw error
+            }
+            try await clearIngestRuns(runLabel: runLabel, on: app.db)
+            try await SPCMesoModel.query(on: app.db).filter(\.$issueYear == product.issueYear).filter(\.$number == product.number).delete()
+            try await SPCMesoModel.query(on: app.db).filter(\.$issueYear == productWithoutCoverage.issueYear).filter(\.$number == productWithoutCoverage.number).delete()
+            try await SPCMesoModel.query(on: app.db).filter(\.$issueYear == geometryFreeProduct.issueYear).filter(\.$number == geometryFreeProduct.number).delete()
+        }
+    }
+
     @Test("ingest freshness retains a successful sweep outside the recent attempt window")
     func ingestFreshnessRetainsOlderSuccess() async throws {
         try await withApp { app in
