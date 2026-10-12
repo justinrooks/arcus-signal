@@ -1,5 +1,15 @@
 # Release Notes
 
+## v1.3.1
+
+## Overview
+
+Arcus Signal v1.3.1 fixes the missing XML runtime dependency in the production container. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- The runtime image now includes `libxml2`, resolving the `libxml2.so.2` loader error affecting the API and worker executables after the SPC meso parser was added.
+
 ## v1.3.0
 
 ## Overview

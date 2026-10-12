@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.1
+
+### Reliability
+
+- The runtime container now installs `libxml2`, providing the `libxml2.so.2` dependency required by FoundationXML for SPC meso parsing so the API and worker executables can load on Linux.
+<!-- evidence: 4252edd -->
+
 ## v1.3.0
 
 ### Features
