@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 9
+    public static let currentSchemaVersion = 10
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -25,6 +25,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var slowRefreshedAt: Date?
 
     public var ingestFreshness: StoredIngestFreshnessMetric
+    public var mesoActivity: StoredMesoActivity?
     public var spcMesoIngest: StoredSPCMesoIngestMetric
     public var pipelineBacklog: StoredPipelineBacklogMetric
     public var stuckClaimedRows: StoredStuckClaimedRowsMetric
@@ -50,6 +51,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         slowRefreshedAt: Date? = nil,
         ingestFreshness: StoredIngestFreshnessMetric = .init(),
         spcMesoIngest: StoredSPCMesoIngestMetric = .init(),
+        mesoActivity: StoredMesoActivity? = nil,
         pipelineBacklog: StoredPipelineBacklogMetric = .init(),
         stuckClaimedRows: StoredStuckClaimedRowsMetric = .init(),
         staleActiveSeries: StoredStaleActiveSeriesMetric = .init(),
@@ -73,6 +75,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.slowRefreshedAt = slowRefreshedAt
         self.ingestFreshness = ingestFreshness
         self.spcMesoIngest = spcMesoIngest
+        self.mesoActivity = mesoActivity
         self.pipelineBacklog = pipelineBacklog
         self.stuckClaimedRows = stuckClaimedRows
         self.staleActiveSeries = staleActiveSeries
@@ -98,6 +101,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case slowRefreshedAt
         case ingestFreshness
         case spcMesoIngest
+        case mesoActivity
         case pipelineBacklog
         case stuckClaimedRows
         case staleActiveSeries
@@ -124,6 +128,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.slowRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .slowRefreshedAt)
         self.ingestFreshness = try container.decode(StoredIngestFreshnessMetric.self, forKey: .ingestFreshness)
         self.spcMesoIngest = try container.decodeIfPresent(StoredSPCMesoIngestMetric.self, forKey: .spcMesoIngest) ?? .init()
+        self.mesoActivity = try container.decodeIfPresent(StoredMesoActivity.self, forKey: .mesoActivity)
         self.pipelineBacklog = try container.decode(StoredPipelineBacklogMetric.self, forKey: .pipelineBacklog)
         self.stuckClaimedRows = try container.decode(StoredStuckClaimedRowsMetric.self, forKey: .stuckClaimedRows)
         self.staleActiveSeries = try container.decode(StoredStaleActiveSeriesMetric.self, forKey: .staleActiveSeries)
@@ -998,6 +1003,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
     public var growthUsage: OperatorDashboardGrowthUsageSectionResponse
     public var audienceTargeting: OperatorDashboardAudienceTargetingSectionResponse
     public var modelArtifacts: OperatorDashboardModelArtifactsSectionResponse
+    public var mesoActivity: StoredMesoActivity?
     public var operatorContext: OperatorDashboardOperatorContextSectionResponse
 
     public init(snapshot: OperatorDashboardStoredSnapshot, renderedAt: Date = .now) {
@@ -1008,6 +1014,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
         self.growthUsage = .init(snapshot: snapshot)
         self.audienceTargeting = .init(snapshot: snapshot, renderedAt: renderedAt)
         self.modelArtifacts = .init(snapshot: snapshot, renderedAt: renderedAt)
+        self.mesoActivity = snapshot.mesoActivity
         self.operatorContext = .init(snapshot: snapshot)
     }
 }
@@ -1767,5 +1774,45 @@ enum OperatorDashboardCalculations {
     static func rate(numerator: Int, denominator: Int) -> Double? {
         guard denominator > 0 else { return nil }
         return Double(numerator) / Double(denominator)
+    }
+}
+
+/// Bounded worker projection. Nil in an older snapshot means unavailable, not empty.
+public struct StoredMesoActivity: Codable, Sendable {
+    static let historyHours = 48
+    static let recordLimit = 50
+    public var refreshedAt: Date
+    public var capped: Bool
+    public var entries: [StoredMesoActivityEntry]
+}
+
+public struct StoredMesoActivityEntry: Codable, Sendable {
+    public var productKey: String
+    public var number: Int
+    public var issued: Date
+    public var validStart: Date
+    public var validEnd: Date
+    public var areasAffected: String
+    public var summary: String
+    public var concerning: String?
+    public var watchProbability: Double?
+    public var watchProbabilityText: String
+    public var peakWindMPH: Int?
+    public var hailRangeInches: Double?
+    public var tornadoStrength: String?
+    public var sourceURL: String
+    public var geometryAvailable: Bool
+    public var h3CoverageComplete: Bool
+
+    func status(asOf date: Date) -> String {
+        if date < validStart { return "Pending" }
+        return date < validEnd ? "Active" : "Expired"
+    }
+
+    var safeSourceURL: String? {
+        guard let url = URL(string: sourceURL), url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "www.spc.noaa.gov" || url.host?.lowercased() == "spc.noaa.gov",
+              url.user == nil, url.password == nil else { return nil }
+        return sourceURL
     }
 }

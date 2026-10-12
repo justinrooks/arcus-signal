@@ -63,6 +63,7 @@ struct OperatorDashboardSnapshotRefresher {
         if fastDue {
             snapshot.ingestFreshness = try await loadIngestFreshness(on: app.db)
             snapshot.spcMesoIngest = try await loadSPCMesoIngest(on: app.db, sql: sql, now: now)
+            snapshot.mesoActivity = try await loadMesoActivity(on: sql, now: now)
             snapshot.pipelineBacklog = try await loadPipelineBacklog(on: app.db)
             snapshot.stuckClaimedRows = try await loadStuckClaimedRows(on: app.db, now: now)
             snapshot.modelArtifacts = try await loadPressureArtifactCatalog(on: app, sql: sql, now: now)
@@ -189,6 +190,31 @@ struct OperatorDashboardSnapshotRefresher {
             otherFailureCount: failures.filter { !["fetch", "parse_reject", "persistence", "h3"].contains(stage($0)) }.count,
             lastFailureMessage: failures.first?.errorMessage
         )
+    }
+
+    func loadMesoActivity(on sql: any SQLDatabase, now: Date) async throws -> StoredMesoActivity {
+        let cutoff = now.addingTimeInterval(-Double(StoredMesoActivity.historyHours * 3_600))
+        // Fetch one extra scalar-only row to disclose truncation without loading geometry/H3 arrays.
+        let rows = try await sql.raw("""
+            SELECT m.product_key AS "productKey", m.md_number AS "number", m.issued,
+              m.valid_start AS "validStart", m.valid_end AS "validEnd",
+              m.areas_affected AS "areasAffected", m.summary, m.concerning,
+              m.watch_probability AS "watchProbability", m.watch_probability_text AS "watchProbabilityText",
+              m.peak_wind_mph AS "peakWindMPH", m.hail_range_inches AS "hailRangeInches",
+              m.tornado_strength AS "tornadoStrength", m.source_url AS "sourceURL",
+              (g.id IS NOT NULL) AS "geometryAvailable",
+              COALESCE(g.h3_resolution = 8 AND g.h3_hash IS NOT NULL, FALSE) AS "h3CoverageComplete"
+            FROM spc_mesos m
+            LEFT JOIN spc_meso_geolocation g ON g.meso_id = m.id
+            WHERE m.issued >= \(bind: cutoff) OR (m.valid_start <= \(bind: now) AND m.valid_end > \(bind: now))
+            ORDER BY (m.valid_start <= \(bind: now) AND m.valid_end > \(bind: now)) DESC,
+              m.issued DESC, m.product_key ASC
+            LIMIT \(bind: StoredMesoActivity.recordLimit + 1)
+            """).all(decoding: StoredMesoActivityEntry.self)
+        let entries = rows.prefix(StoredMesoActivity.recordLimit).sorted {
+            $0.issued == $1.issued ? $0.productKey < $1.productKey : $0.issued > $1.issued
+        }
+        return .init(refreshedAt: now, capped: rows.count > StoredMesoActivity.recordLimit, entries: entries)
     }
 
     private func loadPipelineBacklog(on database: any Database) async throws -> StoredPipelineBacklogMetric {

@@ -24,10 +24,32 @@ extension OperatorDashboardPageRenderer {
         return formatter.string(from: date).replacingOccurrences(of: "T", with: " ").replacingOccurrences(of: ":00Z", with: " UTC").replacingOccurrences(of: "Z", with: " UTC")
     }
 
-    static func healthItem(_ title: String, _ value: String, _ status: OperatorDashboardHealthState, _ summary: String, _ details: String = "") -> String {
+    static func healthItem(_ title: String, _ value: String, _ status: OperatorDashboardHealthState, _ summary: String, _ details: String = "", page: Page? = nil) -> String {
         """
-        <div class="health-item health-\(status.rawValue)"><h3>\(escape(title))</h3><div class="health-reading"><strong>\(escape(value))</strong><span class="health-status">\(status.rawValue.capitalized)</span></div><p>\(escape(summary))</p>\(details.isEmpty ? "" : "<details class=\"health-details\"><summary>Details</summary><div class=\"detail-copy\">\(escape(details))</div></details>")</div>
+        <div class="health-item health-\(status.rawValue)"><h3>\(escape(title))</h3><div class="health-reading"><strong>\(escape(value))</strong><span class="health-status">\(status.rawValue.capitalized)</span></div><p>\(escape(summary))</p>\(details.isEmpty ? "" : "<details class=\"health-details\"><summary>Details</summary><div class=\"detail-copy\">\(escape(details))</div></details>")\(page.map { "<p><a href=\"\($0.path)\">Inspect \($0.title) ↗</a></p>" } ?? "")</div>
         """
+    }
+
+    static func mesoSummary(_ m: SPCMesoIngestMetricResponse) -> String {
+        "<p class=\"detail-copy\">" + escape("\(m.activeProductCount) active discussions · \(m.status.rawValue.capitalized) · Last success: \(controlTime(m.lastSuccessfulAt)). Active geometry H3 coverage: \(m.activeProductsWithH3Coverage) complete, \(m.activeProductsWithoutH3Coverage) missing. Latest issued: \(m.latestProductTitle ?? "n/a") · \(controlTime(m.latestProductIssuedAt)).") + "</p>"
+    }
+
+    static func mesoActivity(_ activity: StoredMesoActivity?) -> String {
+        guard let activity else { return "<p class=\"empty\">Meso activity unavailable in this snapshot. Awaiting worker refresh.</p>" }
+        let note = "<p class=\"module-note\">Issued within 48 hours plus currently active discussions · UTC · " + (activity.capped ? "Capped sample: up to 50 discussions, active products prioritized. " : "") + "Refreshed " + escape(controlTime(activity.refreshedAt)) + "</p>"
+        if activity.entries.isEmpty { return note + "<p class=\"empty\">No active or recently issued discussions.</p>" }
+        return note + activity.entries.map { e in
+            let probability = e.watchProbability.map { "\($0.formatted(.number.grouping(.never).precision(.fractionLength(0...2)).locale(Locale(identifier: "en_US"))))%" } ?? (e.watchProbabilityText.isEmpty ? "Unknown" : e.watchProbabilityText)
+            var fields = [("Valid from", controlTime(e.validStart)), ("Valid until", controlTime(e.validEnd)), ("Product identity", e.productKey), ("Coverage", e.geometryAvailable ? (e.h3CoverageComplete ? "Geometry present · H3 complete" : "Geometry present · H3 missing") : "No geometry")]
+            if let text = e.concerning, !text.isEmpty { fields.append(("Concerning / watch", text)) }
+            if !e.watchProbabilityText.isEmpty { fields.append(("Watch source text", e.watchProbabilityText)) }
+            if let wind = e.peakWindMPH { fields.append(("Peak wind", "\(wind) mph")) }
+            if let hail = e.hailRangeInches { fields.append(("Hail", "\(hail.formatted(.number.grouping(.never).precision(.fractionLength(0...2)).locale(Locale(identifier: "en_US")))) inches")) }
+            if let tornado = e.tornadoStrength, !tornado.isEmpty { fields.append(("Tornado", tornado)) }
+            let definitions = fields.map { "<div><dt>" + escape($0.0) + "</dt><dd>" + escape($0.1) + "</dd></div>" }.joined()
+            let link = e.safeSourceURL.map { "<p><a href=\"" + escape($0) + "\">Original SPC product ↗</a></p>" } ?? ""
+            return "<details class=\"metric-details\" data-disclosure-key=\"" + escape(e.productKey) + "\"><summary class=\"metric-summary\">" + escape("MD \(e.number) · \(e.status(asOf: activity.refreshedAt)) · \(e.areasAffected) · Issued \(controlTime(e.issued)) · Valid until \(controlTime(e.validEnd)) · Watch probability: \(probability)") + "</summary><dl class=\"definition-list\">" + definitions + "</dl><p class=\"detail-copy\" style=\"white-space:pre-wrap\">" + escape(e.summary) + "</p>" + link + "</details>"
+        }.joined()
     }
 
     static func healthOverview(_ r: OperatorDashboardRedLightsSectionResponse) -> String {
@@ -40,11 +62,11 @@ extension OperatorDashboardPageRenderer {
         let unknown = [i.status, m.status, b.status, c.status, s.status].filter { $0 == .unknown }.count
         let headline = findings.isEmpty ? "No classified red lights · \(unknown) unknown signals" : findings.joined(separator: " · ") + " need review"
         let tone = c.status == .critical ? "danger" : (findings.isEmpty ? "muted" : "warning")
-        let destination = c.status == .critical ? Page.delivery : Page.nws
+        let destination = c.status == .critical ? Page.delivery : (m.status == .warning ? Page.mesos : Page.nws)
         return """
         <div class="health-top \(findings.isEmpty ? "neutral" : "")"><div><div class="health-label">Red Lights</div><strong class="\(tone)">\(escape(headline))</strong></div><a href="\(destination.path)">Inspect \(destination.title) ↗</a></div><div class="health-rail">
         \(healthItem("Ingest freshness", maybeDuration(i.timeSinceLastSuccessfulSweepSeconds), i.status, "\(i.recentSuccessCount) successes / \(i.recentFailureCount) failures", "Last success: \(controlTime(i.lastSuccessfulSweepAt)). Last attempt: \(controlTime(i.lastAttemptAt)). Last failure: \(controlTime(i.lastFailureAt)). Error: \(i.lastFailureMessage ?? "none")."))
-        \(healthItem("SPC meso ingest", maybeDuration(m.lastAttemptAgeSeconds), m.status, "\(m.activeProductCount) active products · last attempt \(m.lastAttemptStatus ?? "unknown") · 10-minute cadence", "Last attempt: \(controlTime(m.lastAttemptAt)). Last success: \(controlTime(m.lastSuccessfulAt)). Latest accepted: \(m.latestProductTitle ?? "none") (\(m.latestProductKey ?? "n/a")), issued \(controlTime(m.latestProductIssuedAt)), valid \(controlTime(m.latestProductValidStart)) to \(controlTime(m.latestProductValidEnd)). Active geometry H3 coverage: \(m.activeProductsWithH3Coverage) complete, \(m.activeProductsWithoutH3Coverage) missing. Recent failures: \(m.recentFailureCount) total; transport/fetch \(m.fetchFailureCount), parse/reject \(m.parseRejectionCount), persistence \(m.persistenceFailureCount), H3 \(m.h3FailureCount), other \(m.otherFailureCount). Last error: \(m.lastFailureMessage ?? "none")."))
+        \(healthItem("SPC meso ingest", maybeDuration(m.lastAttemptAgeSeconds), m.status, "\(m.activeProductCount) active products · last attempt \(m.lastAttemptStatus ?? "unknown") · 10-minute cadence", "Last attempt: \(controlTime(m.lastAttemptAt)). Last success: \(controlTime(m.lastSuccessfulAt)). Latest accepted: \(m.latestProductTitle ?? "none") (\(m.latestProductKey ?? "n/a")), issued \(controlTime(m.latestProductIssuedAt)), valid \(controlTime(m.latestProductValidStart)) to \(controlTime(m.latestProductValidEnd)). Active geometry H3 coverage: \(m.activeProductsWithH3Coverage) complete, \(m.activeProductsWithoutH3Coverage) missing. Recent failures: \(m.recentFailureCount) total; transport/fetch \(m.fetchFailureCount), parse/reject \(m.parseRejectionCount), persistence \(m.persistenceFailureCount), H3 \(m.h3FailureCount), other \(m.otherFailureCount). Last error: \(m.lastFailureMessage ?? "none").", page: .mesos))
         \(healthItem("Dispatch backlog", "\(b.pendingTargetDispatchCount + b.pendingNotificationDispatchCount)", b.status, "\(b.pendingTargetDispatchCount) target · \(b.pendingNotificationDispatchCount) notification rows", "Oldest target: \(maybeDuration(b.oldestPendingTargetDispatchAgeSeconds)) (\(controlTime(b.oldestPendingTargetDispatchCreatedAt))). Oldest notification: \(maybeDuration(b.oldestPendingNotificationDispatchAgeSeconds)) (\(controlTime(b.oldestPendingNotificationDispatchCreatedAt))). Pending queue handoffs, not delivery completions."))
         \(healthItem("Stuck claims", "\(c.count)", c.status, "Claim age threshold: \(formatDuration(c.thresholdSeconds))", "Oldest claim: \(maybeDuration(c.oldestClaimedAgeSeconds)) (\(controlTime(c.oldestClaimedCreatedAt)))."))
         \(healthItem("Stale active series", "\(s.count)", s.status, "Grace window: \(formatDuration(s.graceSeconds))"))</div>

@@ -2,7 +2,7 @@ import Foundation
 
 enum OperatorDashboardPageRenderer {
     enum Page: String, CaseIterable {
-        case overview, models, installations, nws, delivery
+        case overview, models, installations, nws, mesos, delivery
         var path: String { self == .overview ? "/dashboard" : "/dashboard/\(rawValue)" }
         var title: String {
             switch self {
@@ -10,6 +10,7 @@ enum OperatorDashboardPageRenderer {
             case .models: "Model Pipeline"
             case .installations: "Usage & Installations"
             case .nws: "NWS Activity"
+            case .mesos: "Meso Activity"
             case .delivery: "Delivery"
             }
         }
@@ -19,6 +20,7 @@ enum OperatorDashboardPageRenderer {
             case .models: "Is the expected model artifact ready, and what is blocking it?"
             case .installations: "Foreground activity, growth, and coarse operational presence."
             case .nws: "Recent weather activity, lifecycle, and hazard context."
+            case .mesos: "Active and recent SPC mesoscale discussions · UTC."
             case .delivery: "Delivery outcomes, candidate coverage, and reasons a push did not send."
             }
         }
@@ -87,6 +89,9 @@ enum OperatorDashboardPageRenderer {
             return controlModule("health-overview", "health wide", healthOverview(s.redLights))
                 + detailModule("Stale series context", "<p id=\"stale\" class=\"detail-copy\">The snapshot supplies the stale-series count, not the affected identities. The recently touched series below are not necessarily the stale ones.</p>", wide: true)
                 + detailModule("Hazard and revision context", slot("touched-series-table", content: touchedSeriesTable(s.operatorContext.lastTouchedSeries)), wide: true)
+        case .mesos:
+            return detailModule("Current meso summary", slot("meso-summary", content: mesoSummary(s.redLights.spcMesoIngest)), wide: true)
+                + detailModule("Active and recent discussions", slot("meso-activity", content: mesoActivity(s.mesoActivity)), wide: true)
         case .delivery:
             return controlModule("delivery-overview", "delivery", deliveryOverview(s.deliveryKPIs, s.audienceTargeting, detail: true))
                 + detailModule("APNs outcomes & latency", slot("apns-success-card", content: apnsSuccessCard(s.deliveryKPIs.apnsDeliverySuccessRate)) + slot("latency-card", content: latencyCard(s.deliveryKPIs.endToEndAlertLatency)))
