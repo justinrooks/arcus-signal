@@ -110,11 +110,10 @@ RUN export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
       libaec0 \
       libopenjp2-7 \
       libpng16-16 \
+      libxml2 \
       tzdata \
 # If your app or its dependencies import FoundationNetworking, also install `libcurl4`.
       # libcurl4 \
-# If your app or its dependencies import FoundationXML, also install `libxml2`.
-      # libxml2 \
     && rm -r /var/lib/apt/lists/*
 
 # Create a vapor user and group with /app as its home directory
