@@ -31,18 +31,20 @@ extension OperatorDashboardPageRenderer {
     }
 
     static func healthOverview(_ r: OperatorDashboardRedLightsSectionResponse) -> String {
-        let i = r.ingestFreshness, b = r.pipelineBacklogAge, c = r.stuckClaimedRows, s = r.staleActiveSeriesCount
+        let i = r.ingestFreshness, m = r.spcMesoIngest, b = r.pipelineBacklogAge, c = r.stuckClaimedRows, s = r.staleActiveSeriesCount
         var findings: [String] = []
         if i.status == .warning { findings.append("Ingest delayed") }
+        if m.status == .warning { findings.append("SPC meso delayed or failing") }
         if c.status == .critical { findings.append("\(c.count) stuck claims") }
         if s.status == .warning { findings.append("\(s.count) stale active series") }
-        let unknown = [i.status, b.status, c.status, s.status].filter { $0 == .unknown }.count
+        let unknown = [i.status, m.status, b.status, c.status, s.status].filter { $0 == .unknown }.count
         let headline = findings.isEmpty ? "No classified red lights · \(unknown) unknown signals" : findings.joined(separator: " · ") + " need review"
         let tone = c.status == .critical ? "danger" : (findings.isEmpty ? "muted" : "warning")
         let destination = c.status == .critical ? Page.delivery : Page.nws
         return """
         <div class="health-top \(findings.isEmpty ? "neutral" : "")"><div><div class="health-label">Red Lights</div><strong class="\(tone)">\(escape(headline))</strong></div><a href="\(destination.path)">Inspect \(destination.title) ↗</a></div><div class="health-rail">
         \(healthItem("Ingest freshness", maybeDuration(i.timeSinceLastSuccessfulSweepSeconds), i.status, "\(i.recentSuccessCount) successes / \(i.recentFailureCount) failures", "Last success: \(controlTime(i.lastSuccessfulSweepAt)). Last attempt: \(controlTime(i.lastAttemptAt)). Last failure: \(controlTime(i.lastFailureAt)). Error: \(i.lastFailureMessage ?? "none")."))
+        \(healthItem("SPC meso ingest", maybeDuration(m.lastAttemptAgeSeconds), m.status, "\(m.activeProductCount) active products · last attempt \(m.lastAttemptStatus ?? "unknown") · 10-minute cadence", "Last attempt: \(controlTime(m.lastAttemptAt)). Last success: \(controlTime(m.lastSuccessfulAt)). Latest accepted: \(m.latestProductTitle ?? "none") (\(m.latestProductKey ?? "n/a")), issued \(controlTime(m.latestProductIssuedAt)), valid \(controlTime(m.latestProductValidStart)) to \(controlTime(m.latestProductValidEnd)). Active geometry H3 coverage: \(m.activeProductsWithH3Coverage) complete, \(m.activeProductsWithoutH3Coverage) missing. Recent failures: \(m.recentFailureCount) total; transport/fetch \(m.fetchFailureCount), parse/reject \(m.parseRejectionCount), persistence \(m.persistenceFailureCount), H3 \(m.h3FailureCount), other \(m.otherFailureCount). Last error: \(m.lastFailureMessage ?? "none")."))
         \(healthItem("Dispatch backlog", "\(b.pendingTargetDispatchCount + b.pendingNotificationDispatchCount)", b.status, "\(b.pendingTargetDispatchCount) target · \(b.pendingNotificationDispatchCount) notification rows", "Oldest target: \(maybeDuration(b.oldestPendingTargetDispatchAgeSeconds)) (\(controlTime(b.oldestPendingTargetDispatchCreatedAt))). Oldest notification: \(maybeDuration(b.oldestPendingNotificationDispatchAgeSeconds)) (\(controlTime(b.oldestPendingNotificationDispatchCreatedAt))). Pending queue handoffs, not delivery completions."))
         \(healthItem("Stuck claims", "\(c.count)", c.status, "Claim age threshold: \(formatDuration(c.thresholdSeconds))", "Oldest claim: \(maybeDuration(c.oldestClaimedAgeSeconds)) (\(controlTime(c.oldestClaimedCreatedAt)))."))
         \(healthItem("Stale active series", "\(s.count)", s.status, "Grace window: \(formatDuration(s.graceSeconds))"))</div>

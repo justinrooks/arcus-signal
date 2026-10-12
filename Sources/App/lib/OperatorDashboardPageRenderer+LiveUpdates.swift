@@ -838,17 +838,19 @@ extension OperatorDashboardPageRenderer {
             return '<div class="health-item health-'+escapeHtml(status)+'"><h3>'+escapeHtml(title)+'</h3><div class="health-reading"><strong>'+escapeHtml(value)+'</strong><span class="health-status">'+escapeHtml(status.charAt(0).toUpperCase()+status.slice(1))+'</span></div><p>'+escapeHtml(summary)+'</p>'+(details ? '<details class="health-details"><summary>Details</summary><div class="detail-copy">'+escapeHtml(details)+'</div></details>' : '')+'</div>';
           }
           function renderHealthOverview(r) {
-            const i=r.ingestFreshness,b=r.pipelineBacklogAge,c=r.stuckClaimedRows,s=r.staleActiveSeriesCount;
+            const i=r.ingestFreshness,m=r.spcMesoIngest,b=r.pipelineBacklogAge,c=r.stuckClaimedRows,s=r.staleActiveSeriesCount;
             const findings=[];
             if(i.status==='warning') findings.push('Ingest delayed');
+            if(m.status==='warning') findings.push('SPC meso delayed or failing');
             if(c.status==='critical') findings.push(c.count+' stuck claims');
             if(s.status==='warning') findings.push(s.count+' stale active series');
-            const unknown=[i,b,c,s].filter(m=>m.status==='unknown').length;
+            const unknown=[i,m,b,c,s].filter(m=>m.status==='unknown').length;
             const headline=findings.length ? findings.join(' · ')+' need review' : 'No classified red lights · '+unknown+' unknown signals';
             const tone=c.status==='critical'?'danger':(findings.length?'warning':'muted');
             const destination=c.status==='critical'?'delivery':'nws',title=c.status==='critical'?'Delivery':'NWS Activity';
             return '<div class="health-top '+(findings.length?'':'neutral')+'"><div><div class="health-label">Red Lights</div><strong class="'+tone+'">'+escapeHtml(headline)+'</strong></div><a href="/dashboard/'+destination+'">Inspect '+title+' ↗</a></div><div class="health-rail">'+
               controlHealthItem('Ingest freshness',formatDuration(i.timeSinceLastSuccessfulSweepSeconds),i.status,i.recentSuccessCount+' successes / '+i.recentFailureCount+' failures','Last success: '+controlTime(i.lastSuccessfulSweepAt)+'. Last attempt: '+controlTime(i.lastAttemptAt)+'. Last failure: '+controlTime(i.lastFailureAt)+'. Error: '+(i.lastFailureMessage??'none')+'.')+
+              controlHealthItem('SPC meso ingest',formatDuration(m.lastAttemptAgeSeconds),m.status,m.activeProductCount+' active products · last attempt '+(m.lastAttemptStatus??'unknown')+' · 10-minute cadence','Last attempt: '+controlTime(m.lastAttemptAt)+'. Last success: '+controlTime(m.lastSuccessfulAt)+'. Latest accepted: '+(m.latestProductTitle??'none')+' ('+(m.latestProductKey??'n/a')+'), issued '+controlTime(m.latestProductIssuedAt)+', valid '+controlTime(m.latestProductValidStart)+' to '+controlTime(m.latestProductValidEnd)+'. Active geometry H3 coverage: '+m.activeProductsWithH3Coverage+' complete, '+m.activeProductsWithoutH3Coverage+' missing. Recent failures: '+m.recentFailureCount+' total; transport/fetch '+m.fetchFailureCount+', parse/reject '+m.parseRejectionCount+', persistence '+m.persistenceFailureCount+', H3 '+m.h3FailureCount+', other '+m.otherFailureCount+'. Last error: '+(m.lastFailureMessage??'none')+'.')+
               controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). Pending queue handoffs, not delivery completions.')+
               controlHealthItem('Stuck claims',String(c.count),c.status,'Claim age threshold: '+formatDuration(c.thresholdSeconds),'Oldest claim: '+formatDuration(c.oldestClaimedAgeSeconds)+' ('+controlTime(c.oldestClaimedCreatedAt)+').')+
               controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+'</div>';

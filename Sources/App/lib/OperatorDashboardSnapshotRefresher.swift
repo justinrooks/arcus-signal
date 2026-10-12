@@ -62,6 +62,7 @@ struct OperatorDashboardSnapshotRefresher {
 
         if fastDue {
             snapshot.ingestFreshness = try await loadIngestFreshness(on: app.db)
+            snapshot.spcMesoIngest = try await loadSPCMesoIngest(on: app.db, sql: sql, now: now)
             snapshot.pipelineBacklog = try await loadPipelineBacklog(on: app.db)
             snapshot.stuckClaimedRows = try await loadStuckClaimedRows(on: app.db, now: now)
             snapshot.modelArtifacts = try await loadPressureArtifactCatalog(on: app, sql: sql, now: now)
@@ -124,6 +125,69 @@ struct OperatorDashboardSnapshotRefresher {
             recentFailureCount: recentRuns.filter { $0.status == IngestSweepRunStatus.failed.rawValue }.count,
             lastFailureCompletedAt: lastFailure?.completedAt,
             lastFailureMessage: lastFailure?.errorMessage
+        )
+    }
+
+    private func loadSPCMesoIngest(
+        on database: any Database,
+        sql: any SQLDatabase,
+        now: Date
+    ) async throws -> StoredSPCMesoIngestMetric {
+        let recentRuns = try await IngestSweepRunModel.query(on: database)
+            .filter(\.$source == "spc-meso")
+            .sort(\.$completedAt, .descending)
+            .limit(OperatorDashboardConfig.ingestRecentAttemptLimit)
+            .all()
+        let lastSuccess: IngestSweepRunModel?
+        if let recentSuccess = recentRuns.first(where: { $0.status == IngestSweepRunStatus.succeeded.rawValue }) {
+            lastSuccess = recentSuccess
+        } else {
+            lastSuccess = try await IngestSweepRunModel.query(on: database)
+                .filter(\.$source == "spc-meso")
+                .filter(\.$status == IngestSweepRunStatus.succeeded.rawValue)
+                .sort(\.$completedAt, .descending)
+                .first()
+        }
+        let failures = recentRuns.filter { $0.status == IngestSweepRunStatus.failed.rawValue }
+        func stage(_ run: IngestSweepRunModel) -> String {
+            guard let message = run.errorMessage, message.hasPrefix("stage=") else { return "other" }
+            return String(message.dropFirst("stage=".count).prefix { !$0.isWhitespace })
+        }
+        let latestProduct = try await SPCMesoModel.query(on: database)
+            .sort(\.$issued, .descending)
+            .first()
+        let coverage = try await sql.raw("""
+            SELECT
+              COUNT(*) AS "activeProductCount",
+              COUNT(*) FILTER (WHERE g.h3_resolution = 8 AND g.h3_hash IS NOT NULL) AS "coveredCount",
+              COUNT(*) FILTER (
+                WHERE g.id IS NOT NULL AND (g.h3_resolution IS DISTINCT FROM 8 OR g.h3_hash IS NULL)
+              ) AS "missingCount"
+            FROM spc_mesos AS m
+            LEFT JOIN spc_meso_geolocation AS g ON g.meso_id = m.id
+            WHERE m.valid_start <= \(bind: now)
+              AND m.valid_end > \(bind: now)
+            """).first(decoding: SPCMesoCoverageCountsRow.self)
+
+        return .init(
+            activeProductCount: Int(coverage?.activeProductCount ?? 0),
+            activeProductsWithH3Coverage: Int(coverage?.coveredCount ?? 0),
+            activeProductsWithoutH3Coverage: Int(coverage?.missingCount ?? 0),
+            latestProductKey: latestProduct?.productKey,
+            latestProductTitle: latestProduct?.title,
+            latestProductIssuedAt: latestProduct?.issued,
+            latestProductValidStart: latestProduct?.validStart,
+            latestProductValidEnd: latestProduct?.validEnd,
+            lastAttemptAt: recentRuns.first?.completedAt,
+            lastAttemptStatus: recentRuns.first?.status,
+            lastSuccessfulAt: lastSuccess?.completedAt,
+            recentFailureCount: failures.count,
+            fetchFailureCount: failures.filter { stage($0) == "fetch" }.count,
+            parseRejectionCount: failures.filter { stage($0) == "parse_reject" }.count,
+            persistenceFailureCount: failures.filter { stage($0) == "persistence" }.count,
+            h3FailureCount: failures.filter { stage($0) == "h3" }.count,
+            otherFailureCount: failures.filter { !["fetch", "parse_reject", "persistence", "h3"].contains(stage($0)) }.count,
+            lastFailureMessage: failures.first?.errorMessage
         )
     }
 
@@ -1179,6 +1243,12 @@ struct OperatorDashboardSnapshotRefresher {
 
 private struct SingleCountRow: Decodable {
     let count: Int64
+}
+
+private struct SPCMesoCoverageCountsRow: Decodable {
+    let activeProductCount: Int64
+    let coveredCount: Int64
+    let missingCount: Int64
 }
 
 private struct LatencyAggregateRow: Decodable {

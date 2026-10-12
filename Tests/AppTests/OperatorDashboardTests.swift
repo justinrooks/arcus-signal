@@ -64,6 +64,22 @@ struct OperatorDashboardTests {
                 lastFailureCompletedAt: isoDate("2026-04-10T11:31:00Z"),
                 lastFailureMessage: "temporary upstream timeout"
             ),
+            spcMesoIngest: .init(
+                activeProductCount: 2,
+                activeProductsWithH3Coverage: 1,
+                activeProductsWithoutH3Coverage: 1,
+                latestProductKey: "202604101200-MD042",
+                latestProductTitle: "SPC MD 42",
+                latestProductIssuedAt: isoDate("2026-04-10T12:00:00Z"),
+                latestProductValidStart: isoDate("2026-04-10T11:30:00Z"),
+                latestProductValidEnd: isoDate("2026-04-10T13:00:00Z"),
+                lastAttemptAt: isoDate("2026-04-10T12:00:00Z"),
+                lastAttemptStatus: IngestSweepRunStatus.succeeded.rawValue,
+                lastSuccessfulAt: isoDate("2026-04-10T12:00:00Z"),
+                recentFailureCount: 1,
+                fetchFailureCount: 1,
+                lastFailureMessage: "stage=fetch error=test timeout"
+            ),
             pipelineBacklog: .init(
                 pendingTargetDispatchCount: 2,
                 oldestPendingTargetDispatchCreatedAt: isoDate("2026-04-10T11:54:00Z"),
@@ -329,6 +345,7 @@ struct OperatorDashboardTests {
         snapshot.pipelineBacklog = .init()
         snapshot.stuckClaimedRows = .init(thresholdSeconds: 300, count: 0)
         snapshot.staleActiveSeries = .init(graceSeconds: 900, count: 0)
+        snapshot.spcMesoIngest = .init()
 
         let response = OperatorDashboardSnapshotResponse(
             snapshot: snapshot,
@@ -400,7 +417,7 @@ struct OperatorDashboardTests {
         #expect(response.redLights.staleActiveSeriesCount.status == .unknown)
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "development", revision: nil))
-        #expect(html.components(separatedBy: "health-item health-unknown").count == 5)
+        #expect(html.components(separatedBy: "health-item health-unknown").count == 6)
         #expect(html.components(separatedBy: "], '', metric.status);").count == 5)
     }
 
@@ -549,6 +566,15 @@ struct OperatorDashboardTests {
                 #expect(payload.redLights.staleActiveSeriesCount.count == 5)
                 #expect(payload.redLights.stuckClaimedRows.status == .critical)
                 #expect(payload.redLights.staleActiveSeriesCount.status == .warning)
+                #expect(payload.redLights.spcMesoIngest.activeProductCount == 2)
+                #expect(payload.redLights.spcMesoIngest.activeProductsWithH3Coverage == 1)
+                #expect(payload.redLights.spcMesoIngest.activeProductsWithoutH3Coverage == 1)
+                #expect(payload.redLights.spcMesoIngest.latestProductKey == "202604101200-MD042")
+                #expect(payload.redLights.spcMesoIngest.latestProductTitle == "SPC MD 42")
+                #expect(payload.redLights.spcMesoIngest.latestProductIssuedAt == isoDate("2026-04-10T12:00:00Z"))
+                #expect(payload.redLights.spcMesoIngest.latestProductValidStart == isoDate("2026-04-10T11:30:00Z"))
+                #expect(payload.redLights.spcMesoIngest.latestProductValidEnd == isoDate("2026-04-10T13:00:00Z"))
+                #expect(payload.redLights.spcMesoIngest.status == .warning)
                 #expect(payload.operatorContext.recentNotificationDebugEntries.entries.count == 2)
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.eventName == "Severe Thunderstorm Warning")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.areaDescription == "Weld / Morgan, CO")
@@ -578,7 +604,7 @@ struct OperatorDashboardTests {
             app.operatorDashboardSnapshotStore = StubSnapshotStore(snapshot: makeSnapshot())
             app.arcusSignalBuildInfo = .init(version: "v9.9.9", revision: "route-test")
             let expected: [OperatorDashboardPageRenderer.Page: [String]] = [
-                .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Pressure artifact catalog history retained for 60 days", "Weld / Morgan, CO", "61.0%", "74 / 100"],
+                .overview: ["health-overview", "model-overview", "usage-overview", "footprint-overview", "geography-overview", "nws-overview", "delivery-overview", "Pressure artifact catalog history retained for 60 days", "SPC MD 42", "202604101200-MD042", "Active geometry H3 coverage: 1 complete, 1 missing", "Weld / Morgan, CO", "61.0%", "74 / 100"],
                 .models: ["pressure-artifact-catalog-card", "pressure-artifact-readiness-card", "recent-pressure-artifacts-table"],
                 .installations: ["recent-server-activity-card", "known-installations-card", "installation-growth-table", "footprint-overview", "geography-overview", "April 2026", "Dormant 180d+"],
                 .nws: ["health-overview", "touched-series-table", "COC005, COC013", "OBSERVED", "CONSIDERABLE", "urn:oid:series-1"],
