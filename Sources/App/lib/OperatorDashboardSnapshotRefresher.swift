@@ -61,6 +61,7 @@ struct OperatorDashboardSnapshotRefresher {
         }
 
         if fastDue {
+            snapshot.airNow = try await AirNowDependencyStore.load(on: app.db)
             snapshot.ingestFreshness = try await loadIngestFreshness(on: app.db)
             snapshot.spcMesoIngest = try await loadSPCMesoIngest(on: app.db, sql: sql, now: now)
             snapshot.mesoActivity = try await loadMesoActivity(on: sql, now: now)

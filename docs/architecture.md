@@ -14,6 +14,32 @@ Arcus Signal ingests NWS alert revisions, targets eligible installations by H3 o
 
 [`ArcusQueueLane`](../Sources/App/Worker/ArcusQueueLane.swift) defines the `ingest`, `target`, `send`, and `model-artifacts` lanes. Worker configuration applies the same `QUEUE_WORKER_COUNT` to Vapor Queues, with a minimum and default of `1`, through [`configureWorkerQueueSettings(on:)`](../Sources/App/configure.swift). Before any consumer or schedule starts, [`WorkerRuntime`](../Sources/App/Worker/WorkerRuntime.swift) atomically returns abandoned registered model-artifact jobs to waiting while preserving and reporting unknown or malformed entries; failed reconciliation shuts the worker down. After successful reconciliation, `WorkerRuntime` starts consumers for every lane.
 
+## AirNow dependency visibility
+
+The API records real AirNow fetch outcomes in the singleton
+`airnow_dependency_status` row. The AirNow client preserves HTTP, transport,
+missing-data, and decode classifications; the AQI provider determines whether
+observations yield usable AQI. Cache hits do not write upstream health evidence.
+API startup records disabled/unconfigured state without contacting AirNow.
+The worker reads this row on the dashboard's fast-refresh lane; dashboard
+rendering remains passive and `/health` is independent of AirNow.
+
+Writes use a PostgreSQL transaction advisory lock. Latest outcome follows
+completion time (including older-started fetches finishing last) with a stable
+tie-breaker; late successes retain timestamp
+watermarks and conservatively reset any interrupted failure streak. The record
+contains bounded operational classifications and timing only, with no location,
+device, AQI value, downstream error text, or API key. A telemetry write failure
+warns without changing the public AQI result.
+
+Healthy means the latest real outcome produced usable AQI. Other known outcomes
+are Warning; absent evidence is Unknown. Critical requires at least two accepted
+failure completions in a streak lasting 90 minutes (twice the AQI cache lifetime)
+and no usable AQI in that interval. One failed attempt cannot age into Critical.
+Idle time alone cannot promote transient failures. Equal-time updates count as
+one failure observation. A subsequent usable result restores Healthy and clears
+the failure streak.
+
 ## SPC mesoscale coverage
 
 `SPCMesoIngestPersistence` accepts canonical meso snapshots and their polygon coverage

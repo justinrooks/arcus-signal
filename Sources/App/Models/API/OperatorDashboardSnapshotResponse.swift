@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 10
+    public static let currentSchemaVersion = 11
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -24,6 +24,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var standardRefreshedAt: Date?
     public var slowRefreshedAt: Date?
 
+    public var airNow: AirNowDependencyStatus
     public var ingestFreshness: StoredIngestFreshnessMetric
     public var mesoActivity: StoredMesoActivity?
     public var spcMesoIngest: StoredSPCMesoIngestMetric
@@ -49,6 +50,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         fastRefreshedAt: Date? = nil,
         standardRefreshedAt: Date? = nil,
         slowRefreshedAt: Date? = nil,
+        airNow: AirNowDependencyStatus = .init(),
         ingestFreshness: StoredIngestFreshnessMetric = .init(),
         spcMesoIngest: StoredSPCMesoIngestMetric = .init(),
         mesoActivity: StoredMesoActivity? = nil,
@@ -73,6 +75,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.fastRefreshedAt = fastRefreshedAt
         self.standardRefreshedAt = standardRefreshedAt
         self.slowRefreshedAt = slowRefreshedAt
+        self.airNow = airNow
         self.ingestFreshness = ingestFreshness
         self.spcMesoIngest = spcMesoIngest
         self.mesoActivity = mesoActivity
@@ -99,6 +102,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case fastRefreshedAt
         case standardRefreshedAt
         case slowRefreshedAt
+        case airNow
         case ingestFreshness
         case spcMesoIngest
         case mesoActivity
@@ -126,6 +130,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.fastRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .fastRefreshedAt)
         self.standardRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .standardRefreshedAt)
         self.slowRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .slowRefreshedAt)
+        self.airNow = try container.decodeIfPresent(AirNowDependencyStatus.self, forKey: .airNow) ?? .init()
         self.ingestFreshness = try container.decode(StoredIngestFreshnessMetric.self, forKey: .ingestFreshness)
         self.spcMesoIngest = try container.decodeIfPresent(StoredSPCMesoIngestMetric.self, forKey: .spcMesoIngest) ?? .init()
         self.mesoActivity = try container.decodeIfPresent(StoredMesoActivity.self, forKey: .mesoActivity)
@@ -1020,6 +1025,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
 }
 
 public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
+    public var airQuality: AirNowDependencyMetricResponse
     public var ingestFreshness: IngestFreshnessMetricResponse
     public var spcMesoIngest: SPCMesoIngestMetricResponse
     public var pipelineBacklogAge: PipelineBacklogMetricResponse
@@ -1027,6 +1033,7 @@ public struct OperatorDashboardRedLightsSectionResponse: Content, Sendable {
     public var staleActiveSeriesCount: StaleActiveSeriesMetricResponse
 
     init(snapshot: OperatorDashboardStoredSnapshot, renderedAt: Date) {
+        self.airQuality = .init(metric: snapshot.airNow, now: renderedAt)
         self.ingestFreshness = .init(
             refreshedAt: snapshot.fastRefreshedAt,
             renderedAt: renderedAt,

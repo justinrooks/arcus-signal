@@ -31,8 +31,8 @@ struct AirQualityTests {
             longitude: -104.9903
         )
 
-        #expect(observations.count == 1)
-        #expect(observations[0].aqi == 20)
+        #expect(observations.observations.count == 1)
+        #expect(observations.observations[0].aqi == 20)
         #expect(httpClient.requests.count == 1)
 
         guard let request = httpClient.requests.first else {
@@ -150,7 +150,7 @@ struct AirQualityTests {
 }
 
 private struct ThrowingAirNowClient: AirNowClient {
-    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> [AirNowObservation] {
+    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> AirNowObservationsResponse {
         _ = latitude
         _ = longitude
         throw AirNowClientError.upstreamFailure(status: 429)

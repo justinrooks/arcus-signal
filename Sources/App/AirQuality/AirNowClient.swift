@@ -3,12 +3,19 @@ import Logging
 
 enum AirNowClientError: Error, Sendable {
     case invalidURL
-    case missingData
+    case missingData(status: Int)
+    case decodeFailure(status: Int)
+    case transportFailure
     case upstreamFailure(status: Int)
 }
 
+struct AirNowObservationsResponse: Sendable {
+    let observations: [AirNowObservation]
+    let httpStatus: Int
+}
+
 protocol AirNowClient: Sendable {
-    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> [AirNowObservation]
+    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> AirNowObservationsResponse
 }
 
 struct DefaultAirNowClient: AirNowClient {
@@ -29,11 +36,10 @@ struct DefaultAirNowClient: AirNowClient {
         self.logger = logger
     }
 
-    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> [AirNowObservation] {
+    func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> AirNowObservationsResponse {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw AirNowClientError.invalidURL
         }
-//        https://www.airnowapi.org/aq/observation/current/ziplatlong/?format=application/json&latitude=39.753&longitude=-104.44991&API_KEY=70D98E07-5A66-4B59-8A83-529D198B4E72
         components.path = "/aq/observation/current/ziplatlong/"
         components.queryItems = [
             .init(name: "format", value: "application/json"),
@@ -44,12 +50,20 @@ struct DefaultAirNowClient: AirNowClient {
         ]
         guard let url = components.url else { throw AirNowClientError.invalidURL }
 
-        let response = try await http.get(url, headers: ["Accept": "application/json"])
+        let response: HTTPResponse
+        do { response = try await http.get(url, headers: ["Accept": "application/json"]) }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw AirNowClientError.transportFailure }
         guard (200...299).contains(response.status) else {
             logger.warning("AirNow request failed status=\(response.status)")
             throw AirNowClientError.upstreamFailure(status: response.status)
         }
-        guard let data = response.data else { throw AirNowClientError.missingData }
-        return try JSONDecoder().decode([AirNowObservation].self, from: data)
+        guard let data = response.data else { throw AirNowClientError.missingData(status: response.status) }
+        do {
+            return AirNowObservationsResponse(
+                observations: try JSONDecoder().decode([AirNowObservation].self, from: data),
+                httpStatus: response.status
+            )
+        } catch { throw AirNowClientError.decodeFailure(status: response.status) }
     }
 }
