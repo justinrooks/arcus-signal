@@ -771,11 +771,18 @@ extension OperatorDashboardPageRenderer {
               return;
             }
 
-            const openDetails = [...node.querySelectorAll('details')].map(element => element.open);
+            const details = [...node.querySelectorAll('details')];
+            const openDetails = details.map(element => element.open);
+            const keyedDetails = new Map(details.filter(element => element.dataset.disclosureKey !== undefined).map(element => [element.dataset.disclosureKey, element.open]));
             const focusedSummary = [...node.querySelectorAll('summary')].indexOf(document.activeElement);
+            const focusedKey = document.activeElement?.closest('details')?.dataset.disclosureKey;
             node.innerHTML = html;
-            node.querySelectorAll('details').forEach((element, index) => { element.open = openDetails[index] ?? false; });
-            if (focusedSummary >= 0) node.querySelectorAll('summary')[focusedSummary]?.focus({ preventScroll: true });
+            node.querySelectorAll('details').forEach((element, index) => {
+              const key = element.dataset.disclosureKey;
+              element.open = key !== undefined ? (keyedDetails.get(key) ?? false) : (openDetails[index] ?? false);
+              if (focusedKey !== undefined && key === focusedKey) element.querySelector('summary')?.focus({ preventScroll: true });
+            });
+            if (focusedKey === undefined && focusedSummary >= 0) node.querySelectorAll('summary')[focusedSummary]?.focus({ preventScroll: true });
           }
 
           function updateSlot(id, key, html, options) {
@@ -834,8 +841,8 @@ extension OperatorDashboardPageRenderer {
           function controlStat(label, value, context) {
             return '<div><span class="stat-label">'+escapeHtml(label)+'</span><strong class="stat-value">'+escapeHtml(value)+'</strong><span class="stat-unit">'+escapeHtml(context)+'</span></div>';
           }
-          function controlHealthItem(title, value, status, summary, details = '') {
-            return '<div class="health-item health-'+escapeHtml(status)+'"><h3>'+escapeHtml(title)+'</h3><div class="health-reading"><strong>'+escapeHtml(value)+'</strong><span class="health-status">'+escapeHtml(status.charAt(0).toUpperCase()+status.slice(1))+'</span></div><p>'+escapeHtml(summary)+'</p>'+(details ? '<details class="health-details"><summary>Details</summary><div class="detail-copy">'+escapeHtml(details)+'</div></details>' : '')+'</div>';
+          function controlHealthItem(title, value, status, summary, details = '', page = null) {
+            return '<div class="health-item health-'+escapeHtml(status)+'"><h3>'+escapeHtml(title)+'</h3><div class="health-reading"><strong>'+escapeHtml(value)+'</strong><span class="health-status">'+escapeHtml(status.charAt(0).toUpperCase()+status.slice(1))+'</span></div><p>'+escapeHtml(summary)+'</p>'+(details ? '<details class="health-details"><summary>Details</summary><div class="detail-copy">'+escapeHtml(details)+'</div></details>' : '')+(page?'<p><a href="/dashboard/'+page+'">Inspect Meso Activity ↗</a></p>':'')+'</div>';
           }
           function renderHealthOverview(r) {
             const i=r.ingestFreshness,m=r.spcMesoIngest,b=r.pipelineBacklogAge,c=r.stuckClaimedRows,s=r.staleActiveSeriesCount;
@@ -847,10 +854,10 @@ extension OperatorDashboardPageRenderer {
             const unknown=[i,m,b,c,s].filter(m=>m.status==='unknown').length;
             const headline=findings.length ? findings.join(' · ')+' need review' : 'No classified red lights · '+unknown+' unknown signals';
             const tone=c.status==='critical'?'danger':(findings.length?'warning':'muted');
-            const destination=c.status==='critical'?'delivery':'nws',title=c.status==='critical'?'Delivery':'NWS Activity';
+            const destination=c.status==='critical'?'delivery':(m.status==='warning'?'mesos':'nws'),title=c.status==='critical'?'Delivery':(m.status==='warning'?'Meso Activity':'NWS Activity');
             return '<div class="health-top '+(findings.length?'':'neutral')+'"><div><div class="health-label">Red Lights</div><strong class="'+tone+'">'+escapeHtml(headline)+'</strong></div><a href="/dashboard/'+destination+'">Inspect '+title+' ↗</a></div><div class="health-rail">'+
               controlHealthItem('Ingest freshness',formatDuration(i.timeSinceLastSuccessfulSweepSeconds),i.status,i.recentSuccessCount+' successes / '+i.recentFailureCount+' failures','Last success: '+controlTime(i.lastSuccessfulSweepAt)+'. Last attempt: '+controlTime(i.lastAttemptAt)+'. Last failure: '+controlTime(i.lastFailureAt)+'. Error: '+(i.lastFailureMessage??'none')+'.')+
-              controlHealthItem('SPC meso ingest',formatDuration(m.lastAttemptAgeSeconds),m.status,m.activeProductCount+' active products · last attempt '+(m.lastAttemptStatus??'unknown')+' · 10-minute cadence','Last attempt: '+controlTime(m.lastAttemptAt)+'. Last success: '+controlTime(m.lastSuccessfulAt)+'. Latest accepted: '+(m.latestProductTitle??'none')+' ('+(m.latestProductKey??'n/a')+'), issued '+controlTime(m.latestProductIssuedAt)+', valid '+controlTime(m.latestProductValidStart)+' to '+controlTime(m.latestProductValidEnd)+'. Active geometry H3 coverage: '+m.activeProductsWithH3Coverage+' complete, '+m.activeProductsWithoutH3Coverage+' missing. Recent failures: '+m.recentFailureCount+' total; transport/fetch '+m.fetchFailureCount+', parse/reject '+m.parseRejectionCount+', persistence '+m.persistenceFailureCount+', H3 '+m.h3FailureCount+', other '+m.otherFailureCount+'. Last error: '+(m.lastFailureMessage??'none')+'.')+
+              controlHealthItem('SPC meso ingest',formatDuration(m.lastAttemptAgeSeconds),m.status,m.activeProductCount+' active products · last attempt '+(m.lastAttemptStatus??'unknown')+' · 10-minute cadence','Last attempt: '+controlTime(m.lastAttemptAt)+'. Last success: '+controlTime(m.lastSuccessfulAt)+'. Latest accepted: '+(m.latestProductTitle??'none')+' ('+(m.latestProductKey??'n/a')+'), issued '+controlTime(m.latestProductIssuedAt)+', valid '+controlTime(m.latestProductValidStart)+' to '+controlTime(m.latestProductValidEnd)+'. Active geometry H3 coverage: '+m.activeProductsWithH3Coverage+' complete, '+m.activeProductsWithoutH3Coverage+' missing. Recent failures: '+m.recentFailureCount+' total; transport/fetch '+m.fetchFailureCount+', parse/reject '+m.parseRejectionCount+', persistence '+m.persistenceFailureCount+', H3 '+m.h3FailureCount+', other '+m.otherFailureCount+'. Last error: '+(m.lastFailureMessage??'none')+'.','mesos')+
               controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). Pending queue handoffs, not delivery completions.')+
               controlHealthItem('Stuck claims',String(c.count),c.status,'Claim age threshold: '+formatDuration(c.thresholdSeconds),'Oldest claim: '+formatDuration(c.oldestClaimedAgeSeconds)+' ('+controlTime(c.oldestClaimedCreatedAt)+').')+
               controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+'</div>';
@@ -904,8 +911,32 @@ extension OperatorDashboardPageRenderer {
               controlStat('Geography → H3',formatPercent(h.successRate),h.successfulConversionCount+' / '+h.geometryBearingRevisionCount+' geometry revisions · '+h.windowHours+'h')+
               '</div><details><summary>Coverage & delivery context</summary><div class="detail-copy">Candidate-query eligible: '+c.candidateQueryEligibleInstallationCount+' / '+c.activeSubscribedInstallationCount+' (presence ≤'+formatDuration(c.hardStalePresenceThresholdSeconds)+'); fresh targetable: '+c.targetableInstallationCount+' / '+c.activeSubscribedInstallationCount+'. These are distinct measures. APNs acceptance does not prove an alert was seen.</div></details>';
           }
+          function renderMesoSummary(m) {
+            return '<p class="detail-copy">'+escapeHtml(m.activeProductCount+' active discussions · '+m.status.charAt(0).toUpperCase()+m.status.slice(1)+' · Last success: '+controlTime(m.lastSuccessfulAt)+'. Active geometry H3 coverage: '+m.activeProductsWithH3Coverage+' complete, '+m.activeProductsWithoutH3Coverage+' missing. Latest issued: '+(m.latestProductTitle??'n/a')+' · '+controlTime(m.latestProductIssuedAt)+'.')+'</p>';
+          }
+          function renderMesoActivity(activity) {
+            if (!activity) return '<p class="empty">Meso activity unavailable in this snapshot. Awaiting worker refresh.</p>';
+            const note='<p class="module-note">Issued within 48 hours plus currently active discussions · UTC · '+(activity.capped?'Capped sample: up to 50 discussions, active products prioritized. ':'')+'Refreshed '+escapeHtml(controlTime(activity.refreshedAt))+'</p>';
+            if (!activity.entries.length) return note+'<p class="empty">No active or recently issued discussions.</p>';
+            const number=value=>Number(value).toLocaleString('en-US',{useGrouping:false,maximumFractionDigits:2});
+            return note+activity.entries.map(e=>{
+              const at=parseDateValue(activity.refreshedAt),status=at<parseDateValue(e.validStart)?'Pending':(at<parseDateValue(e.validEnd)?'Active':'Expired');
+              const probability=e.watchProbability!=null?number(e.watchProbability)+'%':(e.watchProbabilityText||'Unknown');
+              const fields=[['Valid from',controlTime(e.validStart)],['Valid until',controlTime(e.validEnd)],['Product identity',e.productKey],['Coverage',e.geometryAvailable?(e.h3CoverageComplete?'Geometry present · H3 complete':'Geometry present · H3 missing'):'No geometry']];
+              if(e.concerning) fields.push(['Concerning / watch',e.concerning]);
+              if(e.watchProbabilityText) fields.push(['Watch source text',e.watchProbabilityText]);
+              if(e.peakWindMPH!=null) fields.push(['Peak wind',e.peakWindMPH+' mph']);
+              if(e.hailRangeInches!=null) fields.push(['Hail',number(e.hailRangeInches)+' inches']);
+              if(e.tornadoStrength) fields.push(['Tornado',e.tornadoStrength]);
+              let link='';
+              try { const url=new URL(e.sourceURL); if(url.protocol==='https:'&&['www.spc.noaa.gov','spc.noaa.gov'].includes(url.hostname)&&!url.username&&!url.password) link='<p><a href="'+escapeHtml(e.sourceURL)+'">Original SPC product ↗</a></p>'; } catch {}
+              return '<details class="metric-details" data-disclosure-key="'+escapeHtml(e.productKey)+'"><summary class="metric-summary">'+escapeHtml('MD '+e.number+' · '+status+' · '+e.areasAffected+' · Issued '+controlTime(e.issued)+' · Valid until '+controlTime(e.validEnd)+' · Watch probability: '+probability)+'</summary><dl class="definition-list">'+fields.map(([label,value])=>'<div><dt>'+escapeHtml(label)+'</dt><dd>'+escapeHtml(value)+'</dd></div>').join('')+'</dl><p class="detail-copy" style="white-space:pre-wrap">'+escapeHtml(e.summary)+'</p>'+link+'</details>';
+            }).join('');
+          }
           function applySnapshot(snapshot) {
             const detail = document.body.classList.contains('detail-page');
+            updateSlot('meso-summary', JSON.stringify(snapshot.redLights.spcMesoIngest), renderMesoSummary(snapshot.redLights.spcMesoIngest));
+            updateSlot('meso-activity', JSON.stringify(snapshot.mesoActivity), renderMesoActivity(snapshot.mesoActivity));
             updateSlot('health-overview', JSON.stringify(snapshot.redLights), renderHealthOverview(snapshot.redLights));
             updateSlot('model-overview', JSON.stringify(snapshot.modelArtifacts), renderModelOverview(snapshot.modelArtifacts, detail));
             updateSlot('usage-overview', JSON.stringify(snapshot.growthUsage), renderUsageOverview(snapshot.growthUsage, detail));
