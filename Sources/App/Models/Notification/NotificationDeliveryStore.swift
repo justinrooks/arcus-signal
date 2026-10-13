@@ -74,6 +74,162 @@ struct NotificationDeliveryStore {
         }
     }
 
+    /// Event-first, presence-first and fanout producers must all use this claim.
+    /// Only a winner may proceed to delivery; duplicates never acquire retry ownership.
+    func claimMeso(
+        installationID: UUID,
+        issueYear: Int,
+        number: Int,
+        mode: NotificationTargetMode,
+        reason: NotificationReason,
+        freshnessState: LocationFreshnessState,
+        retryOwnerID: String,
+        origin: NotificationDeliveryOrigin,
+        on db: any Database
+    ) async throws -> LedgerClaimResult {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        let row = try await sql.raw("""
+            INSERT INTO notification_ledger
+                (id, installation_id, revision_urn, subject_kind, subject_id, subject_revision_id,
+                 mode, reason, freshness_state, retry_owner_id, delivery_origin, retry_generation, created, status)
+            VALUES
+                (\(bind: UUID()), \(bind: installationID), \(bind: subject.revisionID),
+                 \(bind: subject.kind.rawValue), \(bind: subject.productID), \(bind: subject.revisionID),
+                 \(bind: mode), \(bind: reason), \(bind: freshnessState),
+                 \(bind: retryOwnerID), \(bind: origin.rawValue), 0, NOW(), 'claimed')
+            ON CONFLICT (installation_id, subject_kind, subject_id, subject_revision_id)
+                WHERE series_id IS NULL
+            DO NOTHING
+            RETURNING id, retry_generation AS "retryGeneration"
+            """).first()
+        guard let row else { return .init(inserted: false, id: nil, retryGeneration: nil) }
+        return .init(inserted: true, id: try row.decode(column: "id", as: UUID.self),
+                     retryGeneration: try row.decode(column: "retryGeneration", as: Int.self))
+    }
+
+    /// Retry the same ledger row, fenced by product, installation, owner and generation.
+    func reclaimRetryingMeso(
+        _ delivery: NotificationRetryDelivery,
+        issueYear: Int,
+        number: Int,
+        retryOwnerID: String,
+        freshnessState: LocationFreshnessState,
+        on db: any Database
+    ) async throws -> LedgerClaimResult {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        let row = try await sql.raw("""
+            UPDATE notification_ledger
+            SET status = 'claimed', freshness_state = \(bind: freshnessState), completed_at = NULL
+            WHERE id = \(bind: delivery.id)
+              AND installation_id = \(bind: delivery.installationID)
+              AND series_id IS NULL
+              AND subject_kind = \(bind: subject.kind.rawValue)
+              AND subject_id = \(bind: subject.productID)
+              AND subject_revision_id = \(bind: subject.revisionID)
+              AND status = 'retrying'
+              AND retry_owner_id = \(bind: retryOwnerID)
+              AND retry_generation = \(bind: delivery.retryGeneration)
+            RETURNING id, retry_generation AS "retryGeneration"
+            """).first()
+        guard let row else { return .init(inserted: false, id: nil, retryGeneration: nil) }
+        return .init(inserted: true, id: try row.decode(column: "id", as: UUID.self),
+                     retryGeneration: try row.decode(column: "retryGeneration", as: Int.self))
+    }
+
+    func loadRetryingMesoDeliveries(
+        issueYear: Int, number: Int, installationID: UUID? = nil,
+        retryOwnerID: String, on db: any Database
+    ) async throws -> [NotificationRetryDelivery] {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        return try await sql.raw("""
+            SELECT id, installation_id AS "installationId", retry_generation AS "retryGeneration"
+            FROM notification_ledger
+            WHERE series_id IS NULL
+              AND subject_kind = \(bind: subject.kind.rawValue)
+              AND subject_id = \(bind: subject.productID)
+              AND subject_revision_id = \(bind: subject.revisionID)
+              AND status = 'retrying' AND retry_owner_id = \(bind: retryOwnerID)
+              AND (\(bind: installationID)::uuid IS NULL OR installation_id = \(bind: installationID)::uuid)
+            ORDER BY created, id
+            """).all(decoding: NotificationRetryDelivery.self)
+    }
+
+    func hasMesoRetryInFlight(
+        issueYear: Int, number: Int, installationID: UUID? = nil,
+        retryOwnerID: String, on db: any Database
+    ) async throws -> Bool {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        return try await sql.raw("""
+            SELECT EXISTS (
+                SELECT 1 FROM notification_ledger
+                WHERE series_id IS NULL
+                  AND subject_kind = \(bind: subject.kind.rawValue)
+                  AND subject_id = \(bind: subject.productID)
+                  AND subject_revision_id = \(bind: subject.revisionID)
+                  AND status = 'claimed' AND retry_owner_id = \(bind: retryOwnerID)
+                  AND (\(bind: installationID)::uuid IS NULL OR installation_id = \(bind: installationID)::uuid)
+            ) AS "exists"
+            """).first()?.decode(column: "exists", as: Bool.self) ?? false
+    }
+
+    func completeRetryingMesoFailure(
+        _ delivery: NotificationRetryDelivery,
+        issueYear: Int, number: Int, retryOwnerID: String,
+        apnsErrorCode: String, on db: any Database
+    ) async throws -> Bool {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        let row = try await sql.raw("""
+            UPDATE notification_ledger
+            SET status = 'failed', apns_error_code = \(bind: apnsErrorCode), completed_at = NOW()
+            WHERE id = \(bind: delivery.id) AND installation_id = \(bind: delivery.installationID)
+              AND series_id IS NULL
+              AND subject_kind = \(bind: subject.kind.rawValue)
+              AND subject_id = \(bind: subject.productID)
+              AND subject_revision_id = \(bind: subject.revisionID)
+              AND status = 'retrying' AND retry_owner_id = \(bind: retryOwnerID)
+              AND retry_generation = \(bind: delivery.retryGeneration)
+            RETURNING id
+            """).first()
+        return row != nil
+    }
+
+    func failRetryingMesoDeliveries(
+        issueYear: Int, number: Int, installationID: UUID? = nil,
+        retryOwnerID: String, apnsErrorCode: String, on db: any Database
+    ) async throws -> Int {
+        guard let sql = db as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+        }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        let rows = try await sql.raw("""
+            UPDATE notification_ledger
+            SET status = 'failed', apns_error_code = \(bind: apnsErrorCode), completed_at = NOW()
+            WHERE series_id IS NULL
+              AND subject_kind = \(bind: subject.kind.rawValue)
+              AND subject_id = \(bind: subject.productID)
+              AND subject_revision_id = \(bind: subject.revisionID)
+              AND status = 'retrying' AND retry_owner_id = \(bind: retryOwnerID)
+              AND (\(bind: installationID)::uuid IS NULL OR installation_id = \(bind: installationID)::uuid)
+            RETURNING id
+            """).all()
+        return rows.count
+    }
+
     func loadRetryingDeliveries(
         seriesID: UUID,
         revisionUrn: String,

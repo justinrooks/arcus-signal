@@ -125,6 +125,27 @@ Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0
 
 For a delivery-eligible candidate (`fresh` or `degraded`), [`NotificationDeliveryStore.claim(...)`](../Sources/App/Models/Notification/NotificationDeliveryStore.swift) atomically inserts `notification_ledger` with `ON CONFLICT DO NOTHING`. [`CreateNotificationLedger`](../Sources/App/Migrations/CreateNotificationLedger.swift) enforces `UNIQUE(installation_id, series_id, revision_urn)`. `mode` and `reason` are recorded on a claim but do not participate in its deduplication identity.
 
+SPC meso producers use `NotificationSubject.spcMeso(issueYear:number:)` and
+`NotificationDeliveryStore.claimMeso(...)`. The product ID is the canonical
+`SPC-MD-<issueYear>-<number>`; the delivery revision is always `initial`.
+Content fingerprints, watch probabilities, polygon/H3 coverage, last-seen times,
+targeting modes, reasons, and producer origins never change this identity.
+The existing partial unique index enforces one claim per installation and
+discussion; atomic insert conflict handling permits only one delivery winner.
+A claim is not evidence of a successful send. Transient failure uses the existing
+`markRetrying(...)` transition, then `reclaimRetryingMeso(...)` on the same row,
+fenced by product, installation, retry owner and generation.
+`loadRetryingMesoDeliveries(...)` discovers the owning job's retries;
+`hasMesoRetryInFlight(...)` detects its claimed work. Ineligible retries use
+`completeRetryingMesoFailure(...)`, and exhaustion uses
+`failRetryingMesoDeliveries(...)` for only that subject and owner.
+A competing producer
+cannot obtain a fresh claim or take over an owned retry. Intentional re-notification
+of an existing MD requires a separately approved policy and delivery-revision
+change; canonical content updates must never implicitly enable it.
+These primitives do not enable meso targeting, APNs sends, or the production gate.
+NWS CAP revision identity and retry paths remain unchanged.
+
 After a successful claim, [`NotificationEngine.buildNotification(...)`](../Sources/App/Infrastructure/Notifications/NotificationEngine.swift) builds candidate-specific title, subtitle, and body; the send job then sends APNs using that candidate’s environment. [`NotificationDebugModel`](../Sources/App/Models/Notification/NotificationDebugModel.swift) records the composed preview/candidate copy for diagnostics. [`NotificationSendAttemptModel`](../Sources/App/Models/Notification/NotificationSendAttemptModel.swift) records a send-job attempt summary. Neither is the dispatch-intent outbox or an APNs-delivery guarantee.
 
 On APNs success, `NotificationDeliveryStore.completeSent(...)` completes the claimed ledger row. Classified terminal failures use `completeFailed(...)` to record `failed` and the APNs error code. Delivery is sequential within the job.
