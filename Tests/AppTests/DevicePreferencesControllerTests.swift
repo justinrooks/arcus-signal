@@ -18,6 +18,7 @@ struct DevicePreferencesControllerTests {
         let isSubscribed: Bool
         let source: String
         let reason: String
+        let mesoNotificationsEnabled: Bool?
     }
 
     private func withApp(
@@ -45,7 +46,8 @@ struct DevicePreferencesControllerTests {
         auth: String = "always",
         isSubscribed: Bool = true,
         source: String = "settingsPreference",
-        reason: String = "preferenceChanged"
+        reason: String = "preferenceChanged",
+        mesoNotificationsEnabled: Bool? = nil
     ) -> DevicePreferencesRequest {
         .init(
             installationId: installationId,
@@ -58,7 +60,8 @@ struct DevicePreferencesControllerTests {
             auth: auth,
             isSubscribed: isSubscribed,
             source: source,
-            reason: reason
+            reason: reason,
+            mesoNotificationsEnabled: mesoNotificationsEnabled
         )
     }
 
@@ -78,6 +81,7 @@ struct DevicePreferencesControllerTests {
             let installation = try await DeviceInstallationModel.find(installationId, on: app.db)
             #expect(installation != nil)
             #expect(installation?.isSubscribed == true)
+            #expect(installation?.mesoNotificationsEnabled == nil)
 
             let presence = try await DevicePresenceModel.find(installationId, on: app.db)
             #expect(presence == nil)
@@ -139,6 +143,37 @@ struct DevicePreferencesControllerTests {
 
             let updated = try await DeviceInstallationModel.find(installationId, on: app.db)
             #expect(updated?.isSubscribed == true)
+        }
+    }
+
+    @Test("preference sync persists explicit meso preference and preserves it when omitted")
+    func preferenceSyncMesoPreferenceIsOptionalAndPreserved() async throws {
+        try await withApp { app in
+            for value in [true, false] {
+                let installationID = UUID()
+                let initial = makeRequest(
+                    installationId: installationID.uuidString,
+                    mesoNotificationsEnabled: value
+                )
+                try await app.testing().test(.POST, "api/v1/devices/preferences", beforeRequest: { req in
+                    try req.content.encode(initial)
+                }, afterResponse: { res async in
+                    #expect(res.status == .ok)
+                })
+                let stored = try await DeviceInstallationModel.find(installationID, on: app.db)
+                #expect(stored?.mesoNotificationsEnabled == value)
+                #expect(stored?.isSubscribed == true)
+
+                let legacy = makeRequest(installationId: installationID.uuidString)
+                try await app.testing().test(.POST, "api/v1/devices/preferences", beforeRequest: { req in
+                    try req.content.encode(legacy)
+                }, afterResponse: { res async in
+                    #expect(res.status == .ok)
+                })
+                let preserved = try await DeviceInstallationModel.find(installationID, on: app.db)
+                #expect(preserved?.mesoNotificationsEnabled == value)
+                #expect(preserved?.isSubscribed == true)
+            }
         }
     }
 

@@ -37,7 +37,8 @@ struct DeviceControllerTests {
         cellScheme: CellScheme = .ugcOnly,
         h3Cell: Int64? = nil,
         h3Resolution: Int? = nil,
-        appVersion: String = "1.0.0"
+        appVersion: String = "1.0.0",
+        mesoNotificationsEnabled: Bool? = nil
     ) -> LocationSnapshotPushPayload {
         LocationSnapshotPushPayload(
             capturedAt: capturedAt,
@@ -60,7 +61,8 @@ struct DeviceControllerTests {
             apnsEnvironment: APNsEnvironment.sandbox.rawValue,
             countyLabel: "Boulder County",
             fireZoneLabel: "Front Range",
-            isSubscribed: isSubscribed
+            isSubscribed: isSubscribed,
+            mesoNotificationsEnabled: mesoNotificationsEnabled
         )
     }
 
@@ -110,6 +112,39 @@ struct DeviceControllerTests {
                 let storedPresence = try await DevicePresenceModel.find(installationID, on: app.db)
                 #expect(storedPresence != nil)
                 #expect(storedPresence?.source == source)
+            }
+        }
+    }
+
+    @Test("location snapshots persist explicit meso preference and preserve it when omitted")
+    func locationSnapshotMesoPreferenceIsOptionalAndPreserved() async throws {
+        try await withApp { app in
+            let legacyInstallationID = UUID()
+            try await submit(
+                makePayload(installationId: legacyInstallationID.uuidString),
+                to: app
+            )
+            let legacyInstallation = try await DeviceInstallationModel.find(legacyInstallationID, on: app.db)
+            #expect(legacyInstallation?.mesoNotificationsEnabled == nil)
+            #expect(legacyInstallation?.isSubscribed == true)
+
+            for value in [true, false] {
+                let installationID = UUID()
+                try await submit(
+                    makePayload(
+                        installationId: installationID.uuidString,
+                        mesoNotificationsEnabled: value
+                    ),
+                    to: app
+                )
+                #expect(try await DeviceInstallationModel.find(installationID, on: app.db)?.mesoNotificationsEnabled == value)
+
+                try await submit(
+                    makePayload(installationId: installationID.uuidString),
+                    to: app
+                )
+                #expect(try await DeviceInstallationModel.find(installationID, on: app.db)?.mesoNotificationsEnabled == value)
+                #expect(try await DeviceInstallationModel.find(installationID, on: app.db)?.isSubscribed == true)
             }
         }
     }

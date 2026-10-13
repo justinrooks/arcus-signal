@@ -127,6 +127,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddFreshnessStateToNotificationLedger())
     app.migrations.add(AddIsSubscribedToDeviceInstallation())
     app.migrations.add(FixIsSubscribedToDeviceInstallation())
+    app.migrations.add(AddMesoNotificationPreferenceToDeviceInstallation())
     app.migrations.add(UpdateArcusSeriesConstraints())
     app.migrations.add(AddApnsErrorCodeToNotificationLedger())
     app.migrations.add(AddRetryStateToNotificationLedger())

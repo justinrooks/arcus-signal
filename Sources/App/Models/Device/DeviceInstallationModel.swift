@@ -47,6 +47,9 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
     @Field(key: "is_subscribed")
     public var isSubscribed: Bool
 
+    @OptionalField(key: "meso_notifications_enabled")
+    public var mesoNotificationsEnabled: Bool?
+
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
 
@@ -69,7 +72,8 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
         locationAuth: LocationAuth,
         isActive: Bool = true,
         lastSeenAt: Date = .now,
-        isSubscribed: Bool = true
+        isSubscribed: Bool = true,
+        mesoNotificationsEnabled: Bool? = nil
     ) {
         self.id = installationId
         self.apnsDeviceToken = apnsDeviceToken
@@ -82,6 +86,7 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
         self.isActive = isActive
         self.lastSeenAt = lastSeenAt
         self.isSubscribed = isSubscribed
+        self.mesoNotificationsEnabled = mesoNotificationsEnabled
     }
 
     // MARK: Typed accessors (optional convenience)

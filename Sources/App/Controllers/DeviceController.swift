@@ -141,6 +141,7 @@ struct DeviceController: RouteCollection {
                 locationAuth: locationAuth,
                 lastSeenAt: receivedAt,
                 isSubscribed: payload.isSubscribed ?? true,
+                mesoNotificationsEnabled: payload.mesoNotificationsEnabled,
                 on: database
             )
             
@@ -293,6 +294,7 @@ struct DeviceController: RouteCollection {
                 locationAuth: locationAuth,
                 lastSeenAt: receivedAt,
                 isSubscribed: payload.isSubscribed,
+                mesoNotificationsEnabled: payload.mesoNotificationsEnabled,
                 on: database
             )
         }
@@ -326,6 +328,7 @@ private func upsertDeviceInstallation(
     locationAuth: LocationAuth,
     lastSeenAt: Date,
     isSubscribed: Bool,
+    mesoNotificationsEnabled: Bool?,
     on database: any Database
 ) async throws -> DeviceInstallationModel {
     if let existing = try await DeviceInstallationModel.find(installationId, on: database) {
@@ -338,6 +341,9 @@ private func upsertDeviceInstallation(
         existing.locationAuth = locationAuth
         existing.isActive = true
         existing.isSubscribed = isSubscribed
+        if let mesoNotificationsEnabled {
+            existing.mesoNotificationsEnabled = mesoNotificationsEnabled
+        }
         existing.lastSeenAt = lastSeenAt
         try await existing.update(on: database)
         return existing
@@ -354,7 +360,8 @@ private func upsertDeviceInstallation(
         locationAuth: locationAuth,
         isActive: true,
         lastSeenAt: lastSeenAt,
-        isSubscribed: isSubscribed
+        isSubscribed: isSubscribed,
+        mesoNotificationsEnabled: mesoNotificationsEnabled
     )
     
     do {
@@ -376,6 +383,9 @@ private func upsertDeviceInstallation(
         existing.isActive = true
         existing.lastSeenAt = lastSeenAt
         existing.isSubscribed = isSubscribed
+        if let mesoNotificationsEnabled {
+            existing.mesoNotificationsEnabled = mesoNotificationsEnabled
+        }
         try await existing.update(on: database)
         return existing
     }
