@@ -99,6 +99,13 @@ struct NotificationLedgerFreshnessPersistenceTests {
             ADD COLUMN IF NOT EXISTS freshness_state TEXT NOT NULL DEFAULT 'fresh';
             """).run()
         try await AddNotificationDeliveryProvenance().prepare(on: db)
+        try await sql.raw("""
+            ALTER TABLE notification_ledger
+              ADD COLUMN IF NOT EXISTS subject_kind TEXT,
+              ADD COLUMN IF NOT EXISTS subject_id TEXT,
+              ADD COLUMN IF NOT EXISTS subject_revision_id TEXT;
+            """).run()
+
     }
 
     private func seedInstallation(id: UUID, on db: any Database) async throws {

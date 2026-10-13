@@ -22,10 +22,32 @@ struct NotificationRetryDelivery: Decodable, Sendable {
 }
 
 struct NotificationDeliveryStore {
+    // Preserve existing NWS callers; all claims now write explicit subject identity.
+    func claim(
+        installationID: UUID, seriesID: UUID, revisionUrn: String,
+        mode: NotificationTargetMode, reason: NotificationReason,
+        freshnessState: LocationFreshnessState, retryOwnerID: String? = nil,
+        origin: NotificationDeliveryOrigin? = nil, on db: any Database
+    ) async throws -> LedgerClaimResult {
+        try await claim(
+            installationID: installationID, subject: .nws(seriesID: seriesID, revisionUrn: revisionUrn),
+            mode: mode, reason: reason, freshnessState: freshnessState,
+            retryOwnerID: retryOwnerID, origin: origin, on: db
+        )
+    }
+
+    private func subjectIdentity(_ subject: NotificationSubject) -> SQLQueryString {
+        // Rows written by older workers omit the additive tuple.
+        """
+        COALESCE(subject_kind, 'nws') = \(bind: subject.kind.rawValue)
+        AND COALESCE(subject_id, LOWER(series_id::text)) = \(bind: subject.productID)
+        AND COALESCE(subject_revision_id, revision_urn) = \(bind: subject.revisionID)
+        """
+    }
+
     func claim(
         installationID: UUID,
-        seriesID: UUID,
-        revisionUrn: String,
+        subject: NotificationSubject,
         mode: NotificationTargetMode,
         reason: NotificationReason,
         freshnessState: LocationFreshnessState,
@@ -37,17 +59,24 @@ struct NotificationDeliveryStore {
             throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
         }
 
+        guard let seriesID = subject.nwsSeriesID else {
+            throw Abort(.badRequest, reason: "NWS claim requires an NWS notification subject")
+        }
         let newID = UUID()
 
         let row = try await sql.raw("""
             INSERT INTO notification_ledger
-                (id, installation_id, series_id, revision_urn, mode, reason, freshness_state,
+                (id, installation_id, series_id, revision_urn, subject_kind, subject_id, subject_revision_id,
+                 mode, reason, freshness_state,
                  retry_owner_id, delivery_origin, retry_generation, created, status)
             VALUES
                 (\(bind: newID),
                  \(bind: installationID),
                  \(bind: seriesID),
-                 \(bind: revisionUrn),
+                 \(bind: subject.revisionID),
+                 \(bind: subject.kind.rawValue),
+                 \(bind: subject.productID),
+                 \(bind: subject.revisionID),
                  \(bind: mode),
                  \(bind: reason),
                  \(bind: freshnessState),
@@ -231,8 +260,7 @@ struct NotificationDeliveryStore {
     }
 
     func loadRetryingDeliveries(
-        seriesID: UUID,
-        revisionUrn: String,
+        subject: NotificationSubject,
         installationID: UUID?,
         retryOwnerID: String,
         on db: any Database
@@ -246,8 +274,7 @@ struct NotificationDeliveryStore {
                    installation_id AS "installationId",
                    retry_generation AS "retryGeneration"
             FROM notification_ledger
-            WHERE series_id = \(bind: seriesID)
-              AND revision_urn = \(bind: revisionUrn)
+            WHERE \(subjectIdentity(subject))
               AND status = 'retrying'
               AND retry_owner_id = \(bind: retryOwnerID)
               AND (\(bind: installationID)::uuid IS NULL
@@ -258,8 +285,7 @@ struct NotificationDeliveryStore {
     }
 
     func hasRetryInFlight(
-        seriesID: UUID,
-        revisionUrn: String,
+        subject: NotificationSubject,
         installationID: UUID?,
         retryOwnerID: String,
         on db: any Database
@@ -272,8 +298,7 @@ struct NotificationDeliveryStore {
             SELECT EXISTS (
                 SELECT 1
                 FROM notification_ledger
-                WHERE series_id = \(bind: seriesID)
-                  AND revision_urn = \(bind: revisionUrn)
+                WHERE \(subjectIdentity(subject))
                   AND status = 'claimed'
                   AND retry_owner_id = \(bind: retryOwnerID)
                   AND (\(bind: installationID)::uuid IS NULL
@@ -286,8 +311,7 @@ struct NotificationDeliveryStore {
 
     func reclaimRetrying(
         _ delivery: NotificationRetryDelivery,
-        seriesID: UUID,
-        revisionUrn: String,
+        subject: NotificationSubject,
         retryOwnerID: String,
         freshnessState: LocationFreshnessState,
         on db: any Database
@@ -303,8 +327,7 @@ struct NotificationDeliveryStore {
                 completed_at = NULL
             WHERE id = \(bind: delivery.id)
               AND installation_id = \(bind: delivery.installationID)
-              AND series_id = \(bind: seriesID)
-              AND revision_urn = \(bind: revisionUrn)
+              AND \(subjectIdentity(subject))
               AND status = 'retrying'
               AND retry_owner_id = \(bind: retryOwnerID)
               AND retry_generation = \(bind: delivery.retryGeneration)
@@ -394,8 +417,7 @@ struct NotificationDeliveryStore {
 
     func completeRetryingFailure(
         _ delivery: NotificationRetryDelivery,
-        seriesID: UUID,
-        revisionUrn: String,
+        subject: NotificationSubject,
         retryOwnerID: String,
         apnsErrorCode: String,
         on db: any Database
@@ -411,8 +433,7 @@ struct NotificationDeliveryStore {
                 completed_at = NOW()
             WHERE id = \(bind: delivery.id)
               AND installation_id = \(bind: delivery.installationID)
-              AND series_id = \(bind: seriesID)
-              AND revision_urn = \(bind: revisionUrn)
+              AND \(subjectIdentity(subject))
               AND status = 'retrying'
               AND retry_owner_id = \(bind: retryOwnerID)
               AND retry_generation = \(bind: delivery.retryGeneration)
@@ -475,8 +496,7 @@ struct NotificationDeliveryStore {
     }
 
     func failRetryingDeliveries(
-        seriesID: UUID,
-        revisionUrn: String,
+        subject: NotificationSubject,
         installationID: UUID?,
         retryOwnerID: String,
         apnsErrorCode: String,
@@ -491,8 +511,7 @@ struct NotificationDeliveryStore {
             SET status = 'failed',
                 apns_error_code = \(bind: apnsErrorCode),
                 completed_at = NOW()
-            WHERE series_id = \(bind: seriesID)
-              AND revision_urn = \(bind: revisionUrn)
+            WHERE \(subjectIdentity(subject))
               AND status = 'retrying'
               AND retry_owner_id = \(bind: retryOwnerID)
               AND (\(bind: installationID)::uuid IS NULL

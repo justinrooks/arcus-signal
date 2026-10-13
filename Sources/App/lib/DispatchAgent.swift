@@ -48,7 +48,8 @@ public struct DispatchAgent {
                     reason: reason,
                     origin: .alertDriven,
                     queuedAt: Date(),
-                    sourceTargetExecutionId: row.sourceTargetExecutionId
+                    sourceTargetExecutionId: row.sourceTargetExecutionId,
+                    subject: row.subject
                 )
                 
                 try await sendQueue.dispatch(
@@ -116,7 +117,8 @@ public struct DispatchAgent {
             sourceTargetExecutionId: sourceTargetExecutionId,
             state: "ready",
             attempts: 0,
-            availableAt: .now
+            availableAt: .now,
+            subject: .nws(seriesID: seriesId, revisionUrn: revisionUrn)
         )
 
         do {

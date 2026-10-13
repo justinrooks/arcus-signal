@@ -1,7 +1,7 @@
 import Foundation
 
 /// Delivery identity only; canonical NWS and SPC persistence remain separate.
-public struct NotificationSubject: Equatable, Sendable {
+public struct NotificationSubject: Equatable, Codable, Sendable {
     // Fixed whitespace vocabulary shared with the SQL checks, independent of DB locale.
     static let identityWhitespace = "\t\n\u{000B}\u{000C}\r \u{0085}\u{00A0}\u{1680}"
         + "\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{200B}"
@@ -37,6 +37,10 @@ public struct NotificationSubject: Equatable, Sendable {
     public let kind: Kind
     public let productID: String
     public let revisionID: String
+
+    var nwsSeriesID: UUID? {
+        kind == .nws ? UUID(uuidString: productID) : nil
+    }
 
     public init(kind: Kind, productID: String, revisionID: String) {
         self.kind = kind

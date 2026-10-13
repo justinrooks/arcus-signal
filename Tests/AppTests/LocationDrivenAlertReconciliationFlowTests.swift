@@ -434,7 +434,19 @@ struct LocationDrivenAlertReconciliationFlowTests {
 
             let sender = FlowRecordingNotificationSender()
             for payload in payloads {
+                #expect(payload.subject == .nws(seriesID: payload.seriesId, revisionUrn: payload.revisionUrn))
                 try await deliver(payload, sender: sender, on: app)
+                let ledger = try #require(try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$deviceInstallation.$id == installationID)
+                    .filter(\.$series.$id == payload.seriesId).first())
+                let debug = try #require(try await NotificationDebugModel.query(on: app.db)
+                    .filter(\.$notificationLedgerID == ledger.id).first())
+                let attempt = try #require(try await NotificationSendAttemptModel.query(on: app.db)
+                    .filter(\.$series.$id == payload.seriesId).first())
+                #expect(ledger.subject == payload.subject && ledger.subjectKindRaw == "nws")
+                #expect(debug.subject == payload.subject && debug.subjectKindRaw == "nws")
+                #expect(attempt.subject == payload.subject && attempt.subjectKindRaw == "nws")
+                #expect(ledger.status == "sent" && attempt.sentCount == 1)
             }
             #expect(await sender.sendCount == 2)
         }

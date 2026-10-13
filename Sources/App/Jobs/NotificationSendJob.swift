@@ -70,6 +70,7 @@ public enum NotificationDeliveryOrigin: String, Codable, Sendable {
 }
 
 public struct NotificationSendJobPayload: Codable, Sendable {
+    let subject: NotificationSubject
     let seriesId: UUID
     let revisionUrn: String
     let mode: NotificationTargetMode
@@ -90,8 +91,10 @@ public struct NotificationSendJobPayload: Codable, Sendable {
         deliveryAttemptId: UUID? = UUID(),
         origin: NotificationDeliveryOrigin? = .alertDriven,
         queuedAt: Date? = nil,
-        sourceTargetExecutionId: UUID? = nil
+        sourceTargetExecutionId: UUID? = nil,
+        subject: NotificationSubject? = nil
     ) {
+        self.subject = subject ?? .nws(seriesID: seriesId, revisionUrn: revisionUrn)
         self.seriesId = seriesId
         self.revisionUrn = revisionUrn
         self.mode = mode
@@ -101,6 +104,35 @@ public struct NotificationSendJobPayload: Codable, Sendable {
         self.origin = origin
         self.queuedAt = queuedAt
         self.sourceTargetExecutionId = sourceTargetExecutionId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case subject, seriesId, revisionUrn, mode, reason, installationId, deliveryAttemptId
+        case origin, queuedAt, sourceTargetExecutionId
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let seriesID = try values.decode(UUID.self, forKey: .seriesId)
+        let revision = try values.decode(String.self, forKey: .revisionUrn)
+        let subject = try values.decodeIfPresent(NotificationSubject.self, forKey: .subject)
+            ?? .nws(seriesID: seriesID, revisionUrn: revision)
+        guard subject == .nws(seriesID: seriesID, revisionUrn: revision) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .subject, in: values, debugDescription: "NWS delivery subject must match legacy identity"
+            )
+        }
+        self.init(
+            seriesId: seriesID, revisionUrn: revision,
+            mode: try values.decode(NotificationTargetMode.self, forKey: .mode),
+            reason: try values.decode(NotificationReason.self, forKey: .reason),
+            installationId: try values.decodeIfPresent(UUID.self, forKey: .installationId),
+            deliveryAttemptId: try values.decodeIfPresent(UUID.self, forKey: .deliveryAttemptId),
+            origin: try values.decodeIfPresent(NotificationDeliveryOrigin.self, forKey: .origin),
+            queuedAt: try values.decodeIfPresent(Date.self, forKey: .queuedAt),
+            sourceTargetExecutionId: try values.decodeIfPresent(UUID.self, forKey: .sourceTargetExecutionId),
+            subject: subject
+        )
     }
 }
 
@@ -184,6 +216,10 @@ public struct NotificationSendJob: AsyncJob {
     }
     
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
+        guard let seriesID = payload.subject.nwsSeriesID,
+              payload.subject == .nws(seriesID: payload.seriesId, revisionUrn: payload.revisionUrn) else {
+            throw Abort(.badRequest, reason: "Unsupported or inconsistent notification subject")
+        }
         let startedAt = Date()
         let retryOwnerID = retryOwnerID(context: context, payload: payload)
         let queueFailureCount = try await queueFailureCount(context: context)
@@ -209,14 +245,13 @@ public struct NotificationSendJob: AsyncJob {
             .with(\.$geolocation)
             .with(\.$revisions)
             .group(.and) { group in
-                group.filter(\.$id == payload.seriesId)
+                group.filter(\.$id == seriesID)
             }
             .first()
         
-        guard let series, series.currentRevisionUrn == payload.revisionUrn else {
+        guard let series, series.currentRevisionUrn == payload.subject.revisionID else {
             let failedRetryCount = try await deliveryStore.failRetryingDeliveries(
-                seriesID: payload.seriesId,
-                revisionUrn: payload.revisionUrn,
+                subject: payload.subject,
                 installationID: payload.installationId,
                 retryOwnerID: retryOwnerID,
                 apnsErrorCode: "RetryIneligibleStaleRevision",
@@ -268,8 +303,7 @@ public struct NotificationSendJob: AsyncJob {
                 ]
             )
             let failedRetryCount = try await deliveryStore.failRetryingDeliveries(
-                seriesID: payload.seriesId,
-                revisionUrn: payload.revisionUrn,
+                subject: payload.subject,
                 installationID: payload.installationId,
                 retryOwnerID: retryOwnerID,
                 apnsErrorCode: "RetryIneligibleSeriesLifecycle",
@@ -296,8 +330,7 @@ public struct NotificationSendJob: AsyncJob {
         let presenceCutoff = attemptedAt.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
 
         let retryingDeliveries = try await deliveryStore.loadRetryingDeliveries(
-            seriesID: payload.seriesId,
-            revisionUrn: payload.revisionUrn,
+            subject: payload.subject,
             installationID: payload.installationId,
             retryOwnerID: retryOwnerID,
             on: context.application.db
@@ -321,8 +354,7 @@ public struct NotificationSendJob: AsyncJob {
         }
 
         if try await deliveryStore.hasRetryInFlight(
-            seriesID: payload.seriesId,
-            revisionUrn: payload.revisionUrn,
+            subject: payload.subject,
             installationID: payload.installationId,
             retryOwnerID: retryOwnerID,
             on: context.application.db
@@ -476,8 +508,7 @@ public struct NotificationSendJob: AsyncJob {
     public func error(_ context: QueueContext, _ error: any Error, _ payload: Payload) async throws {
         let retryOwnerID = retryOwnerID(context: context, payload: payload)
         let failedCount = try await deliveryStore.failRetryingDeliveries(
-            seriesID: payload.seriesId,
-            revisionUrn: payload.revisionUrn,
+            subject: payload.subject,
             installationID: payload.installationId,
             retryOwnerID: retryOwnerID,
             apnsErrorCode: "RetryExhausted",
@@ -561,8 +592,7 @@ extension NotificationSendJob {
             guard let candidate = matches.first else {
                 let terminalized = try await deliveryStore.completeRetryingFailure(
                     delivery,
-                    seriesID: payload.seriesId,
-                    revisionUrn: payload.revisionUrn,
+                    subject: payload.subject,
                     retryOwnerID: retryOwnerID,
                     apnsErrorCode: "RetryIneligibleCandidate",
                     on: context.application.db
@@ -623,10 +653,9 @@ extension NotificationSendJob {
         guard candidates.count > 0 else {
             let preview = engine.buildPreviewNotification(for: series, with: payload)
             await saveNotificationDebugSnapshot(
-                seriesID: payload.seriesId,
+                subject: payload.subject,
                 installationID: nil,
                 notificationLedgerID: nil,
-                revisionUrn: payload.revisionUrn,
                 mode: payload.mode,
                 reason: payload.reason,
                 recordKind: .previewNoCandidates,
@@ -675,8 +704,7 @@ extension NotificationSendJob {
                 if let retryingDelivery {
                     let terminalized = try await deliveryStore.completeRetryingFailure(
                         retryingDelivery,
-                        seriesID: payload.seriesId,
-                        revisionUrn: payload.revisionUrn,
+                        subject: payload.subject,
                         retryOwnerID: retryOwnerID,
                         apnsErrorCode: "RetryIneligibleStaleLocation",
                         on: context.application.db
@@ -729,8 +757,7 @@ extension NotificationSendJob {
             if let retryingDelivery {
                 claim = try await deliveryStore.reclaimRetrying(
                     retryingDelivery,
-                    seriesID: payload.seriesId,
-                    revisionUrn: payload.revisionUrn,
+                    subject: payload.subject,
                     retryOwnerID: retryOwnerID,
                     freshnessState: freshnessDecision.state,
                     on: context.application.db
@@ -738,8 +765,7 @@ extension NotificationSendJob {
             } else {
                 claim = try await deliveryStore.claim(
                     installationID: candidate.id,
-                    seriesID: payload.seriesId,
-                    revisionUrn: payload.revisionUrn,
+                    subject: payload.subject,
                     mode: payload.mode,
                     reason: payload.reason,
                     freshnessState: freshnessDecision.state,
@@ -762,10 +788,9 @@ extension NotificationSendJob {
                 freshnessState: freshnessDecision.state
             )
             await saveNotificationDebugSnapshot(
-                seriesID: payload.seriesId,
+                subject: payload.subject,
                 installationID: candidate.id,
                 notificationLedgerID: claim.id,
-                revisionUrn: payload.revisionUrn,
                 mode: payload.mode,
                 reason: payload.reason,
                 recordKind: .candidate,
@@ -895,10 +920,9 @@ extension NotificationSendJob {
     }
 
     func saveNotificationDebugSnapshot(
-        seriesID: UUID,
+        subject: NotificationSubject,
         installationID: UUID?,
         notificationLedgerID: UUID?,
-        revisionUrn: String,
         mode: NotificationTargetMode,
         reason: NotificationReason,
         recordKind: NotificationDebugRecordKind,
@@ -906,16 +930,17 @@ extension NotificationSendJob {
         using context: QueueContext
     ) async {
         let snapshot = NotificationDebugModel(
-            seriesID: seriesID,
+            seriesID: subject.nwsSeriesID,
             installationID: installationID,
             notificationLedgerID: notificationLedgerID,
-            revisionUrn: revisionUrn,
+            revisionUrn: subject.revisionID,
             mode: mode.rawValue,
             reason: reason.rawValue,
             recordKind: recordKind,
             title: alert.title,
             subtitle: alert.subTitle,
-            body: alert.body
+            body: alert.body,
+            subject: subject
         )
 
         do {
@@ -925,8 +950,8 @@ extension NotificationSendJob {
                 context.logger.debug(
                     "Notification debug snapshot already recorded.",
                     metadata: [
-                        "seriesId": .string(seriesID.uuidString),
-                        "revisionUrn": .string(revisionUrn),
+                        "seriesId": .string(subject.productID),
+                        "revisionUrn": .string(subject.revisionID),
                         "mode": .string(mode.rawValue),
                         "recordKind": .string(recordKind.rawValue)
                     ]
@@ -937,8 +962,8 @@ extension NotificationSendJob {
             context.logger.error(
                 "Failed to save notification debug snapshot.",
                 metadata: [
-                    "seriesId": .string(seriesID.uuidString),
-                    "revisionUrn": .string(revisionUrn),
+                    "seriesId": .string(subject.productID),
+                    "revisionUrn": .string(subject.revisionID),
                     "mode": .string(mode.rawValue),
                     "recordKind": .string(recordKind.rawValue),
                     "error": .string(String(reflecting: error))
@@ -976,7 +1001,8 @@ extension NotificationSendJob {
             claimedCount: summary.claimedCount,
             sentCount: summary.sentCount,
             failedCount: summary.failedCount,
-            attemptedAt: attemptedAt
+            attemptedAt: attemptedAt,
+            subject: payload.subject
         )
 
         do {

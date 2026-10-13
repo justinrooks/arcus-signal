@@ -212,7 +212,16 @@ struct NotificationDispatchOutboxTests {
         try await withApp { app in
             let series = try await seed(on: app.db)
             do {
-                let id = try await insert(series: series, availableAt: .distantPast, on: app.db)
+                let revision = "urn:oid:\(series)"
+                #expect(try await DispatchAgent.enqueueNotificationDispatchOutbox(
+                    revisionUrn: revision, seriesId: series, reason: .new, mode: .ugc,
+                    on: app.db, logger: app.logger
+                ))
+                let outbox = try #require(try await ArcusNotificationOutboxModel.query(on: app.db)
+                    .filter(\.$series.$id == series).first())
+                #expect(outbox.subject == .nws(seriesID: series, revisionUrn: revision))
+                #expect(outbox.subjectKindRaw == "nws")
+                let id = try outbox.requireID()
                 let probe = NotificationHandoffProbe(id: id, db: app.db)
                 app.queues.add(probe)
                 let context = QueueContext(
@@ -227,6 +236,7 @@ struct NotificationDispatchOutboxTests {
                 #expect(payloads.count == 1)
                 #expect(payloads.first?.mode == .ugc && payloads.first?.reason == .new)
                 let payload = try #require(payloads.first)
+                #expect(payload.subject == .nws(seriesID: series, revisionUrn: row.revisionUrn))
                 #expect(payload.origin == .alertDriven)
                 let queuedAt = try #require(payload.queuedAt)
                 // The candidate query has no codes, so no APNs dependency is reached.
