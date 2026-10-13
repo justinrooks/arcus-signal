@@ -15,6 +15,7 @@ public enum AppRuntimeMode: String, Sendable {
 
 public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.arcusSignalBuildInfo = .resolved()
+    configureMesoNotifications(on: app, value: Environment.get("MESO_NOTIFICATIONS_ENABLED"))
 
     if mode == .worker {
         try await configureAPNs(on: app)
@@ -51,6 +52,7 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     app.queues.add(TargetEventRevisionJob())
     app.queues.add(ReconcileInstallationAlertsJob())
     app.queues.add(NotificationSendJob())
+    app.queues.add(MesoNotificationSendJob())
     app.queues.add(PressureArtifactWarmJob())
     app.queues.add(PressureArtifactFailureCompletionJob(
         retryPolicy: app.stormSetupConfiguration.pressureArtifactFailureCompletionRetryPolicy
@@ -75,6 +77,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)
         app.recordWorkerScheduledJob("DispatchIngestNWSAlertsScheduledJob")
         registerSPCMesoIngestSchedule(on: app)
+        app.queues.schedule(DispatchMesoNotificationsScheduledJob()).minutely().at(0)
+        app.recordWorkerScheduledJob("DispatchMesoNotificationsScheduledJob")
         app.queues.schedule(DispatchPresenceReconciliationScheduledJob()).minutely().at(0)
         app.recordWorkerScheduledJob("DispatchPresenceReconciliationScheduledJob")
         app.queues.schedule(ProbeHRRRPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds))
