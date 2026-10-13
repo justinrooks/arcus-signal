@@ -1178,12 +1178,16 @@ struct OperatorDashboardSnapshotRefresher {
         }
     }
 
-    private func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
+    func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
         let rows = try await sql.raw("""
             SELECT
                 d.created AS "createdAt",
                 d.series_id AS "seriesID",
-                COALESCE(s.event, s.headline, s.title, 'Unknown Alert') AS "eventName",
+                d.subject_kind AS "subjectKind",
+                COALESCE(d.subject_id, d.series_id::text) AS "subjectID",
+                COALESCE(s.event, s.headline, s.title,
+                    CASE WHEN d.subject_kind = 'spc-meso' THEN 'Mesoscale Discussion' ELSE 'Unknown Alert' END
+                ) AS "eventName",
                 d.record_kind AS "recordKind",
                 d.mode AS "mode",
                 d.reason AS "reason",
@@ -1193,7 +1197,7 @@ struct OperatorDashboardSnapshotRefresher {
                 l.status AS "ledgerStatus",
                 l.apns_error_code AS "apnsErrorCode"
             FROM notification_debug d
-            JOIN arcus_series s ON s.id = d.series_id
+            LEFT JOIN arcus_series s ON s.id = d.series_id
             LEFT JOIN notification_ledger l ON l.id = d.notification_ledger_id
             ORDER BY d.created DESC
             LIMIT \(bind: OperatorDashboardConfig.recentNotificationDebugLimit)
@@ -1203,6 +1207,8 @@ struct OperatorDashboardSnapshotRefresher {
             .init(
                 createdAt: $0.createdAt,
                 seriesID: $0.seriesID,
+                subjectKind: $0.subjectKind,
+                subjectID: $0.subjectID,
                 eventName: $0.eventName,
                 recordKind: $0.recordKind,
                 mode: $0.mode,
@@ -1395,7 +1401,9 @@ private struct H3AggregateRow: Decodable {
 
 private struct RecentNotificationDebugRow: Decodable {
     let createdAt: Date
-    let seriesID: UUID
+    let seriesID: UUID?
+    let subjectKind: String?
+    let subjectID: String?
     let eventName: String
     let recordKind: String
     let mode: String

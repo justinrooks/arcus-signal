@@ -893,7 +893,9 @@ public struct StoredPressureArtifactDashboardEntry: Codable, Sendable {
 
 public struct StoredRecentNotificationDebugEntry: Codable, Sendable {
     public var createdAt: Date
-    public var seriesID: UUID
+    public var seriesID: UUID?
+    public var subjectKind: String?
+    public var subjectID: String?
     public var eventName: String
     public var recordKind: String
     public var mode: String
@@ -906,7 +908,9 @@ public struct StoredRecentNotificationDebugEntry: Codable, Sendable {
 
     public init(
         createdAt: Date,
-        seriesID: UUID,
+        seriesID: UUID?,
+        subjectKind: String? = nil,
+        subjectID: String? = nil,
         eventName: String,
         recordKind: String,
         mode: String,
@@ -919,6 +923,8 @@ public struct StoredRecentNotificationDebugEntry: Codable, Sendable {
     ) {
         self.createdAt = createdAt
         self.seriesID = seriesID
+        self.subjectKind = subjectKind
+        self.subjectID = subjectID
         self.eventName = eventName
         self.recordKind = recordKind
         self.mode = mode
@@ -1698,7 +1704,9 @@ public struct H3DerivationMetricResponse: Content, Sendable {
 
 public struct RecentNotificationDebugEntryResponse: Content, Sendable {
     public var createdAt: Date
-    public var seriesID: UUID
+    public var seriesID: UUID?
+    public var subjectKind: String?
+    public var subjectID: String?
     public var eventName: String
     public var recordKind: String
     public var mode: String
@@ -1720,6 +1728,8 @@ public struct RecentNotificationDebugEntriesResponse: Content, Sendable {
             .init(
                 createdAt: $0.createdAt,
                 seriesID: $0.seriesID,
+                subjectKind: $0.subjectKind,
+                subjectID: $0.subjectID,
                 eventName: $0.eventName,
                 recordKind: $0.recordKind,
                 mode: $0.mode,
