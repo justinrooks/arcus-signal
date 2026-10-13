@@ -48,6 +48,12 @@ public struct NotificationSubject: Equatable, Sendable {
         .init(kind: .nws, productID: seriesID.uuidString.lowercased(), revisionID: revisionUrn)
     }
 
+    /// Once per discussion, independent of canonical content refreshes or producer path.
+    /// A future re-notification policy requires a separately approved delivery revision.
+    public static func spcMeso(issueYear: Int, number: Int) -> Self {
+        .init(kind: .spcMeso, productID: "SPC-MD-\(issueYear)-\(number)", revisionID: "initial")
+    }
+
     // Unchanged NWS SQL writers may omit the additive columns during cutover.
     static func resolve(kind: String?, productID: String?, revisionID: String?, seriesID: UUID?, revisionUrn: String) -> Self? {
         if let kind, let kind = Kind(rawValue: kind), let productID, let revisionID {
