@@ -417,7 +417,8 @@ struct OperatorDashboardTests {
         #expect(response.redLights.staleActiveSeriesCount.status == .unknown)
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "development", revision: nil))
-        #expect(html.components(separatedBy: "health-item health-unknown").count == 6)
+        #expect(response.redLights.airQuality.status == .unknown)
+        #expect(html.components(separatedBy: "health-item health-unknown").count == 7)
         #expect(html.components(separatedBy: "], '', metric.status);").count == 5)
     }
 

@@ -7,8 +7,10 @@ protocol AirQualityCurrentProviding: Sendable {
 }
 
 struct UnavailableAirQualityProvider: AirQualityCurrentProviding {
+    var recorder: (any AirNowDependencyRecording)? = nil
     func currentResponse(for h3Cell: Int64) async throws -> AirQualityCurrentResponse? {
-        nil
+        await recorder?.record(.init(attemptedAt: nil, completedAt: .now, outcome: .disabled))
+        return nil
     }
 }
 
@@ -35,6 +37,7 @@ struct DefaultAirQualityProvider: AirQualityCurrentProviding {
     private let client: any AirNowClient
     private let h3Resolver: any StormSetupH3Resolving
     private let cache: AirQualityCurrentCache
+    private let recorder: (any AirNowDependencyRecording)?
     private let now: @Sendable () -> Date
 
     init(
@@ -42,6 +45,7 @@ struct DefaultAirQualityProvider: AirQualityCurrentProviding {
         client: any AirNowClient,
         h3Resolver: any StormSetupH3Resolving = DefaultStormSetupH3Resolver(),
         cache: AirQualityCurrentCache = AirQualityCurrentCache(),
+        recorder: (any AirNowDependencyRecording)? = nil,
         now: @escaping @Sendable () -> Date = { .now }
     ) {
         self.configuration = configuration
@@ -49,6 +53,7 @@ struct DefaultAirQualityProvider: AirQualityCurrentProviding {
         self.h3Resolver = h3Resolver
         self.cache = cache
         self.now = now
+        self.recorder = recorder
     }
 
     func currentResponse(for h3Cell: Int64) async throws -> AirQualityCurrentResponse? {
@@ -58,17 +63,39 @@ struct DefaultAirQualityProvider: AirQualityCurrentProviding {
         }
 
         let centroid = try h3Resolver.resolve(h3Cell: h3Cell).centroid
+        let started = ContinuousClock.now
+        func event(_ outcome: AirNowDependencyOutcome, status: Int? = nil) -> AirNowDependencyEvent {
+            let elapsed = started.duration(to: .now).components
+            return .init(
+                attemptedAt: requestDate, completedAt: now(), outcome: outcome, httpStatus: status,
+                durationMilliseconds: Int(elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000)
+            )
+        }
         do {
-            let observations = try await client.fetchCurrentObservations(
+            let upstream = try await client.fetchCurrentObservations(
                 latitude: centroid.latitude,
                 longitude: centroid.longitude
             )
-            let response = AirNowNormalizer.normalize(observations: observations)
+            let response = AirNowNormalizer.normalize(observations: upstream.observations)
+            await recorder?.record(event(response == nil ? .noUsableObservation : .usableAQI, status: upstream.httpStatus))
             await cache.store(response, for: h3Cell, expiresAt: requestDate.addingTimeInterval(configuration.cacheLifetime))
             return response
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            let outcome: AirNowDependencyOutcome
+            var status: Int?
+            switch error {
+            case AirNowClientError.upstreamFailure(let code): outcome = .httpFailure; status = code
+            case AirNowClientError.decodeFailure(let code): outcome = .decodeFailure; status = code
+            case AirNowClientError.missingData(let code): outcome = .missingData; status = code
+            case AirNowClientError.invalidURL: outcome = .invalidRequest
+            default: outcome = .transportFailure
+            }
+            let diagnostic = outcome == .invalidRequest
+                ? AirNowDependencyEvent(attemptedAt: nil, completedAt: now(), outcome: outcome)
+                : event(outcome, status: status)
+            await recorder?.record(diagnostic)
             return nil
         }
     }

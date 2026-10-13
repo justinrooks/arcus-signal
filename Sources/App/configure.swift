@@ -25,13 +25,18 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
     try configureQueues(on: app)
 
     let airQualityConfiguration = AirQualityConfiguration.resolved()
+    let airNowRecorder = DatabaseAirNowDependencyRecorder(database: app.db, logger: app.logger)
+    if mode == .api {
+        app.lifecycle.use(AirNowConfigurationLifecycle(configured: airQualityConfiguration.airNowAPIKey != nil))
+    }
     if let airNowAPIKey = airQualityConfiguration.airNowAPIKey {
         app.airQualityProvider = DefaultAirQualityProvider(
             configuration: airQualityConfiguration,
-            client: DefaultAirNowClient(apiKey: airNowAPIKey, http: VaporApplicationHTTPClient(application: app))
+            client: DefaultAirNowClient(apiKey: airNowAPIKey, http: VaporApplicationHTTPClient(application: app)),
+            recorder: airNowRecorder
         )
     } else {
-        app.airQualityProvider = UnavailableAirQualityProvider()
+        app.airQualityProvider = UnavailableAirQualityProvider(recorder: airNowRecorder)
         app.logger.warning("AirNow AQI is disabled because AIRNOW_API_KEY is not configured.")
     }
 
@@ -140,6 +145,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreatePipelineStageTimings())
     app.migrations.add(AddCandidateCountToNotificationPipelineTimings())
     app.migrations.add(CreateSPCMesos())
+    app.migrations.add(CreateAirNowDependencyStatus())
 }
 
 private func configureAPNs(on app: Application) async throws {
