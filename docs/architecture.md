@@ -86,6 +86,21 @@ The arrows are distinct boundaries. A durable intent, successful queue enqueue, 
 
 ### Notification dispatch
 
+Delivery subject identity in `notification_outbox`, `notification_ledger`,
+`notification_debug`, and `notification_send_attempts` accepts any nonblank kind,
+product ID, and revision ID. Explicit tuples must be complete and their revision
+must equal `revision_urn`. `nws` requires its matching CAP `series_id`; all other
+kinds require a null series. Legacy series-only NWS writes remain valid and
+resolve to NWS subjects on read. Known `.nws` and `.spcMeso` kinds retain typed
+call sites; future kinds round-trip without a schema registration step.
+The current drain remains explicitly NWS-only. Recognition grants no sender policy.
+
+`MakeNotificationSubjectKindsExtensible` replaces the four constraints atomically
+after the original identity migration, preserving its backfill, foreign keys,
+and uniqueness indexes. Rollback restores the original `nws`/`spc-meso` allowlist
+and refuses atomically while any other kind exists; those records must be handled
+explicitly before rollback. It never deletes or rewrites delivery history.
+
 [`DispatchAgent.enqueueNotificationDispatchOutbox(...)`](../Sources/App/lib/DispatchAgent.swift) writes `notification_outbox` intent for a `(series_id, revision_urn, mode)` and records the triggering reason. [`CreateNotificationOutbox`](../Sources/App/Migrations/CreateNotificationOutbox.swift) enforces that identity. The row contains revision, mode, reason, queue-dispatch state, queue-dispatch attempts, availability, and errors. It contains neither installation identity nor rendered APNs content.
 
 [`DispatchAgent.dispatchPendingNotificationJobs(...)`](../Sources/App/lib/DispatchAgent.swift) uses [`NotificationDispatchOutboxStore`](../Sources/App/Models/Notification/NotificationDispatchOutboxStore.swift) to atomically claim a mode-specific bounded batch with `FOR UPDATE SKIP LOCKED`. Eligible `ready` rows and expired `processing` rows become `processing` with a five-minute lease in `available_at`. The claim statement commits before queue handoff; no row locks are held across Redis awaits. Replay cannot modify processing rows, including expired leases, whose recovery belongs to the claim path.

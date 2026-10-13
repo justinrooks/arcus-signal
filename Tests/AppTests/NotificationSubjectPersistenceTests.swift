@@ -9,6 +9,24 @@ import Vapor
 struct NotificationSubjectPersistenceTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @Test("kind strings round-trip without an allowlist and reject blank values")
+    func kindRepresentation() throws {
+        for value in ["nws", "spc-meso", "test-product"] {
+            let kind = try #require(NotificationSubject.Kind(rawValue: value))
+            #expect(try JSONDecoder().decode(NotificationSubject.Kind.self, from: JSONEncoder().encode(kind)) == kind)
+            #expect(NotificationSubject.resolve(kind: value, productID: "product", revisionID: "revision",
+                                               seriesID: nil, revisionUrn: "revision")?.kind == kind)
+        }
+        #expect(NotificationSubject.Kind(rawValue: "nws") == .nws)
+        #expect(NotificationSubject.Kind(rawValue: "spc-meso") == .spcMeso)
+        for value in ["", " ", "\t\n\r", "\u{00A0}", "\u{2007}", "\u{202F}", "\u{200B}"] {
+            #expect(NotificationSubject.Kind(rawValue: value) == nil)
+            #expect(throws: (any Error).self) {
+                try JSONDecoder().decode(NotificationSubject.Kind.self, from: JSONEncoder().encode(value))
+            }
+        }
+    }
+
     private func withDatabase(test: @escaping @Sendable (any Database) async throws -> Void) async throws {
         try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
             try await withRollbackTransaction(on: app, test: test)
@@ -91,12 +109,14 @@ struct NotificationSubjectPersistenceTests {
             let revision = "urn:oid:\(UUID())"
             let ids = try await records(series: fixture.series, installation: fixture.installation,
                                         revision: revision, on: db)
+            try await MakeNotificationSubjectKindsExtensible().revert(on: db)
             try await AddNotificationSubjectIdentity().revert(on: db)
             // The rows now exist in the physical pre-change schema.
             let old = try #require(try await sql.raw("SELECT series_id, revision_urn FROM notification_ledger WHERE id = \(bind: ids.ledger)").first())
             #expect(try old.decode(column: "series_id", as: UUID.self) == fixture.series)
             #expect(try old.decode(column: "revision_urn", as: String.self) == revision)
             try await AddNotificationSubjectIdentity().prepare(on: db)
+            try await MakeNotificationSubjectKindsExtensible().prepare(on: db)
             let subject = NotificationSubject.nws(seriesID: fixture.series, revisionUrn: revision)
             try await expectSubjects(ids, equal: subject, on: db)
             for (table, id) in [("notification_outbox", ids.outbox), ("notification_ledger", ids.ledger),
@@ -139,13 +159,13 @@ struct NotificationSubjectPersistenceTests {
         }
     }
 
-    @Test("non-CAP records persist without a series and never enter the NWS drain")
-    func nonCAPIdentity() async throws {
+    @Test("non-CAP records persist without a series and never enter the NWS drain", arguments: ["spc-meso", "test-product"])
+    func nonCAPIdentity(kind: String) async throws {
         try await withDatabase { db in
             let sql = try #require(db as? any SQLDatabase)
             let fixture = try await seed(on: db)
             try await ArcusNotificationOutboxModel.query(on: db).set(\.$state, to: "done").update()
-            let subject = NotificationSubject(kind: .spcMeso, productID: "spc:md:2026:1234", revisionID: "initial")
+            let subject = NotificationSubject(kind: try #require(.init(rawValue: kind)), productID: "product:2026:1234", revisionID: "initial")
             let ids = try await records(series: nil, installation: fixture.installation,
                                         revision: subject.revisionID, subject: subject, on: db)
             try await expectSubjects(ids, equal: subject, on: db)
@@ -154,14 +174,14 @@ struct NotificationSubjectPersistenceTests {
             let duplicateLedger = try await sql.raw("""
                 INSERT INTO notification_ledger
                 (id, installation_id, revision_urn, mode, reason, freshness_state, subject_kind, subject_id, subject_revision_id)
-                VALUES (\(bind: UUID()), \(bind: fixture.installation), 'initial', 'ugc', 'new', 'fresh', 'spc-meso', \(bind: subject.productID), 'initial')
+                VALUES (\(bind: UUID()), \(bind: fixture.installation), 'initial', 'ugc', 'new', 'fresh', \(bind: kind), \(bind: subject.productID), 'initial')
                 ON CONFLICT DO NOTHING RETURNING id;
                 """).first()
             #expect(duplicateLedger == nil)
             let duplicateOutbox = try await sql.raw("""
                 INSERT INTO notification_outbox
                 (id, revision_urn, mode, reason, state, attempts, available_at, subject_kind, subject_id, subject_revision_id)
-                VALUES (\(bind: UUID()), 'initial', 'h3', 'new', 'ready', 0, \(bind: now), 'spc-meso', \(bind: subject.productID), 'initial')
+                VALUES (\(bind: UUID()), 'initial', 'h3', 'new', 'ready', 0, \(bind: now), \(bind: kind), \(bind: subject.productID), 'initial')
                 ON CONFLICT DO NOTHING RETURNING id;
                 """).first()
             #expect(duplicateOutbox == nil)
@@ -183,9 +203,22 @@ struct NotificationSubjectPersistenceTests {
                                         revision: "initial", subject: subject, on: db)
             for (table, id) in [("notification_outbox", ids.outbox), ("notification_ledger", ids.ledger),
                                 ("notification_debug", ids.debug), ("notification_send_attempts", ids.attempt)] {
-                for assignment in ["subject_kind = NULL", "subject_id = NULL", "subject_id = ' '",
+                for blank in ["\u{00A0}", "\u{2007}", "\u{202F}", "\u{200B}"] {
+                    for column in ["subject_kind", "subject_id"] {
+                        try await expectRejected(on: db) {
+                            try await sql.raw("UPDATE \(ident: table) SET \(ident: column) = \(bind: blank) WHERE id = \(bind: id)").run()
+                        }
+                    }
+                    try await expectRejected(on: db) {
+                        try await sql.raw("UPDATE \(ident: table) SET subject_revision_id = \(bind: blank), revision_urn = \(bind: blank) WHERE id = \(bind: id)").run()
+                    }
+                }
+                for assignment in ["subject_kind = NULL", "subject_kind = ''", "subject_kind = E' \\t\\n'",
+                                   "subject_id = NULL", "subject_id = ''", "subject_id = E' \\t\\n'",
                                    "subject_revision_id = NULL", "subject_revision_id = 'different'",
-                                   "subject_kind = 'nws'", "subject_kind = 'unknown'",
+                                   "subject_revision_id = '', revision_urn = ''",
+                                   "subject_revision_id = E' \\t\\n', revision_urn = E' \\t\\n'",
+                                   "subject_kind = 'nws'",
                                    "subject_kind = NULL, subject_id = NULL, subject_revision_id = NULL"] {
                     try await expectRejected(on: db) {
                         try await sql.raw("UPDATE \(ident: table) SET \(unsafeRaw: assignment) WHERE id = \(bind: id)").run()
@@ -195,6 +228,41 @@ struct NotificationSubjectPersistenceTests {
                     try await sql.raw("UPDATE \(ident: table) SET series_id = \(bind: fixture.series) WHERE id = \(bind: id)").run()
                 }
             }
+        }
+    }
+
+    @Test("extensibility migration upgrades existing data and rolls back atomically")
+    func extensibilityMigration() async throws {
+        try await withDatabase { db in
+            let fixture = try await seed(on: db)
+            let nws = try await records(series: fixture.series, installation: fixture.installation,
+                                        revision: "nws-revision", on: db)
+            let meso = NotificationSubject(kind: .spcMeso, productID: "meso", revisionID: "initial")
+            let mesoIDs = try await records(series: nil, installation: fixture.installation,
+                                            revision: "initial", subject: meso, on: db)
+            try await MakeNotificationSubjectKindsExtensible().revert(on: db)
+            let future = NotificationSubject(kind: try #require(.init(rawValue: "test-product")),
+                                             productID: "future", revisionID: "initial")
+            try await expectRejected(on: db) {
+                _ = try await records(series: nil, installation: fixture.installation,
+                                      revision: "initial", subject: future, on: db)
+            }
+            try await MakeNotificationSubjectKindsExtensible().prepare(on: db)
+            try await expectSubjects(nws, equal: .nws(seriesID: fixture.series, revisionUrn: "nws-revision"), on: db)
+            try await expectSubjects(mesoIDs, equal: meso, on: db)
+            // Unknown data in the final table proves rollback cannot leave earlier
+            // tables with restored closed constraints after a late validation failure.
+            let attempt = NotificationSendAttemptModel(
+                seriesID: nil, revisionUrn: "initial", mode: .h3, reason: .new, outcome: .noOp,
+                candidateResolutionReached: false, candidateCount: 0, claimedCount: 0,
+                sentCount: 0, failedCount: 0, subject: future
+            )
+            try await attempt.create(on: db)
+            try await expectRejected(on: db) { try await MakeNotificationSubjectKindsExtensible().revert(on: db) }
+            #expect(try await NotificationSendAttemptModel.find(attempt.requireID(), on: db)?.subject == future)
+            let futureIDs = try await records(series: nil, installation: fixture.installation,
+                                              revision: "initial", subject: future, on: db)
+            try await expectSubjects(futureIDs, equal: future, on: db)
         }
     }
 
