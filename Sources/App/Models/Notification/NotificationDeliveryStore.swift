@@ -37,11 +37,23 @@ struct NotificationDeliveryStore {
     }
 
     private func subjectIdentity(_ subject: NotificationSubject) -> SQLQueryString {
-        // Rows written by older workers omit the additive tuple.
-        """
-        COALESCE(subject_kind, 'nws') = \(bind: subject.kind.rawValue)
-        AND COALESCE(subject_id, LOWER(series_id::text)) = \(bind: subject.productID)
-        AND COALESCE(subject_revision_id, revision_urn) = \(bind: subject.revisionID)
+        if subject.kind == .nws {
+            guard let seriesID = subject.nwsSeriesID,
+                  subject.productID == seriesID.uuidString.lowercased() else { return "FALSE" }
+            // DB constraints equate explicit NWS subjects with these columns;
+            // legacy rows retain them too. Keep the existing identity index usable.
+            return """
+            series_id = \(bind: seriesID)
+            AND revision_urn = \(bind: subject.revisionID)
+            """
+        }
+        // Non-NWS rows always carry an explicit tuple. This predicate also
+        // establishes eligibility for the partial subject-identity index.
+        return """
+        series_id IS NULL
+        AND subject_kind = \(bind: subject.kind.rawValue)
+        AND subject_id = \(bind: subject.productID)
+        AND subject_revision_id = \(bind: subject.revisionID)
         """
     }
 

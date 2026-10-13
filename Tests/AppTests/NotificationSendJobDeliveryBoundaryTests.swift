@@ -1898,6 +1898,87 @@ struct NotificationSendJobDeliveryBoundaryTests {
         }
     }
 
+    @Test("retry identity separates NWS and non-NWS kinds with matching product and revision IDs")
+    func retrySubjectKindIsolation() async throws {
+        try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
+            try await withRollbackTransaction(on: app) { db in
+                let sql = try #require(db as? any SQLDatabase)
+                let store = NotificationDeliveryStore()
+                let installationID = UUID()
+                let seriesID = UUID()
+                let revision = "initial"
+                let owner = UUID().uuidString
+                try await seedInstallation(id: installationID, locationAuth: .always, on: db)
+                try await seedSeries(id: seriesID, revisionUrn: revision, on: db)
+                let nws = NotificationSubject.nws(seriesID: seriesID, revisionUrn: revision)
+                let nwsClaim = try await store.claim(
+                    installationID: installationID, subject: nws, mode: .h3,
+                    reason: .new, freshnessState: .fresh, retryOwnerID: owner, on: db
+                )
+                try await store.markRetrying(
+                    claimID: nwsClaim.id, retryOwnerID: owner, retryGeneration: nwsClaim.retryGeneration,
+                    apnsErrorCode: "ServiceUnavailable", on: db
+                )
+                let kinds = try ["test-product-a", "test-product-b"].map {
+                    try #require(NotificationSubject.Kind(rawValue: $0))
+                }
+                let subjects = kinds.map {
+                    NotificationSubject(kind: $0, productID: nws.productID, revisionID: revision)
+                }
+                for subject in subjects {
+                    try await sql.raw("""
+                        INSERT INTO notification_ledger
+                            (id, installation_id, revision_urn, subject_kind, subject_id, subject_revision_id,
+                             mode, reason, freshness_state, status, retry_owner_id, retry_generation, created)
+                        VALUES (\(bind: UUID()), \(bind: installationID), \(bind: revision),
+                                \(bind: subject.kind.rawValue), \(bind: subject.productID), \(bind: revision),
+                                'h3', 'new', 'fresh', 'retrying', \(bind: owner), 1, NOW())
+                        """).run()
+                }
+                let deliveries = try await store.loadRetryingDeliveries(
+                    subject: subjects[0], installationID: installationID, retryOwnerID: owner, on: db
+                )
+                #expect(deliveries.count == 1)
+                let delivery = try #require(deliveries.first)
+                let nwsDeliveries = try await store.loadRetryingDeliveries(
+                    subject: nws, installationID: installationID, retryOwnerID: owner, on: db
+                )
+                #expect(nwsDeliveries.count == 1 && nwsDeliveries.first?.id == nwsClaim.id)
+                #expect(!(try await store.reclaimRetrying(
+                    delivery, subject: subjects[1], retryOwnerID: owner, freshnessState: .fresh, on: db
+                )).inserted)
+                let claim = try await store.reclaimRetrying(
+                    delivery, subject: subjects[0], retryOwnerID: owner, freshnessState: .fresh, on: db
+                )
+                #expect(claim.inserted)
+                #expect(try await store.hasRetryInFlight(
+                    subject: subjects[0], installationID: installationID, retryOwnerID: owner, on: db
+                ))
+                #expect(!(try await store.hasRetryInFlight(
+                    subject: subjects[1], installationID: installationID, retryOwnerID: owner, on: db
+                )))
+                try await store.markRetrying(
+                    claimID: claim.id, retryOwnerID: owner, retryGeneration: claim.retryGeneration,
+                    apnsErrorCode: "ServiceUnavailable", on: db
+                )
+                let retry = try #require(try await store.loadRetryingDeliveries(
+                    subject: subjects[0], installationID: installationID, retryOwnerID: owner, on: db
+                ).first)
+                #expect(!(try await store.completeRetryingFailure(
+                    retry, subject: subjects[1], retryOwnerID: owner, apnsErrorCode: "ineligible", on: db
+                )))
+                #expect(try await store.completeRetryingFailure(
+                    retry, subject: subjects[0], retryOwnerID: owner, apnsErrorCode: "ineligible", on: db
+                ))
+                #expect(try await store.failRetryingDeliveries(
+                    subject: subjects[1], installationID: installationID,
+                    retryOwnerID: owner, apnsErrorCode: "exhausted", on: db
+                ) == 1)
+                #expect(try await NotificationLedgerModel.find(nwsClaim.id, on: db)?.status == "retrying")
+            }
+        }
+    }
+
     @Test("retry exhaustion is scoped to the constrained installation")
     func retryExhaustionIsScoped() async throws {
         try await withIntegrationTestApplication(
