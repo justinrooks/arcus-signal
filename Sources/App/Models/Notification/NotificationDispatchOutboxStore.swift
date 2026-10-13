@@ -28,6 +28,8 @@ struct NotificationDispatchOutboxStore {
                 SELECT id, available_at
                 FROM notification_outbox
                 WHERE mode = \(bind: mode)
+                  AND series_id IS NOT NULL
+                  AND (subject_kind IS NULL OR subject_kind = 'nws')
                   AND state IN ('ready', 'processing')
                   AND available_at <= \(bind: now)
                 ORDER BY available_at, id

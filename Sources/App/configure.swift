@@ -147,6 +147,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(AddCandidateCountToNotificationPipelineTimings())
     app.migrations.add(CreateSPCMesos())
     app.migrations.add(CreateAirNowDependencyStatus())
+    app.migrations.add(AddNotificationSubjectIdentity())
 }
 
 private func configureAPNs(on app: Application) async throws {
