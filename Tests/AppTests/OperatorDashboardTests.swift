@@ -207,6 +207,21 @@ struct OperatorDashboardTests {
                     body: "Avoid flooded roads",
                     ledgerStatus: nil,
                     apnsErrorCode: nil
+                ),
+                .init(
+                    createdAt: isoDate("2026-04-10T11:57:00Z"),
+                    seriesID: nil,
+                    subjectKind: "spc-meso",
+                    subjectID: "SPC-MD-2026-0042",
+                    eventName: "Mesoscale Discussion",
+                    recordKind: "preview_no_candidates",
+                    mode: "h3",
+                    reason: "new",
+                    title: "Mesoscale Discussion for your area",
+                    subtitle: "Watch potential not specified",
+                    body: "SPC is monitoring storms near your area.",
+                    ledgerStatus: nil,
+                    apnsErrorCode: nil
                 )
             ],
             touchedSeries: [
@@ -495,7 +510,21 @@ struct OperatorDashboardTests {
             "successfulConversionCount": 0,
             "p95ConversionSeconds": null
           },
-          "recentNotificationDebugEntries": [],
+          "recentNotificationDebugEntries": [
+            {
+              "createdAt": "2026-04-10T11:58:00Z",
+              "seriesID": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+              "eventName": "Tornado Warning",
+              "recordKind": "candidate",
+              "mode": "h3",
+              "reason": "new",
+              "title": "Tornado Warning",
+              "subtitle": "Includes your location",
+              "body": "Take shelter now",
+              "ledgerStatus": "sent",
+              "apnsErrorCode": null
+            }
+          ],
           "touchedSeries": [
             {
               "seriesID": "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC",
@@ -525,6 +554,9 @@ struct OperatorDashboardTests {
         #expect(snapshot.installationActivity.dailyActiveInstallationCount == 0)
         #expect(snapshot.installationActivity.monthlyActiveInstallationCount == 0)
         #expect(snapshot.installationActivity.stateBreakdown.isEmpty)
+        #expect(snapshot.recentNotificationDebugEntries.first?.seriesID == UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
+        #expect(snapshot.recentNotificationDebugEntries.first?.subjectKind == nil)
+        #expect(snapshot.recentNotificationDebugEntries.first?.subjectID == nil)
     }
 
     @Test("legacy snapshot backfills touched-series fields")
@@ -576,7 +608,9 @@ struct OperatorDashboardTests {
                 #expect(payload.redLights.spcMesoIngest.latestProductValidStart == isoDate("2026-04-10T11:30:00Z"))
                 #expect(payload.redLights.spcMesoIngest.latestProductValidEnd == isoDate("2026-04-10T13:00:00Z"))
                 #expect(payload.redLights.spcMesoIngest.status == .warning)
-                #expect(payload.operatorContext.recentNotificationDebugEntries.entries.count == 2)
+                #expect(payload.operatorContext.recentNotificationDebugEntries.entries.count == 3)
+                #expect(payload.operatorContext.recentNotificationDebugEntries.entries.last?.subjectKind == "spc-meso")
+                #expect(payload.operatorContext.recentNotificationDebugEntries.entries.last?.subjectID == "SPC-MD-2026-0042")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.eventName == "Severe Thunderstorm Warning")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.areaDescription == "Weld / Morgan, CO")
                 #expect(payload.operatorContext.lastTouchedSeries.entries.first?.ugcCodes == ["COC005", "COC013"])
@@ -677,6 +711,8 @@ struct OperatorDashboardTests {
                         #expect(markup.contains("data-record-kind=\"preview_no_candidates\""))
                         #expect(markup.contains("Take shelter now"))
                         #expect(markup.contains("Avoid flooded roads"))
+                        #expect(markup.contains("SPC-MD-2026-0042"))
+                        #expect(markup.contains("Mesoscale Discussion for your area"))
                         #expect(markup.contains("new / candidate"))
                         #expect(markup.contains("update / preview_no_candidates"))
                         #expect(!markup.contains("diagnostic-disclosure"))
@@ -693,6 +729,7 @@ struct OperatorDashboardTests {
                         #expect(html.contains("applyDebugFilter(document.getElementById('recent-debug-table'), state.debugFilter)"))
                         #expect(html.contains("kind === 'candidate'"))
                         #expect(html.contains("kind === 'preview_no_candidates'"))
+                        #expect(html.contains("entry.subjectID ?? 'Unknown product'"))
                     }
                     for destination in OperatorDashboardPageRenderer.Page.allCases {
                         #expect(markup.contains("href=\"\(destination.path)\""))

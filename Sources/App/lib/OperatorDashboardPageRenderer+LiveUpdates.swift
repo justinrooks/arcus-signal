@@ -614,7 +614,7 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Time">${escapeHtml(formatDate(entry.createdAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
-                  <div class="diagnostic-mono">${escapeHtml(entry.seriesID)}</div>
+                  <div class="diagnostic-mono">${escapeHtml(entry.seriesID ?? entry.subjectID ?? 'Unknown product')}</div>
                 </td>
                 <td data-label="Mode / reason">
                   <span class="pill">${escapeHtml(entry.mode)}</span>

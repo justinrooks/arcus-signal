@@ -541,7 +541,7 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Time">\(escape(formatDate(entry.createdAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
-            <div class="diagnostic-mono">\(escape(entry.seriesID.uuidString))</div>
+            <div class="diagnostic-mono">\(escape(entry.seriesID?.uuidString ?? entry.subjectID ?? "Unknown product"))</div>
           </td>
           <td data-label="Mode / reason">
             <span class="pill">\(escape(entry.mode))</span>
