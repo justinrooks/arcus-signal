@@ -7,6 +7,12 @@ struct NotificationDispatchClaim: Decodable, Sendable {
     let id: UUID
     let seriesId: UUID
     let revisionUrn: String
+    let subjectID: String
+    let subjectRevisionID: String
+
+    var subject: NotificationSubject {
+        .init(kind: .nws, productID: subjectID, revisionID: subjectRevisionID)
+    }
     let mode: String
     let reason: String
     let sourceTargetExecutionId: UUID?
@@ -44,6 +50,8 @@ struct NotificationDispatchOutboxStore {
                 WHERE outbox.id = eligible.id
                 RETURNING outbox.id, outbox.series_id AS "seriesId",
                           outbox.revision_urn AS "revisionUrn", outbox.mode, outbox.reason,
+                          COALESCE(outbox.subject_id, LOWER(outbox.series_id::text)) AS "subjectID",
+                          COALESCE(outbox.subject_revision_id, outbox.revision_urn) AS "subjectRevisionID",
                           outbox.source_target_execution_id AS "sourceTargetExecutionId",
                           outbox.available_at::text AS lease,
                           eligible.available_at AS previous_availability
