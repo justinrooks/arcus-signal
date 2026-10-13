@@ -90,6 +90,19 @@ struct MesoNotificationComposerTests {
         #expect(result.title == "Mesoscale Discussion for your area")
     }
 
+    @Test("Explicitly not expected tornadoes are not presented as a concern")
+    func notExpectedTornadoFallback() {
+        let result = composer.buildPreviewNotification(
+            for: discussion(threats: .init(
+                peakWindMPH: nil,
+                hailRangeInches: nil,
+                tornadoStrength: " Not Expected "
+            ))
+        )
+
+        #expect(result.body == "SPC is monitoring storms near your area. Open SkyAware for the full discussion.")
+    }
+
     @Test("Typed APNs payload identifies a meso product while legacy alert decoding remains supported")
     func typedPayloadAndDebugSubject() throws {
         let subject = NotificationSubject.spcMeso(issueYear: 2025, number: 1234)

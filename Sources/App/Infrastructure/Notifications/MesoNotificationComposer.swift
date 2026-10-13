@@ -68,6 +68,7 @@ struct MesoNotificationComposer: Sendable {
             return false
         }
         return trimmed.localizedCaseInsensitiveCompare("unknown") != .orderedSame
+            && trimmed.localizedCaseInsensitiveCompare("not expected") != .orderedSame
     }
 
     private func naturalLanguageList(_ items: [String]) -> String {
