@@ -104,6 +104,18 @@ Expected ports:
 - In non-dev environments, missing `REDIS_URL` is an immediate startup failure.
 - In non-dev environments, missing `DATABASE_URL` is an immediate startup failure.
 
+### Docker runtime dependencies
+
+- When adding a Swift import or package that uses a native shared library,
+  update the final runtime stage of `Dockerfile` with the required OS package.
+  `--static-swift-stdlib` does not make the entire executable self-contained.
+- `FoundationXML` requires the runtime package `libxml2`
+  (`libxml2.so.2`). Keep it installed while SPC parsing uses FoundationXML.
+- For dependency changes, inspect `ldd` output for both `Run` and `RunWorker`
+  inside the final runtime image and confirm no libraries are reported as
+  `not found`. Verify executable startup in that image; success in the Swift
+  build image alone is insufficient.
+
 <!-- graft:start -->
 ## Graft — Repository Context
 
