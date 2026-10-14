@@ -263,6 +263,7 @@ extension OperatorDashboardPageRenderer {
                 \(stageRow("Notification queue", metric.notificationQueueWait))
                 \(stageRow("Candidate resolution", metric.candidateResolution))
                 \(stageRow("Notification preparation / APNs handoff", metric.notificationPreparation))
+                \(stageRow("Meso accepted to successful delivery", metric.spcMesoDelivery ?? .init()))
               </tbody>
             </table>
           </div>
@@ -279,6 +280,8 @@ extension OperatorDashboardPageRenderer {
             details: [
                 ("Sent", "\(metric.sentCount)"),
                 ("Failed", "\(metric.failedCount)"),
+                ("Meso sent / failed", "\(metric.spcMesoSentCount.map(String.init) ?? "n/a") / \(metric.spcMesoFailedCount.map(String.init) ?? "n/a")"),
+                ("Meso top failures", metric.spcMesoTopFailureReasons.map(joinedReasons) ?? "n/a"),
                 ("Top failures", joinedReasons(metric.topFailureReasons))
             ]
         )
@@ -292,7 +295,9 @@ extension OperatorDashboardPageRenderer {
             details: [
                 ("Total attempts", "\(metric.totalAttemptCount)"),
                 ("No-op attempts", "\(metric.noOpAttemptCount)"),
-                ("Reasons", joinedReasons(metric.reasons))
+                ("Reasons", joinedReasons(metric.reasons)),
+                ("Meso attempts / no-ops", "\(metric.spcMesoTotalAttemptCount.map(String.init) ?? "n/a") / \(metric.spcMesoNoOpAttemptCount.map(String.init) ?? "n/a")"),
+                ("Meso no-op reasons", metric.spcMesoReasons.map(joinedReasons) ?? "n/a")
             ]
         )
     }
@@ -304,7 +309,9 @@ extension OperatorDashboardPageRenderer {
             refreshedAt: metric.refreshedAt,
             details: [
                 ("Candidate-resolution attempts", "\(metric.candidateResolutionAttemptCount)"),
-                ("Zero-candidate attempts", "\(metric.zeroCandidateAttemptCount)")
+                ("Zero-candidate attempts", "\(metric.zeroCandidateAttemptCount)"),
+                ("Meso candidate / zero-candidate attempts", "\(metric.spcMesoCandidateResolutionAttemptCount.map(String.init) ?? "n/a") / \(metric.spcMesoZeroCandidateAttemptCount.map(String.init) ?? "n/a")"),
+                ("Meso eligible candidates across attempts", metric.spcMesoEligibleCandidateCount.map(String.init) ?? "n/a")
             ]
         )
     }
@@ -541,6 +548,7 @@ extension OperatorDashboardPageRenderer {
           <td data-label="Time">\(escape(formatDate(entry.createdAt)))</td>
           <td data-label="Alert">
             <div>\(escape(entry.eventName))</div>
+            \(entry.subjectKind == "spc-meso" ? #"<span class="pill">SPC Meso</span>"# : "")
             <div class="diagnostic-mono">\(escape(entry.seriesID?.uuidString ?? entry.subjectID ?? "Unknown product"))</div>
           </td>
           <td data-label="Mode / reason">

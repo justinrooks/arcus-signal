@@ -398,7 +398,8 @@ extension OperatorDashboardPageRenderer {
               ['H3 / target processing', metric.h3TargetProcessing],
               ['Notification queue', metric.notificationQueueWait],
               ['Candidate resolution', metric.candidateResolution],
-              ['Notification preparation / APNs handoff', metric.notificationPreparation]
+              ['Notification preparation / APNs handoff', metric.notificationPreparation],
+              ['Meso accepted to successful delivery', metric.spcMesoDelivery]
             ];
             const stageRows = stages.map(([label, distribution]) => {
               const value = distribution || {};
@@ -417,6 +418,8 @@ extension OperatorDashboardPageRenderer {
             return renderCompactMetricCard('APNs delivery success rate', formatPercent(metric.successRate), metric.refreshedAt, null, [
               { label: 'Sent', value: String(metric.sentCount) },
               { label: 'Failed', value: String(metric.failedCount) },
+              { label: 'Meso sent / failed', value: `${metric.spcMesoSentCount ?? 'n/a'} / ${metric.spcMesoFailedCount ?? 'n/a'}` },
+              { label: 'Meso top failures', value: metric.spcMesoTopFailureReasons ? joinedReasons(metric.spcMesoTopFailureReasons) : 'n/a' },
               { label: 'Top failures', value: joinedReasons(metric.topFailureReasons) }
             ]);
           }
@@ -425,14 +428,18 @@ extension OperatorDashboardPageRenderer {
             return renderCompactMetricCard('Send no-op rate by reason', formatPercent(metric.noOpRate), metric.refreshedAt, null, [
               { label: 'Total attempts', value: String(metric.totalAttemptCount) },
               { label: 'No-op attempts', value: String(metric.noOpAttemptCount) },
-              { label: 'Reasons', value: joinedReasons(metric.reasons) }
+              { label: 'Reasons', value: joinedReasons(metric.reasons) },
+              { label: 'Meso attempts / no-ops', value: `${metric.spcMesoTotalAttemptCount ?? 'n/a'} / ${metric.spcMesoNoOpAttemptCount ?? 'n/a'}` },
+              { label: 'Meso no-op reasons', value: metric.spcMesoReasons ? joinedReasons(metric.spcMesoReasons) : 'n/a' }
             ]);
           }
 
           function renderZeroCandidateCard(metric) {
             return renderCompactMetricCard('Zero-candidate revision rate', formatPercent(metric.zeroCandidateRate), metric.refreshedAt, null, [
               { label: 'Candidate-resolution attempts', value: String(metric.candidateResolutionAttemptCount) },
-              { label: 'Zero-candidate attempts', value: String(metric.zeroCandidateAttemptCount) }
+              { label: 'Zero-candidate attempts', value: String(metric.zeroCandidateAttemptCount) },
+              { label: 'Meso candidate / zero-candidate attempts', value: `${metric.spcMesoCandidateResolutionAttemptCount ?? 'n/a'} / ${metric.spcMesoZeroCandidateAttemptCount ?? 'n/a'}` },
+              { label: 'Meso eligible candidates across attempts', value: String(metric.spcMesoEligibleCandidateCount ?? 'n/a') }
             ]);
           }
 
@@ -614,6 +621,7 @@ extension OperatorDashboardPageRenderer {
                 <td data-label="Time">${escapeHtml(formatDate(entry.createdAt))}</td>
                 <td data-label="Alert">
                   <div>${escapeHtml(entry.eventName)}</div>
+                  ${entry.subjectKind === 'spc-meso' ? '<span class="pill">SPC Meso</span>' : ''}
                   <div class="diagnostic-mono">${escapeHtml(entry.seriesID ?? entry.subjectID ?? 'Unknown product')}</div>
                 </td>
                 <td data-label="Mode / reason">
