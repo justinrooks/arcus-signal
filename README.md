@@ -40,6 +40,12 @@ Current AQI endpoint configuration:
 
 - `AIRNOW_API_KEY` (EPA AirNow API key; required on the API service to enable `GET /api/v1/air-quality/current`)
 
+Meso notification rollout configuration:
+
+- `MESO_NOTIFICATIONS_ENABLED` is shared by the API and worker and defaults to `false`.
+- Enabling meso delivery requires valid sandbox and production APNs credential pairs on the worker. Worker startup fails with a configuration error if either environment is incomplete or invalid.
+- The API receives only the rollout flag; APNs credentials and private keys remain worker-only.
+
 Worker APNs configuration:
 
 - `APNS_TEAM_ID` (Apple Team ID)
@@ -70,7 +76,7 @@ Current migration set includes series/revision persistence, geolocation (`arcus_
 docker compose up --build
 ```
 
-Compose sets defaults for queue tuning env vars (`QUEUE_WORKER_COUNT`, `REDIS_POOL_MAX_CONNECTIONS`, `REDIS_POOL_CONNECTION_TIMEOUT_SECONDS`, `WORKER_STARTUP_GRACE_SECONDS`).
+Compose sets defaults for queue tuning env vars (`QUEUE_WORKER_COUNT`, `REDIS_POOL_MAX_CONNECTIONS`, `REDIS_POOL_CONNECTION_TIMEOUT_SECONDS`, `WORKER_STARTUP_GRACE_SECONDS`) and the shared `MESO_NOTIFICATIONS_ENABLED` rollout gate (`false`).
 
 Compose APNs wiring (worker only):
 
@@ -80,6 +86,7 @@ Compose APNs wiring (worker only):
 - `APNS_SANDBOX_P8_HOST_PATH` controls the host-side sandbox `.p8` bind mount path (default `./.secrets/apns/AuthKey-sandbox.p8`).
 - `APNS_PROD_P8_HOST_PATH` controls the host-side production `.p8` bind mount path (default `./.secrets/apns/AuthKey-prod.p8`).
 - `APNS_SANDBOX_KEY_ID`, `APNS_PROD_KEY_ID`, `APNS_TEAM_ID`, and `APNS_TOPIC` are read from environment and passed only to the worker service.
+- The shared `MESO_NOTIFICATIONS_ENABLED` value is passed to both API and worker; when true, the worker requires both APNs environments to be configured.
 
 Example:
 

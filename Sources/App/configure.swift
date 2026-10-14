@@ -163,6 +163,20 @@ private func configureAPNs(on app: Application) async throws {
         }
     }
     let missingKeys = requiredKeys.filter { values[$0] == nil }
+
+    let sandboxKeyID = trimmedEnvironmentValue("APNS_SANDBOX_KEY_ID")
+    let sandboxKeyPath = trimmedEnvironmentValue("APNS_SANDBOX_PRIVATE_KEY_PATH")
+    let prodKeyID = trimmedEnvironmentValue("APNS_PROD_KEY_ID")
+    let prodKeyPath = trimmedEnvironmentValue("APNS_PROD_PRIVATE_KEY_PATH")
+    try validateMesoAPNSReadiness(
+        enabled: app.mesoNotificationsEnabled,
+        teamID: values["APNS_TEAM_ID"],
+        topic: values["APNS_TOPIC"],
+        sandboxKeyID: sandboxKeyID,
+        sandboxKeyPath: sandboxKeyPath,
+        productionKeyID: prodKeyID,
+        productionKeyPath: prodKeyPath
+    )
     
     guard missingKeys.isEmpty else {
         let reason = "APNS configuration is incomplete. Missing: \(missingKeys.joined(separator: ", "))."
@@ -180,8 +194,6 @@ private func configureAPNs(on app: Application) async throws {
     let isNonProductionLike = app.environment == .development || app.environment == .testing
     var configuredContainers = 0
     
-    let sandboxKeyID = trimmedEnvironmentValue("APNS_SANDBOX_KEY_ID")
-    let sandboxKeyPath = trimmedEnvironmentValue("APNS_SANDBOX_PRIVATE_KEY_PATH")
     try validateAPNSCredentialPair(
         keyID: sandboxKeyID,
         keyIDEnvironmentKey: "APNS_SANDBOX_KEY_ID",
@@ -195,7 +207,9 @@ private func configureAPNs(on app: Application) async throws {
         let sandboxAuth = try loadAuthenticationMethod(
             keyID: sandboxKeyID,
             teamID: teamId,
-            privateKeyPath: sandboxKeyPath
+            privateKeyPath: sandboxKeyPath,
+            environmentName: "sandbox",
+            requiresMesoReadiness: app.mesoNotificationsEnabled
         )
         
         await app.apns.containers.use(
@@ -215,8 +229,6 @@ private func configureAPNs(on app: Application) async throws {
         configuredContainers += 1
     }
     
-    let prodKeyID = trimmedEnvironmentValue("APNS_PROD_KEY_ID")
-    let prodKeyPath = trimmedEnvironmentValue("APNS_PROD_PRIVATE_KEY_PATH")
     try validateAPNSCredentialPair(
         keyID: prodKeyID,
         keyIDEnvironmentKey: "APNS_PROD_KEY_ID",
@@ -230,7 +242,9 @@ private func configureAPNs(on app: Application) async throws {
         let prodAuth = try loadAuthenticationMethod(
             keyID: prodKeyID,
             teamID: teamId,
-            privateKeyPath: prodKeyPath
+            privateKeyPath: prodKeyPath,
+            environmentName: "production",
+            requiresMesoReadiness: app.mesoNotificationsEnabled
         )
         
         await app.apns.containers.use(
@@ -261,22 +275,68 @@ private func configureAPNs(on app: Application) async throws {
     
 }
 
+func validateMesoAPNSReadiness(
+    enabled: Bool,
+    teamID: String?,
+    topic: String?,
+    sandboxKeyID: String?,
+    sandboxKeyPath: String?,
+    productionKeyID: String?,
+    productionKeyPath: String?
+) throws {
+    guard enabled else { return }
+
+    var missing: [String] = []
+    if teamID == nil { missing.append("APNS_TEAM_ID") }
+    if topic == nil { missing.append("APNS_TOPIC") }
+    if sandboxKeyID == nil { missing.append("APNS_SANDBOX_KEY_ID") }
+    if sandboxKeyPath == nil { missing.append("APNS_SANDBOX_PRIVATE_KEY_PATH") }
+    if productionKeyID == nil { missing.append("APNS_PROD_KEY_ID") }
+    if productionKeyPath == nil { missing.append("APNS_PROD_PRIVATE_KEY_PATH") }
+
+    guard missing.isEmpty else {
+        throw Abort(
+            .internalServerError,
+            reason: "MESO_NOTIFICATIONS_ENABLED=true requires complete sandbox and production APNS configuration. Missing: \(missing.joined(separator: ", "))."
+        )
+    }
+
+    for (environment, path) in [("sandbox", sandboxKeyPath), ("production", productionKeyPath)] {
+        guard let path, FileManager.default.isReadableFile(atPath: path) else {
+            throw Abort(
+                .internalServerError,
+                reason: "MESO_NOTIFICATIONS_ENABLED=true requires a readable APNS \(environment) private key file."
+            )
+        }
+    }
+}
+
 func makeAPNSRequestEncoder() -> JSONEncoder {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     return encoder
 }
-private func loadAuthenticationMethod(
+func loadAuthenticationMethod(
     keyID: String,
     teamID: String,
-    privateKeyPath: String
+    privateKeyPath: String,
+    environmentName: String,
+    requiresMesoReadiness: Bool
 ) throws -> APNSClientConfiguration.AuthenticationMethod {
-    let pem = try String(contentsOfFile: privateKeyPath, encoding: .utf8)
-    return .jwt(
-        privateKey: try .loadFrom(string: pem),
-        keyIdentifier: keyID,
-        teamIdentifier: teamID
-    )
+    do {
+        let pem = try String(contentsOfFile: privateKeyPath, encoding: .utf8)
+        return .jwt(
+            privateKey: try .loadFrom(string: pem),
+            keyIdentifier: keyID,
+            teamIdentifier: teamID
+        )
+    } catch {
+        guard requiresMesoReadiness else { throw error }
+        throw Abort(
+            .internalServerError,
+            reason: "MESO_NOTIFICATIONS_ENABLED=true requires valid APNS \(environmentName) credential material."
+        )
+    }
 }
 
 private func trimmedEnvironmentValue(_ key: String) -> String? {
