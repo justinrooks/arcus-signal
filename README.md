@@ -131,6 +131,14 @@ After publishing a stable GitHub Release and waiting for its versioned GHCR imag
 
 The installer pulls the requested version before starting the application and uses that same image tag for both API and worker. To select an older available image version, run the same command with its tag, for example `./install v1.0.3`. This selects the container version only; it does not guarantee that database migrations are safely reversible.
 
+### Agent-guided deployments
+
+The repository-local Codex skill at `.agents/skills/arcus-signal-release/SKILL.md` guides versioned deployment **on the production host**. It uses `./install vMAJOR.MINOR.PATCH` as the only deployment executor, requires explicit human approval, and captures pre/post NWS, queue, and APNs health evidence. For v1.4.0, the shared `MESO_NOTIFICATIONS_ENABLED` rollout gate must remain explicitly disabled.
+
+The read-only `tools/release-snapshot.sh --json` helper selects coarse operational data from the running API and containers. Add `--expected-tag v1.4.0` after deploying, or `--output /tmp/arcus-after.json` for a sanitized JSON artifact. It requires `curl`, `jq`, and sudo-enabled Docker Compose access. `/health` checks alone do not verify downstream ingestion, database, Redis, or APNs behavior.
+
+The skill does not publish releases, enable the meso rollout gate, automatically roll back, or run production data mutations beyond the reviewed installer.
+
 ## Endpoint Docs
 
 Detailed endpoint behavior, validation rules, and examples are documented in [docs/api-endpoints.md](docs/api-endpoints.md).
