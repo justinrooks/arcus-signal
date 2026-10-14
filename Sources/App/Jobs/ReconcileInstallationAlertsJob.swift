@@ -220,6 +220,22 @@ struct ReconcileInstallationAlertsJob: AsyncJob {
                 dispatchedCount += 1
             }
 
+            if context.application.mesoNotificationsEnabled {
+                let mesos = try await candidateStore.loadMatchingActiveMesos(
+                    for: payload.installationId, evaluatedAt: evaluatedAt, on: database
+                )
+                matchCount += mesos.count
+                for meso in mesos {
+                    try Task.checkCancellation()
+                    try await sendQueue.dispatch(
+                        MesoNotificationSendJob.self,
+                        .init(issueYear: meso.issueYear, number: meso.number, installationID: payload.installationId),
+                        maxRetryCount: MesoNotificationSendJob.maximumRetryCount
+                    )
+                    dispatchedCount += 1
+                }
+            }
+
             context.logger.info(
                 "Installation alert reconciliation completed.",
                 metadata: metadata.merging([

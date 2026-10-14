@@ -8,11 +8,13 @@ import Vapor
 struct MesoNotificationSendPayload: Codable, Sendable {
     let issueYear: Int
     let number: Int
+    let installationID: UUID?
     let deliveryAttemptID: UUID
 
-    init(issueYear: Int, number: Int, deliveryAttemptID: UUID = UUID()) {
+    init(issueYear: Int, number: Int, installationID: UUID? = nil, deliveryAttemptID: UUID = UUID()) {
         self.issueYear = issueYear
         self.number = number
+        self.installationID = installationID
         self.deliveryAttemptID = deliveryAttemptID
     }
 
@@ -66,7 +68,7 @@ struct MesoNotificationSendJob: AsyncJob {
                                                  retryOwnerID: payload.retryOwnerID, on: db)) else { return }
         }
         let matching = try await NotificationCandidateStore().loadMesoCandidates(
-            productID: payload.subject.productID, evaluatedAt: now, on: db
+            productID: payload.subject.productID, installationID: payload.installationID, evaluatedAt: now, on: db
         )
         let eligible = matching.filter {
             LocationFreshnessPolicy().decide(capturedAt: $0.capturedAt, locationAuth: $0.locationAuth, now: now).state != .stale
@@ -102,7 +104,7 @@ struct MesoNotificationSendJob: AsyncJob {
                 claim = try await store.claimMeso(
                     installationID: candidate.id, issueYear: payload.issueYear, number: payload.number,
                     mode: .h3, reason: .new, freshnessState: freshness.state,
-                    retryOwnerID: payload.retryOwnerID, origin: .alertDriven, on: db
+                    retryOwnerID: payload.retryOwnerID, origin: payload.installationID == nil ? .alertDriven : .presenceReconciliation, on: db
                 )
             }
             guard claim.inserted else { continue }

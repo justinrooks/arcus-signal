@@ -92,6 +92,132 @@ struct MesoEventNotificationTests {
         return try #require(geometry.h3Cells.first)
     }
 
+    private func reconcile(_ app: Application, installationID: UUID) async throws -> [MesoNotificationSendPayload] {
+        let before = app.queues.test.all(MesoNotificationSendJob.self).count
+        try await ReconcileInstallationAlertsJob().reconcile(context(app), .init(
+            intentId: UUID(), installationId: installationID, triggerCategory: .movedWhileUsable
+        ), on: app.db)
+        return Array(app.queues.test.all(MesoNotificationSendJob.self).dropFirst(before))
+    }
+
+    private func move(_ app: Application, installationID: UUID, cell: Int64) async throws {
+        let presence = try #require(try await DevicePresenceModel.find(installationID, on: app.db))
+        presence.h3Cell = cell
+        try await presence.update(on: app.db)
+    }
+
+    @Test("event-first and presence-first converge across repeated covered moves", arguments: [true, false])
+    func presenceDiscovery(eventFirst: Bool) async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let id = try await installation(app, cell: eventFirst ? cell : cell + 1000)
+            let sender = MesoEventRecordingSender()
+            let job = MesoNotificationSendJob(sender: sender)
+            let event = MesoNotificationSendPayload(issueYear: discussion.issueYear, number: discussion.number)
+            if eventFirst { try await job.dequeue(context(app), event) }
+            else { #expect(try await reconcile(app, installationID: id).isEmpty) }
+            try await move(app, installationID: id, cell: cell)
+            let other = try await installation(app, cell: cell)
+            for _ in 0..<2 {
+                let payload = try #require(try await reconcile(app, installationID: id).first)
+                #expect(payload.installationID == id)
+                try await job.dequeue(context(app), payload)
+            }
+            // A second covered cell represents a meaningful move within the MD.
+            let meso = try #require(try await SPCMesoModel.query(on: app.db).filter(\.$productKey == discussion.productID).first())
+            let geometry = try #require(try await SPCMesoGeolocationModel.query(on: app.db).filter(\.$meso.$id == meso.requireID()).first())
+            try await move(app, installationID: id, cell: try #require(geometry.h3Cells.first { $0 != cell }))
+            for payload in try await reconcile(app, installationID: id) { try await job.dequeue(context(app), payload) }
+            #expect(await sender.tokens == ["meso-event-test-\(id)"])
+            #expect(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == other).count() == 0)
+            if !eventFirst {
+                // A later ingest fanout can reach other installations, but never resend this MD to id.
+                _ = try await persist(app, try product(now: discussion.issued, summary: "Changed after move"), at: .now.addingTimeInterval(1))
+                try await MesoNotificationOutboxStore().dispatchPending(context: context(app))
+                let fanout = try #require(app.queues.test.all(MesoNotificationSendJob.self).last)
+                try await job.dequeue(context(app), fanout)
+            }
+            let rows = try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == id).all()
+            #expect(rows.count == 1 && rows.first?.status == "sent")
+            let sql = try #require(app.db as? any SQLDatabase)
+            let origin = try #require(try await sql.raw("SELECT delivery_origin FROM notification_ledger WHERE installation_id = \(bind: id)").first())
+            #expect(try origin.decode(column: "delivery_origin", as: String.self) == (eventFirst ? "alertDriven" : "presenceReconciliation"))
+            #expect(await sender.tokens.filter { $0 == "meso-event-test-\(id)" }.count == 1)
+        }
+    }
+
+    @Test("presence lookup applies meso exclusions and the disabled gate")
+    func presenceEligibility() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            var excluded: [UUID] = []
+            excluded.append(try await installation(app, cell: cell, preference: nil))
+            excluded.append(try await installation(app, cell: cell, preference: false))
+            excluded.append(try await installation(app, cell: cell, subscribed: false))
+            excluded.append(try await installation(app, cell: cell, active: false))
+            excluded.append(try await installation(app, cell: cell, capturedAt: .now.addingTimeInterval(-25 * 3600)))
+            excluded.append(try await installation(app, cell: cell, auth: .denied))
+            excluded.append(try await installation(app, cell: cell, resolution: 7))
+            excluded.append(try await installation(app, cell: nil))
+            excluded.append(try await installation(app, cell: cell + 1000))
+            for id in excluded { #expect(try await reconcile(app, installationID: id).isEmpty) }
+            let degraded = try await installation(app, cell: cell, capturedAt: .now.addingTimeInterval(-7 * 3600))
+            #expect(try await reconcile(app, installationID: degraded).count == 1)
+            app.mesoNotificationsEnabled = false
+            #expect(try await reconcile(app, installationID: degraded).isEmpty)
+            app.mesoNotificationsEnabled = true
+            _ = try await persist(app, try product(now: discussion.issued.addingTimeInterval(-7200)), at: .now.addingTimeInterval(1))
+            #expect(try await reconcile(app, installationID: degraded).isEmpty)
+        }
+    }
+
+    @Test("presence sends recheck latest coverage and retain their constraint on retry")
+    func constrainedPresenceRetry() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let id = try await installation(app, cell: cell)
+            let payload = try #require(try await reconcile(app, installationID: id).first)
+            try await move(app, installationID: id, cell: cell + 1000)
+            let sender = MesoEventRecordingSender(failFirst: true)
+            let job = MesoNotificationSendJob(sender: sender)
+            try await job.dequeue(context(app), payload)
+            #expect(await sender.tokens.isEmpty)
+            try await move(app, installationID: id, cell: cell)
+            await #expect(throws: NotificationDeliveryRetryableError.self) { try await job.dequeue(context(app), payload) }
+            let other = try await installation(app, cell: cell)
+            try await job.dequeue(retryContext(app, payload: payload), payload)
+            #expect(await sender.tokens == ["meso-event-test-\(id)", "meso-event-test-\(id)"])
+            #expect(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == other).count() == 0)
+        }
+    }
+
+    @Test("simultaneous event-first and presence-first sends have one winner")
+    func concurrentDiscoveryPaths() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let id = try await installation(app, cell: cell)
+            let presence = try #require(try await reconcile(app, installationID: id).first)
+            let sender = MesoEventRecordingSender()
+            let job = MesoNotificationSendJob(sender: sender)
+            async let eventSend: Void = job.dequeue(context(app), .init(issueYear: discussion.issueYear, number: discussion.number))
+            async let presenceSend: Void = job.dequeue(context(app), presence)
+            _ = try await (eventSend, presenceSend)
+            #expect(await sender.tokens == ["meso-event-test-\(id)"])
+            #expect(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == id).count() == 1)
+        }
+    }
+
+    @Test("legacy queued meso payloads remain unconstrained")
+    func legacyPayload() throws {
+        let payload = MesoNotificationSendPayload(issueYear: 2026, number: 9875)
+        let data = try JSONEncoder().encode(payload)
+        #expect(try JSONDecoder().decode(MesoNotificationSendPayload.self, from: data).installationID == nil)
+    }
+
     @Test("disabled gate prevents intents, handoffs, and manually queued sends")
     func disabled() async throws {
         try await fixture { app, discussion in
