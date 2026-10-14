@@ -1021,11 +1021,12 @@ struct AppTests {
         try await withApp(mode: .worker) { app in
             #expect(app.workerScheduledJobNames.contains("DispatchIngestNWSAlertsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("DispatchIngestSPCMesoScheduledJob"))
+            #expect(app.workerScheduledJobNames.contains("DispatchMesoNotificationsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("DispatchPresenceReconciliationScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("ProbeHRRRPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("CleanupPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("RefreshOperatorDashboardSnapshotScheduledJob"))
-            #expect(app.workerScheduledJobNames.count == 6)
+            #expect(app.workerScheduledJobNames.count == 7)
         }
     }
 

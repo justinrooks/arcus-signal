@@ -18,12 +18,10 @@ public struct IngestSPCMesoPayload: Codable, Sendable {
 
 public struct IngestSPCMesoJob: AsyncJob {
     public typealias Payload = IngestSPCMesoPayload
-    private let persist: SPCMesoPersistOperation
+    private let persist: SPCMesoPersistOperation?
 
     public init() {
-        persist = { products, database, seenAt in
-            try await SPCMesoIngestPersistence().persist(products, on: database, seenAt: seenAt)
-        }
+        persist = nil
     }
 
     init(persist: @escaping SPCMesoPersistOperation) {
@@ -47,13 +45,21 @@ public struct IngestSPCMesoJob: AsyncJob {
             ])
 
             stage = "persistence"
-            let result = try await persist(products, context.application.db, startedAt)
+            let result: SPCMesoPersistResult
+            if let persist {
+                result = try await persist(products, context.application.db, startedAt)
+            } else {
+                result = try await SPCMesoIngestPersistence().persist(products, on: context.application.db, seenAt: startedAt,
+                    enqueueNotifications: context.application.mesoNotificationsEnabled)
+            }
             context.logger.info("SPC meso products persisted.", metadata: [
                 "inserted": .stringConvertible(result.inserted),
                 "updated": .stringConvertible(result.updated),
                 "unchanged": .stringConvertible(result.unchanged),
                 "ignored": .stringConvertible(result.ignored)
             ])
+            stage = "notification_handoff"
+            try await MesoNotificationOutboxStore().dispatchPending(context: context)
             await recordRun(
                 context: context,
                 status: .succeeded,

@@ -25,7 +25,8 @@ struct SPCMesoIngestPersistence {
     }
 
     func persist(
-        _ products: [MesoscaleDiscussionPayload], on database: any Database, seenAt: Date
+        _ products: [MesoscaleDiscussionPayload], on database: any Database, seenAt: Date,
+        enqueueNotifications: Bool = false
     ) async throws -> SPCMesoPersistResult {
         var accepted: [String: MesoscaleDiscussionPayload] = [:]
         for product in products {
@@ -49,10 +50,12 @@ struct SPCMesoIngestPersistence {
             for snapshot in snapshots {
                 let product = snapshot.product
                 let meso: SPCMesoModel
+                var changed = true
                 if let stored = try await SPCMesoModel.query(on: db)
                     .filter(\.$productKey == product.productID).first() {
                     meso = stored
                     if stored.contentFingerprint == snapshot.fingerprint {
+                        changed = false
                         stored.lastSeen = max(stored.lastSeen, seenAt)
                         try await stored.update(on: db)
                         result.unchanged += 1
@@ -94,6 +97,9 @@ struct SPCMesoIngestPersistence {
                 // The canonical feed lock serializes coverage with snapshot replacement.
                 if let existing, existing.geometryHash == geometryHash,
                    existing.h3Resolution == 8, existing.h3Hash != nil {
+                    if enqueueNotifications, meso.isActive(asOf: seenAt), !existing.h3Cells.isEmpty {
+                        try await MesoNotificationOutboxStore().enqueue(issueYear: meso.issueYear, number: meso.number, changed: changed, on: db)
+                    }
                     continue
                 }
                 let coverage: H3Coverage
@@ -112,6 +118,9 @@ struct SPCMesoIngestPersistence {
                     try await location.update(on: db)
                 } else {
                     try await location.create(on: db)
+                }
+                if enqueueNotifications, meso.isActive(asOf: seenAt), !location.h3Cells.isEmpty {
+                    try await MesoNotificationOutboxStore().enqueue(issueYear: meso.issueYear, number: meso.number, changed: changed, on: db)
                 }
             }
             return result

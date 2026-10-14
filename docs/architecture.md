@@ -50,7 +50,7 @@ skips computation and geolocation writes; replay fills legacy rows with nil cove
 metadata. Changed geometry replaces all coverage fields atomically. Missing geometry
 remains readable without a geolocation row. Coverage failure throws a product-specific
 error and rolls back the accepted feed, retaining the previous snapshot and cover.
-This path creates no notification dispatch or fallback targeting.
+With `MESO_NOTIFICATIONS_ENABLED=true`, accepted active products with completed nonempty resolution-8 coverage also write a meso notification intent in the same transaction. The gate defaults off; absent or other values do not enable it. Coverage failure therefore rolls back both canonical data and intent creation. Meso targeting has no fallback.
 
 H3 polyfill selects cells by their centers. Matching a location's cell therefore
 approximates the polygon boundary: a point just outside can share an included cell,
@@ -93,7 +93,7 @@ must equal `revision_urn`. `nws` requires its matching CAP `series_id`; all othe
 kinds require a null series. Legacy series-only NWS writes remain valid and
 resolve to NWS subjects on read. Known `.nws` and `.spcMeso` kinds retain typed
 call sites; future kinds round-trip without a schema registration step.
-The current drain remains explicitly NWS-only. Recognition grants no sender policy.
+The existing drain remains explicitly NWS-only. Recognition grants no sender policy. `MesoNotificationOutboxStore` separately claims only `spc-meso` H3 intents with the stable `initial` delivery revision, using the same five-minute lease and bounded queue-handoff backoff. The worker drains these intents after ingestion and on a minutely recovery schedule, only while the meso gate is enabled. Redis awaits hold no database locks, and completion is fenced by the exact lease. Changed accepted content can ready a completed intent again to reach newly matching installations; unchanged replay cannot reset it, and the discussion-level ledger prevents another send to an already claimed installation.
 
 `MakeNotificationSubjectKindsExtensible` replaces the four constraints atomically
 after the original identity migration, preserving its backfill, foreign keys,
@@ -117,7 +117,7 @@ Each match is handed to the existing send lane as a `NotificationSendJob` constr
 
 ### Queue retries and replay limits
 
-Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `NotificationSendJob` is an explicit exception: every producer dispatches it with three retries using capped delays of 30, 120, and 300 seconds. A retry processes only ledger rows already marked `retrying` and owned by that queue job, atomically reclaims each row with a retry-generation compare-and-swap, and revalidates current installation, subscription, targeting, and location-freshness eligibility before APNs delivery. A queue retry that failed before creating an owned retry row does not perform fresh candidate discovery. `ReconcileInstallationAlertsJob` is also explicitly retryable because rediscovery and constrained send dispatch converge on the ledger identity; `PressureArtifactFailureCompletionJob` separately uses its configured completion schedule on the `model-artifacts` lane. Outbox drain attempts and reconciliation retries remain distinct from APNs delivery retries.
+Production `.dispatch(...)` calls default to Vapor Queues' `maxRetryCount` of `0`, so most dequeued job failures are not retried by Vapor Queues. `NotificationSendJob` is an explicit exception: every producer dispatches it with three retries using capped delays of 30, 120, and 300 seconds. A retry processes only ledger rows already marked `retrying` and owned by that queue job, atomically reclaims each row with a retry-generation compare-and-swap, and revalidates current installation, subscription, targeting, and location-freshness eligibility before APNs delivery. An NWS queue retry that failed before creating an owned retry row does not perform fresh candidate discovery. `MesoNotificationSendJob` uses the same bounded retry delays, but allows pre-claim recovery while no ledger row exists for its discussion and retry owner; after its first persisted claim, only owned retrying rows are eligible. `ReconcileInstallationAlertsJob` is also explicitly retryable because rediscovery and constrained send dispatch converge on the ledger identity; `PressureArtifactFailureCompletionJob` separately uses its configured completion schedule on the `model-artifacts` lane. Outbox drain attempts and reconciliation retries remain distinct from APNs delivery retries.
 
 ## Candidate selection, claim, and APNs delivery
 
@@ -143,7 +143,7 @@ A competing producer
 cannot obtain a fresh claim or take over an owned retry. Intentional re-notification
 of an existing MD requires a separately approved policy and delivery-revision
 change; canonical content updates must never implicitly enable it.
-These primitives do not enable meso targeting, APNs sends, or the production gate.
+`MesoNotificationSendJob` consumes these primitives behind the disabled runtime gate. It loads current canonical content and matches only active, subscribed installations whose explicit meso preference is true, whose presence uses resolution-8 H3 matching completed coverage, and whose location passes the existing freshness policy. Unknown capability, UGC-only presence, invalid resolution, and stale authorization/location are excluded. The gate is checked at execution and again before sending, including queued retries. Composition follows a successful ledger claim and uses the typed mesoscale-discussion APNs resource identity. The send lane owns three retries with 30/120/300-second delays. Before any claim exists for the discussion and retry owner, a queue retry may repeat candidate discovery to recover transient pre-claim read failures. Once any owned ledger claim exists, regardless of status, executions process only owned retrying rows and cannot broaden to new candidates. A claim committed before a lost database response also establishes this boundary. Pre-claim recovery remains bounded by the queue retry budget; outbox completion continues to represent successful queue handoff. Location-driven meso reconciliation remains a separate issue.
 NWS CAP revision identity and retry paths remain unchanged.
 
 After a successful claim, [`NotificationEngine.buildNotification(...)`](../Sources/App/Infrastructure/Notifications/NotificationEngine.swift) builds candidate-specific title, subtitle, and body; the send job then sends APNs using that candidate’s environment. [`NotificationDebugModel`](../Sources/App/Models/Notification/NotificationDebugModel.swift) records the composed preview/candidate copy for diagnostics. [`NotificationSendAttemptModel`](../Sources/App/Models/Notification/NotificationSendAttemptModel.swift) records a send-job attempt summary. Neither is the dispatch-intent outbox or an APNs-delivery guarantee.
