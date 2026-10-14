@@ -14,6 +14,16 @@ if [[ $# -ne 1 || ! "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
 fi
 
 release_tag="$1"
+
+# Fail before any production mutation if the checkout is locally modified.
+[[ -f .env ]] || { echo "Missing .env in repository root." >&2; exit 3; }
+for tool in git docker sudo curl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "Missing prerequisite: $tool" >&2; exit 3; }
+done
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "Tracked files are modified. Resolve the checkout before deploying." >&2
+  exit 4
+fi
 compose=(sudo env "ARCUS_SIGNAL_IMAGE_TAG=$release_tag" docker compose --env-file .env)
 
 echo "Pulling latest repo changes..."
@@ -34,4 +44,33 @@ echo "Verifying packaged wgrib2 binary..."
 echo "Starting api/worker from pulled images..."
 "${compose[@]}" up -d --no-build api worker
 
+echo "Verifying requested API and worker image identities..."
+expected_image="ghcr.io/justinrooks/arcus-signal:$release_tag"
+for service in api worker; do
+  container_id="$("${compose[@]}" ps -q "$service")"
+  [[ -n "$container_id" ]] || { echo "$service container missing after deployment." >&2; exit 1; }
+  deployed_image="$(sudo docker inspect --format '{{.Config.Image}}' "$container_id")"
+  [[ "$deployed_image" == "$expected_image" ]] || {
+    echo "$service is running unexpected image: $deployed_image" >&2
+    exit 1
+  }
+done
+
+# /health checks HTTP availability only; inspect downstream metrics separately.
+check_http_health() {
+  local service="$1" port="$2" attempt
+  for ((attempt = 1; attempt <= 20; attempt++)); do
+    if curl -fsS --max-time 3 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
+      echo "$service HTTP health: OK"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "$service HTTP health did not recover." >&2
+  return 1
+}
+check_http_health api 8080
+check_http_health worker 8081
+
+echo "Versioned services respond. Verify downstream health with tools/release-snapshot.sh."
 echo "Done."
