@@ -1,6 +1,6 @@
 ---
 name: arcus-signal-release
-description: Deploy and observe an explicitly approved Arcus Signal production release with the repo installer, NWS regression checks, bounded monitoring, and a human-readable report.
+description: Deploy and observe an explicitly versioned, human-approved Arcus Signal release. Use when asked to release a specific version such as "release v1.4.0" or "release 1.4.1"; require a version before any release workflow.
 ---
 
 # Arcus Signal release deployment
@@ -9,9 +9,17 @@ Operate from the Arcus Signal checkout **on the deployment host**. This skill do
 
 **Source of truth:** `install` owns deployment mechanics, `tools/release-snapshot.sh` captures sanitized operational evidence, `docs/architecture.md` defines runtime and notification invariants, and `release/RELEASE_NOTES.md` describes the selected version.
 
+## Required version input
+
+- **A release version must be supplied explicitly by the user in the current request.** Examples: `release v1.4.0` and `release 1.4.1`. Both invoke this workflow for the explicitly named version.
+- Accept only a single complete semantic version of the form `vMAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH` (nonnegative decimal components, no prerelease/build suffix). Normalize a missing leading `v` to `v` and use that exact tag throughout preflight, image verification, approval, installation, and post-deploy checks.
+- **If no version is supplied, stop before preflight or any deployment actions and ask: "Which exact version should I release (for example, v1.4.0)?"** If multiple versions are supplied without a clear target, ask which version is intended.
+- **Never guess, select, or default the target version** from `latest`, the current installed image, the most recent GitHub Release, repository tags, changelog headings, branch names, or conversation history. A discovered newer version is not authorization to substitute it for the user's explicit target.
+- Confirm that the normalized tag exists as a published stable release before asking for deployment approval. An unavailable or invalid requested version must be reported as such, not silently replaced.
+
 ## Mandatory safeguards
 
-- Target only a **published, stable `vMAJOR.MINOR.PATCH` release** with an available GHCR versioned image. Never deploy `latest` or an unreviewed branch build.
+- Target only the **user-supplied, normalized, published stable `vMAJOR.MINOR.PATCH` release** with an available GHCR versioned image. Never deploy `latest`, infer a release number, or use an unreviewed branch build.
 - **Get explicit human approval immediately before running `./install`.** Show target/current versions, migration considerations, backup status, NWS baseline, meso gate, and rollback target. Preflight does not imply deployment approval.
 - For the **v1.4.0 infrastructure release**, `MESO_NOTIFICATIONS_ENABLED` must be **explicitly false** on API and worker. Do not enable it; activation belongs to #289 after the app cutover.
 - No automatic rollback, migration reversal, editing production configuration, test APNs sends, synthetic NWS alerts, queue draining, Redis flushing, ledger edits, or data cleanup.
