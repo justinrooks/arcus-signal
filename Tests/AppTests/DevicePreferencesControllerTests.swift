@@ -6,6 +6,15 @@ import VaporTesting
 
 @Suite("Device preferences endpoint", .serialized)
 struct DevicePreferencesControllerTests {
+    private struct DevicePreferencesResponse: Content {
+        let serverOwnsMesoNotificationDelivery: Bool?
+    }
+
+    private struct LegacyDevicePreferencesResponse: Decodable {
+        let status: String
+        let receivedAt: Date
+    }
+
     private struct DevicePreferencesRequest: Content {
         let installationId: String
         let apnsDeviceToken: String
@@ -173,6 +182,66 @@ struct DevicePreferencesControllerTests {
                 let preserved = try await DeviceInstallationModel.find(installationID, on: app.db)
                 #expect(preserved?.mesoNotificationsEnabled == value)
                 #expect(preserved?.isSubscribed == true)
+            }
+        }
+    }
+
+    @Test("preference sync reports meso ownership only when the gate and installation are eligible")
+    func reportsMesoDeliveryOwnershipFromGateAndInstallationState() async throws {
+        try await withApp { app in
+            let cases: [(gate: Bool, preference: Bool?, subscribed: Bool, expected: Bool)] = [
+                (false, true, true, false),
+                (true, nil, true, false),
+                (true, false, true, false),
+                (true, true, false, false),
+                (true, true, true, true)
+            ]
+
+            for testCase in cases {
+                app.mesoNotificationsEnabled = testCase.gate
+                let request = makeRequest(
+                    isSubscribed: testCase.subscribed,
+                    mesoNotificationsEnabled: testCase.preference
+                )
+                try await app.testing().test(.POST, "api/v1/devices/preferences", beforeRequest: { req in
+                    try req.content.encode(request)
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .ok)
+                    let response = try res.content.decode(DevicePreferencesResponse.self)
+                    #expect(response.serverOwnsMesoNotificationDelivery == testCase.expected)
+
+                    if testCase.expected {
+                        let decoder = JSONDecoder()
+                        decoder.dateDecodingStrategy = .iso8601
+                        let legacyResponse = try decoder.decode(
+                            LegacyDevicePreferencesResponse.self,
+                            from: Data(res.body.readableBytesView)
+                        )
+                        #expect(legacyResponse.status == "ok")
+                        #expect(legacyResponse.receivedAt.timeIntervalSince1970 > 0)
+                    }
+                })
+            }
+        }
+    }
+
+    @Test("preference sync uses the persisted meso preference when a later payload omits it")
+    func reportsOwnershipFromPersistedMesoPreference() async throws {
+        try await withApp { app in
+            app.mesoNotificationsEnabled = true
+            let installationID = UUID()
+            for preference in [Bool?.some(true), nil] {
+                let request = makeRequest(
+                    installationId: installationID.uuidString,
+                    mesoNotificationsEnabled: preference
+                )
+                try await app.testing().test(.POST, "api/v1/devices/preferences", beforeRequest: { req in
+                    try req.content.encode(request)
+                }, afterResponse: { res async throws in
+                    #expect(res.status == .ok)
+                    let response = try res.content.decode(DevicePreferencesResponse.self)
+                    #expect(response.serverOwnsMesoNotificationDelivery == true)
+                })
             }
         }
     }

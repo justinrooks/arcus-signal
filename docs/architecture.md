@@ -50,7 +50,7 @@ skips computation and geolocation writes; replay fills legacy rows with nil cove
 metadata. Changed geometry replaces all coverage fields atomically. Missing geometry
 remains readable without a geolocation row. Coverage failure throws a product-specific
 error and rolls back the accepted feed, retaining the previous snapshot and cover.
-With `MESO_NOTIFICATIONS_ENABLED=true`, accepted active products with completed nonempty resolution-8 coverage also write a meso notification intent in the same transaction. The gate defaults off; absent or other values do not enable it. Coverage failure therefore rolls back both canonical data and intent creation. Meso targeting has no fallback.
+`MESO_NOTIFICATIONS_ENABLED` is a shared API/worker ownership gate and defaults off; absent or other values do not enable it. When enabled, the worker must have valid sandbox and production APNs credential pairs configured before startup succeeds, because the API may acknowledge ownership for installations in either environment. The preference-sync acknowledgment reports configured server ownership from this gate and the installation's persisted subscription and explicit meso preference. It does not report transient worker health or guarantee APNs delivery. With the gate enabled, accepted active products with completed nonempty resolution-8 coverage also write a meso notification intent in the same transaction. Coverage failure therefore rolls back both canonical data and intent creation. Meso targeting has no fallback.
 
 H3 polyfill selects cells by their centers. Matching a location's cell therefore
 approximates the polygon boundary: a point just outside can share an included cell,

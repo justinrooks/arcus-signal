@@ -282,7 +282,7 @@ struct DeviceController: RouteCollection {
 
         let receivedAt = Date()
 
-        _ = try await req.db.transaction { database in
+        let installation = try await req.db.transaction { database in
             try await upsertDeviceInstallation(
                 installationId: installationUUID,
                 apnsDeviceToken: apnsDeviceToken,
@@ -313,7 +313,13 @@ struct DeviceController: RouteCollection {
             ]
         )
 
-        return .init(status: "ok", receivedAt: receivedAt)
+        return .init(
+            status: "ok",
+            receivedAt: receivedAt,
+            serverOwnsMesoNotificationDelivery: req.application.mesoNotificationsEnabled
+                && installation.isSubscribed
+                && installation.mesoNotificationsEnabled == true
+        )
     }
 }
 
