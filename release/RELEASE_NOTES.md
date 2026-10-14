@@ -1,5 +1,20 @@
 # Release Notes
 
+## v1.4.1
+
+## Overview
+
+Arcus Signal v1.4.1 hardens recovery of the notification subject identity migration when an earlier attempt left part of its schema in place. Run the migration with a single runner and keep tests from migrating the same production database concurrently. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- The migration adds missing identity columns, preserves already populated identities, and backfills only legacy rows whose identity fields are all empty.
+- Existing subject identity checks are recreated on retry, and missing subject identity indexes are created.
+
+## Maintenance
+
+- No application behavior change is intended; this patch makes the v1.4.0 schema migration resumable for the partially prepared production database.
+
 ## v1.4.0
 
 ## Overview
