@@ -352,6 +352,7 @@ public struct StoredEndToEndLatencyMetric: Codable, Sendable {
     public var notificationQueueWait: StoredLatencyDistribution
     public var candidateResolution: StoredLatencyDistribution
     public var notificationPreparation: StoredLatencyDistribution
+    public var spcMesoDelivery: StoredLatencyDistribution?
 
     public init(
         windowHours: Int = OperatorDashboardConfig.rollingWindowHours,
@@ -364,7 +365,8 @@ public struct StoredEndToEndLatencyMetric: Codable, Sendable {
         h3TargetProcessing: StoredLatencyDistribution = .init(),
         notificationQueueWait: StoredLatencyDistribution = .init(),
         candidateResolution: StoredLatencyDistribution = .init(),
-        notificationPreparation: StoredLatencyDistribution = .init()
+        notificationPreparation: StoredLatencyDistribution = .init(),
+        spcMesoDelivery: StoredLatencyDistribution? = nil
     ) {
         self.windowHours = windowHours
         self.successfulRevisionCount = successfulRevisionCount
@@ -377,11 +379,13 @@ public struct StoredEndToEndLatencyMetric: Codable, Sendable {
         self.notificationQueueWait = notificationQueueWait
         self.candidateResolution = candidateResolution
         self.notificationPreparation = notificationPreparation
+        self.spcMesoDelivery = spcMesoDelivery
     }
 
     enum CodingKeys: String, CodingKey {
         case windowHours, successfulRevisionCount, p95Seconds, sampleCount, p50Seconds, maxSeconds
         case targetQueueWait, h3TargetProcessing, notificationQueueWait, candidateResolution, notificationPreparation
+        case spcMesoDelivery
     }
 
     public init(from decoder: any Decoder) throws {
@@ -398,7 +402,8 @@ public struct StoredEndToEndLatencyMetric: Codable, Sendable {
             h3TargetProcessing: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .h3TargetProcessing) ?? .init(),
             notificationQueueWait: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .notificationQueueWait) ?? .init(),
             candidateResolution: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .candidateResolution) ?? .init(),
-            notificationPreparation: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .notificationPreparation) ?? .init()
+            notificationPreparation: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .notificationPreparation) ?? .init(),
+            spcMesoDelivery: try container.decodeIfPresent(StoredLatencyDistribution.self, forKey: .spcMesoDelivery)
         )
     }
 }
@@ -430,14 +435,29 @@ public struct StoredAPNsDeliveryMetric: Codable, Sendable {
     public var sentCount: Int
     public var failedCount: Int
     public var topFailureReasons: [StoredReasonCount]
+    public var spcMeso: StoredSPCMesoDeliveryCounts?
 
     public init(
         windowHours: Int = OperatorDashboardConfig.rollingWindowHours,
         sentCount: Int = 0,
         failedCount: Int = 0,
-        topFailureReasons: [StoredReasonCount] = []
+        topFailureReasons: [StoredReasonCount] = [],
+        spcMeso: StoredSPCMesoDeliveryCounts? = nil
     ) {
         self.windowHours = windowHours
+        self.sentCount = sentCount
+        self.failedCount = failedCount
+        self.topFailureReasons = topFailureReasons
+        self.spcMeso = spcMeso
+    }
+}
+
+public struct StoredSPCMesoDeliveryCounts: Codable, Sendable {
+    public var sentCount: Int
+    public var failedCount: Int
+    public var topFailureReasons: [StoredReasonCount]
+
+    public init(sentCount: Int = 0, failedCount: Int = 0, topFailureReasons: [StoredReasonCount] = []) {
         self.sentCount = sentCount
         self.failedCount = failedCount
         self.topFailureReasons = topFailureReasons
@@ -449,14 +469,29 @@ public struct StoredSendNoOpsMetric: Codable, Sendable {
     public var totalAttemptCount: Int
     public var noOpAttemptCount: Int
     public var reasons: [StoredReasonCount]
+    public var spcMeso: StoredSPCMesoAttemptCounts?
 
     public init(
         windowHours: Int = OperatorDashboardConfig.rollingWindowHours,
         totalAttemptCount: Int = 0,
         noOpAttemptCount: Int = 0,
-        reasons: [StoredReasonCount] = []
+        reasons: [StoredReasonCount] = [],
+        spcMeso: StoredSPCMesoAttemptCounts? = nil
     ) {
         self.windowHours = windowHours
+        self.totalAttemptCount = totalAttemptCount
+        self.noOpAttemptCount = noOpAttemptCount
+        self.reasons = reasons
+        self.spcMeso = spcMeso
+    }
+}
+
+public struct StoredSPCMesoAttemptCounts: Codable, Sendable {
+    public var totalAttemptCount: Int
+    public var noOpAttemptCount: Int
+    public var reasons: [StoredReasonCount]
+
+    public init(totalAttemptCount: Int = 0, noOpAttemptCount: Int = 0, reasons: [StoredReasonCount] = []) {
         self.totalAttemptCount = totalAttemptCount
         self.noOpAttemptCount = noOpAttemptCount
         self.reasons = reasons
@@ -467,15 +502,30 @@ public struct StoredZeroCandidateRateMetric: Codable, Sendable {
     public var windowHours: Int
     public var candidateResolutionAttemptCount: Int
     public var zeroCandidateAttemptCount: Int
+    public var spcMeso: StoredSPCMesoCandidateCounts?
 
     public init(
         windowHours: Int = OperatorDashboardConfig.rollingWindowHours,
         candidateResolutionAttemptCount: Int = 0,
-        zeroCandidateAttemptCount: Int = 0
+        zeroCandidateAttemptCount: Int = 0,
+        spcMeso: StoredSPCMesoCandidateCounts? = nil
     ) {
         self.windowHours = windowHours
         self.candidateResolutionAttemptCount = candidateResolutionAttemptCount
         self.zeroCandidateAttemptCount = zeroCandidateAttemptCount
+        self.spcMeso = spcMeso
+    }
+}
+
+public struct StoredSPCMesoCandidateCounts: Codable, Sendable {
+    public var candidateResolutionAttemptCount: Int
+    public var zeroCandidateAttemptCount: Int
+    public var eligibleCandidateCount: Int
+
+    public init(candidateResolutionAttemptCount: Int = 0, zeroCandidateAttemptCount: Int = 0, eligibleCandidateCount: Int = 0) {
+        self.candidateResolutionAttemptCount = candidateResolutionAttemptCount
+        self.zeroCandidateAttemptCount = zeroCandidateAttemptCount
+        self.eligibleCandidateCount = eligibleCandidateCount
     }
 }
 
@@ -1472,6 +1522,7 @@ public struct EndToEndLatencyMetricResponse: Content, Sendable {
     public var notificationQueueWait: StoredLatencyDistribution
     public var candidateResolution: StoredLatencyDistribution
     public var notificationPreparation: StoredLatencyDistribution
+    public var spcMesoDelivery: StoredLatencyDistribution?
 
     init(refreshedAt: Date?, metric: StoredEndToEndLatencyMetric) {
         self.refreshedAt = refreshedAt
@@ -1486,6 +1537,7 @@ public struct EndToEndLatencyMetricResponse: Content, Sendable {
         self.notificationQueueWait = metric.notificationQueueWait
         self.candidateResolution = metric.candidateResolution
         self.notificationPreparation = metric.notificationPreparation
+        self.spcMesoDelivery = metric.spcMesoDelivery
     }
 }
 
@@ -1511,6 +1563,9 @@ public struct APNsDeliveryMetricResponse: Content, Sendable {
     public var failedCount: Int
     public var successRate: Double?
     public var topFailureReasons: [ReasonBreakdownResponse]
+    public var spcMesoSentCount: Int?
+    public var spcMesoFailedCount: Int?
+    public var spcMesoTopFailureReasons: [ReasonBreakdownResponse]?
 
     init(refreshedAt: Date?, metric: StoredAPNsDeliveryMetric) {
         let denominator = metric.sentCount + metric.failedCount
@@ -1525,6 +1580,11 @@ public struct APNsDeliveryMetricResponse: Content, Sendable {
         self.topFailureReasons = metric.topFailureReasons.map {
             .init(reason: $0.reason, count: $0.count, denominator: metric.failedCount)
         }
+        self.spcMesoSentCount = metric.spcMeso?.sentCount
+        self.spcMesoFailedCount = metric.spcMeso?.failedCount
+        self.spcMesoTopFailureReasons = metric.spcMeso?.topFailureReasons.map {
+            .init(reason: $0.reason, count: $0.count, denominator: metric.spcMeso?.failedCount ?? 0)
+        }
     }
 }
 
@@ -1535,6 +1595,9 @@ public struct SendNoOpsMetricResponse: Content, Sendable {
     public var noOpAttemptCount: Int
     public var noOpRate: Double?
     public var reasons: [ReasonBreakdownResponse]
+    public var spcMesoTotalAttemptCount: Int?
+    public var spcMesoNoOpAttemptCount: Int?
+    public var spcMesoReasons: [ReasonBreakdownResponse]?
 
     init(refreshedAt: Date?, metric: StoredSendNoOpsMetric) {
         self.refreshedAt = refreshedAt
@@ -1548,6 +1611,11 @@ public struct SendNoOpsMetricResponse: Content, Sendable {
         self.reasons = metric.reasons.map {
             .init(reason: $0.reason, count: $0.count, denominator: metric.totalAttemptCount)
         }
+        self.spcMesoTotalAttemptCount = metric.spcMeso?.totalAttemptCount
+        self.spcMesoNoOpAttemptCount = metric.spcMeso?.noOpAttemptCount
+        self.spcMesoReasons = metric.spcMeso?.reasons.map {
+            .init(reason: $0.reason, count: $0.count, denominator: metric.spcMeso?.totalAttemptCount ?? 0)
+        }
     }
 }
 
@@ -1557,6 +1625,9 @@ public struct ZeroCandidateRateMetricResponse: Content, Sendable {
     public var candidateResolutionAttemptCount: Int
     public var zeroCandidateAttemptCount: Int
     public var zeroCandidateRate: Double?
+    public var spcMesoCandidateResolutionAttemptCount: Int?
+    public var spcMesoZeroCandidateAttemptCount: Int?
+    public var spcMesoEligibleCandidateCount: Int?
 
     init(refreshedAt: Date?, metric: StoredZeroCandidateRateMetric) {
         self.refreshedAt = refreshedAt
@@ -1567,6 +1638,9 @@ public struct ZeroCandidateRateMetricResponse: Content, Sendable {
             numerator: metric.zeroCandidateAttemptCount,
             denominator: metric.candidateResolutionAttemptCount
         )
+        self.spcMesoCandidateResolutionAttemptCount = metric.spcMeso?.candidateResolutionAttemptCount
+        self.spcMesoZeroCandidateAttemptCount = metric.spcMeso?.zeroCandidateAttemptCount
+        self.spcMesoEligibleCandidateCount = metric.spcMeso?.eligibleCandidateCount
     }
 }
 

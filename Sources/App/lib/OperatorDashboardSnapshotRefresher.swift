@@ -319,6 +319,18 @@ struct OperatorDashboardSnapshotRefresher {
                     AND n.delivery_attempt_id::text = LOWER(p.retry_owner_id)
                 WHERE r.received >= \(bind: windowStart)
                   AND (p.first_apns_attempt_started_at IS NOT NULL OR n.candidate_count = 0)
+            ),
+            meso_delivery_samples AS (
+                SELECT EXTRACT(EPOCH FROM (MIN(l.completed_at) - m.first_seen)) AS latency_seconds
+                FROM spc_mesos m
+                JOIN notification_ledger l
+                  ON l.subject_kind = 'spc-meso'
+                 AND l.subject_id = m.product_key
+                 AND l.status = 'sent'
+                 AND l.delivery_origin = 'alertDriven'
+                 AND l.completed_at >= m.first_seen
+                WHERE m.first_seen >= \(bind: windowStart)
+                GROUP BY m.product_key, m.first_seen
             )
             SELECT
                 (SELECT COUNT(*) FROM primary_samples) AS "successfulRevisionCount",
@@ -340,7 +352,10 @@ struct OperatorDashboardSnapshotRefresher {
                 (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY candidate_resolution_seconds) FROM stage_samples) AS "candidateResolutionP95Seconds",
                 (SELECT COUNT(notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationSampleCount",
                 (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationP50Seconds",
-                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationP95Seconds"
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY notification_preparation_seconds) FROM stage_samples) AS "notificationPreparationP95Seconds",
+                (SELECT COUNT(*) FROM meso_delivery_samples) AS "mesoDeliverySampleCount",
+                (SELECT PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latency_seconds) FROM meso_delivery_samples) AS "mesoDeliveryP50Seconds",
+                (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_seconds) FROM meso_delivery_samples) AS "mesoDeliveryP95Seconds"
         """).first(decoding: LatencyAggregateRow.self)
 
         let targetQueueWait = row.map {
@@ -378,6 +393,13 @@ struct OperatorDashboardSnapshotRefresher {
                 p95Seconds: $0.notificationPreparationP95Seconds
             )
         } ?? .init()
+        let mesoDelivery = row.map {
+            StoredLatencyDistribution(
+                sampleCount: Int($0.mesoDeliverySampleCount),
+                p50Seconds: $0.mesoDeliveryP50Seconds,
+                p95Seconds: $0.mesoDeliveryP95Seconds
+            )
+        } ?? .init()
         return .init(
             windowHours: OperatorDashboardConfig.rollingWindowHours,
             successfulRevisionCount: row.map { Int($0.successfulRevisionCount) } ?? 0,
@@ -389,16 +411,31 @@ struct OperatorDashboardSnapshotRefresher {
             h3TargetProcessing: h3TargetProcessing,
             notificationQueueWait: notificationQueueWait,
             candidateResolution: candidateResolution,
-            notificationPreparation: notificationPreparation
+            notificationPreparation: notificationPreparation,
+            spcMesoDelivery: mesoDelivery
         )
     }
 
-    private func loadAPNsDelivery(on sql: any SQLDatabase, now: Date) async throws -> StoredAPNsDeliveryMetric {
+    func loadAPNsDelivery(on sql: any SQLDatabase, now: Date) async throws -> StoredAPNsDeliveryMetric {
         let windowStart = now.addingTimeInterval(-Double(OperatorDashboardConfig.rollingWindowHours * 60 * 60))
         let aggregate = try await sql.raw("""
             SELECT
                 COUNT(*) FILTER (WHERE status = 'sent') AS "sentCount",
-                COUNT(*) FILTER (WHERE status = 'failed') AS "failedCount"
+                COUNT(*) FILTER (WHERE status = 'failed') AS "failedCount",
+                COUNT(*) FILTER (WHERE status = 'sent' AND subject_kind = 'spc-meso') AS "mesoSentCount",
+                COUNT(*) FILTER (WHERE status = 'failed' AND subject_kind = 'spc-meso') AS "mesoFailedCount",
+                COALESCE((
+                    SELECT json_agg(json_build_object('reason', reason, 'count', reason_count))::text
+                    FROM (
+                        SELECT COALESCE(apns_error_code, 'unknown') AS reason, COUNT(*) AS reason_count
+                        FROM notification_ledger
+                        WHERE completed_at >= \(bind: windowStart)
+                          AND status = 'failed' AND subject_kind = 'spc-meso'
+                        GROUP BY COALESCE(apns_error_code, 'unknown')
+                        ORDER BY COUNT(*) DESC, COALESCE(apns_error_code, 'unknown') ASC
+                        LIMIT \(bind: OperatorDashboardConfig.topFailureReasonLimit)
+                    ) meso_reasons
+                ), '[]') AS "mesoReasonsJSON"
             FROM notification_ledger
             WHERE completed_at >= \(bind: windowStart)
               AND status IN ('sent', 'failed')
@@ -419,16 +456,34 @@ struct OperatorDashboardSnapshotRefresher {
             windowHours: OperatorDashboardConfig.rollingWindowHours,
             sentCount: aggregate.map { Int($0.sentCount) } ?? 0,
             failedCount: aggregate.map { Int($0.failedCount) } ?? 0,
-            topFailureReasons: reasons.map { .init(reason: $0.reason, count: Int($0.count)) }
+            topFailureReasons: reasons.map { .init(reason: $0.reason, count: Int($0.count)) },
+            spcMeso: .init(
+                sentCount: Int(aggregate?.mesoSentCount ?? 0),
+                failedCount: Int(aggregate?.mesoFailedCount ?? 0),
+                topFailureReasons: try JSONDecoder().decode([StoredReasonCount].self, from: Data((aggregate?.mesoReasonsJSON ?? "[]").utf8))
+            )
         )
     }
 
-    private func loadSendNoOps(on sql: any SQLDatabase, now: Date) async throws -> StoredSendNoOpsMetric {
+    func loadSendNoOps(on sql: any SQLDatabase, now: Date) async throws -> StoredSendNoOpsMetric {
         let windowStart = now.addingTimeInterval(-Double(OperatorDashboardConfig.rollingWindowHours * 60 * 60))
         let aggregate = try await sql.raw("""
             SELECT
                 COUNT(*) AS "totalAttemptCount",
-                COUNT(*) FILTER (WHERE outcome = 'no_op') AS "noOpAttemptCount"
+                COUNT(*) FILTER (WHERE outcome = 'no_op') AS "noOpAttemptCount",
+                COUNT(*) FILTER (WHERE subject_kind = 'spc-meso') AS "mesoTotalAttemptCount",
+                COUNT(*) FILTER (WHERE subject_kind = 'spc-meso' AND outcome = 'no_op') AS "mesoNoOpAttemptCount",
+                COALESCE((
+                    SELECT json_agg(json_build_object('reason', reason, 'count', reason_count))::text
+                    FROM (
+                        SELECT no_op_reason AS reason, COUNT(*) AS reason_count
+                        FROM notification_send_attempts
+                        WHERE attempted_at >= \(bind: windowStart)
+                          AND subject_kind = 'spc-meso' AND outcome = 'no_op' AND no_op_reason IS NOT NULL
+                        GROUP BY no_op_reason
+                        ORDER BY COUNT(*) DESC, no_op_reason ASC
+                    ) meso_reasons
+                ), '[]') AS "mesoReasonsJSON"
             FROM notification_send_attempts
             WHERE attempted_at >= \(bind: windowStart)
         """).first(decoding: SendAttemptAggregateRow.self)
@@ -444,28 +499,44 @@ struct OperatorDashboardSnapshotRefresher {
             ORDER BY COUNT(*) DESC, no_op_reason ASC
         """).all(decoding: ReasonAggregateRow.self)
 
+
         return .init(
             windowHours: OperatorDashboardConfig.rollingWindowHours,
             totalAttemptCount: aggregate.map { Int($0.totalAttemptCount) } ?? 0,
             noOpAttemptCount: aggregate.map { Int($0.noOpAttemptCount) } ?? 0,
-            reasons: reasons.map { .init(reason: $0.reason, count: Int($0.count)) }
+            reasons: reasons.map { .init(reason: $0.reason, count: Int($0.count)) },
+            spcMeso: .init(
+                totalAttemptCount: Int(aggregate?.mesoTotalAttemptCount ?? 0),
+                noOpAttemptCount: Int(aggregate?.mesoNoOpAttemptCount ?? 0),
+                reasons: try JSONDecoder().decode([StoredReasonCount].self, from: Data((aggregate?.mesoReasonsJSON ?? "[]").utf8))
+            )
         )
     }
 
-    private func loadZeroCandidateRate(on sql: any SQLDatabase, now: Date) async throws -> StoredZeroCandidateRateMetric {
+    func loadZeroCandidateRate(on sql: any SQLDatabase, now: Date) async throws -> StoredZeroCandidateRateMetric {
         let windowStart = now.addingTimeInterval(-Double(OperatorDashboardConfig.rollingWindowHours * 60 * 60))
         let aggregate = try await sql.raw("""
             SELECT
                 COUNT(*) FILTER (WHERE candidate_resolution_reached = TRUE) AS "candidateResolutionAttemptCount",
-                COUNT(*) FILTER (WHERE candidate_resolution_reached = TRUE AND candidate_count = 0) AS "zeroCandidateAttemptCount"
+                COUNT(*) FILTER (WHERE candidate_resolution_reached = TRUE AND candidate_count = 0) AS "zeroCandidateAttemptCount",
+                COALESCE(SUM(candidate_count) FILTER (WHERE candidate_resolution_reached = TRUE), 0)::BIGINT AS "eligibleCandidateCount",
+                COUNT(*) FILTER (WHERE candidate_resolution_reached = TRUE AND subject_kind = 'spc-meso') AS "mesoCandidateResolutionAttemptCount",
+                COUNT(*) FILTER (WHERE candidate_resolution_reached = TRUE AND candidate_count = 0 AND subject_kind = 'spc-meso') AS "mesoZeroCandidateAttemptCount",
+                COALESCE(SUM(candidate_count) FILTER (WHERE candidate_resolution_reached = TRUE AND subject_kind = 'spc-meso'), 0)::BIGINT AS "mesoEligibleCandidateCount"
             FROM notification_send_attempts
             WHERE attempted_at >= \(bind: windowStart)
         """).first(decoding: ZeroCandidateAggregateRow.self)
 
+
         return .init(
             windowHours: OperatorDashboardConfig.rollingWindowHours,
             candidateResolutionAttemptCount: aggregate.map { Int($0.candidateResolutionAttemptCount) } ?? 0,
-            zeroCandidateAttemptCount: aggregate.map { Int($0.zeroCandidateAttemptCount) } ?? 0
+            zeroCandidateAttemptCount: aggregate.map { Int($0.zeroCandidateAttemptCount) } ?? 0,
+            spcMeso: .init(
+                candidateResolutionAttemptCount: Int(aggregate?.mesoCandidateResolutionAttemptCount ?? 0),
+                zeroCandidateAttemptCount: Int(aggregate?.mesoZeroCandidateAttemptCount ?? 0),
+                eligibleCandidateCount: Int(aggregate?.mesoEligibleCandidateCount ?? 0)
+            )
         )
     }
 
@@ -1180,26 +1251,47 @@ struct OperatorDashboardSnapshotRefresher {
 
     func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
         let rows = try await sql.raw("""
-            SELECT
-                d.created AS "createdAt",
-                d.series_id AS "seriesID",
-                d.subject_kind AS "subjectKind",
-                COALESCE(d.subject_id, d.series_id::text) AS "subjectID",
-                COALESCE(s.event, s.headline, s.title,
-                    CASE WHEN d.subject_kind = 'spc-meso' THEN 'Mesoscale Discussion' ELSE 'Unknown Alert' END
-                ) AS "eventName",
-                d.record_kind AS "recordKind",
-                d.mode AS "mode",
-                d.reason AS "reason",
-                d.title AS "title",
-                d.subtitle AS "subtitle",
-                d.body AS "body",
-                l.status AS "ledgerStatus",
-                l.apns_error_code AS "apnsErrorCode"
-            FROM notification_debug d
-            LEFT JOIN arcus_series s ON s.id = d.series_id
-            LEFT JOIN notification_ledger l ON l.id = d.notification_ledger_id
-            ORDER BY d.created DESC
+            WITH all_entries AS (
+                SELECT
+                    d.id AS "debugID",
+                    d.created AS "createdAt",
+                    d.series_id AS "seriesID",
+                    d.subject_kind AS "subjectKind",
+                    COALESCE(d.subject_id, d.series_id::text) AS "subjectID",
+                    COALESCE(s.event, s.headline, s.title,
+                        CASE WHEN d.subject_kind = 'spc-meso' THEN 'Mesoscale Discussion' ELSE 'Unknown Alert' END
+                    ) AS "eventName",
+                    d.record_kind AS "recordKind",
+                    d.mode AS "mode",
+                    d.reason AS "reason",
+                    d.title AS "title",
+                    d.subtitle AS "subtitle",
+                    d.body AS "body",
+                    l.status AS "ledgerStatus",
+                    l.apns_error_code AS "apnsErrorCode"
+                FROM notification_debug d
+                LEFT JOIN arcus_series s ON s.id = d.series_id
+                LEFT JOIN notification_ledger l ON l.id = d.notification_ledger_id
+            ), meso_entries AS (
+                SELECT * FROM all_entries
+                WHERE "subjectKind" = 'spc-meso'
+                ORDER BY "createdAt" DESC, "debugID" DESC
+                LIMIT \(bind: OperatorDashboardConfig.recentMesoNotificationDebugLimit)
+            ), other_entries AS (
+                SELECT * FROM all_entries
+                WHERE "subjectKind" IS DISTINCT FROM 'spc-meso'
+                ORDER BY "createdAt" DESC, "debugID" DESC
+                LIMIT GREATEST(
+                    \(bind: OperatorDashboardConfig.recentNotificationDebugLimit)
+                    - (SELECT COUNT(*) FROM meso_entries), 0
+                )
+            )
+            SELECT * FROM (
+                SELECT * FROM meso_entries
+                UNION ALL
+                SELECT * FROM other_entries
+            ) recent
+            ORDER BY "createdAt" DESC, "debugID" DESC
             LIMIT \(bind: OperatorDashboardConfig.recentNotificationDebugLimit)
         """).all(decoding: RecentNotificationDebugRow.self)
 
@@ -1305,21 +1397,34 @@ private struct LatencyAggregateRow: Decodable {
     let notificationPreparationSampleCount: Int64
     let notificationPreparationP50Seconds: Double?
     let notificationPreparationP95Seconds: Double?
+    let mesoDeliverySampleCount: Int64
+    let mesoDeliveryP50Seconds: Double?
+    let mesoDeliveryP95Seconds: Double?
 }
 
 private struct DeliveryAggregateRow: Decodable {
     let sentCount: Int64
     let failedCount: Int64
+    let mesoSentCount: Int64
+    let mesoFailedCount: Int64
+    let mesoReasonsJSON: String
 }
 
 private struct SendAttemptAggregateRow: Decodable {
     let totalAttemptCount: Int64
     let noOpAttemptCount: Int64
+    let mesoTotalAttemptCount: Int64
+    let mesoNoOpAttemptCount: Int64
+    let mesoReasonsJSON: String
 }
 
 private struct ZeroCandidateAggregateRow: Decodable {
     let candidateResolutionAttemptCount: Int64
     let zeroCandidateAttemptCount: Int64
+    let eligibleCandidateCount: Int64?
+    let mesoCandidateResolutionAttemptCount: Int64
+    let mesoZeroCandidateAttemptCount: Int64
+    let mesoEligibleCandidateCount: Int64
 }
 
 private struct ReasonAggregateRow: Decodable {
@@ -1400,6 +1505,7 @@ private struct H3AggregateRow: Decodable {
 }
 
 private struct RecentNotificationDebugRow: Decodable {
+    let debugID: UUID
     let createdAt: Date
     let seriesID: UUID?
     let subjectKind: String?

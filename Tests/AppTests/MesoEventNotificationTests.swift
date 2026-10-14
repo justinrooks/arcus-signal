@@ -62,7 +62,9 @@ struct MesoEventNotificationTests {
     }
 
     private func cleanup(_ app: Application, productID: String) async throws {
+        try await NotificationDebugModel.query(on: app.db).filter(\.$subjectID == productID).delete()
         try await IngestSweepRunModel.query(on: app.db).filter(\.$runLabel == "meso-event-test-" + productID).delete()
+        try await NotificationSendAttemptModel.query(on: app.db).filter(\.$subjectID == productID).delete()
         try await DeviceInstallationModel.query(on: app.db).filter(\.$apnsDeviceToken ~~ "meso-event-test-").delete()
         try await ArcusNotificationOutboxModel.query(on: app.db).filter(\.$subjectID == productID).delete()
         try await SPCMesoModel.query(on: app.db).filter(\.$productKey == productID).delete()
@@ -144,6 +146,65 @@ struct MesoEventNotificationTests {
             let origin = try #require(try await sql.raw("SELECT delivery_origin FROM notification_ledger WHERE installation_id = \(bind: id)").first())
             #expect(try origin.decode(column: "delivery_origin", as: String.self) == (eventFirst ? "alertDriven" : "presenceReconciliation"))
             #expect(await sender.tokens.filter { $0 == "meso-event-test-\(id)" }.count == 1)
+        }
+    }
+
+    @Test("meso attempts record candidate, delivery, zero-candidate, and dedupe outcomes")
+    func attemptDiagnostics() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let job = MesoNotificationSendJob(sender: MesoEventRecordingSender())
+
+            try await job.dequeue(context(app), .init(issueYear: discussion.issueYear, number: discussion.number))
+            _ = try await installation(app, cell: cell)
+            try await job.dequeue(context(app), .init(issueYear: discussion.issueYear, number: discussion.number))
+            try await job.dequeue(context(app), .init(issueYear: discussion.issueYear, number: discussion.number))
+
+            let attempts = try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID)
+                .sort(\.$attemptedAt, .ascending)
+                .all()
+            #expect(attempts.count == 3)
+            #expect(attempts.allSatisfy { $0.subjectKindRaw == "spc-meso" && $0.$series.id == nil })
+            #expect(attempts[0].candidateResolutionReached && attempts[0].candidateCount == 0)
+            #expect(attempts[0].outcome == NotificationSendAttemptOutcome.noOp.rawValue)
+            #expect(attempts[0].noOpReason == NotificationSendNoOpReason.zeroCandidates.rawValue)
+            #expect(attempts[1].candidateCount == 1 && attempts[1].claimedCount == 1 && attempts[1].sentCount == 1)
+            #expect(attempts[1].outcome == NotificationSendAttemptOutcome.delivered.rawValue)
+            #expect(attempts[2].candidateCount == 1 && attempts[2].claimedCount == 0)
+            #expect(attempts[2].outcome == NotificationSendAttemptOutcome.noOp.rawValue)
+            #expect(attempts[2].noOpReason == NotificationSendNoOpReason.allCandidatesPreviouslyClaimed.rawValue)
+
+            let debugRows = try await NotificationDebugModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID)
+                .all()
+            #expect(debugRows.count == 2)
+            #expect(debugRows.contains { $0.recordKind == NotificationDebugRecordKind.previewNoCandidates.rawValue })
+            #expect(debugRows.contains { $0.recordKind == NotificationDebugRecordKind.candidate.rawValue && $0.notificationLedgerID != nil })
+        }
+    }
+
+    @Test("candidate diagnostics exclude fresh presence with denied location authority")
+    func attemptDiagnosticsExcludeDeniedLocationAuthority() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let deniedID = try await installation(app, cell: cell, auth: .denied)
+            let sender = MesoEventRecordingSender()
+
+            try await MesoNotificationSendJob(sender: sender).dequeue(
+                context(app), .init(issueYear: discussion.issueYear, number: discussion.number)
+            )
+
+            let attempt = try #require(try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID).first())
+            #expect(attempt.candidateResolutionReached)
+            #expect(attempt.candidateCount == 0)
+            #expect(attempt.noOpReason == NotificationSendNoOpReason.allCandidatesStaleLocation.rawValue)
+            #expect(await sender.tokens.isEmpty)
+            #expect(try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == deniedID).count() == 0)
         }
     }
 
@@ -306,6 +367,30 @@ struct MesoEventNotificationTests {
             #expect(rows.count == 1 && rows.first?.id == original.id && rows.first?.status == "sent")
             #expect(await sender.tokens == ["meso-event-test-\(id)", "meso-event-test-\(id)"])
             #expect(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == other).count() == 0)
+        }
+    }
+
+    @Test("rollout disable terminalization is recorded as a failed retry attempt")
+    func disabledRetryRecordsFailure() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            _ = try await installation(app, cell: try await persist(app, discussion))
+            let sender = MesoEventRecordingSender(failFirst: true)
+            let job = MesoNotificationSendJob(sender: sender)
+            let payload = MesoNotificationSendPayload(issueYear: discussion.issueYear, number: discussion.number)
+            await #expect(throws: NotificationDeliveryRetryableError.self) { try await job.dequeue(context(app), payload) }
+
+            app.mesoNotificationsEnabled = false
+            try await job.dequeue(retryContext(app, payload: payload), payload)
+
+            let ledger = try #require(try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID).first())
+            #expect(ledger.status == "failed")
+            let attempt = try #require(try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID).sort(\.$attemptedAt, .descending).first())
+            #expect(attempt.outcome == NotificationSendAttemptOutcome.failed.rawValue)
+            #expect(attempt.failedCount == 1)
+            #expect(attempt.noOpReason == nil)
         }
     }
 

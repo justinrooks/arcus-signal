@@ -1,4 +1,5 @@
 @testable import App
+import ArcusCore
 import Fluent
 import FluentSQL
 import Foundation
@@ -193,8 +194,8 @@ struct NotificationSubjectPersistenceTests {
         }
     }
 
-    @Test("dashboard debug query retains a meso preview without an NWS series")
-    func dashboardDebugQueryIncludesSerieslessMesoPreview() async throws {
+    @Test("dashboard debug query reserves meso evidence under NWS volume")
+    func dashboardDebugQueryReservesMesoEvidenceUnderNWSVolume() async throws {
         try await withDatabase { db in
             let sql = try #require(db as? any SQLDatabase)
             let subject = NotificationSubject.spcMeso(issueYear: 2026, number: 90_000_000 + Int.random(in: 1...999_999))
@@ -210,17 +211,99 @@ struct NotificationSubjectPersistenceTests {
                 subject: subject
             )
             try await debug.create(on: db)
-            debug.created = Date(timeIntervalSinceNow: 60)
+            debug.created = Date(timeIntervalSinceNow: -60 * 60)
             try await debug.update(on: db)
+
+            let fixture = try await seed(on: db)
+            for _ in 0..<OperatorDashboardConfig.recentNotificationDebugLimit + 1 {
+                let revision = "urn:oid:\(UUID())"
+                let nwsSubject = NotificationSubject.nws(seriesID: fixture.series, revisionUrn: revision)
+                _ = try await records(series: fixture.series, installation: fixture.installation,
+                                      revision: revision, subject: nwsSubject, on: db)
+            }
 
             let entries = try await OperatorDashboardSnapshotRefresher()
                 .loadRecentNotificationDebugEntries(on: sql)
 
             let entry = try #require(entries.first { $0.subjectID == subject.productID })
+            #expect(entries.count == OperatorDashboardConfig.recentNotificationDebugLimit)
             #expect(entry.seriesID == nil)
             #expect(entry.subjectKind == "spc-meso")
             #expect(entry.eventName == "Mesoscale Discussion")
             #expect(entry.title == "Mesoscale Discussion for your area")
+        }
+    }
+
+    @Test("dashboard notification metrics separate meso counts and preserve all-kind totals")
+    func dashboardNotificationMetricsSeparateMeso() async throws {
+        try await withDatabase { db in
+            let sql = try #require(db as? any SQLDatabase)
+            let fixture = try await seed(on: db)
+            let nwsSubject = NotificationSubject.nws(seriesID: fixture.series, revisionUrn: "urn:oid:\(fixture.series)")
+            let nws = try await records(series: fixture.series, installation: fixture.installation,
+                                        revision: nwsSubject.revisionID, subject: nwsSubject, on: db)
+            let mesoNumber = 90_000_000 + Int.random(in: 1...999_000)
+            let mesoSubject = NotificationSubject.spcMeso(issueYear: 2026, number: mesoNumber)
+            let meso = try await records(series: nil, installation: fixture.installation,
+                                         revision: mesoSubject.revisionID, subject: mesoSubject, on: db)
+
+            for id in [nws.ledger, meso.ledger] {
+                let ledger = try #require(try await NotificationLedgerModel.find(id, on: db))
+                ledger.status = "sent"
+                ledger.completedAt = now
+                try await ledger.update(on: db)
+            }
+            let failedSubject = NotificationSubject.spcMeso(issueYear: 2026, number: mesoNumber + 1)
+            try await NotificationLedgerModel(
+                installationId: fixture.installation, series: nil, revisionUrn: failedSubject.revisionID,
+                mode: "h3", reason: "new", freshnessState: .fresh, status: "failed", completedAt: now,
+                subject: failedSubject
+            ).create(on: db)
+            try await NotificationSendAttemptModel(
+                seriesID: nil, revisionUrn: mesoSubject.revisionID, mode: .h3, reason: .new,
+                outcome: .noOp, noOpReason: .zeroCandidates, candidateResolutionReached: true,
+                candidateCount: 0, claimedCount: 0, sentCount: 0, failedCount: 0, attemptedAt: now,
+                subject: mesoSubject
+            ).create(on: db)
+
+            let acceptedAt = now.addingTimeInterval(-120)
+            let timedNumber = mesoNumber + 2
+            let timedPayload = MesoscaleDiscussionPayload(
+                number: timedNumber, title: "Mesoscale Discussion \(timedNumber)",
+                sourceURL: try #require(URL(string: "https://www.spc.noaa.gov/products/md/md\(timedNumber).html")),
+                issued: acceptedAt, validStart: acceptedAt, validEnd: now.addingTimeInterval(3600),
+                areasAffected: "Test area", summary: "Timing fixture", concerning: nil,
+                watchProbability: nil, watchProbabilityText: "", threats: nil,
+                coordinates: [.init(latitude: 35, longitude: -98), .init(latitude: 36, longitude: -98),
+                              .init(latitude: 36, longitude: -97), .init(latitude: 35, longitude: -98)]
+            )
+            try await SPCMesoIngestPersistence().persist([timedPayload], on: db, seenAt: acceptedAt)
+            let timedSubject = NotificationSubject.spcMeso(issueYear: timedPayload.issueYear, number: timedNumber)
+            let timedLedger = NotificationLedgerModel(
+                installationId: fixture.installation, series: nil, revisionUrn: timedSubject.revisionID,
+                mode: "h3", reason: "new", freshnessState: .fresh, status: "sent",
+                completedAt: now, subject: timedSubject
+            )
+            try await timedLedger.create(on: db)
+            try await sql.raw("UPDATE notification_ledger SET delivery_origin = 'alertDriven' WHERE id = \(bind: try timedLedger.requireID())").run()
+
+            let refresher = OperatorDashboardSnapshotRefresher()
+            let delivery = try await refresher.loadAPNsDelivery(on: sql, now: now)
+            let noOps = try await refresher.loadSendNoOps(on: sql, now: now)
+            let candidates = try await refresher.loadZeroCandidateRate(on: sql, now: now)
+            let latency = try await refresher.loadEndToEndLatency(on: sql, now: now)
+
+            #expect(delivery.sentCount == 3 && delivery.failedCount == 1)
+            #expect(delivery.spcMeso?.sentCount == 2 && delivery.spcMeso?.failedCount == 1)
+            #expect(noOps.totalAttemptCount == 3 && noOps.noOpAttemptCount == 1)
+            #expect(noOps.spcMeso?.totalAttemptCount == 2 && noOps.spcMeso?.noOpAttemptCount == 1)
+            #expect(noOps.spcMeso?.reasons.first?.reason == "zero_candidates")
+            #expect(candidates.candidateResolutionAttemptCount == 3 && candidates.zeroCandidateAttemptCount == 1)
+            #expect(candidates.spcMeso?.candidateResolutionAttemptCount == 2)
+            #expect(candidates.spcMeso?.zeroCandidateAttemptCount == 1)
+            #expect(candidates.spcMeso?.eligibleCandidateCount == 1)
+            #expect(latency.spcMesoDelivery?.sampleCount == 1)
+            #expect(latency.spcMesoDelivery?.p95Seconds == 120)
         }
     }
 

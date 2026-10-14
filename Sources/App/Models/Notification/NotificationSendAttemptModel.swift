@@ -9,6 +9,7 @@ public enum NotificationSendAttemptOutcome: String, Codable, Sendable {
 }
 
 public enum NotificationSendNoOpReason: String, Codable, Sendable {
+    case rolloutDisabled = "rollout_disabled"
     case staleRevisionMismatch = "stale_revision_mismatch"
     case missingGeolocation = "missing_geolocation"
     case zeroCandidates = "zero_candidates"

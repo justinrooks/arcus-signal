@@ -115,7 +115,9 @@ struct OperatorDashboardTests {
                 topFailureReasons: [
                     .init(reason: "badDeviceToken", count: 12),
                     .init(reason: "tooManyRequests", count: 5)
-                ]
+                ],
+                spcMeso: .init(sentCount: 3, failedCount: 2,
+                               topFailureReasons: [.init(reason: "tooManyRequests", count: 2)])
             ),
             sendNoOps: .init(
                 windowHours: 24,
@@ -124,12 +126,15 @@ struct OperatorDashboardTests {
                 reasons: [
                     .init(reason: "zero_candidates", count: 6),
                     .init(reason: "missing_geolocation", count: 4)
-                ]
+                ],
+                spcMeso: .init(totalAttemptCount: 8, noOpAttemptCount: 3,
+                               reasons: [.init(reason: "zero_candidates", count: 2)])
             ),
             zeroCandidateRate: .init(
                 windowHours: 24,
                 candidateResolutionAttemptCount: 24,
-                zeroCandidateAttemptCount: 6
+                zeroCandidateAttemptCount: 6,
+                spcMeso: .init(candidateResolutionAttemptCount: 8, zeroCandidateAttemptCount: 3, eligibleCandidateCount: 17)
             ),
             installationGrowth: .init(
                 knownInstallationCount: 40,
@@ -303,8 +308,16 @@ struct OperatorDashboardTests {
         #expect(response.redLights.stuckClaimedRows.status == .critical)
         #expect(response.redLights.staleActiveSeriesCount.status == .warning)
         #expect(abs((response.deliveryKPIs.apnsDeliverySuccessRate.successRate ?? 0) - 0.8) < 0.0001)
+        #expect(response.deliveryKPIs.apnsDeliverySuccessRate.spcMesoSentCount == 3)
+        #expect(response.deliveryKPIs.apnsDeliverySuccessRate.spcMesoFailedCount == 2)
+        #expect(response.deliveryKPIs.apnsDeliverySuccessRate.spcMesoTopFailureReasons?.first?.reason == "tooManyRequests")
         #expect(abs((response.deliveryKPIs.sendNoOpRateByReason.noOpRate ?? 0) - 0.25) < 0.0001)
+        #expect(response.deliveryKPIs.sendNoOpRateByReason.spcMesoTotalAttemptCount == 8)
+        #expect(response.deliveryKPIs.sendNoOpRateByReason.spcMesoNoOpAttemptCount == 3)
         #expect(abs((response.deliveryKPIs.zeroCandidateRevisionRate.zeroCandidateRate ?? 0) - 0.25) < 0.0001)
+        #expect(response.deliveryKPIs.zeroCandidateRevisionRate.spcMesoCandidateResolutionAttemptCount == 8)
+        #expect(response.deliveryKPIs.zeroCandidateRevisionRate.spcMesoZeroCandidateAttemptCount == 3)
+        #expect(response.deliveryKPIs.zeroCandidateRevisionRate.spcMesoEligibleCandidateCount == 17)
         #expect(abs((response.growthUsage.installationGrowth.seenLast24HoursRate ?? 0) - 0.75) < 0.0001)
         #expect(response.growthUsage.installationGrowth.currentInstallationCount == 36)
         #expect(response.growthUsage.installationGrowth.dormantInstallationCount == 4)
@@ -314,6 +327,46 @@ struct OperatorDashboardTests {
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.targetableRate ?? 0) - 0.61) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
         #expect(abs((response.audienceTargeting.alertsWithGeographyAndH3Success.successRate ?? 0) - 0.8333333333) < 0.0001)
+
+        let apnsCard = OperatorDashboardPageRenderer.apnsSuccessCard(response.deliveryKPIs.apnsDeliverySuccessRate)
+        let noOpCard = OperatorDashboardPageRenderer.noOpCard(response.deliveryKPIs.sendNoOpRateByReason)
+        let zeroCandidateCard = OperatorDashboardPageRenderer.zeroCandidateCard(response.deliveryKPIs.zeroCandidateRevisionRate)
+        #expect(apnsCard.contains("Meso sent / failed") && apnsCard.contains("3 / 2"))
+        #expect(apnsCard.contains("Meso top failures") && apnsCard.contains("tooManyRequests (2)"))
+        #expect(noOpCard.contains("Meso attempts / no-ops") && noOpCard.contains("8 / 3"))
+        #expect(noOpCard.contains("Meso no-op reasons") && noOpCard.contains("zero_candidates (2)"))
+        #expect(noOpCard.range(of: "Reasons")!.lowerBound < noOpCard.range(of: "Meso attempts / no-ops")!.lowerBound)
+        #expect(noOpCard.range(of: "Meso attempts / no-ops")!.lowerBound < noOpCard.range(of: "Meso no-op reasons")!.lowerBound)
+        #expect(zeroCandidateCard.contains("Meso candidate / zero-candidate attempts") && zeroCandidateCard.contains("8 / 3"))
+        #expect(zeroCandidateCard.contains("Meso eligible candidates across attempts") && zeroCandidateCard.contains("17"))
+
+        let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "test", revision: nil))
+        let live = liveFunction("function renderAPNsSuccessCard", until: "function renderCoverageCard", in: html)
+        #expect(live.contains("spcMesoSentCount"))
+        #expect(live.contains("spcMesoNoOpAttemptCount"))
+        #expect(live.contains("spcMesoZeroCandidateAttemptCount"))
+        #expect(live.contains("spcMesoEligibleCandidateCount"))
+        let liveNoOp = liveFunction("function renderNoOpCard", until: "function renderZeroCandidateCard", in: html)
+        #expect(liveNoOp.range(of: "{ label: 'Reasons'")!.lowerBound < liveNoOp.range(of: "{ label: 'Meso attempts / no-ops'")!.lowerBound)
+        #expect(liveNoOp.range(of: "{ label: 'Meso attempts / no-ops'")!.lowerBound < liveNoOp.range(of: "{ label: 'Meso no-op reasons'")!.lowerBound)
+    }
+
+    @Test("legacy dashboard snapshots decode without product-kind breakdowns")
+    func legacySnapshotDecodeWithoutProductBreakdowns() throws {
+        let encoded = try JSONEncoder().encode(makeSnapshot())
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        for key in ["apnsDelivery", "sendNoOps", "zeroCandidateRate"] {
+            var metric = try #require(object[key] as? [String: Any])
+            metric.removeValue(forKey: "spcMeso")
+            object[key] = metric
+        }
+        let legacy = try JSONDecoder().decode(
+            OperatorDashboardStoredSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.apnsDelivery.spcMeso == nil)
+        #expect(legacy.sendNoOps.spcMeso == nil)
+        #expect(legacy.zeroCandidateRate.spcMeso == nil)
     }
 
     @Test("installation footprint exposes only coarse operational fields")
@@ -557,6 +610,7 @@ struct OperatorDashboardTests {
         #expect(snapshot.recentNotificationDebugEntries.first?.seriesID == UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
         #expect(snapshot.recentNotificationDebugEntries.first?.subjectKind == nil)
         #expect(snapshot.recentNotificationDebugEntries.first?.subjectID == nil)
+        #expect(snapshot.endToEndLatency.spcMesoDelivery == nil)
     }
 
     @Test("legacy snapshot backfills touched-series fields")
