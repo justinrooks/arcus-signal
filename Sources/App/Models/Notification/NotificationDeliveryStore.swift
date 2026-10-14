@@ -204,6 +204,23 @@ struct NotificationDeliveryStore {
             """).all(decoding: NotificationRetryDelivery.self)
     }
 
+    /// Any persisted claim establishes that this owner has entered delivery,
+    /// including a claim committed before its database response was lost.
+    func hasMesoClaims(issueYear: Int, number: Int, retryOwnerID: String, on db: any Database) async throws -> Bool {
+        guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
+        let subject = NotificationSubject.spcMeso(issueYear: issueYear, number: number)
+        return try await sql.raw("""
+            SELECT EXISTS (
+                SELECT 1 FROM notification_ledger
+                WHERE series_id IS NULL
+                  AND subject_kind = \(bind: subject.kind.rawValue)
+                  AND subject_id = \(bind: subject.productID)
+                  AND subject_revision_id = \(bind: subject.revisionID)
+                  AND retry_owner_id = \(bind: retryOwnerID)
+            ) AS "exists"
+            """).first()?.decode(column: "exists", as: Bool.self) ?? false
+    }
+
     func hasMesoRetryInFlight(
         issueYear: Int, number: Int, installationID: UUID? = nil,
         retryOwnerID: String, on db: any Database

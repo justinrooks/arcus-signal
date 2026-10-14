@@ -1,6 +1,7 @@
 @testable import App
 import ArcusCore
 import Fluent
+import FluentSQL
 import Foundation
 import Queues
 import Testing
@@ -32,6 +33,17 @@ struct MesoEventNotificationTests {
     private func context(_ app: Application) -> QueueContext {
         .init(queueName: ArcusQueueLane.send.queueName, configuration: app.queues.configuration,
               application: app, logger: app.logger, on: app.eventLoopGroup.any())
+    }
+
+    private func retryContext(_ app: Application, payload: MesoNotificationSendPayload) throws -> QueueContext {
+        let id = JobIdentifier(string: UUID().uuidString)
+        app.queues.test.jobs[id] = JobData(payload: Array(try JSONEncoder().encode(payload)),
+            maxRetryCount: MesoNotificationSendJob.maximumRetryCount, jobName: MesoNotificationSendJob.name,
+            delayUntil: nil, queuedAt: .now, attempts: 1)
+        var logger = app.logger
+        logger[metadataKey: "job_id"] = .string(id.string)
+        return .init(queueName: ArcusQueueLane.send.queueName, configuration: app.queues.configuration,
+                     application: app, logger: logger, on: app.eventLoopGroup.any())
     }
 
     private func fixture(_ body: (Application, MesoscaleDiscussionPayload) async throws -> Void) async throws {
@@ -163,11 +175,69 @@ struct MesoEventNotificationTests {
             let original = try #require(try await NotificationLedgerModel.query(on: app.db).filter(\.$subjectID == discussion.productID).first())
             #expect(original.status == "retrying")
             let other = try await installation(app, cell: cell)
-            try await job.dequeue(context(app), payload)
+            try await job.dequeue(retryContext(app, payload: payload), payload)
             let rows = try await NotificationLedgerModel.query(on: app.db).filter(\.$subjectID == discussion.productID).all()
             #expect(rows.count == 1 && rows.first?.id == original.id && rows.first?.status == "sent")
             #expect(await sender.tokens == ["meso-event-test-\(id)", "meso-event-test-\(id)"])
             #expect(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == other).count() == 0)
+        }
+    }
+
+    @Test("a queued retry recovers a pre-claim read failure even after outbox handoff is done")
+    func preClaimRecovery() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let id = try await installation(app, cell: cell)
+            try await MesoNotificationOutboxStore().dispatchPending(context: context(app))
+            let payload = try #require(app.queues.test.all(MesoNotificationSendJob.self).first)
+            #expect(try await ArcusNotificationOutboxModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID).first()?.state == "done")
+            let sender = MesoEventRecordingSender()
+            let read = MesoEventFailingRead()
+            let job = MesoNotificationSendJob(sender: sender, loadDiscussion: { sql, id, now in
+                try await read.load(sql: sql, productID: id, now: now)
+            })
+            await #expect(throws: MesoEventFailingRead.TransientReadFailure.self) {
+                try await job.dequeue(context(app), payload)
+            }
+            #expect(!(try await NotificationDeliveryStore().hasMesoClaims(issueYear: payload.issueYear,
+                number: payload.number, retryOwnerID: payload.retryOwnerID, on: app.db)))
+            #expect(await sender.tokens.isEmpty)
+            let retry = try retryContext(app, payload: payload)
+            try await job.dequeue(retry, payload)
+            try await job.dequeue(retry, payload)
+            #expect(await sender.tokens == ["meso-event-test-\(id)"])
+            let rows = try await NotificationLedgerModel.query(on: app.db).filter(\.$subjectID == discussion.productID).all()
+            #expect(rows.count == 1 && rows.first?.status == "sent")
+        }
+    }
+
+    @Test("any owned claim blocks fresh discovery on a queue retry", arguments: ["claimed", "sent", "failed"])
+    func postClaimBoundary(status: String) async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let id = try await installation(app, cell: cell)
+            let payload = MesoNotificationSendPayload(issueYear: discussion.issueYear, number: discussion.number)
+            let store = NotificationDeliveryStore()
+            let claim = try await store.claimMeso(installationID: id, issueYear: payload.issueYear,
+                number: payload.number, mode: .h3, reason: .new, freshnessState: .fresh,
+                retryOwnerID: payload.retryOwnerID, origin: .alertDriven, on: app.db)
+            if status == "sent" { try await store.completeSent(claimID: claim.id, on: app.db) }
+            if status == "failed" { try await store.completeFailed(claimID: claim.id, apnsErrorCode: "Terminal", on: app.db) }
+            #expect(try await store.hasMesoClaims(issueYear: payload.issueYear, number: payload.number,
+                retryOwnerID: payload.retryOwnerID, on: app.db))
+            #expect(!(try await store.hasMesoClaims(issueYear: payload.issueYear, number: payload.number + 1,
+                retryOwnerID: payload.retryOwnerID, on: app.db)))
+            #expect(!(try await store.hasMesoClaims(issueYear: payload.issueYear, number: payload.number,
+                retryOwnerID: "another-owner", on: app.db)))
+            let later = try await installation(app, cell: cell)
+            let sender = MesoEventRecordingSender()
+            try await MesoNotificationSendJob(sender: sender).dequeue(retryContext(app, payload: payload), payload)
+            #expect(await sender.tokens.isEmpty)
+            #expect(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == later).count() == 0)
+            #expect(try await NotificationLedgerModel.find(try #require(claim.id), on: app.db)?.status == status)
         }
     }
 
@@ -248,6 +318,15 @@ struct MesoEventNotificationTests {
 private struct MesoEventClient: SPCMesoClient {
     let discussion: MesoscaleDiscussionPayload
     func fetchDiscussions() async throws -> [MesoscaleDiscussionPayload] { [discussion] }
+}
+
+private actor MesoEventFailingRead {
+    enum TransientReadFailure: Error { case injected }
+    private var failFirst = true
+    func load(sql: any SQLDatabase, productID: String, now: Date) async throws -> MesoscaleDiscussionPayload? {
+        if failFirst { failFirst = false; throw TransientReadFailure.injected }
+        return try await loadMesos(sql: sql, productID: productID, h3: nil, evaluatedAt: now).first
+    }
 }
 
 private actor MesoEventRecordingSender: NotificationSender {

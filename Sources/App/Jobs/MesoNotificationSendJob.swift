@@ -25,8 +25,17 @@ struct MesoNotificationSendJob: AsyncJob {
     static let maximumRetryCount = 3
     private let sender: any NotificationSender
     private let store = NotificationDeliveryStore()
+    private let loadDiscussion: @Sendable (any SQLDatabase, String, Date) async throws -> MesoscaleDiscussionPayload?
 
-    init(sender: any NotificationSender = APNsClient()) { self.sender = sender }
+    init(
+        sender: any NotificationSender = APNsClient(),
+        loadDiscussion: @escaping @Sendable (any SQLDatabase, String, Date) async throws -> MesoscaleDiscussionPayload? = { sql, id, now in
+            try await loadMesos(sql: sql, productID: id, h3: nil, evaluatedAt: now).first
+        }
+    ) {
+        self.sender = sender
+        self.loadDiscussion = loadDiscussion
+    }
 
     func nextRetryIn(attempt: Int) -> Int {
         NotificationSendRetryPolicy().delaySeconds(forAttempt: attempt)
@@ -41,7 +50,7 @@ struct MesoNotificationSendJob: AsyncJob {
             return
         }
         guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
-        guard let discussion = try await loadMesos(sql: sql, productID: payload.subject.productID, h3: nil, evaluatedAt: now).first,
+        guard let discussion = try await loadDiscussion(sql, payload.subject.productID, now),
               discussion.issueYear == payload.issueYear, discussion.number == payload.number,
               discussion.validStart <= now, discussion.validEnd > now else {
             try await failOwnedRetries(payload, code: "RetryIneligibleInactiveMeso", on: db)
@@ -50,11 +59,11 @@ struct MesoNotificationSendJob: AsyncJob {
         let retries = try await store.loadRetryingMesoDeliveries(
             issueYear: payload.issueYear, number: payload.number, retryOwnerID: payload.retryOwnerID, on: db
         )
-        let failures = try await queueFailureCount(context)
         if retries.isEmpty {
-            guard failures == 0,
-                  !(try await store.hasMesoRetryInFlight(issueYear: payload.issueYear, number: payload.number,
-                                                      retryOwnerID: payload.retryOwnerID, on: db)) else { return }
+            // Queue attempts alone cannot prove that delivery began. Recover
+            // pre-claim failures, but never rediscover after any owned claim.
+            guard !(try await store.hasMesoClaims(issueYear: payload.issueYear, number: payload.number,
+                                                 retryOwnerID: payload.retryOwnerID, on: db)) else { return }
         }
         let matching = try await NotificationCandidateStore().loadMesoCandidates(
             productID: payload.subject.productID, evaluatedAt: now, on: db
@@ -137,9 +146,4 @@ struct MesoNotificationSendJob: AsyncJob {
             retryOwnerID: payload.retryOwnerID, apnsErrorCode: code, on: db)
     }
 
-    private func queueFailureCount(_ context: QueueContext) async throws -> Int {
-        guard case let .string(jobID)? = context.logger[metadataKey: "job_id"] else { return 0 }
-        let data = try await context.queues(context.queueName).get(JobIdentifier(string: jobID)).get()
-        return data.attempts ?? 0
-    }
 }
