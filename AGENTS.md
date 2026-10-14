@@ -82,6 +82,8 @@ swift run RunWorker serve --hostname 0.0.0.0 --port 8081
 swift test
 ```
 
+For broad database-backed validation, point `DATABASE_NAME` or `DATABASE_URL` at a dedicated test database and run `tools/test_lane.sh --full --no-parallel`. Avoid using the shared default `arcus_signal` database for concurrent or repeated full-suite runs. If a test lane stalls, treat it as incomplete, preserve its logs, and inspect PostgreSQL activity (queries and locks) before attributing the stall to a particular test. If PostgreSQL activity cannot be inspected, report that as a diagnostic limitation.
+
 ### Docker Compose
 
 ```bash
