@@ -8,7 +8,7 @@ import Testing
 import Vapor
 import XCTQueues
 
-@Suite("Event-first meso notifications", .serialized)
+@Suite("Event-first meso notifications", .serialized, .sharedDatabase)
 struct MesoEventNotificationTests {
     @Test("only the explicit true environment value enables the rollout", arguments: ["absent", "false", "TRUE", "true"])
     func configuredGate(value: String) async throws {

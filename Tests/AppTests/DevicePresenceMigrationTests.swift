@@ -4,7 +4,7 @@ import SQLKit
 import Testing
 import Vapor
 
-@Suite("Device presence migration tests", .serialized)
+@Suite("Device presence migration tests", .serialized, .sharedDatabase)
 struct DevicePresenceMigrationTests {
     private enum Rollback: Error {
         case afterAssertions

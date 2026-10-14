@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Operator dashboard installation activity", .serialized)
+@Suite("Operator dashboard installation activity", .serialized, .sharedDatabase)
 struct OperatorDashboardInstallationActivityTests {
     private enum Rollback: Error {
         case afterAssertions

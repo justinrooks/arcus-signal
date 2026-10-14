@@ -4,7 +4,7 @@ import Testing
 import Vapor
 import VaporTesting
 
-@Suite("Device preferences endpoint", .serialized)
+@Suite("Device preferences endpoint", .serialized, .sharedDatabase)
 struct DevicePreferencesControllerTests {
     private struct DevicePreferencesResponse: Content {
         let serverOwnsMesoNotificationDelivery: Bool?

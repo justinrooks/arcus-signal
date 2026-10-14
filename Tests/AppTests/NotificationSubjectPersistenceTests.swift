@@ -6,7 +6,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Notification subject persistence", .serialized)
+@Suite("Notification subject persistence", .serialized, .sharedDatabase)
 struct NotificationSubjectPersistenceTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -29,8 +29,13 @@ struct NotificationSubjectPersistenceTests {
     }
 
     private func withDatabase(test: @escaping @Sendable (any Database) async throws -> Void) async throws {
-        try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
-            try await withRollbackTransaction(on: app, test: test)
+        do {
+            try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
+                try await withRollbackTransaction(on: app, test: test)
+            }
+        } catch {
+            Issue.record("Notification subject persistence failure: \(String(reflecting: error))")
+            throw error
         }
     }
 
@@ -174,8 +179,10 @@ struct NotificationSubjectPersistenceTests {
             // Same installation/product/revision conflicts even with a different mode.
             let duplicateLedger = try await sql.raw("""
                 INSERT INTO notification_ledger
-                (id, installation_id, revision_urn, mode, reason, freshness_state, subject_kind, subject_id, subject_revision_id)
-                VALUES (\(bind: UUID()), \(bind: fixture.installation), 'initial', 'ugc', 'new', 'fresh', \(bind: kind), \(bind: subject.productID), 'initial')
+                (id, installation_id, revision_urn, mode, reason, freshness_state,
+                 subject_kind, subject_id, subject_revision_id, created)
+                VALUES (\(bind: UUID()), \(bind: fixture.installation), 'initial', 'ugc', 'new', 'fresh',
+                        \(bind: kind), \(bind: subject.productID), 'initial', NOW())
                 ON CONFLICT DO NOTHING RETURNING id;
                 """).first()
             #expect(duplicateLedger == nil)

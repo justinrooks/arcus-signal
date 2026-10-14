@@ -118,62 +118,44 @@ Expected ports:
   `not found`. Verify executable startup in that image; success in the Swift
   build image alone is insufficient.
 
-<!-- graft:start -->
-## Graft — Repository Context
+<!-- trail:start -->
+## Trail — repo context graph
 
-Arcus-Signal has a local structural context graph under `graft/`. Use Graft as a navigation and impact-analysis aid, not as a source of truth.
+This repo is indexed in `graft/`: small linked markdown nodes that explain each
+system and carry exact file:line spans, kept in sync with the code through git.
 
-For intended system behavior and architectural invariants, follow `docs/architecture.md`. For actual runtime behavior, verify the relevant implementation and focused tests.
+For ANY task here — understanding how something works, finding where code lives,
+or scoping a change — get context from the graph before grepping or opening
+source files. Re-ask freely (it's cheap) and reuse literal identifiers you
+already have (symbol, error string, file name) as the query. New to this repo?
+Run `trail map` first — a token-budgeted orientation (dir clusters, hubs,
+hotspots), no LLM, no key.
 
-### When to use Graft
+- Run `trail ask "<your question>" --source` → ranked nodes with the relevant
+  code spans inlined (each hit's ≤8-line crux by default; `--full` for whole
+  definitions when the crux isn't enough). Match the tool to the task shape:
+  for understanding or editing, the top node IS the answer — cite its
+  `covers:` file:line spans and edit straight from `--source`. For
+  exhaustive tasks ("every occurrence / every caller of this pattern"), ranked
+  results are top-N, not complete — run `trail grep "<literal>"` instead
+  (exhaustive over indexed files, grouped by enclosing symbol), falling back
+  to raw `grep -rn` only for unindexed files.
+- `trail skeleton <file>` → every definition's signature + span, ~10× cheaper
+  than reading the file; use it to skim an API surface.
+- `trail callers <symbol>` gives precomputed, exact edges — who calls this.
+  Add `--direction out` for what it calls, or `--depth N` to walk
+  transitively for the full blast radius. For structural questions, skip
+  ranking and use this directly.
+- Or browse: `graft/INDEX.md` lists every node; follow the links.
+- Monorepos and folders of multiple repos rank fairly across sub-projects —
+  hits carry `[scope/]` labels naming which one they're from. Narrow with
+  `trail ask "<task>" --in <scope>/` once you know where you're working.
 
-Use Graft when a task is unfamiliar, cross-cutting, or requires tracing relationships across multiple files, especially:
+If a returned span is truncated ("+N more lines"), open the file at that exact
+range before finalizing. Only open source files when a node genuinely lacks a
+needed detail, and then at the exact file:line the node points to — never
+re-read whole files.
 
-* ingest → persistence → targeting → notification flows
-* queue and outbox orchestration
-* model/revision relationships
-* notification routing and delivery
-* locating ownership of an unfamiliar behavior
-* determining callers, dependencies, or blast radius before a change
-
-For a small task with a known file, symbol, or focused slice, go directly to the relevant source and tests. Do not add a Graft query merely because Graft is available.
-
-### Recommended workflow
-
-Start broad only when necessary:
-
-`graft ask "<question>" --source`
-
-Treat the results as ranked leads. Identify the likely architectural spine, then verify the important behavior in the referenced source and tests.
-
-Prefer a small number of targeted follow-up queries over repeatedly rephrasing the same question.
-
-Use:
-
-* `graft callers <symbol>` for callers and dependency/blast-radius questions.
-* `graft callers <symbol> --direction out` for dependencies used by a symbol.
-* `graft skeleton <file>` when only a file's API surface is needed.
-* `graft grep "<pattern>"` when every indexed occurrence matters.
-* normal repository search for unindexed content, documentation, configuration, or when a direct literal search is simpler.
-
-Use `--full` only when the normal source excerpts do not contain enough context. Otherwise prefer the smaller default spans.
-
-### Verification
-
-Do not treat a Graft result, generated summary, or top-ranked node as authoritative by itself.
-
-Before changing production behavior:
-
-1. verify the relevant implementation;
-2. inspect focused tests covering the behavior;
-3. check `docs/architecture.md` when an architectural invariant or pipeline boundary is involved.
-
-Open as much surrounding source as needed to understand invariants, error handling, transaction boundaries, concurrency, or lifecycle behavior. Token savings are useful, but correctness comes first.
-
-### Keeping the graph current
-
-Graft queries normally refresh the structural graph against working-tree changes automatically.
-
-Use `graft check` when graph freshness is in doubt. Run `graft build` manually only when the graph needs rebuilding or troubleshooting; do not rebuild reflexively after every edit.
-
-<!-- graft:end -->
+After big code changes, refresh the graph with `trail build` (deterministic,
+no API key, $0).
+<!-- trail:end -->

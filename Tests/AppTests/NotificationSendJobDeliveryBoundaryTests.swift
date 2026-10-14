@@ -9,7 +9,7 @@ import Vapor
 import XCTQueues
 import ArcusCore
 
-@Suite("Notification send job delivery boundary", .serialized)
+@Suite("Notification send job delivery boundary", .serialized, .sharedDatabase)
 struct NotificationSendJobDeliveryBoundaryTests {
     private func bootstrapTables(on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {

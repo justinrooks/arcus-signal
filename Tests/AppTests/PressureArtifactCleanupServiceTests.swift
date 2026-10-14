@@ -6,7 +6,7 @@ import Dispatch
 import Testing
 import Vapor
 
-@Suite("Pressure artifact cleanup service", .serialized)
+@Suite("Pressure artifact cleanup service", .serialized, .sharedDatabase)
 struct PressureArtifactCleanupServiceTests {
     @Test("terminal retention uses valid time with a strict 60-day cutoff", arguments: [
         PressureArtifactCatalogStatus.failed, .expired

@@ -7,7 +7,7 @@ import Testing
 import Vapor
 import XCTQueues
 
-@Suite("HRRR pressure artifact probe service", .serialized)
+@Suite("HRRR pressure artifact probe service", .serialized, .sharedDatabase)
 struct HRRRPressureArtifactProbeServiceTests {
     @Test("default pressure warm dispatcher disables automatic retries")
     func defaultWarmDispatcherDisablesAutomaticRetries() async throws {

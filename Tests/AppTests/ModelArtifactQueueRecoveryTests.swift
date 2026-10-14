@@ -4,7 +4,7 @@ import Redis
 import Testing
 import Vapor
 
-@Suite("Model-artifact queue recovery", .serialized)
+@Suite("Model-artifact queue recovery", .serialized, .sharedDatabase)
 struct ModelArtifactQueueRecoveryTests {
     @Test("known abandoned jobs are planned back to waiting")
     func knownAbandonedJobIsPlannedBackToWaiting() async throws {

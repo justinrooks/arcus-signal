@@ -8,7 +8,7 @@ import Vapor
 import VaporTesting
 import XCTQueues
 
-@Suite("Location-driven alert reconciliation flow", .serialized)
+@Suite("Location-driven alert reconciliation flow", .serialized, .sharedDatabase)
 struct LocationDrivenAlertReconciliationFlowTests {
     private func withApp(test: (Application) async throws -> Void) async throws {
         try await withIntegrationTestApplication(

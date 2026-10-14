@@ -4,7 +4,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("NWS ingest persistence flow", .serialized)
+@Suite("NWS ingest persistence flow", .serialized, .sharedDatabase)
 struct NWSIngestPersistenceFlowTests {
     private enum Rollback: Error {
         case forcedLateFailure

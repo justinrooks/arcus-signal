@@ -5,7 +5,7 @@ import FluentSQL
 import Testing
 import Vapor
 
-@Suite("Notification missed decision persistence", .serialized)
+@Suite("Notification missed decision persistence", .serialized, .sharedDatabase)
 struct NotificationMissedDecisionPersistenceTests {
     private func bootstrapTables(on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {

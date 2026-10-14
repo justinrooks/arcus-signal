@@ -8,7 +8,7 @@ import Testing
 import Vapor
 import ArcusCore
 
-@Suite("Pressure artifact diagnostics", .serialized)
+@Suite("Pressure artifact diagnostics", .serialized, .sharedDatabase)
 struct PressureArtifactDiagnosticsTests {
     @Test("probe logs idx availability, queue metadata, and enqueue details")
     func probeLogsIdxAvailabilityQueueMetadataAndEnqueueDetails() async throws {

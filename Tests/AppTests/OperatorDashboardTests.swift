@@ -5,7 +5,7 @@ import Testing
 import Vapor
 import VaporTesting
 
-@Suite("Operator dashboard", .serialized)
+@Suite("Operator dashboard", .serialized, .sharedDatabase)
 struct OperatorDashboardTests {
     private struct StubSnapshotStore: OperatorDashboardSnapshotStore {
         let snapshot: OperatorDashboardStoredSnapshot?

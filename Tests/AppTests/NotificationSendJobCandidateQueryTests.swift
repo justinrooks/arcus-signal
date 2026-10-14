@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Notification candidate store queries", .serialized)
+@Suite("Notification candidate store queries", .serialized, .sharedDatabase)
 struct NotificationSendJobCandidateQueryTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

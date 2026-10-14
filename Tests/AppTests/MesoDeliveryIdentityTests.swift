@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Meso durable delivery identity", .serialized)
+@Suite("Meso durable delivery identity", .serialized, .sharedDatabase)
 struct MesoDeliveryIdentityTests {
     private let store = NotificationDeliveryStore()
 

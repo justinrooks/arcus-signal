@@ -7,7 +7,7 @@ import Vapor
 import VaporTesting
 import ArcusCore
 
-@Suite("Operator dashboard pressure artifacts", .serialized)
+@Suite("Operator dashboard pressure artifacts", .serialized, .sharedDatabase)
 struct OperatorDashboardPressureArtifactTests {
     private func withApp(test: (Application) async throws -> Void) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {
@@ -251,7 +251,9 @@ struct OperatorDashboardPressureArtifactTests {
     @Test("ingest freshness retains a successful sweep outside the recent attempt window")
     func ingestFreshnessRetainsOlderSuccess() async throws {
         try await withApp { app in
-            let now = makeUTCDate(year: 2026, month: 10, day: 1, hour: 0)
+            // Keep the global freshness window ahead of rows retained from normal development
+            // and previous integration-test runs.
+            let now = makeUTCDate(year: 2100, month: 1, day: 1, hour: 0)
             let source = "issue-294-test-\(UUID().uuidString)"
             let successfulAt = now.addingTimeInterval(-120)
             try await clearIngestRuns(source: source, on: app.db)

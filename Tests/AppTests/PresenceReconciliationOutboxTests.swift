@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Presence reconciliation outbox persistence", .serialized)
+@Suite("Presence reconciliation outbox persistence", .serialized, .sharedDatabase)
 struct PresenceReconciliationOutboxTests {
     private let store = PresenceReconciliationOutboxStore()
 
