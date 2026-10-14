@@ -6,7 +6,7 @@ import Testing
 import Vapor
 import VaporTesting
 
-@Suite("Meso API reads", .serialized)
+@Suite("Meso API reads", .serialized, .sharedDatabase)
 struct MesosControllerTests {
     private let cell: Int64 = 614553222213795839
     private let otherCell: Int64 = 614553222215892991
@@ -32,7 +32,9 @@ struct MesosControllerTests {
         do {
             try await configure(app, mode: .api)
             try await app.autoMigrate()
-            try #require(try await SPCMesoModel.query(on: app.db).filter(\.$issueYear == 1804).count() == 0)
+            // Remove fixtures left behind by an interrupted earlier run. The shared-database
+            // trait prevents another database-backed suite from writing while this suite runs.
+            try await SPCMesoModel.query(on: app.db).filter(\.$issueYear == 1804).delete()
             do { try await test(app, Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))) }
             catch {
                 try await SPCMesoModel.query(on: app.db).filter(\.$issueYear == 1804).delete()

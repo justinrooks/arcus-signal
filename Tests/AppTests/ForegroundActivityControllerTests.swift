@@ -5,7 +5,7 @@ import Testing
 import Vapor
 import VaporTesting
 
-@Suite("Foreground activity endpoint", .serialized)
+@Suite("Foreground activity endpoint", .serialized, .sharedDatabase)
 struct ForegroundActivityControllerTests {
     private struct RequestBody: Content {
         let installationId: String

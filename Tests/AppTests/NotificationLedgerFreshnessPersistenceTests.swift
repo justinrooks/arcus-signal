@@ -5,7 +5,7 @@ import FluentSQL
 import Testing
 import Vapor
 
-@Suite("Notification ledger freshness persistence", .serialized)
+@Suite("Notification ledger freshness persistence", .serialized, .sharedDatabase)
 struct NotificationLedgerFreshnessPersistenceTests {
     private func bootstrapTables(on db: any Database) async throws {
         guard let sql = db as? any SQLDatabase else {

@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.4.0
+
+### Features
+
+- Device preference updates now persist an optional per-installation SPC meso notification setting, and responses indicate when server delivery is active for that installation.
+<!-- evidence: a7b9c20, 1bba1b5 -->
+- Accepted SPC discussions can enqueue event-first notifications behind the `MESO_NOTIFICATIONS_ENABLED` rollout gate, which defaults to disabled; the worker requires complete sandbox and production APNs credentials when delivery is enabled.
+<!-- evidence: f2a4789, f483afe, 1bba1b5 -->
+
+### Reliability
+
+- NWS and SPC meso delivery now use product-neutral notification subjects and the shared per-installation ledger claim boundary; meso claims use stable discussion identity across revisions.
+<!-- evidence: e100aa2, 5c8df75, bc62ce4, 4eef148 -->
+- Active SPC meso delivery is reconciled after device presence changes so updated installation eligibility is applied to retained discussions.
+<!-- evidence: b7efb1c -->
+
+### Operations
+
+- Red Lights now reports persisted AirNow dependency health, including recent success and failure outcomes.
+<!-- evidence: 279074d -->
+- Operator dashboard diagnostics now include meso candidate counts, no-op reasons, APNs outcomes, recent notification evidence, and accepted-to-first-successful-delivery latency.
+<!-- evidence: 4aca49a -->
+
+### Migrations
+
+- Added persistence for per-installation meso notification preferences, product-neutral notification subject identity, and AirNow dependency status.
+<!-- evidence: a7b9c20, e100aa2, 279074d -->
+
+### Tests / QA
+
+- Database-backed test suites now share a cross-process serialization gate, and SPC/dashboard fixtures clean up stale records or use stable time windows to avoid dependence on earlier runs.
+<!-- evidence: 34df784 -->
+
 ## v1.3.1
 
 ### Reliability

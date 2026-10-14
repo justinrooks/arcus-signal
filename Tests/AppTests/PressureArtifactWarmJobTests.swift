@@ -7,7 +7,7 @@ import Vapor
 import XCTQueues
 import ArcusCore
 
-@Suite("Pressure artifact warm job", .serialized)
+@Suite("Pressure artifact warm job", .serialized, .sharedDatabase)
 struct PressureArtifactWarmJobTests {
     @Test("pressure warm retry delays are deterministic and positive")
     func retryDelaysAreDeterministicAndPositive() {

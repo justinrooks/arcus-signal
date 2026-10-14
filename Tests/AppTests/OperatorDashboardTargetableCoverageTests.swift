@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Operator dashboard targetable coverage", .serialized)
+@Suite("Operator dashboard targetable coverage", .serialized, .sharedDatabase)
 struct OperatorDashboardTargetableCoverageTests {
     private enum Rollback: Error {
         case afterAssertions
@@ -238,7 +238,8 @@ struct OperatorDashboardTargetableCoverageTests {
     @Test("touched series uses the rolling detail window and hard cap")
     func touchedSeriesUsesRollingDetailWindowAndHardCap() async throws {
         try await withApp { database in
-            let testNow = Date()
+            // 2100-01-01 keeps this window clear of rows from current-date integration fixtures.
+            let testNow = Date(timeIntervalSince1970: 4_102_444_800)
             let prefix = UUID().uuidString.lowercased()
             guard let sql = database as? any SQLDatabase else {
                 throw Abort(.internalServerError, reason: "Database is not SQLDatabase")

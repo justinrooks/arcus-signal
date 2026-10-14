@@ -3,7 +3,7 @@ import Fluent
 import Foundation
 import Testing
 
-@Suite("Notification active alert query", .serialized)
+@Suite("Notification active alert query", .serialized, .sharedDatabase)
 struct NotificationActiveAlertQueryTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

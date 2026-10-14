@@ -6,7 +6,7 @@ import Testing
 import Vapor
 import XCTQueues
 
-@Suite("Installation alert reconciliation jobs", .serialized)
+@Suite("Installation alert reconciliation jobs", .serialized, .sharedDatabase)
 struct InstallationAlertReconciliationJobTests {
     private func withApp(test: (Application) async throws -> Void) async throws {
         let app = try await Application.make(.testing)

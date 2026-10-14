@@ -6,7 +6,7 @@ import Queues
 import Testing
 import Vapor
 
-@Suite("SPC meso ingest job", .serialized)
+@Suite("SPC meso ingest job", .serialized, .sharedDatabase)
 struct SPCMesoIngestJobTests {
     @Test func fullIngestCyclePersistsCoverageAndRunFreshnessIdempotently() async throws {
         let app = try await Application.make(.testing)

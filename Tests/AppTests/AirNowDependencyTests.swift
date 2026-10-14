@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("AirNow dependency evidence", .serialized)
+@Suite("AirNow dependency evidence", .serialized, .sharedDatabase)
 struct AirNowDependencyTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -201,7 +201,7 @@ private struct CancelledClient: AirNowClient {
     func fetchCurrentObservations(latitude: Double, longitude: Double) async throws -> AirNowObservationsResponse { throw CancellationError() }
 }
 
-@Suite("AirNow cross-process persistence", .serialized)
+@Suite("AirNow cross-process persistence", .serialized, .sharedDatabase)
 struct AirNowDependencyPersistenceTests {
     @Test("API evidence survives separate application reads and fast snapshot refresh")
     func persistenceAndSnapshot() async throws {

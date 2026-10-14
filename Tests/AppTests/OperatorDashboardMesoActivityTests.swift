@@ -7,7 +7,7 @@ import Testing
 import Vapor
 import VaporTesting
 
-@Suite("Operator dashboard meso activity", .serialized)
+@Suite("Operator dashboard meso activity", .serialized, .sharedDatabase)
 struct OperatorDashboardMesoActivityTests {
     private let now = Date(timeIntervalSince1970: 1_776_000_000)
 

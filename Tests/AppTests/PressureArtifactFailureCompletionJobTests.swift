@@ -7,7 +7,7 @@ import Vapor
 import XCTQueues
 import ArcusCore
 
-@Suite("Pressure artifact failure completion job", .serialized)
+@Suite("Pressure artifact failure completion job", .serialized, .sharedDatabase)
 struct PressureArtifactFailureCompletionJobTests {
     @Test("failed fenced completion is durably retried and later succeeds")
     func failedCompletionIsDurablyRetriedAndLaterSucceeds() async throws {

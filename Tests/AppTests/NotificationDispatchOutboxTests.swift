@@ -7,7 +7,7 @@ import Testing
 import Vapor
 import XCTQueues
 
-@Suite("Notification dispatch outbox leases", .serialized)
+@Suite("Notification dispatch outbox leases", .serialized, .sharedDatabase)
 struct NotificationDispatchOutboxTests {
     private let store = NotificationDispatchOutboxStore()
     private let now = Date(timeIntervalSince1970: 1_800_000_000)

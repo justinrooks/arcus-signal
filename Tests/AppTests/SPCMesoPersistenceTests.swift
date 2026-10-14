@@ -6,7 +6,7 @@ import SQLKit
 import Testing
 import Vapor
 
-@Suite("SPC meso persistence", .serialized)
+@Suite("SPC meso persistence", .serialized, .sharedDatabase)
 struct SPCMesoPersistenceTests {
     private enum Rollback: Error { case afterAssertions }
 

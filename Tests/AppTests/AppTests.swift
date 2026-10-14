@@ -13,7 +13,7 @@ import VaporTesting
 import XCTQueues
 import ArcusCore
 
-@Suite("Arcus Signal bootstrap tests", .serialized)
+@Suite("Arcus Signal bootstrap tests", .serialized, .sharedDatabase)
 struct AppTests {
     private func withApp(
         mode: AppRuntimeMode,

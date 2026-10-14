@@ -6,7 +6,7 @@ import Vapor
 import VaporTesting
 import ArcusCore
 
-@Suite("Alerts controller", .serialized)
+@Suite("Alerts controller", .serialized, .sharedDatabase)
 struct AlertsControllerTests {
     private struct DecodedAlertPayload: Decodable {
         let id: UUID
@@ -95,7 +95,7 @@ struct AlertsControllerTests {
         try await withApp { app in
             let now = isoDate("2026-05-21T18:00:00Z")
             let oneHourAgo = now.addingTimeInterval(-60 * 60)
-            let collectionUGC = ["COC262"]
+            let collectionUGC = ["TEST-\(UUID().uuidString)"]
 
             let active = UUID()
             let activeExpired = UUID()

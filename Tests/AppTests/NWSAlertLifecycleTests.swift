@@ -3,7 +3,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("NWS alert lifecycle", .serialized)
+@Suite("NWS alert lifecycle", .serialized, .sharedDatabase)
 struct NWSAlertLifecycleTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

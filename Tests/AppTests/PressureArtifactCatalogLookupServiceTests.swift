@@ -5,7 +5,7 @@ import Foundation
 import Testing
 import Vapor
 
-@Suite("Pressure artifact catalog lookup", .serialized)
+@Suite("Pressure artifact catalog lookup", .serialized, .sharedDatabase)
 struct PressureArtifactCatalogLookupServiceTests {
     private func withApp(
         test: (Application, NIOThreadPoolPressureArtifactBlockingWorkExecutor) async throws -> Void

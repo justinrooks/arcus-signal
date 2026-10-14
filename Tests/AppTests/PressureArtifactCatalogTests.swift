@@ -6,7 +6,7 @@ import Testing
 import Vapor
 import ArcusCore
 
-@Suite("Pressure artifact catalog persistence", .serialized)
+@Suite("Pressure artifact catalog persistence", .serialized, .sharedDatabase)
 struct PressureArtifactCatalogTests {
     private func withApp(test: (Application) async throws -> Void) async throws {
         try await PressureArtifactCatalogTestGate.shared.withExclusiveAccess {

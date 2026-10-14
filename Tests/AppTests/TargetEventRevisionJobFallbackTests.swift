@@ -8,7 +8,7 @@ import Testing
 import Vapor
 import XCTQueues
 
-@Suite("Target event revision fallback tests", .serialized)
+@Suite("Target event revision fallback tests", .serialized, .sharedDatabase)
 struct TargetEventRevisionJobFallbackTests {
     private func withWorkerApp(test: (Application) async throws -> Void) async throws {
         let app = try await Application.make(.testing)
