@@ -11,9 +11,9 @@ Operate from the Arcus Signal checkout **on the deployment host**. This skill do
 
 ## Required version input
 
-- **A release version must be supplied explicitly by the user in the current request.** Examples: `release v1.4.0` and `release 1.4.1`. Both invoke this workflow for the explicitly named version.
+- A release version must be supplied explicitly when initiating a new release workflow. Accept commands such as release v1.4.0 or release 1.4.1. Once validated, retain the normalized version throughout the entire workflow, including preflight, approval, deployment, troubleshooting, and monitoring. Follow-up responses such as "approved," "continue," or "proceed" must use the previously established version without requesting it again. Never infer a version when starting a new release workflow.
 - Accept only a single complete semantic version of the form `vMAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH` (nonnegative decimal components, no prerelease/build suffix). Normalize a missing leading `v` to `v` and use that exact tag throughout preflight, image verification, approval, installation, and post-deploy checks.
-- **If no version is supplied, stop before preflight or any deployment actions and ask: "Which exact version should I release (for example, v1.4.0)?"** If multiple versions are supplied without a clear target, ask which version is intended.
+- If no version was supplied when initiating the release workflow, stop before preflight or deployment and ask for the exact version.
 - **Never guess, select, or default the target version** from `latest`, the current installed image, the most recent GitHub Release, repository tags, changelog headings, branch names, or conversation history. A discovered newer version is not authorization to substitute it for the user's explicit target.
 - Confirm that the normalized tag exists as a published stable release before asking for deployment approval. An unavailable or invalid requested version must be reported as such, not silently replaced.
 
@@ -30,7 +30,7 @@ Operate from the Arcus Signal checkout **on the deployment host**. This skill do
 ## Preflight, read-only
 
 1. Read `AGENTS.md`, `install`, `docker-compose.yml`, the relevant `docs/architecture.md` delivery sections, and the version section in `release/RELEASE_NOTES.md`. Consult `docs/Sql/NotificationProcessing.sql` and `docs/Sql/NotificationDebug.sql` for troubleshooting clues, **not** as scripts to run wholesale.
-2. Verify deployment host, repository remote, clean `main` checkout, upstream, and available `.env` without showing its contents. The installer uses `git pull --ff-only`; unexpected branch, dirty tracked changes, or divergent history requires operator resolution.
+2. Verify the deployment host and Arcus Signal repository directory. Confirm `install`, `docker-compose.yml`, and `.env` exist. Validate that the local deployment configuration supports the requested release. Never display `.env` contents. Git branch, upstream, and repository synchronization are not deployment prerequisites.
 3. Verify the stable GitHub Release is published (not draft/prerelease), its GHCR image can be accessed, and API/worker are currently on the same version. Review migrations for compatibility with the intended fallback image.
 4. Inspect only the two resolved meso gate values, not all Compose environment values: `sudo env ARCUS_SIGNAL_IMAGE_TAG="<tag>" docker compose --env-file .env config --format json | jq -r '[.services.api.environment.MESO_NOTIFICATIONS_ENABLED, .services.worker.environment.MESO_NOTIFICATIONS_ENABLED] | join(" / ")'`. They must agree; both must be false for v1.4.0.
 5. Confirm a restorable recent PostgreSQL backup exists and deployment conditions are sensible given any active severe weather. This skill does not create or restore backups.

@@ -26,9 +26,6 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 compose=(sudo env "ARCUS_SIGNAL_IMAGE_TAG=$release_tag" docker compose --env-file .env)
 
-echo "Pulling latest repo changes..."
-git pull --ff-only
-
 echo "Pulling Arcus Signal $release_tag image from GitHub..."
 "${compose[@]}" pull api worker
 
