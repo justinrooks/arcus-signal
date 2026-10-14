@@ -194,8 +194,8 @@ struct NotificationSubjectPersistenceTests {
         }
     }
 
-    @Test("dashboard debug query retains a meso preview without an NWS series")
-    func dashboardDebugQueryIncludesSerieslessMesoPreview() async throws {
+    @Test("dashboard debug query reserves meso evidence under NWS volume")
+    func dashboardDebugQueryReservesMesoEvidenceUnderNWSVolume() async throws {
         try await withDatabase { db in
             let sql = try #require(db as? any SQLDatabase)
             let subject = NotificationSubject.spcMeso(issueYear: 2026, number: 90_000_000 + Int.random(in: 1...999_999))
@@ -211,13 +211,22 @@ struct NotificationSubjectPersistenceTests {
                 subject: subject
             )
             try await debug.create(on: db)
-            debug.created = Date(timeIntervalSinceNow: 60)
+            debug.created = Date(timeIntervalSinceNow: -60 * 60)
             try await debug.update(on: db)
+
+            let fixture = try await seed(on: db)
+            for _ in 0..<OperatorDashboardConfig.recentNotificationDebugLimit + 1 {
+                let revision = "urn:oid:\(UUID())"
+                let nwsSubject = NotificationSubject.nws(seriesID: fixture.series, revisionUrn: revision)
+                _ = try await records(series: fixture.series, installation: fixture.installation,
+                                      revision: revision, subject: nwsSubject, on: db)
+            }
 
             let entries = try await OperatorDashboardSnapshotRefresher()
                 .loadRecentNotificationDebugEntries(on: sql)
 
             let entry = try #require(entries.first { $0.subjectID == subject.productID })
+            #expect(entries.count == OperatorDashboardConfig.recentNotificationDebugLimit)
             #expect(entry.seriesID == nil)
             #expect(entry.subjectKind == "spc-meso")
             #expect(entry.eventName == "Mesoscale Discussion")

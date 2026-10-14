@@ -1251,26 +1251,47 @@ struct OperatorDashboardSnapshotRefresher {
 
     func loadRecentNotificationDebugEntries(on sql: any SQLDatabase) async throws -> [StoredRecentNotificationDebugEntry] {
         let rows = try await sql.raw("""
-            SELECT
-                d.created AS "createdAt",
-                d.series_id AS "seriesID",
-                d.subject_kind AS "subjectKind",
-                COALESCE(d.subject_id, d.series_id::text) AS "subjectID",
-                COALESCE(s.event, s.headline, s.title,
-                    CASE WHEN d.subject_kind = 'spc-meso' THEN 'Mesoscale Discussion' ELSE 'Unknown Alert' END
-                ) AS "eventName",
-                d.record_kind AS "recordKind",
-                d.mode AS "mode",
-                d.reason AS "reason",
-                d.title AS "title",
-                d.subtitle AS "subtitle",
-                d.body AS "body",
-                l.status AS "ledgerStatus",
-                l.apns_error_code AS "apnsErrorCode"
-            FROM notification_debug d
-            LEFT JOIN arcus_series s ON s.id = d.series_id
-            LEFT JOIN notification_ledger l ON l.id = d.notification_ledger_id
-            ORDER BY d.created DESC
+            WITH all_entries AS (
+                SELECT
+                    d.id AS "debugID",
+                    d.created AS "createdAt",
+                    d.series_id AS "seriesID",
+                    d.subject_kind AS "subjectKind",
+                    COALESCE(d.subject_id, d.series_id::text) AS "subjectID",
+                    COALESCE(s.event, s.headline, s.title,
+                        CASE WHEN d.subject_kind = 'spc-meso' THEN 'Mesoscale Discussion' ELSE 'Unknown Alert' END
+                    ) AS "eventName",
+                    d.record_kind AS "recordKind",
+                    d.mode AS "mode",
+                    d.reason AS "reason",
+                    d.title AS "title",
+                    d.subtitle AS "subtitle",
+                    d.body AS "body",
+                    l.status AS "ledgerStatus",
+                    l.apns_error_code AS "apnsErrorCode"
+                FROM notification_debug d
+                LEFT JOIN arcus_series s ON s.id = d.series_id
+                LEFT JOIN notification_ledger l ON l.id = d.notification_ledger_id
+            ), meso_entries AS (
+                SELECT * FROM all_entries
+                WHERE "subjectKind" = 'spc-meso'
+                ORDER BY "createdAt" DESC, "debugID" DESC
+                LIMIT \(bind: OperatorDashboardConfig.recentMesoNotificationDebugLimit)
+            ), other_entries AS (
+                SELECT * FROM all_entries
+                WHERE "subjectKind" IS DISTINCT FROM 'spc-meso'
+                ORDER BY "createdAt" DESC, "debugID" DESC
+                LIMIT GREATEST(
+                    \(bind: OperatorDashboardConfig.recentNotificationDebugLimit)
+                    - (SELECT COUNT(*) FROM meso_entries), 0
+                )
+            )
+            SELECT * FROM (
+                SELECT * FROM meso_entries
+                UNION ALL
+                SELECT * FROM other_entries
+            ) recent
+            ORDER BY "createdAt" DESC, "debugID" DESC
             LIMIT \(bind: OperatorDashboardConfig.recentNotificationDebugLimit)
         """).all(decoding: RecentNotificationDebugRow.self)
 
@@ -1484,6 +1505,7 @@ private struct H3AggregateRow: Decodable {
 }
 
 private struct RecentNotificationDebugRow: Decodable {
+    let debugID: UUID
     let createdAt: Date
     let seriesID: UUID?
     let subjectKind: String?

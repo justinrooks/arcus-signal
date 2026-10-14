@@ -94,12 +94,12 @@ struct MesoNotificationSendJob: AsyncJob {
         let eligible = matching.filter {
             LocationFreshnessPolicy().decide(capturedAt: $0.capturedAt, locationAuth: $0.locationAuth, now: now).state != .stale
         }
-        var summary = MesoDispatchSummary(
-            candidateResolutionReached: true,
-            candidateCount: retries.isEmpty ? matching.count : retries.count
-        )
         let retryByInstallation = Dictionary(uniqueKeysWithValues: retries.map { ($0.installationID, $0) })
         let candidates = retries.isEmpty ? eligible : eligible.filter { retryByInstallation[$0.id] != nil }
+        var summary = MesoDispatchSummary(
+            candidateResolutionReached: true,
+            candidateCount: candidates.count
+        )
         let eligibleIDs = Set(candidates.map(\.id))
         if matching.isEmpty {
             await saveDebugSnapshot(

@@ -185,6 +185,29 @@ struct MesoEventNotificationTests {
         }
     }
 
+    @Test("candidate diagnostics exclude fresh presence with denied location authority")
+    func attemptDiagnosticsExcludeDeniedLocationAuthority() async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let deniedID = try await installation(app, cell: cell, auth: .denied)
+            let sender = MesoEventRecordingSender()
+
+            try await MesoNotificationSendJob(sender: sender).dequeue(
+                context(app), .init(issueYear: discussion.issueYear, number: discussion.number)
+            )
+
+            let attempt = try #require(try await NotificationSendAttemptModel.query(on: app.db)
+                .filter(\.$subjectID == discussion.productID).first())
+            #expect(attempt.candidateResolutionReached)
+            #expect(attempt.candidateCount == 0)
+            #expect(attempt.noOpReason == NotificationSendNoOpReason.allCandidatesStaleLocation.rawValue)
+            #expect(await sender.tokens.isEmpty)
+            #expect(try await NotificationLedgerModel.query(on: app.db)
+                .filter(\.$deviceInstallation.$id == deniedID).count() == 0)
+        }
+    }
+
     @Test("presence lookup applies meso exclusions and the disabled gate")
     func presenceEligibility() async throws {
         try await fixture { app, discussion in
