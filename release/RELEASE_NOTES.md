@@ -1,5 +1,22 @@
 # Release Notes
 
+## v1.4.0
+
+## Overview
+
+Arcus Signal v1.4.0 adds opt-in SPC mesoscale notifications, installation-level preferences, and operator visibility into meso delivery and AirNow dependency health. Meso notification delivery remains disabled by default. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- Device preference updates persist an optional SPC meso notification setting per installation, and responses indicate when server-owned delivery is active.
+- SPC meso notifications use an event-first queue and stable discussion identity, with delivery gated by `MESO_NOTIFICATIONS_ENABLED` and worker APNs readiness.
+- NWS and SPC meso delivery share product-neutral notification subjects and the per-installation ledger claim boundary; active meso delivery is reconciled after device presence changes.
+- Red Lights reports persisted AirNow dependency health, while operator dashboard diagnostics show meso candidate resolution, no-op reasons, APNs outcomes, recent notification evidence, and delivery latency.
+
+## Maintenance
+
+- Added database persistence for meso notification preferences, notification subject identity, and AirNow dependency health; database-backed test suites use shared serialization and deterministic fixture cleanup.
+
 ## v1.3.1
 
 ## Overview
