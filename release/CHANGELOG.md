@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4.1
+
+### Reliability
+
+- Notification subject identity migration can resume after partial schema preparation, preserving existing identities, backfilling only legacy rows with no identity, and recreating its checks while creating missing indexes.
+
+### Operations
+
+- Run production migrations with a single migration runner; do not overlap deployment migrations with test runners against the same database.
+
 ## v1.4.0
 
 ### Features
