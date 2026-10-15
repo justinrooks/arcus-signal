@@ -20,21 +20,25 @@ root=Path(os.environ['MOCK_ROOT']); clock=root/'clock'
 now=int(clock.read_text()); epoch=lambda t: datetime.datetime.fromtimestamp(t,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 mode=os.environ.get('CASE','')
 if name=='date':
- print(now if args==['+%s'] else epoch(now)); sys.exit()
+ print(now if args==['+%s'] else (epoch(now).replace('Z','.250000000Z') if '%N' in args[-1] else epoch(now))); sys.exit()
 if name=='sleep': clock.write_text(str(now+int(args[0]))); sys.exit()
 if name=='git': sys.exit()
 if name=='curl':
  url=args[-1]
  if 'api.github.com' in url:
   print(json.dumps(dict(tag_name=url.split('/')[-1],draft=False,prerelease=mode=='prerelease',published_at=epoch(now))));sys.exit()
- if url.endswith('/health'): sys.exit(0)
+ if url.endswith('/health'):
+  if mode.startswith('early_delivery') and (root/'deployed').exists() and not (root/'health_waited').exists():
+   clock.write_text(str(now+5)); (root/'health_waited').touch()
+  sys.exit(0)
  if mode=='metrics_invalid': print('invalid');sys.exit()
- meso='warning' if mode=='meso_warning' or (mode=='meso_transient' and now-int(os.environ['MOCK_EPOCH'])==120) else 'healthy'
+ regression=mode=='operational_transient' and now-int(os.environ['MOCK_EPOCH'])==120
+ meso='warning' if regression or mode=='meso_warning' or (mode=='meso_transient' and now-int(os.environ['MOCK_EPOCH'])==120) else 'healthy'
  print(json.dumps({'generatedAt':epoch(now if mode!='stale' else now-500),
-  'redLights':{'ingestFreshness':{'status':'critical' if mode=='nws_failed' else 'healthy','recentFailureCount':0},
-   'spcMesoIngest':{'status':meso,'lastAttemptStatus':'succeeded','lastAttemptAgeSeconds':700 if meso=='warning' else 20,'recentFailureCount':0},
-   'pipelineBacklogAge':{'status':'healthy','pendingTargetDispatchCount':0,'pendingNotificationDispatchCount':0},
-   'stuckClaimedRows':{'status':'healthy','count':0}},
+  'redLights':{'ingestFreshness':{'status':'critical' if regression or mode=='nws_failed' else 'healthy','recentFailureCount':0},
+   'spcMesoIngest':{'status':meso,'lastAttemptStatus':'failed' if regression else 'succeeded','lastAttemptAgeSeconds':700 if meso=='warning' else 20,'recentFailureCount':1 if regression else 0},
+   'pipelineBacklogAge':{'status':'warning' if regression else 'healthy','pendingTargetDispatchCount':2 if regression else 0,'pendingNotificationDispatchCount':0},
+   'stuckClaimedRows':{'status':'warning' if regression else 'healthy','count':1 if regression else 0}},
   'deliveryKPIs':{'apnsDeliverySuccessRate':{'sentCount':6,'failedCount':2},'sendNoOpRateByReason':{}}}));sys.exit()
 if name!='docker': sys.exit(90)
 with (root/'calls').open('a') as f: f.write(json.dumps(args)+'\n')
@@ -69,7 +73,15 @@ if args[0]=='compose':
   data=sys.stdin.read()
   if 'pg_restore' in args: sys.exit(1 if mode=='bad_backup' else 0)
   if any(a.startswith('since=') for a in args):
-   print(json.dumps({'sentCount':1 if mode=='delivery_observed' else 0,'failedCount':1 if mode=='delivery_failed' else 0}))
+   counts={'sentCount':1 if mode=='delivery_observed' else 0,'failedCount':1 if mode=='delivery_failed' else 0,'ambiguousSentCount':0,'ambiguousFailedCount':0}
+   if (root/'completions').exists():
+    params=dict(a.split('=',1) for a in args if a.startswith(('since=','attributable_since=')))
+    timestamp=lambda t: datetime.datetime.fromisoformat(t.replace('Z','+00:00')).timestamp()
+    since=timestamp(params['since']); attributable=timestamp(params['attributable_since'])
+    for completion in json.loads((root/'completions').read_text()):
+     if since <= completion <= now:
+      counts['sentCount' if completion >= attributable else 'ambiguousSentCount']+=1
+   print(json.dumps(counts))
   else: print(json.dumps({'passed':mode!='bad_schema'}))
   sys.exit()
  if command=='pull': sys.exit()
@@ -78,7 +90,16 @@ if args[0]=='compose':
   if 'migrate' in args and mode=='migration_failed': print('SECRET_SENTINEL');sys.exit(7)
   if mode=='binary_failed' and 'migrate' not in args: sys.exit(9)
   sys.exit()
- if command=='up': (root/'deployed').write_text(os.environ['ARCUS_SIGNAL_IMAGE_TAG']);sys.exit()
+ if command=='up':
+  (root/'deployed').write_text(os.environ['ARCUS_SIGNAL_IMAGE_TAG'])
+  if mode.startswith('early_delivery'):
+   # Two overlap completions, one in the verification second, and a completion
+   # after verification but before the installer's delayed HTTP checks finish.
+   completions=[now-1,now+2,now+5.1]
+   if mode=='early_delivery_mixed': completions.append(now+7)
+   (root/'completions').write_text(json.dumps(completions))
+   clock.write_text(str(now+5))
+  sys.exit()
 sys.exit(91)
 """
 
@@ -128,6 +149,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(r['migrationState'],'completed')
         self.assertEqual(r['imageID'],'sha256:new')
         self.assertIn('schema_verification',r['completedPhases'])
+        self.assertEqual(r['deliveryEvidenceStartAt'],r['applicationStartAt'])
+        self.assertTrue(r['workerVerifiedAt'])
         calls=[json.loads(x) for x in self.calls().splitlines()]
         migration=[x for x in calls if 'migrate' in x]
         self.assertEqual(len(migration),1)
@@ -233,6 +256,62 @@ class ReleaseTests(unittest.TestCase):
         path,_=self.deploy()
         p=self.run_script('tools/release-observe.sh','--deployment',str(path),case='meso_warning',expected=1)
         self.assertIn('recheck after the next attempt',p.stdout)
+        finding=next(item for item in json.loads(p.stdout)['findings'] if item['key']=='spc_ingest')
+        self.assertEqual(finding['state'],'unresolved')
+        self.assertIsNone(finding['recoveredAt'])
+
+    def test_transient_regressions_are_retained_as_recovered(self):
+        path,_=self.deploy()
+        p=self.run_script('tools/release-observe.sh','--deployment',str(path),case='operational_transient')
+        summary=json.loads(p.stdout)
+        self.assertEqual(summary['status'],'passed')
+        self.assertEqual(summary['concerns'],[])
+        findings={item['key']:item for item in summary['findings']}
+        self.assertTrue({'nws_ingest','dispatch_backlog','stuck_claims','spc_ingest'} <= findings.keys())
+        report=json.loads(next(path.parent.glob('observation.*/observation.json')).read_text())
+        for item in findings.values():
+            self.assertEqual(item['state'],'recovered')
+            self.assertFalse(item['preexisting'])
+            self.assertEqual([o['scheduledOffsetSeconds'] for o in item['observations']],[120])
+            self.assertEqual(item['recoveredAt'],report['snapshots'][2]['capturedAt'])
+        self.assertEqual([sample['operationalStatus'] for sample in report['snapshots']],
+                         ['healthy','degraded','healthy','healthy'])
+
+    def test_delivery_between_startup_and_finished_is_not_lost(self):
+        path,deployment=self.deploy(case='early_delivery_mixed')
+        self.assertLess(deployment['workerVerifiedAt'],deployment['finishedAt'])
+        p=self.run_script('tools/release-observe.sh','--deployment',str(path))
+        summary=json.loads(p.stdout)
+        self.assertEqual(summary['deliveryConfidence'],'observed')
+        self.assertEqual(summary['deliveryEvidence']['sentCount'],1)
+        self.assertEqual(summary['deliveryEvidence']['ambiguousSentCount'],2)
+        report=json.loads(next(path.parent.glob('observation.*/observation.json')).read_text())
+        self.assertEqual(report['deliveryEvidenceStartAt'],deployment['applicationStartAt'])
+        self.assertEqual(report['snapshots'][0]['deliverySince'],deployment['applicationStartAt'])
+        self.assertEqual(report['snapshots'][0]['postDeployDelivery']['sentCount'],1)
+
+    def test_overlap_only_delivery_is_ambiguous_not_observed(self):
+        path,_=self.deploy(case='early_delivery_ambiguous')
+        p=self.run_script('tools/release-observe.sh','--deployment',str(path))
+        summary=json.loads(p.stdout)
+        self.assertEqual(summary['deliveryConfidence'],'ambiguous')
+        self.assertEqual(summary['deliveryEvidence']['sentCount'],0)
+        self.assertEqual(summary['deliveryEvidence']['ambiguousSentCount'],2)
+
+    def test_older_records_retain_early_delivery_conservatively(self):
+        path,deployment=self.deploy(case='early_delivery_mixed')
+        del deployment['workerVerifiedAt']
+        del deployment['deliveryEvidenceStartAt']
+        path.write_text(json.dumps(deployment))
+        p=self.run_script('tools/release-observe.sh','--deployment',str(path))
+        summary=json.loads(p.stdout)
+        self.assertEqual(summary['deliveryConfidence'],'ambiguous')
+        self.assertEqual(summary['deliveryEvidence']['ambiguousSentCount'],3)
+
+    def test_attribution_boundary_cannot_precede_evidence(self):
+        self.run_script('tools/release-snapshot.sh','--since','2026-10-15T17:00:00.250Z',
+                        '--attributable-since','2026-10-15T17:00:00.100Z',expected=2)
+        self.assertFalse((self.root/'calls').exists())
 
     def test_partial_deployment_cannot_be_observed_as_success(self):
         path,_=self.deploy(case='bad_schema',expected=4)

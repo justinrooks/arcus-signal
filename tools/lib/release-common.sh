@@ -14,6 +14,13 @@ release_require() {
 }
 release_tag_valid() { [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; }
 release_now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+release_now_precise() { date -u '+%Y-%m-%dT%H:%M:%S.%NZ'; }
+release_timestamp_valid() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,9})?Z$ ]]; }
+release_timestamp_key() {
+  local value="${1%Z}" fraction=000000000
+  if [[ "$value" == *.* ]]; then fraction="${value#*.}000000000"; value="${value%%.*}"; fi
+  printf '%s.%.9s' "$value" "$fraction"
+}
 release_compose() { timeout --foreground 60 docker compose --project-directory "$RELEASE_ROOT" --env-file "$RELEASE_ROOT/.env" "$@"; }
 release_docker_check() {
   release_require docker timeout jq curl date

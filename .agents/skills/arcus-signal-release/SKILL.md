@@ -41,8 +41,9 @@ Investigation and editing this skill do not authorize deployment.
    Never claim observations that have not actually completed.
 4. Read the resulting `observation.json`. Report target/revision/digest, previous
    images, migration/schema result, rollout gates, observation times, NWS/SPC status,
-   backlog/claim changes, and delivery confidence. Distinguish preexisting concerns
-   from new failures using the baseline and timestamped evidence.
+   backlog/claim changes, and delivery confidence. Include `findings` from the whole
+   window, with recovered/unresolved states and baseline context; recovered warnings
+   remain visible even when the final status passes.
 
 ## Operating rules
 
@@ -61,7 +62,10 @@ Investigation and editing this skill do not authorize deployment.
   staleness or failed attempts require investigation; report an unresolved warning
   at the end of the observation window.
 - Rolling 24-hour APNs counts are historical activity. `observed` requires a successful
-  ledger completion after deployment; no traffic is `unobserved`, not failed delivery.
+  ledger completion after the new worker image is verified. Count evidence from
+  rollout start: earlier overlapping completions remain ambiguously attributed,
+  including those before installer checks finish. Overlap-only traffic is `ambiguous`;
+  no traffic is `unobserved`, not failed delivery.
   HTTP `/health` proves response availability only.
 - Evidence contains coarse operational fields only and lives in private temporary
   run directories outside the repo. Never print `.env`, credentials, APNs material,

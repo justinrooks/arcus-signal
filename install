@@ -17,6 +17,7 @@ phase=preflight
 migration_state=not_started
 application_started=false
 application_start_at=''
+worker_verified_at=''
 image_id=''
 revision=''
 image_digest=''
@@ -29,12 +30,12 @@ finish() {
   [[ "$code" == 0 ]] && status=passed
   release_write "$run_dir/deployment.json" "$(jq -nc \
     --arg status "$status" --arg tag "$ARCUS_SIGNAL_IMAGE_TAG" --arg phase "$phase" \
-    --arg migration "$migration_state" --arg started "$started_at" --arg finished "$(release_now)" \
-    --arg applicationStart "$application_start_at" --arg imageID "$image_id" --arg revision "$revision" --arg digest "$image_digest" \
+    --arg migration "$migration_state" --arg started "$started_at" --arg finished "$(release_now_precise)" \
+    --arg applicationStart "$application_start_at" --arg workerVerified "$worker_verified_at" --arg imageID "$image_id" --arg revision "$revision" --arg digest "$image_digest" \
     --arg baseline "$run_dir/before.json" --argjson previous "$previous" --argjson completed "$completed" \
     --argjson applicationStarted "$application_started" --argjson exitCode "$code" \
     '{schemaVersion:1,status:$status,targetTag:$tag,startedAt:$started,finishedAt:$finished,
-      applicationStartAt:$applicationStart,applicationStarted:$applicationStarted,migrationState:$migration,
+      applicationStartAt:$applicationStart,deliveryEvidenceStartAt:$applicationStart,workerVerifiedAt:$workerVerified,applicationStarted:$applicationStarted,migrationState:$migration,
       failedPhase:(if $status=="passed" then null else $phase end),completedPhases:$completed,exitCode:$exitCode,
       imageID:$imageID,revision:$revision,digest:$digest,previous:$previous,baseline:$baseline}')"
   printf 'Deployment %s; result: %s/deployment.json\n' "$status" "$run_dir" >&2
@@ -87,7 +88,7 @@ if [[ "$(printf '%s\n' v1.4.0 "$1" | sort -V | tail -n 1)" == "$1" ]]; then
   jq -e '.passed == true' "$run_dir/schema.json" >/dev/null || release_die 4 'Schema does not match the migration ledger; applications were not replaced.'
 fi
 complete_phase
-application_start_at="$(release_now)"
+application_start_at="$(release_now_precise)"
 application_started=null # Compose can partially replace services before failing.
 run_phase application_start release_compose up -d --no-deps --no-build --pull never api worker
 application_started=true
@@ -96,6 +97,9 @@ for service in api worker; do
   deployed="$(release_service "$service")" || release_die 3 "$service inspection failed."
   jq -e --arg image "$RELEASE_IMAGE:$1" --arg id "$image_id" '.running and .image == $image and .imageID == $id and .mesoGate == "false"' <<< "$deployed" >/dev/null || release_die 4 "$service image identity or rollout gate mismatch."
 done
+# Completions during replacement can belong to either worker. Once Compose up
+# has returned and image verification has passed, the old worker is stopped.
+worker_verified_at="$(release_now_precise)"
 complete_phase
 phase=http_health
 for port in 8080 8081; do

@@ -13,8 +13,10 @@ record="$(realpath "$2")"
 jq -e '.schemaVersion == 1 and .status == "passed" and .migrationState == "completed" and .applicationStarted == true' "$record" >/dev/null || release_die 4 'Deployment did not complete; inspect its failed phase before observing.'
 tag="$(jq -r .targetTag "$record")"
 release_tag_valid "$tag" || release_die 2 'Deployment record has an invalid tag.'
-since="$(jq -r .finishedAt "$record")"
-[[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || release_die 2 'Invalid deployment completion timestamp.'
+since="$(jq -r '.deliveryEvidenceStartAt // .applicationStartAt' "$record")"
+attributable_since="$(jq -r '.workerVerifiedAt // .finishedAt' "$record")"
+release_timestamp_valid "$since" && release_timestamp_valid "$attributable_since" || release_die 2 'Invalid deployment evidence timestamps.'
+[[ "$(release_timestamp_key "$attributable_since")" < "$(release_timestamp_key "$since")" ]] && release_die 2 'Worker verification must not precede rollout.'
 image_id="$(jq -r .imageID "$record")"
 [[ "$image_id" == sha256:* ]] || release_die 2 'Deployment record lacks its image identity.'
 base="$(jq -r .baseline "$record")"
@@ -25,10 +27,10 @@ started_at="$(release_now)"
 snapshots='[]'
 write_report() {
   release_write "$run_dir/observation.json" "$(jq -n \
-    --arg tag "$tag" --arg started "$started_at" --arg finished "$(release_now)" \
+    --arg tag "$tag" --arg since "$since" --arg attributableSince "$attributable_since" --arg started "$started_at" --arg finished "$(release_now)" \
     --argjson snapshots "$snapshots" --slurpfile baseline "$base" \
     '{schemaVersion:1,targetTag:$tag,startedAt:$started,finishedAt:$finished,
-      expectedOffsetsSeconds:[0,120,420,720],snapshots:$snapshots,baseline:$baseline[0]}' \
+      deliveryEvidenceStartAt:$since,workerVerifiedAt:$attributableSince,expectedOffsetsSeconds:[0,120,420,720],snapshots:$snapshots,baseline:$baseline[0]}' \
     | jq -c -f "$RELEASE_ROOT/tools/lib/release-observe.jq")"
 }
 trap 'write_report; exit 130' INT
@@ -41,7 +43,7 @@ for offset in 0 120 420 720; do
   done
   snapshot="$run_dir/after-${offset}s.json"
   code=0
-  "$RELEASE_ROOT/tools/release-snapshot.sh" --expected-tag "$tag" --since "$since" --json --output "$snapshot" >/dev/null || code=$?
+  "$RELEASE_ROOT/tools/release-snapshot.sh" --expected-tag "$tag" --since "$since" --attributable-since "$attributable_since" --json --output "$snapshot" >/dev/null || code=$?
   [[ -s "$snapshot" ]] || release_die 3 'Snapshot failed without an evidence artifact.'
   value="$(jq -c --argjson offset "$offset" --argjson elapsed "$(( $(date +%s) - start_epoch ))" \
     --arg expectedImageID "$image_id" --argjson exitCode "$code" '
@@ -54,5 +56,5 @@ for offset in 0 120 420 720; do
   printf 'Observation at %ss: %s; report: %s/observation.json\n' "$offset" "$(jq -r .status <<< "$value")" "$run_dir" >&2
   [[ "$(jq -r .status <<< "$value")" != failed ]] || exit 4
 done
-jq '{status,operationalStatus,deliveryConfidence,concerns,snapshotTimes:[.snapshots[].capturedAt]}' "$run_dir/observation.json"
+jq '{status,operationalStatus,deliveryConfidence,deliveryEvidence,findings,concerns,snapshotTimes:[.snapshots[].capturedAt]}' "$run_dir/observation.json"
 case "$(jq -r .status "$run_dir/observation.json")" in passed) exit 0;; failed) exit 4;; *) exit 1;; esac
