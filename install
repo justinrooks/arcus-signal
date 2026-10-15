@@ -1,76 +1,114 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$repo_root"
-
-usage() {
-  echo "Usage: ./install vMAJOR.MINOR.PATCH" >&2
+set -Eeuo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/tools/lib/release-common.sh"
+if [[ $# == 1 && "$1" == --help ]]; then
+  echo 'Usage: ./install vMAJOR.MINOR.PATCH'
+  echo 'Deploys exactly the supplied release. Uses ~/backups/arcus-signal; see tools/release-preflight.sh --help.'
+  exit 0
+fi
+[[ $# == 1 ]] && release_tag_valid "$1" || release_die 2 'Usage: ./install vMAJOR.MINOR.PATCH'
+export ARCUS_SIGNAL_IMAGE_TAG="$1"
+release_require jq flock mktemp timeout
+# One installer per checkout; the FD remains open through every deployment phase.
+exec 9< "$RELEASE_ROOT/install"
+flock -n 9 || release_die 4 'Another release is already running in this checkout.'
+run_dir="$(mktemp -d "${TMPDIR:-/tmp}/arcus-release-${1}.XXXXXXXX")"
+phase=preflight
+migration_state=not_started
+application_started=false
+application_start_at=''
+worker_verified_at=''
+image_id=''
+revision=''
+image_digest=''
+previous='null'
+started_at="$(release_now)"
+completed='[]'
+finish() {
+  local code=$? status=failed
+  trap - EXIT
+  [[ "$code" == 0 ]] && status=passed
+  release_write "$run_dir/deployment.json" "$(jq -nc \
+    --arg status "$status" --arg tag "$ARCUS_SIGNAL_IMAGE_TAG" --arg phase "$phase" \
+    --arg migration "$migration_state" --arg started "$started_at" --arg finished "$(release_now_precise)" \
+    --arg applicationStart "$application_start_at" --arg workerVerified "$worker_verified_at" --arg imageID "$image_id" --arg revision "$revision" --arg digest "$image_digest" \
+    --arg baseline "$run_dir/before.json" --argjson previous "$previous" --argjson completed "$completed" \
+    --argjson applicationStarted "$application_started" --argjson exitCode "$code" \
+    '{schemaVersion:1,status:$status,targetTag:$tag,startedAt:$started,finishedAt:$finished,
+      applicationStartAt:$applicationStart,deliveryEvidenceStartAt:$applicationStart,workerVerifiedAt:$workerVerified,applicationStarted:$applicationStarted,migrationState:$migration,
+      failedPhase:(if $status=="passed" then null else $phase end),completedPhases:$completed,exitCode:$exitCode,
+      imageID:$imageID,revision:$revision,digest:$digest,previous:$previous,baseline:$baseline}')"
+  printf 'Deployment %s; result: %s/deployment.json\n' "$status" "$run_dir" >&2
+  if [[ "$code" != 0 && "$migration_state" != not_started ]]; then
+    echo 'Database changes may have committed. Inspect ledger/schema before an explicitly approved retry or rollback.' >&2
+  fi
+  exit "$code"
 }
-
-if [[ $# -ne 1 || ! "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-  usage
-  exit 64
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+complete_phase() { completed="$(jq -c --arg phase "$phase" '. + [$phase]' <<< "$completed")"; }
+run_phase() {
+  phase="$1"; shift
+  printf 'Release phase: %s\n' "$phase" >&2
+  # Do not persist or display raw container/migration output, which may contain secrets.
+  "$@" >/dev/null 2>&1 || release_die 4 "Release phase failed: $phase"
+  complete_phase
+}
+"$RELEASE_ROOT/tools/release-preflight.sh" "$1" > "$run_dir/preflight.json"
+complete_phase
+phase=baseline
+"$RELEASE_ROOT/tools/release-snapshot.sh" --json --output "$run_dir/before.json" >/dev/null || {
+  # A successful SPC attempt can age beyond the dashboard's ten-minute threshold.
+  jq -e '.collectionStatus == "passed" and .infrastructureStatus == "passed" and
+    .metrics.nwsIngest.status == "healthy" and .metrics.backlog.status == "healthy" and
+    .metrics.stuckClaims.status == "healthy" and .metricsFresh and
+    .metrics.mesoIngest.lastAttemptStatus == "succeeded" and
+    .metrics.mesoIngest.recentFailureCount == 0 and .metrics.mesoIngest.lastAttemptAgeSeconds <= 1200' \
+    "$run_dir/before.json" >/dev/null || release_die 4 'Baseline is unsafe or unavailable; inspect before deploying.'
+}
+previous="$(jq -c '.services | {api,worker}' "$run_dir/before.json")"
+complete_phase
+run_phase pull timeout --foreground 600 docker compose --project-directory "$RELEASE_ROOT" --env-file "$RELEASE_ROOT/.env" pull api worker
+phase=image_identity
+image_metadata="$(timeout 10 docker image inspect --format '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "org.opencontainers.image.version"}}|{{join .RepoDigests ","}}' "$RELEASE_IMAGE:$1" 2>/dev/null)"
+IFS='|' read -r image_id revision image_version image_digest <<< "$image_metadata"
+[[ "$image_version" == "$1" && "$image_id" == sha256:* && "$revision" =~ ^[0-9a-f]{40}$ && -n "$image_digest" ]] || release_die 4 'Pulled image lacks matching release metadata or a registry digest.'
+complete_phase
+run_phase packaged_binaries release_compose run --rm --no-deps --pull never --entrypoint sh api -ec 'test -x /usr/local/bin/wgrib2; for binary in ./Run ./RunWorker; do dependencies="$(ldd "$binary")"; case "$dependencies" in *"not found"*) exit 1;; esac; done; test -x ./Run; test -x ./RunWorker'
+# Existing PostgreSQL/Redis must already be healthy in the baseline. Do not
+# recreate durable dependencies as a side effect of an application release.
+phase=migrations
+migration_state=uncertain
+run_phase migrations timeout --foreground 600 docker compose --project-directory "$RELEASE_ROOT" --env-file "$RELEASE_ROOT/.env" run --rm --no-deps --pull never api ./Run migrate --env production --yes
+migration_state=completed
+phase=schema_verification
+if [[ "$(printf '%s\n' v1.4.0 "$1" | sort -V | tail -n 1)" == "$1" ]]; then
+  release_psql < "$RELEASE_ROOT/tools/sql/verify-notification-subject-identity.sql" > "$run_dir/schema.json" 2>/dev/null || release_die 4 'Schema verification query failed.'
+  jq -e '.passed == true' "$run_dir/schema.json" >/dev/null || release_die 4 'Schema does not match the migration ledger; applications were not replaced.'
 fi
-
-release_tag="$1"
-
-# Fail before any production mutation if the checkout is locally modified.
-[[ -f .env ]] || { echo "Missing .env in repository root." >&2; exit 3; }
-for tool in git docker sudo curl; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "Missing prerequisite: $tool" >&2; exit 3; }
-done
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "Tracked files are modified. Resolve the checkout before deploying." >&2
-  exit 4
-fi
-compose=(sudo env "ARCUS_SIGNAL_IMAGE_TAG=$release_tag" docker compose --env-file .env)
-
-echo "Pulling latest repo changes..."
-git pull --ff-only
-
-echo "Pulling Arcus Signal $release_tag image from GitHub..."
-"${compose[@]}" pull api worker
-
-echo "Starting database and queue dependencies..."
-"${compose[@]}" up -d postgres redis
-
-echo "Running database migrations..."
-"${compose[@]}" run --rm api ./Run migrate --env development --yes
-
-echo "Verifying packaged wgrib2 binary..."
-"${compose[@]}" run --rm api test -x /usr/local/bin/wgrib2
-
-echo "Starting api/worker from pulled images..."
-"${compose[@]}" up -d --no-build api worker
-
-echo "Verifying requested API and worker image identities..."
-expected_image="ghcr.io/justinrooks/arcus-signal:$release_tag"
+complete_phase
+application_start_at="$(release_now_precise)"
+application_started=null # Compose can partially replace services before failing.
+run_phase application_start release_compose up -d --no-deps --no-build --pull never api worker
+application_started=true
+phase=image_verification
 for service in api worker; do
-  container_id="$("${compose[@]}" ps -q "$service")"
-  [[ -n "$container_id" ]] || { echo "$service container missing after deployment." >&2; exit 1; }
-  deployed_image="$(sudo docker inspect --format '{{.Config.Image}}' "$container_id")"
-  [[ "$deployed_image" == "$expected_image" ]] || {
-    echo "$service is running unexpected image: $deployed_image" >&2
-    exit 1
-  }
+  deployed="$(release_service "$service")" || release_die 3 "$service inspection failed."
+  jq -e --arg image "$RELEASE_IMAGE:$1" --arg id "$image_id" '.running and .image == $image and .imageID == $id and .mesoGate == "false"' <<< "$deployed" >/dev/null || release_die 4 "$service image identity or rollout gate mismatch."
 done
-
-# /health checks HTTP availability only; inspect downstream metrics separately.
-check_http_health() {
-  local service="$1" port="$2" attempt
-  for ((attempt = 1; attempt <= 20; attempt++)); do
-    if curl -fsS --max-time 3 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
-      echo "$service HTTP health: OK"
-      return 0
-    fi
+# Completions during replacement can belong to either worker. Once Compose up
+# has returned and image verification has passed, the old worker is stopped.
+worker_verified_at="$(release_now_precise)"
+complete_phase
+phase=http_health
+for port in 8080 8081; do
+  healthy=false
+  for ((attempt=0; attempt<20; attempt++)); do
+    if curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then healthy=true; break; fi
     sleep 3
   done
-  echo "$service HTTP health did not recover." >&2
-  return 1
-}
-check_http_health api 8080
-check_http_health worker 8081
-
-echo "Versioned services respond. Verify downstream health with tools/release-snapshot.sh."
-echo "Done."
+  [[ "$healthy" == true ]] || release_die 4 "HTTP health failed on port $port."
+done
+complete_phase
+phase=complete
