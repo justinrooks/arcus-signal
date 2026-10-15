@@ -1,57 +1,73 @@
 ---
 name: arcus-signal-release
-description: Deploy and observe an explicitly versioned, human-approved Arcus Signal release. Use when asked to release a specific version such as "release v1.4.0" or "release 1.4.1"; require a version before any release workflow.
+description: Deploy an explicitly requested Arcus Signal version on its server, then observe ingestion, queues, and delivery for 12 minutes. Use for requests such as "release v1.4.2"; require an explicit version.
 ---
 
-# Arcus Signal release deployment
+# Arcus Signal release
 
-Operate from the Arcus Signal checkout **on the deployment host**. This skill does not publish GitHub releases, merge PRs, or provision infrastructure. If you cannot execute commands on the host, explain what remains to be performed; never claim deployment or monitoring occurred.
+Operate from this checkout on the deployment host. `install` owns deployment;
+`tools/release-observe.sh` owns timed observation. Read `AGENTS.md`, the requested
+version's release notes, and relevant delivery invariants in `docs/architecture.md`.
+Do not publish a GitHub release or substitute a different version.
 
-**Source of truth:** `install` owns deployment mechanics, `tools/release-snapshot.sh` captures sanitized operational evidence, `docs/architecture.md` defines runtime and notification invariants, and `release/RELEASE_NOTES.md` describes the selected version.
+## Version and authorization
 
-## Required version input
+Accept one complete stable version, `vMAJOR.MINOR.PATCH`; a bare version may be
+normalized by adding `v`. Reject leading zeroes, prerelease/build suffixes, and
+`latest`. Retain that exact normalized tag across follow-ups. If none was supplied,
+ask for it before starting. Never infer a tag from the checkout or release list.
 
-- A release version must be supplied explicitly when initiating a new release workflow. Accept commands such as release v1.4.0 or release 1.4.1. Once validated, retain the normalized version throughout the entire workflow, including preflight, approval, deployment, troubleshooting, and monitoring. Follow-up responses such as "approved," "continue," or "proceed" must use the previously established version without requesting it again. Never infer a version when starting a new release workflow.
-- Accept only a single complete semantic version of the form `vMAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH` (nonnegative decimal components, no prerelease/build suffix). Normalize a missing leading `v` to `v` and use that exact tag throughout preflight, image verification, approval, installation, and post-deploy checks.
-- If no version was supplied when initiating the release workflow, stop before preflight or deployment and ask for the exact version.
-- **Never guess, select, or default the target version** from `latest`, the current installed image, the most recent GitHub Release, repository tags, changelog headings, branch names, or conversation history. A discovered newer version is not authorization to substitute it for the user's explicit target.
-- Confirm that the normalized tag exists as a published stable release before asking for deployment approval. An unavailable or invalid requested version must be reported as such, not silently replaced.
+An explicit instruction such as **"release v1.4.2" authorizes preflight, one install,
+and bounded observation**. Announce the target and proceed without a second
+conversational approval. Runtime execution approvals remain enforced; request the
+specific command through that boundary when needed, explaining its source.
+Investigation and editing this skill do not authorize deployment.
 
-## Mandatory safeguards
+## Execute
 
-- Target only the **user-supplied, normalized, published stable `vMAJOR.MINOR.PATCH` release** with an available GHCR versioned image. Never deploy `latest`, infer a release number, or use an unreviewed branch build.
-- **Get explicit human approval immediately before running `./install`.** Show target/current versions, migration considerations, backup status, NWS baseline, meso gate, and rollback target. Preflight does not imply deployment approval.
-- For the **v1.4.0 infrastructure release**, `MESO_NOTIFICATIONS_ENABLED` must be **explicitly false** on API and worker. Do not enable it; activation belongs to #289 after the app cutover.
-- No automatic rollback, migration reversal, editing production configuration, test APNs sends, synthetic NWS alerts, queue draining, Redis flushing, ledger edits, or data cleanup.
-- Never display or copy `.env`, APNs keys/tokens, credentials, installation IDs, precise locations, raw dashboard JSON, or unredacted logs. Store sanitized evidence outside the repo.
-- A successful `/health` only proves HTTP response, **not** Redis, Postgres, NWS ingestion, or APNs health.
-- Do not promise continued background monitoring beyond the bounded observation session.
+1. Run `./install <tag>` **once**. It locks the checkout, checks the published stable
+   release and GHCR image, verifies configuration and a backup, saves a baseline,
+   pulls the image, checks packaged binaries, migrates using production configuration,
+   verifies the schema, starts API/worker, and checks image identities and HTTP health.
+   `./tools/release-preflight.sh <tag>` is available for a standalone readiness check.
+2. Use the printed `deployment.json` path. If installation failed, inspect its
+   `failedPhase`, `completedPhases`, and `migrationState`; stop deployment actions.
+   `uncertain` or `completed` migrations may have committed changes. Inspect ledger
+   **and schema** before proposing an explicitly approved retry or rollback.
+3. On success, immediately run
+   `./tools/release-observe.sh --deployment <absolute-path-to-deployment.json>`.
+   It samples immediately and at **2, 7, and 12 minutes** from observation start.
+   When the tool yields, poll its running session and provide progress updates.
+   Never claim observations that have not actually completed.
+4. Read the resulting `observation.json`. Report target/revision/digest, previous
+   images, migration/schema result, rollout gates, observation times, NWS/SPC status,
+   backlog/claim changes, and delivery confidence. Distinguish preexisting concerns
+   from new failures using the baseline and timestamped evidence.
 
-## Preflight, read-only
+## Operating rules
 
-1. Read `AGENTS.md`, `install`, `docker-compose.yml`, the relevant `docs/architecture.md` delivery sections, and the version section in `release/RELEASE_NOTES.md`. Consult `docs/Sql/NotificationProcessing.sql` and `docs/Sql/NotificationDebug.sql` for troubleshooting clues, **not** as scripts to run wholesale.
-2. Verify the deployment host and Arcus Signal repository directory. Confirm `install`, `docker-compose.yml`, and `.env` exist. Validate that the local deployment configuration supports the requested release. Never display `.env` contents. Git branch, upstream, and repository synchronization are not deployment prerequisites.
-3. Verify the stable GitHub Release is published (not draft/prerelease), its GHCR image can be accessed, and API/worker are currently on the same version. Review migrations for compatibility with the intended fallback image.
-4. Inspect only the two resolved meso gate values, not all Compose environment values: `sudo env ARCUS_SIGNAL_IMAGE_TAG="<tag>" docker compose --env-file .env config --format json | jq -r '[.services.api.environment.MESO_NOTIFICATIONS_ENABLED, .services.worker.environment.MESO_NOTIFICATIONS_ENABLED] | join(" / ")'`. They must agree; both must be false for v1.4.0.
-5. Confirm a restorable recent PostgreSQL backup exists and deployment conditions are sensible given any active severe weather. This skill does not create or restore backups.
-6. Capture a coarse baseline: `./tools/release-snapshot.sh --json --output /tmp/arcus-release-before.json`. Its nonzero exit means attention/failed state; investigate and disclose that baseline, not overwrite it or call it healthy.
-7. Present a concise go/no-go summary and **request explicit deployment approval**. Stop if approval is missing.
-
-## Deployment, approved write boundary
-
-Run `./install <tag>` once, from repo root. Do not independently reimplement its pull, migration, startup, or health steps. On a partial failure, stop and report which operation completed; do not retry migrations or initiate rollback without separate approval.
-
-## Post-deployment observation, read-only
-
-1. Capture `./tools/release-snapshot.sh --expected-tag <tag> --json --output /tmp/arcus-release-after-1.json`. Check both images and both HTTP health endpoints, Docker service status, PostgreSQL/Redis health, matching meso gate values, and dashboard availability.
-2. Continue a **bounded 10–15 minute observation**, taking at least two more snapshots separated in time. Check `generatedAt` advances, and inspect the existing operator dashboard (`/dashboard`, `/dashboard/delivery`, `/dashboard/mesos`).
-3. Compare baseline vs post-deploy: NWS ingest status/success age/failures; target and notification outbox backlog counts/ages; stuck claimed rows; APNs sent/failed counts and failure reasons; no-op decisions; SPC meso ingest. The dashboard has rolling windows and staggered refresh cadences. A quiet period with no pushes is **inconclusive**, not proof that delivery works or fails.
-4. Review bounded local logs only when relevant, e.g. `sudo docker compose --env-file .env logs --since 10m --tail 150 api worker`. Do not upload unredacted output. Look for new startup/migration errors, Postgres or Redis failures, repeated APNs failures, and exhausted retries.
-5. Trace suspected failures through the real boundaries: ingest → target/outbox → queue handoff → ledger claim → APNs completion. Distinguish **preexisting vs new**, **NWS vs meso**, **no traffic vs failed traffic**, and **stale dashboard vs stale upstream ingest**. Diagnostic SQL, if truly necessary, must be narrow, read-only, and privacy-preserving; never run a bundled query file wholesale.
-6. Escalate on mismatched images, unhealthy containers, missing/stale metrics, newly stale NWS ingestion, growing backlogs, new stuck claims, repeated new DB/Redis/APNs errors, or an unexpectedly enabled meso gate. Do not automatically rollback on a rate fluctuation or missing activity.
-
-## Rollback and report
-
-Any rollback requires **separate approval** and confirmed compatibility of the previous binary with the **already-migrated** database. `./install <previous-tag>` selects older images but also invokes migrations; it does **not** revert schema or data. Do not run Fluent revert or schema-modifying SQL automatically.
-
-Report: target tag/revision, previous image, migration outcome, gate, API/worker status, snapshot times, NWS ingest/queue/APNs comparison, relevant sanitized errors, and confidence in notification delivery (`observed` / `unobserved` / `degraded`). Record unresolved concerns and explicit next actions; never assert APNs is healthy solely because `/health` returned 200.
+- Use direct Docker access. Access/inspection errors are collection failures,
+  not missing services. Do not add `sudo` or change host permissions to bypass an error.
+- Meso delivery stays **explicitly false on API and worker through v1.4.1 and later
+  versions until the separately approved app cutover**. An enabled gate blocks release;
+  this workflow does not change it.
+- Backups default to the newest readable `*.dump` in `~/backups/arcus-signal`.
+  `ARCUS_RELEASE_BACKUP_FILE` or `ARCUS_RELEASE_BACKUP_DIR` overrides discovery;
+  `ARCUS_RELEASE_BACKUP_MAX_AGE_HOURS` defaults to 24. Archive readability and age
+  do not prove a tested restore. Missing/stale/invalid evidence blocks deployment;
+  do not create or restore backups implicitly.
+- A recent successful SPC attempt can warn after ten minutes because the schedule
+  also runs every ten minutes. One age-only warning calls for a recheck. Continued
+  staleness or failed attempts require investigation; report an unresolved warning
+  at the end of the observation window.
+- Rolling 24-hour APNs counts are historical activity. `observed` requires a successful
+  ledger completion after deployment; no traffic is `unobserved`, not failed delivery.
+  HTTP `/health` proves response availability only.
+- Evidence contains coarse operational fields only and lives in private temporary
+  run directories outside the repo. Never print `.env`, credentials, APNs material,
+  installation identities, precise locations, raw dashboard responses, or raw logs.
+- No automatic retry, rollback, schema repair, queue cleanup, synthetic alerts, or
+  test pushes. A rollback needs separate approval and compatibility with the already
+  migrated database; selecting an older image does not revert schema or data.
+- Monitoring ends with this bounded session. For a concern, inspect bounded,
+  sanitized logs or narrow read-only queries and recommend the next action.

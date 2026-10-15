@@ -129,15 +129,27 @@ After publishing a stable GitHub Release and waiting for its versioned GHCR imag
 2. Run `./install v1.1.0` with the release version to deploy.
 3. Verify API and worker health.
 
-The installer pulls the requested version before starting the application and uses that same image tag for both API and worker. To select an older available image version, run the same command with its tag, for example `./install v1.0.3`. This selects the container version only; it does not guarantee that database migrations are safely reversible.
+The installer pulls the requested version before starting the application and uses that same image tag for both API and worker. Preflight blocks downgrades. Recovery with an older image requires a separately approved procedure compatible with the already migrated database; changing images does not revert schema or data.
 
 ### Agent-guided deployments
 
-The repository-local Codex skill at `.agents/skills/arcus-signal-release/SKILL.md` guides versioned deployment **on the production host**. It uses `./install vMAJOR.MINOR.PATCH` as the only deployment executor, requires explicit human approval, and captures pre/post NWS, queue, and APNs health evidence. For v1.4.0, the shared `MESO_NOTIFICATIONS_ENABLED` rollout gate must remain explicitly disabled.
+The repository-local Codex skill at `.agents/skills/arcus-signal-release/SKILL.md` accepts an explicit request such as `release v1.4.2` as authorization to install that version once and observe the result. It uses direct Docker access; no `sudo` is required when the invoking account can reach the Docker daemon. Runtime execution approvals still apply.
 
-The read-only `tools/release-snapshot.sh --json` helper selects coarse operational data from the running API and containers. Add `--expected-tag v1.4.0` after deploying, or `--output /tmp/arcus-after.json` for a sanitized JSON artifact. It requires `curl`, `jq`, and sudo-enabled Docker Compose access. `/health` checks alone do not verify downstream ingestion, database, Redis, or APNs behavior.
+`./install vMAJOR.MINOR.PATCH` runs preflight, saves a baseline, pulls and verifies the requested image, checks packaged binaries, runs production migrations, verifies the schema, and replaces only API/worker. Existing PostgreSQL and Redis must already be healthy. The checkout must have no tracked modifications. The installer writes a private run directory under `${TMPDIR:-/tmp}` and prints its `deployment.json` path, including the failed phase and migration state on failure. It never retries or rolls back automatically.
 
-The skill does not publish releases, enable the meso rollout gate, automatically roll back, or run production data mutations beyond the reviewed installer.
+Preflight checks a published stable GitHub release and accessible GHCR image. It requires an existing readable PostgreSQL custom/tar archive: by default the newest readable `*.dump` in `~/backups/arcus-signal`. Override with `ARCUS_RELEASE_BACKUP_FILE` or `ARCUS_RELEASE_BACKUP_DIR`; `ARCUS_RELEASE_BACKUP_MAX_AGE_HOURS` defaults to 24. A readable archive is not proof of a tested restore. `./tools/release-preflight.sh vMAJOR.MINOR.PATCH` checks readiness independently without pulling or starting anything.
+
+Immediately after a successful install, run:
+
+```bash
+./tools/release-observe.sh --deployment /absolute/path/to/deployment.json
+```
+
+The observer captures sanitized snapshots immediately and at **2, 7, and 12 minutes** after observation starts, writing a unique observation directory alongside the deployment record. It compares ingestion, dispatch backlogs, stuck claims, metrics freshness, and post-deploy APNs completions. A quiet delivery window is `unobserved`; rolling 24-hour counts alone do not establish new-version delivery. An age-only SPC warning near its ten-minute ingest interval calls for a recheck, with unresolved warnings retained in the report.
+
+`./tools/release-snapshot.sh --json` remains available for standalone read-only evidence; add `--expected-tag vMAJOR.MINOR.PATCH`, `--since YYYY-MM-DDTHH:MM:SSZ`, or `--output /existing/private/directory/snapshot.json`. Docker access/inspection errors are collection failures, not missing services. `/health` alone does not verify downstream ingestion or delivery. Helpers return 0 for passed, 1 for attention, 2 for invalid invocation, 3 for unavailable prerequisites/collection, and 4 for unsafe/failed state.
+
+`MESO_NOTIFICATIONS_ENABLED` must remain explicitly false on both API and worker through v1.4.1 and later releases until the separately approved app cutover. This workflow does not publish releases, create backups, enable meso delivery, or perform automatic rollback/schema repair.
 
 ## Endpoint Docs
 
