@@ -28,18 +28,26 @@ Investigation and editing this skill do not authorize deployment.
 1. Run `./install <tag>` **once**. It locks the checkout, checks the published stable
    release and GHCR image, verifies configuration and a backup, saves a baseline,
    pulls the image, checks packaged binaries, migrates using production configuration,
-   verifies the schema, starts API/worker, and checks image identities and HTTP health.
+   verifies the schema, starts API/worker, checks image identities and HTTP health,
+   and atomically saves the successful image tag in `.env`. Preflight requires
+   Python 3 and a writable regular `.env` file and directory.
    `./tools/release-preflight.sh <tag>` is available for a standalone readiness check.
 2. Use the printed `deployment.json` path. If installation failed, inspect its
    `failedPhase`, `completedPhases`, and `migrationState`; stop deployment actions.
    `uncertain` or `completed` migrations may have committed changes. Inspect ledger
    **and schema** before proposing an explicitly approved retry or rollback.
-3. On success, immediately run
+3. On success, confirm `persistedTag` equals the requested tag and
+   `saved_configuration_verification` is in `completedPhases`. Independently check
+   `env -u ARCUS_SIGNAL_IMAGE_TAG docker compose --env-file .env config --images`
+   after the installer exits; both application images must select the requested
+   release. This prints image references only. Missing or mismatched saved selection
+   is a failed deployment check; do not recreate services or silently repair it.
+   Then immediately run
    `./tools/release-observe.sh --deployment <absolute-path-to-deployment.json>`.
    It samples immediately and at **2, 7, and 12 minutes** from observation start.
    When the tool yields, poll its running session and provide progress updates.
    Never claim observations that have not actually completed.
-4. Read the resulting `observation.json`. Report target/revision/digest, previous
+4. Read the resulting `observation.json`. Report target/revision/digest, saved image tag, previous
    images, migration/schema result, rollout gates, observation times, NWS/SPC status,
    backlog/claim changes, and delivery confidence. Include `findings` from the whole
    window, with recovered/unresolved states and baseline context; recovered warnings

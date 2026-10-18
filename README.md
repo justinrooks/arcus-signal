@@ -73,8 +73,11 @@ Current migration set includes series/revision persistence, geolocation (`arcus_
 ## Docker Compose
 
 ```bash
-docker compose up --build
+ARCUS_SIGNAL_IMAGE_TAG=development docker compose up --build
 ```
+
+Compose requires an explicit `ARCUS_SIGNAL_IMAGE_TAG`; missing or empty values fail
+configuration instead of selecting `latest`. Use `development` for local builds.
 
 Compose sets defaults for queue tuning env vars (`QUEUE_WORKER_COUNT`, `REDIS_POOL_MAX_CONNECTIONS`, `REDIS_POOL_CONNECTION_TIMEOUT_SECONDS`, `WORKER_STARTUP_GRACE_SECONDS`) and the shared `MESO_NOTIFICATIONS_ENABLED` rollout gate (`false`).
 
@@ -97,7 +100,7 @@ APNS_SANDBOX_KEY_ID=ABC123SANDBOX \
 APNS_PROD_KEY_ID=XYZ789PROD \
 APNS_TEAM_ID=TEAM123456 \
 APNS_TOPIC=com.skyaware.app \
-docker compose up --build
+ARCUS_SIGNAL_IMAGE_TAG=development docker compose up --build
 ```
 
 For production deployments, prefer Docker secrets or an external secret manager over direct bind mounts.
@@ -129,17 +132,26 @@ After publishing a stable GitHub Release and waiting for its versioned GHCR imag
 2. Run `./install v1.1.0` with the release version to deploy.
 3. Verify API and worker health.
 
-The installer pulls the requested version before starting the application and uses that same image tag for both API and worker. Preflight blocks downgrades. Recovery with an older image requires a separately approved procedure compatible with the already migrated database; changing images does not revert schema or data.
+The installer pulls the requested version before starting the application and uses that same image tag for both API and worker. After image and HTTP health checks pass, it atomically saves a final `ARCUS_SIGNAL_IMAGE_TAG=<tag>` assignment in `.env`, preserving other contents, ownership, and permissions. Later successful releases replace that final assignment. This keeps ordinary Compose recreations on the deployed version. Earlier failed phases leave the previous saved tag unchanged. Preflight blocks downgrades. Recovery with an older image requires a separately approved procedure compatible with the already migrated database; changing images does not revert schema or data.
 
 ### Agent-guided deployments
 
 The repository-local Codex skill at `.agents/skills/arcus-signal-release/SKILL.md` accepts an explicit request such as `release v1.4.2` as authorization to install that version once and observe the result. It uses direct Docker access; no `sudo` is required when the invoking account can reach the Docker daemon. Runtime execution approvals still apply.
 
-`./install vMAJOR.MINOR.PATCH` runs preflight, saves a baseline, pulls and verifies the requested image, checks packaged binaries, runs production migrations, verifies the schema, and replaces only API/worker. Existing PostgreSQL and Redis must already be healthy. The checkout must have no tracked modifications. The installer writes a private run directory under `${TMPDIR:-/tmp}` and prints its `deployment.json` path, including the failed phase and migration state on failure. It never retries or rolls back automatically.
+`./install vMAJOR.MINOR.PATCH` runs preflight, saves a baseline, pulls and verifies the requested image, checks packaged binaries, runs production migrations, verifies the schema, and replaces only API/worker. Existing PostgreSQL and Redis must already be healthy. The checkout must have no tracked modifications. Python 3 and a writable regular `.env` file and parent directory are required; symlinked `.env` files are rejected before deployment. The installer writes a private run directory under `${TMPDIR:-/tmp}` and prints its `deployment.json` path, including the failed phase, migration state, and `persistedTag`. A save or saved-configuration verification failure after rollout remains a failed deployment; inspect the record before any approved recovery. It never retries or rolls back automatically.
 
 Preflight checks a published stable GitHub release and accessible GHCR image. It requires an existing readable PostgreSQL custom/tar archive: by default the newest readable `*.dump` in `~/backups/arcus-signal`. Override with `ARCUS_RELEASE_BACKUP_FILE` or `ARCUS_RELEASE_BACKUP_DIR`; `ARCUS_RELEASE_BACKUP_MAX_AGE_HOURS` defaults to 24. A readable archive is not proof of a tested restore. `./tools/release-preflight.sh vMAJOR.MINOR.PATCH` checks readiness independently without pulling or starting anything.
 
-Immediately after a successful install, run:
+The final installer phase verifies both application images with its temporary image-tag
+override removed. Independently verify the saved selection after the installer exits:
+
+```bash
+env -u ARCUS_SIGNAL_IMAGE_TAG docker compose --env-file .env config --images
+```
+
+Both application references must use the requested release. Avoid a conflicting
+`ARCUS_SIGNAL_IMAGE_TAG` in your shell when recreating services: shell values take
+precedence over `.env`. Immediately after a successful install, run:
 
 ```bash
 ./tools/release-observe.sh --deployment /absolute/path/to/deployment.json

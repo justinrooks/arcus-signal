@@ -87,7 +87,7 @@ For broad database-backed validation, point `DATABASE_NAME` or `DATABASE_URL` at
 ### Docker Compose
 
 ```bash
-docker compose up --build
+ARCUS_SIGNAL_IMAGE_TAG=development docker compose up --build
 ```
 
 Expected ports:

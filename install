@@ -8,7 +8,7 @@ if [[ $# == 1 && "$1" == --help ]]; then
 fi
 [[ $# == 1 ]] && release_tag_valid "$1" || release_die 2 'Usage: ./install vMAJOR.MINOR.PATCH'
 export ARCUS_SIGNAL_IMAGE_TAG="$1"
-release_require jq flock mktemp timeout
+release_require jq flock mktemp timeout python3
 # One installer per checkout; the FD remains open through every deployment phase.
 exec 9< "$RELEASE_ROOT/install"
 flock -n 9 || release_die 4 'Another release is already running in this checkout.'
@@ -21,6 +21,7 @@ worker_verified_at=''
 image_id=''
 revision=''
 image_digest=''
+persisted_tag=''
 previous='null'
 started_at="$(release_now)"
 completed='[]'
@@ -32,12 +33,12 @@ finish() {
     --arg status "$status" --arg tag "$ARCUS_SIGNAL_IMAGE_TAG" --arg phase "$phase" \
     --arg migration "$migration_state" --arg started "$started_at" --arg finished "$(release_now_precise)" \
     --arg applicationStart "$application_start_at" --arg workerVerified "$worker_verified_at" --arg imageID "$image_id" --arg revision "$revision" --arg digest "$image_digest" \
-    --arg baseline "$run_dir/before.json" --argjson previous "$previous" --argjson completed "$completed" \
+    --arg persistedTag "$persisted_tag" --arg baseline "$run_dir/before.json" --argjson previous "$previous" --argjson completed "$completed" \
     --argjson applicationStarted "$application_started" --argjson exitCode "$code" \
     '{schemaVersion:1,status:$status,targetTag:$tag,startedAt:$started,finishedAt:$finished,
       applicationStartAt:$applicationStart,deliveryEvidenceStartAt:$applicationStart,workerVerifiedAt:$workerVerified,applicationStarted:$applicationStarted,migrationState:$migration,
       failedPhase:(if $status=="passed" then null else $phase end),completedPhases:$completed,exitCode:$exitCode,
-      imageID:$imageID,revision:$revision,digest:$digest,previous:$previous,baseline:$baseline}')"
+      imageID:$imageID,revision:$revision,digest:$digest,persistedTag:(if $persistedTag=="" then null else $persistedTag end),previous:$previous,baseline:$baseline}')"
   printf 'Deployment %s; result: %s/deployment.json\n' "$status" "$run_dir" >&2
   if [[ "$code" != 0 && "$migration_state" != not_started ]]; then
     echo 'Database changes may have committed. Inspect ledger/schema before an explicitly approved retry or rollback.' >&2
@@ -110,5 +111,13 @@ for port in 8080 8081; do
   done
   [[ "$healthy" == true ]] || release_die 4 "HTTP health failed on port $port."
 done
+complete_phase
+# Save only a verified healthy rollout. Failed earlier phases leave .env intact.
+run_phase persist_image_tag python3 "$RELEASE_ROOT/tools/lib/release-pin.py" "$RELEASE_ROOT/.env" "$1"
+persisted_tag="$1"
+phase=saved_configuration_verification
+# Do not let the installer's temporary export hide a missing or incorrect pin.
+saved_images="$(unset ARCUS_SIGNAL_IMAGE_TAG; release_compose config --format json 2>/dev/null | jq -ec '.services | {api:.api.image,worker:.worker.image}')" || release_die 4 'Saved Compose configuration is unavailable.'
+jq -e --arg image "$RELEASE_IMAGE:$1" '.api == $image and .worker == $image' <<< "$saved_images" >/dev/null || release_die 4 'Saved Compose configuration does not select the deployed release.'
 complete_phase
 phase=complete
