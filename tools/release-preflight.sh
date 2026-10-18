@@ -14,8 +14,9 @@ EOF
 fi
 [[ $# == 1 ]] && release_tag_valid "$1" || release_die 2 'Supply exactly one vMAJOR.MINOR.PATCH tag.'
 export ARCUS_SIGNAL_IMAGE_TAG="$1"
-release_require git stat sort
+release_require git stat sort python3
 release_docker_check
+python3 "$RELEASE_ROOT/tools/lib/release-pin.py" --check "$RELEASE_ROOT/.env" "$1"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || release_die 4 'Tracked files are modified; review and commit the release tooling before deploying.'
 config="$(release_compose config --format json 2>/dev/null)" || release_die 3 'Compose configuration resolution failed.'
 # Match the database used by read-only verification to the API/worker database.

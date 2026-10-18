@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 MOCK = r"""#!/usr/bin/env python3
-import datetime, json, os, sys
+import datetime, json, os, re, sys
 from pathlib import Path
 name=Path(sys.argv[0]).name; args=sys.argv[1:]
 root=Path(os.environ['MOCK_ROOT']); clock=root/'clock'
@@ -28,6 +28,9 @@ if name=='curl':
  if 'api.github.com' in url:
   print(json.dumps(dict(tag_name=url.split('/')[-1],draft=False,prerelease=mode=='prerelease',published_at=epoch(now))));sys.exit()
  if url.endswith('/health'):
+  if mode=='health_failed': sys.exit(22)
+  if mode=='pin_write_failed' and not (root/'original.env').exists():
+   (root/'.env').rename(root/'original.env'); (root/'.env').symlink_to(root/'original.env')
   if mode.startswith('early_delivery') and (root/'deployed').exists() and not (root/'health_waited').exists():
    clock.write_text(str(now+5)); (root/'health_waited').touch()
   sys.exit(0)
@@ -61,10 +64,16 @@ if args[0]=='compose':
  if args[1:]==['version']: print('5');sys.exit()
  args=args[5:]  # --project-directory PATH --env-file PATH
  command=args[0]
+ tag=os.environ.get('ARCUS_SIGNAL_IMAGE_TAG')
+ if tag is None:
+  pins=re.findall(r'^ARCUS_SIGNAL_IMAGE_TAG=(.*)$',(root/'.env').read_text(),re.M)
+  tag=pins[-1] if pins else None
+ if not tag: sys.exit(42)
+ if command=='config' and mode=='saved_tag_mismatch' and 'ARCUS_SIGNAL_IMAGE_TAG' not in os.environ: tag='v1.4.0'
  if command=='config':
   env={'VAPOR_ENV':'production','MESO_NOTIFICATIONS_ENABLED':'false','DATABASE_URL':'postgres://arcus:fake@postgres:5432/arcus_signal','REDIS_URL':'redis://redis:6379'}
-  print(json.dumps({'services':{'api':{'image':'ghcr.io/justinrooks/arcus-signal:'+os.environ['ARCUS_SIGNAL_IMAGE_TAG'],'environment':env},
-   'worker':{'image':'ghcr.io/justinrooks/arcus-signal:'+os.environ['ARCUS_SIGNAL_IMAGE_TAG'],'environment':env},
+  print(json.dumps({'services':{'api':{'image':'ghcr.io/justinrooks/arcus-signal:'+tag,'environment':env},
+   'worker':{'image':'ghcr.io/justinrooks/arcus-signal:'+tag,'environment':env},
    'postgres':{'environment':{'POSTGRES_DB':'arcus_signal'}}}}));sys.exit()
  if command=='ps':
   if mode!='missing_service': print(args[-1]+'_id')
@@ -91,7 +100,7 @@ if args[0]=='compose':
   if mode=='binary_failed' and 'migrate' not in args: sys.exit(9)
   sys.exit()
  if command=='up':
-  (root/'deployed').write_text(os.environ['ARCUS_SIGNAL_IMAGE_TAG'])
+  (root/'deployed').write_text(tag)
   if mode.startswith('early_delivery'):
    # Two overlap completions, one in the verification second, and a completion
    # after verification but before the installer's delayed HTTP checks finish.
@@ -114,8 +123,8 @@ class ReleaseTests(unittest.TestCase):
             shutil.copy(ROOT/'tools'/name, self.root/'tools'/name)
         shutil.copytree(ROOT/'tools/lib', self.root/'tools/lib')
         shutil.copytree(ROOT/'tools/sql', self.root/'tools/sql')
-        (self.root/'.env').touch()
-        (self.root/'docker-compose.yml').touch()
+        (self.root/'.env').write_text('ARCUS_SIGNAL_IMAGE_TAG=v1.4.1\n')
+        shutil.copy(ROOT/'docker-compose.yml', self.root/'docker-compose.yml')
         (self.root/'bin').mkdir()
         driver=self.root/'bin/mock';driver.write_text(MOCK);driver.chmod(0o755)
         for name in ('docker','curl','git','date','sleep'): (self.root/'bin'/name).symlink_to(driver)
@@ -127,6 +136,7 @@ class ReleaseTests(unittest.TestCase):
             TMPDIR=str(self.root),MOCK_ROOT=str(self.root),MOCK_EPOCH=str(self.epoch),
             ARCUS_RELEASE_BACKUP_FILE=str(backup))
         self.env.pop('CASE',None)
+        self.env.pop('ARCUS_SIGNAL_IMAGE_TAG',None)
 
     def run_script(self, name, *args, case='', expected=0):
         p=subprocess.run([str(self.root/name),*args],env=dict(self.env,CASE=case),text=True,capture_output=True,timeout=20)
@@ -143,12 +153,67 @@ class ReleaseTests(unittest.TestCase):
     def calls(self):
         return (self.root/'calls').read_text()
 
+    def test_saved_release_survives_a_fresh_compose_recreation(self):
+        # Installer export must not be needed by an independent later process.
+        self.env['ARCUS_SIGNAL_IMAGE_TAG']='latest'
+        original=b'VAPOR_ENV=production\nARCUS_SIGNAL_IMAGE_TAG=v1.4.1\nOTHER=SECRET_SENTINEL\n'
+        (self.root/'.env').write_bytes(original)
+        self.deploy()
+        self.assertTrue((self.root/'.env').read_bytes().startswith(original))
+        self.env.pop('ARCUS_SIGNAL_IMAGE_TAG')
+        config=self.run_script('tools/release-snapshot.sh','--expected-tag','v1.4.2','--json')
+        self.assertEqual(json.loads(config.stdout)['status'],'passed')
+        compose=['docker','compose','--project-directory',str(self.root),'--env-file',str(self.root/'.env')]
+        p=subprocess.run(compose+['config','--format','json'],env=self.env,text=True,capture_output=True,check=True)
+        for service in ('api','worker'):
+            self.assertEqual(json.loads(p.stdout)['services'][service]['image'],'ghcr.io/justinrooks/arcus-signal:v1.4.2')
+        subprocess.run(compose+['up','-d','--no-deps','--no-build','--pull','never','api','worker'],env=self.env,check=True)
+        self.assertEqual((self.root/'deployed').read_text(),'v1.4.2')
+
+    def test_failed_rollout_does_not_change_saved_selection(self):
+        original=b'ARCUS_SIGNAL_IMAGE_TAG=v1.4.1\nOTHER=SECRET_SENTINEL\n'
+        for case in ('migration_failed','bad_schema','health_failed'):
+            with self.subTest(case=case):
+                (self.root/'.env').write_bytes(original)
+                self.run_script('install','v1.4.2',case=case,expected=4)
+                self.assertEqual((self.root/'.env').read_bytes(),original)
+        records=[json.loads(p.read_text()) for p in self.root.glob('arcus-release-*/deployment.json')]
+        self.assertTrue(all(r['persistedTag'] is None for r in records))
+
+    def test_saved_configuration_mismatch_is_not_reported_as_success(self):
+        _,record=self.deploy(case='saved_tag_mismatch',expected=4)
+        self.assertEqual(record['failedPhase'],'saved_configuration_verification')
+        self.assertTrue(record['applicationStarted'])
+        self.assertEqual(record['migrationState'],'completed')
+        self.assertEqual(record['persistedTag'],'v1.4.2')
+
+    def test_symlinked_configuration_blocks_preflight(self):
+        original=self.root/'actual.env'
+        (self.root/'.env').rename(original)
+        (self.root/'.env').symlink_to(original)
+        self.run_script('tools/release-preflight.sh','v1.4.2',expected=4)
+        self.assertNotIn('migrate',self.calls())
+
+    def test_pin_write_failure_records_a_partial_deployment(self):
+        original=(self.root/'.env').read_bytes()
+        _,record=self.deploy(case='pin_write_failed',expected=4)
+        self.assertEqual(record['failedPhase'],'persist_image_tag')
+        self.assertTrue(record['applicationStarted'])
+        self.assertEqual(record['migrationState'],'completed')
+        self.assertIsNone(record['persistedTag'])
+        self.assertEqual((self.root/'.env').read_bytes(),original)
+        calls=[json.loads(line) for line in self.calls().splitlines()]
+        self.assertEqual(sum('up' in call for call in calls),1)
+
     def test_successful_deployment(self):
         _,r=self.deploy()
         self.assertEqual(r['status'],'passed')
         self.assertEqual(r['migrationState'],'completed')
         self.assertEqual(r['imageID'],'sha256:new')
         self.assertIn('schema_verification',r['completedPhases'])
+        self.assertEqual(r['persistedTag'],'v1.4.2')
+        self.assertIn('persist_image_tag',r['completedPhases'])
+        self.assertIn('saved_configuration_verification',r['completedPhases'])
         self.assertEqual(r['deliveryEvidenceStartAt'],r['applicationStartAt'])
         self.assertTrue(r['workerVerifiedAt'])
         calls=[json.loads(x) for x in self.calls().splitlines()]
