@@ -15,14 +15,18 @@ struct MesoNotificationTestControllerTests {
         secret: String? = String(repeating: "a", count: 32),
         environment: Environment = .development,
         autoMigrate: Bool = false,
+        databaseURL: String? = Environment.get("DATABASE_URL"),
         test: (Application) async throws -> Void
     ) async throws {
+        if autoMigrate || environment == .production {
+            try requireIsolatedTestDatabaseURL(databaseURL)
+        }
         var environmentOverrides: [String: String?] = [
             "ARCUS_MESO_NOTIFICATION_TEST_ENABLED": enabled,
             "ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET": secret
         ]
         if environment == .production {
-            environmentOverrides["DATABASE_URL"] = "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal?tlsmode=disable"
+            environmentOverrides["DATABASE_URL"] = databaseURL
             environmentOverrides["REDIS_URL"] = "redis://127.0.0.1:6379"
         }
         try await previewWithEnvironment(environmentOverrides) {
@@ -37,6 +41,43 @@ struct MesoNotificationTestControllerTests {
                 throw error
             }
             try await app.asyncShutdown()
+        }
+    }
+
+    private func requireIsolatedTestDatabaseURL(_ rawURL: String?) throws {
+        guard let rawURL,
+              let components = URLComponents(string: rawURL),
+              let databaseName = components.path.split(separator: "/").last.map(String.init),
+              databaseName.range(
+                  of: #"^arcus_issue[0-9]+_(test|validation)(_|$)"#,
+                  options: .regularExpression
+              ) != nil else {
+            throw TestDatabaseIsolationError.databaseURLMustIdentifyDedicatedTestDatabase
+        }
+    }
+
+    @Test("database-backed cases require an explicit dedicated test database")
+    func databaseIsolationGuardRejectsSharedFallback() async throws {
+        #expect(throws: TestDatabaseIsolationError.self) {
+            try requireIsolatedTestDatabaseURL(nil)
+        }
+        #expect(throws: TestDatabaseIsolationError.self) {
+            try requireIsolatedTestDatabaseURL("postgres://arcus:arcus@127.0.0.1:5432/arcus_signal")
+        }
+        #expect(throws: TestDatabaseIsolationError.self) {
+            try requireIsolatedTestDatabaseURL("postgres://arcus:arcus@127.0.0.1:5432/arcus_signal_production_test")
+        }
+        try requireIsolatedTestDatabaseURL("postgres://arcus:arcus@127.0.0.1:5432/arcus_issue344_validation")
+
+        await #expect(throws: TestDatabaseIsolationError.self) {
+            try await withApp(autoMigrate: true, databaseURL: "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal") { _ in
+                Issue.record("Unsafe database URL reached app migration setup.")
+            }
+        }
+        await #expect(throws: TestDatabaseIsolationError.self) {
+            try await withApp(environment: .production, databaseURL: "postgres://arcus:arcus@127.0.0.1:5432/arcus_signal_production_test") { _ in
+                Issue.record("Unsafe database URL reached production app setup.")
+            }
         }
     }
 
@@ -154,17 +195,27 @@ struct MesoNotificationTestControllerTests {
                 locationAuth: .always
             )
             try await installation.save(on: app.db)
-            let outboxBefore = try await ArcusNotificationOutboxModel.query(on: app.db).count()
-            let response = try await request(to: app, installationID: installationID)
+            do {
+                let outboxBefore = try await ArcusNotificationOutboxModel.query(on: app.db).count()
+                let response = try await request(to: app, installationID: installationID)
 
-            #expect(response.status == .notImplemented)
-            #expect(response.body.contains("not-yet-wired"))
-            #expect(try await DevicePresenceModel.find(installationID, on: app.db) == nil)
-            #expect(try await ArcusNotificationOutboxModel.query(on: app.db).count() == outboxBefore)
-            #expect(app.queues.test.all(MesoNotificationSendJob.self).isEmpty)
-            #expect(app.queues.test.all(NotificationSendJob.self).isEmpty)
+                #expect(response.status == .notImplemented)
+                #expect(response.body.contains("not-yet-wired"))
+                #expect(try await DevicePresenceModel.find(installationID, on: app.db) == nil)
+                #expect(try await ArcusNotificationOutboxModel.query(on: app.db).count() == outboxBefore)
+                #expect(app.queues.test.all(MesoNotificationSendJob.self).isEmpty)
+                #expect(app.queues.test.all(NotificationSendJob.self).isEmpty)
+            } catch {
+                try? await installation.delete(on: app.db)
+                throw error
+            }
+            try await installation.delete(on: app.db)
         }
     }
+}
+
+private enum TestDatabaseIsolationError: Error {
+    case databaseURLMustIdentifyDedicatedTestDatabase
 }
 
 private struct RequestPayload: Encodable {
