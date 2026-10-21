@@ -31,8 +31,11 @@ struct MesoNotificationTestController: RouteCollection {
             throw Abort(.notFound, reason: "Unknown installation")
         }
 
-        let response = Response(status: .notImplemented)
-        try response.content.encode(MesoNotificationTestResponse(status: "not-yet-wired"))
+        let product = try await SyntheticMesoService().create(h3Cell: payload.h3Cell, on: req.db)
+        let response = Response(status: .created)
+        try response.content.encode(MesoNotificationTestResponse(
+            status: "fixture-created", productID: product.productID, validEnd: product.validEnd
+        ))
         return response
     }
 }
@@ -45,6 +48,8 @@ private struct MesoNotificationTestRequest: Content {
 
 private struct MesoNotificationTestResponse: Content {
     let status: String
+    let productID: String
+    let validEnd: Date
 }
 
 private func isAuthorized(_ authorization: String?, secret: String) -> Bool {
