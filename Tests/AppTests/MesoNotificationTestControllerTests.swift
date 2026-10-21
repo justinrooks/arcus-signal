@@ -2,6 +2,7 @@
 import ArcusCore
 import Fluent
 import Foundation
+import Queues
 import SQLKit
 import SwiftyH3
 import Testing
@@ -23,6 +24,7 @@ struct MesoNotificationTestControllerTests {
             try requireIsolatedTestDatabaseURL(databaseURL)
         }
         var environmentOverrides: [String: String?] = [
+            "MESO_NOTIFICATIONS_ENABLED": "false",
             "ARCUS_MESO_NOTIFICATION_TEST_ENABLED": enabled,
             "ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET": secret
         ]
@@ -185,7 +187,7 @@ struct MesoNotificationTestControllerTests {
         }
     }
 
-    @Test("valid request creates a canonical fixture without changing presence or handing off notifications")
+    @Test("gate-off request accepts a canonical fixture without changing presence or handing off notifications")
     func validRequestStopsBeforeNotificationSideEffects() async throws {
         try await withApp(autoMigrate: true) { app in
             let installationID = UUID()
@@ -205,10 +207,11 @@ struct MesoNotificationTestControllerTests {
                 let outboxBefore = try await ArcusNotificationOutboxModel.query(on: app.db).count()
                 let response = try await request(to: app, installationID: installationID)
 
-                #expect(response.status == .created)
+                #expect(response.status == .accepted)
                 let result = try JSONDecoder().decode(FixtureResponse.self, from: Data(response.body.utf8))
                 fixtureIDs.append(result.productID)
-                #expect(result.status == "fixture-created")
+                #expect(result.status == "accepted")
+                #expect(result.notificationStatus == "disabled" && result.installationId == installationID)
                 let second = try await request(to: app, installationID: installationID)
                 let repeated = try JSONDecoder().decode(FixtureResponse.self, from: Data(second.body.utf8))
                 fixtureIDs.append(repeated.productID)
@@ -234,6 +237,89 @@ struct MesoNotificationTestControllerTests {
             try await SPCMesoModel.query(on: app.db).filter(\.$productKey ~~ fixtureIDs).delete()
             try await installation.delete(on: app.db)
         }
+    }
+
+    @Test("requests use normal event-first fanout, eligibility, and dedupe", arguments: [true, false])
+    func requestEntersNormalPipeline(requestedMatches: Bool) async throws {
+        try await withApp(autoMigrate: true) { app in
+            configureMesoNotifications(on: app, value: "true")
+            let cell = try validH3Cell()
+            let outside = Int64(bitPattern: try H3LatLng(latitudeDegs: 35, longitudeDegs: -98).cell(at: .res8).id)
+            let requested = try await pipelineInstallation(app, cell: requestedMatches ? cell : outside)
+            let other = try await pipelineInstallation(app, cell: cell)
+            _ = try await pipelineInstallation(app, cell: cell, preference: nil)
+            _ = try await pipelineInstallation(app, cell: cell, preference: false)
+            _ = try await pipelineInstallation(app, cell: cell, subscribed: false)
+            _ = try await pipelineInstallation(app, cell: cell, active: false)
+            _ = try await pipelineInstallation(app, cell: cell, capturedAt: .now.addingTimeInterval(-25 * 3600))
+            var productID: String?
+            do {
+                let response = try await request(to: app, installationID: requested, h3Cell: cell)
+                #expect(response.status == .accepted)
+                let result = try JSONDecoder().decode(FixtureResponse.self, from: Data(response.body.utf8))
+                productID = result.productID
+                #expect(result.status == "accepted" && result.notificationStatus == "pending")
+                #expect(result.installationId == requested)
+                #expect(app.queues.test.all(MesoNotificationSendJob.self).isEmpty)
+                let outbox = try #require(try await ArcusNotificationOutboxModel.query(on: app.db)
+                    .filter(\.$subjectID == result.productID).first())
+                #expect(outbox.state == "ready" && outbox.attempts == 0)
+                let context = QueueContext(queueName: ArcusQueueLane.send.queueName,
+                    configuration: app.queues.configuration, application: app,
+                    logger: app.logger, on: app.eventLoopGroup.any())
+                try await MesoNotificationOutboxStore().dispatchPending(context: context)
+                let payload = try #require(app.queues.test.all(MesoNotificationSendJob.self).first)
+                #expect(payload.subject.productID == result.productID && payload.installationID == nil)
+                #expect(app.queues.test.all(MesoNotificationSendJob.self).count == 1)
+                let jobData = try #require(app.queues.test.jobs.values.first)
+                #expect(jobData.maxRetryCount == MesoNotificationSendJob.maximumRetryCount)
+                let sender = SyntheticMesoRecordingSender()
+                let job = MesoNotificationSendJob(sender: sender)
+                try await job.dequeue(context, payload)
+                try await job.dequeue(context, payload)
+                let expected = Set(requestedMatches ? [requested, other] : [other])
+                #expect(Set(await sender.tokens) == Set(expected.map { "meso-pipeline-test-\($0)" }))
+                #expect(await sender.tokens.count == expected.count)
+                #expect(await sender.testCopyOnly)
+                #expect(await sender.resourceIDs.allSatisfy { $0 == result.productID })
+                let claims = try await NotificationLedgerModel.query(on: app.db)
+                    .filter(\.$subjectID == result.productID).all()
+                #expect(Set(claims.map { $0.$deviceInstallation.id }) == expected)
+                #expect(claims.count == expected.count && claims.allSatisfy { $0.status == "sent" })
+                let presence = try #require(try await DevicePresenceModel.find(requested, on: app.db))
+                #expect(presence.h3Cell == (requestedMatches ? cell : outside))
+                #expect(app.queues.test.all(NotificationSendJob.self).isEmpty)
+            } catch {
+                try? await cleanupPipeline(app, productID: productID)
+                throw error
+            }
+            try await cleanupPipeline(app, productID: productID)
+        }
+    }
+
+    private func pipelineInstallation(_ app: Application, cell: Int64, preference: Bool? = true,
+                                      subscribed: Bool = true, active: Bool = true,
+                                      capturedAt: Date = .now) async throws -> UUID {
+        let id = UUID()
+        try await DeviceInstallationModel(installationId: id, apnsDeviceToken: "meso-pipeline-test-\(id)",
+            apnsEnvironment: .sandbox, platform: .iOS, osVersion: "26", appVersion: "1", buildNumber: "1",
+            locationAuth: .always, isActive: active, isSubscribed: subscribed,
+            mesoNotificationsEnabled: preference).create(on: app.db)
+        try await DevicePresenceModel(installationId: id, capturedAt: capturedAt, locationAgeSeconds: 0,
+            horizontalAccuracyMeters: 10, cellScheme: .h3, h3Cell: cell, h3Resolution: 8,
+            county: nil, zone: nil, fireZone: nil, source: .foregroundPrime,
+            countyLabel: nil, fireZoneLabel: nil).create(on: app.db)
+        return id
+    }
+
+    private func cleanupPipeline(_ app: Application, productID: String?) async throws {
+        if let productID {
+            try await NotificationDebugModel.query(on: app.db).filter(\.$subjectID == productID).delete()
+            try await NotificationSendAttemptModel.query(on: app.db).filter(\.$subjectID == productID).delete()
+            try await ArcusNotificationOutboxModel.query(on: app.db).filter(\.$subjectID == productID).delete()
+            try await SPCMesoModel.query(on: app.db).filter(\.$productKey == productID).delete()
+        }
+        try await DeviceInstallationModel.query(on: app.db).filter(\.$apnsDeviceToken ~~ "meso-pipeline-test-").delete()
     }
 
     private enum Rollback: Error { case assertionsComplete }
@@ -373,4 +459,19 @@ private struct RequestPayload: Encodable {
 private struct FixtureResponse: Decodable {
     let status: String
     let productID: String
+    let installationId: UUID
+    let notificationStatus: String
+}
+
+private actor SyntheticMesoRecordingSender: NotificationSender {
+    private(set) var tokens: [String] = []
+    private(set) var resourceIDs: [String] = []
+    private(set) var testCopyOnly = true
+
+    func sendNotification(app: Application, with details: AlertDetails, hotAlertPayload: HotAlertAPNsPayload,
+                          to device: String, environment: APNsEnvironment) async throws {
+        tokens.append(device)
+        resourceIDs.append(hotAlertPayload.resourceID ?? "")
+        testCopyOnly = testCopyOnly && details.title.hasPrefix("TEST ") && details.body.contains("TEST ONLY")
+    }
 }
