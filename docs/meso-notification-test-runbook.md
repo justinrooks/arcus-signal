@@ -8,10 +8,35 @@ The route is `POST /v1/dev/notification-test` (the legacy `/api/v1/dev/notificat
 
 1. Confirm this is the isolated development API/worker deployment with its own database and Redis. Do not run this procedure against production or TestFlight infrastructure.
 2. Confirm the API and worker use the same isolated development database and Redis, and that the worker consumes the `send` queue.
-3. Set the API process to `VAPOR_ENV=development`, `ARCUS_MESO_NOTIFICATION_TEST_ENABLED=true`, and a dedicated `ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET` of at least 32 random bytes. Store the secret in the deployment secret manager; never put it in this repository, a URL, a ticket, or a captured terminal transcript.
+3. Set the API process to `VAPOR_ENV=development`, `ARCUS_MESO_NOTIFICATION_TEST_ENABLED=true`, and a dedicated `ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET` of at least 32 random bytes. Store the secret in the deployment secret manager; never put it in this repository, a URL, a ticket, or a captured terminal transcript. The root `docker-compose.yml` intentionally does not forward the test endpoint settings. For a Compose-based development deployment, use a temporary development-only override to pass them to the API container; host `.env` values alone are not container environment variables.
 4. Set `MESO_NOTIFICATIONS_ENABLED=true` on both API and worker only for the test window. The worker's startup readiness currently requires complete sandbox and production APNs credential pairs, plus `APNS_TEAM_ID` and `APNS_TOPIC`. The test iPhone must be registered with `apns_environment='sandbox'`, so its actual send uses sandbox APNs. Keep production credentials in the secret manager and do not register production installations in this development database.
 5. Ensure the development database contains only the intended Debug iPhone installation. Fanout is deliberately event-first and unfiltered; any other normally eligible installation whose H3 is covered can receive a TEST notification.
 6. Confirm the Debug iPhone has notifications enabled, has recently uploaded H3 resolution-8 presence, has location authority accepted by the app, is subscribed, and has meso notifications explicitly enabled. Unknown meso preference and opt-out are ineligible.
+
+For a Compose-based development deployment, inject the secret into a Bash shell from the deployment secret manager (or enter it with a hidden prompt), then create a temporary override containing no secret value:
+
+```bash
+read -s -r -p 'Development endpoint bearer secret: ' ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET
+printf '\n'
+export ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET
+export VAPOR_ENV=development
+DEV_COMPOSE_OVERRIDE="$(mktemp)"
+chmod 600 "$DEV_COMPOSE_OVERRIDE"
+cat > "$DEV_COMPOSE_OVERRIDE" <<'YAML'
+services:
+  api:
+    environment:
+      VAPOR_ENV: development
+      ARCUS_MESO_NOTIFICATION_TEST_ENABLED: "true"
+      ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET: ${ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET:?Inject the development endpoint secret into this shell}
+YAML
+
+docker compose -f docker-compose.yml -f "$DEV_COMPOSE_OVERRIDE" up -d api
+docker compose -f docker-compose.yml -f "$DEV_COMPOSE_OVERRIDE" exec -T api sh -c \
+  'test "$ARCUS_MESO_NOTIFICATION_TEST_ENABLED" = true && test "${#ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET}" -ge 32 && echo "development test endpoint configuration present"'
+```
+
+The check prints only a fixed confirmation after verifying the flag and minimum secret length; do not inspect or print the container environment, run `docker compose config`, or enable shell tracing while the secret is present. Keep using the same two `-f` arguments for subsequent Compose commands that inspect or restart the API. After the test, disable the endpoint in the API deployment, restart it without this override, remove the temporary override with `rm -f "$DEV_COMPOSE_OVERRIDE"`, and unset the shell variable with `unset ARCUS_MESO_NOTIFICATION_TEST_BEARER_SECRET`. The dedicated test flag and bearer authentication are independent of `ARCUS_DEBUG_ENDPOINTS_ENABLED`; that general switch does not enable or authenticate this route. For a non-Compose deployment, set the same three values directly in the isolated development API service's environment through its secret manager and use an equivalent in-container presence/length check that never prints the secret.
 
 Enable the rollout gate only after the route secret and worker credentials are installed. After configuration, verify the API health endpoint and worker health endpoint, then check that the authorized route is present in the development API logs or can be called with the secret. An unauthorized call should return `401`; do not use a real fixture request while validating the secret.
 
