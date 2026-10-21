@@ -6,6 +6,14 @@ struct MesoNotificationComposer: Sendable {
         for discussion: MesoscaleDiscussionPayload,
         placeLabel: String? = nil
     ) -> AlertDetails {
+        if discussion.sourceURL == SyntheticMesoService.sourceURL,
+           (9000...9999).contains(discussion.number) {
+            return .init(
+                title: "TEST Mesoscale Discussion",
+                subTitle: "Development notification test",
+                body: "TEST ONLY. No real weather threat. Open SkyAware for the test discussion."
+            )
+        }
         let place = sanitizedPlaceLabel(placeLabel)
         return .init(
             title: "Mesoscale Discussion for \(place)",

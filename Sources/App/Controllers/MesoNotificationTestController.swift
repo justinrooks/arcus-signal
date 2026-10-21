@@ -31,10 +31,16 @@ struct MesoNotificationTestController: RouteCollection {
             throw Abort(.notFound, reason: "Unknown installation")
         }
 
-        let product = try await SyntheticMesoService().create(h3Cell: payload.h3Cell, on: req.db)
-        let response = Response(status: .created)
+        let enabled = req.application.mesoNotificationsEnabled
+        let product = try await SyntheticMesoService().create(
+            h3Cell: payload.h3Cell, on: req.db, enqueueNotifications: enabled
+        )
+        // Canonical acceptance writes the intent atomically. The normal worker
+        // drain owns queue handoff; this response cannot attest to delivery.
+        let response = Response(status: .accepted)
         try response.content.encode(MesoNotificationTestResponse(
-            status: "fixture-created", productID: product.productID, validEnd: product.validEnd
+            status: "accepted", productID: product.productID, validEnd: product.validEnd,
+            installationId: payload.installationId, notificationStatus: enabled ? "pending" : "disabled"
         ))
         return response
     }
@@ -50,6 +56,8 @@ private struct MesoNotificationTestResponse: Content {
     let status: String
     let productID: String
     let validEnd: Date
+    let installationId: UUID
+    let notificationStatus: String
 }
 
 private func isAuthorized(_ authorization: String?, secret: String) -> Bool {

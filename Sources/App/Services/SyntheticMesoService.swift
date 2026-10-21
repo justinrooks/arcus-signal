@@ -17,7 +17,8 @@ struct SyntheticMesoService {
         self.persistence = persistence
     }
 
-    func create(h3Cell: Int64, on database: any Database, now: Date = .now) async throws -> MesoscaleDiscussionPayload {
+    func create(h3Cell: Int64, on database: any Database, now: Date = .now,
+                enqueueNotifications: Bool = false) async throws -> MesoscaleDiscussionPayload {
         let cell = H3Cell(UInt64(bitPattern: h3Cell))
         guard cell.isValid, try cell.resolution == .res8 else {
             throw Abort(.badRequest, reason: "h3Cell must be a valid resolution-8 H3 cell")
@@ -46,7 +47,7 @@ struct SyntheticMesoService {
                 throw Abort(.conflict, reason: "TEST meso identity range exhausted for this UTC year")
             }
             let product = Self.product(number: number, coordinates: coordinates, now: now)
-            _ = try await persistence.persist([product], on: db, seenAt: now, enqueueNotifications: false)
+            _ = try await persistence.persist([product], on: db, seenAt: now, enqueueNotifications: enqueueNotifications)
             let stored = try await SPCMesoModel.query(on: db).filter(\.$productKey == product.productID).first()
             guard let id = stored?.id,
                   let geo = try await SPCMesoGeolocationModel.query(on: db).filter(\.$meso.$id == id).first(),

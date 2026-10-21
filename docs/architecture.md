@@ -58,6 +58,8 @@ and a point just inside can share an excluded cell. Tiny polygons can produce an
 empty cover. This deliberately differs from the app's prior exact point-in-polygon
 check; no ring expansion or broad fallback compensates for boundary misses.
 
+The authenticated development-only `POST /v1/dev/notification-test` endpoint accepts a short-lived synthetic TEST meso through canonical polygon/H3 persistence. With the existing meso rollout gate enabled, acceptance atomically writes the ordinary event-first notification intent; the worker's existing drain handles unfiltered fanout, eligibility, claims, retries, and APNs. The requested `installationId` validates registration and provides correlation only; it neither changes presence nor constrains recipients. The response returns `202`, `status: accepted`, the unique `productID` as test identifier, the requested `installationId`, expiry, and `notificationStatus: pending` (durable intent awaiting worker handoff) or `disabled` (gate off). It does not report queue consumption, APNs acceptance, or device receipt. Reserved synthetic products carry explicit TEST notification copy. The endpoint remains absent outside development and requires its separate enablement and bearer secret; enable the shared rollout gate only in the isolated development deployment. Production enablement remains separately gated.
+
 ## Delivery pipeline
 
 ```text
