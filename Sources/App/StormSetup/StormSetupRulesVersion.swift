@@ -6,5 +6,5 @@ enum StormSetupRulesVersion: String, Sendable, Codable, Equatable {
 }
 
 extension StormSetupRulesVersion {
-    static let current: Self = .tornadoIngredientV1
+    static let current: Self = .tornadoIngredientV2
 }

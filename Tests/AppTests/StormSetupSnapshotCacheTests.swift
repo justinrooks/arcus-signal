@@ -191,12 +191,12 @@ struct StormSetupSnapshotCacheTests {
         let keyV1 = try StormSetupSnapshotCacheKey(
             h3Cell: h3Cell,
             sourceMetadata: source,
-            rulesVersion: .current
+            rulesVersion: .tornadoIngredientV1
         )
         let keyV2 = try StormSetupSnapshotCacheKey(
             h3Cell: h3Cell,
             sourceMetadata: source,
-            rulesVersion: .tornadoIngredientV2
+            rulesVersion: .current
         )
         let snapshot = makeSnapshot(h3Cell: h3Cell, source: source, fetchedAt: makeUTCDate(year: 2026, month: 6, day: 3, hour: 22))
 
