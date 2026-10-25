@@ -86,6 +86,8 @@ The arrows are distinct boundaries. A durable intent, successful queue enqueue, 
 
 [`IngestNWSAlertsJob.dispatchPendingTargetJobs(...)`](../Sources/App/Jobs/IngestNWSAlertsJob.swift) selects rows without `dispatched`, enqueues `TargetEventRevisionJob`, and then sets `dispatched`, increments `attempt_count`, and records any enqueue error. This outbox represents target-job queue handoff only. A `dispatched` row is not evidence that the target consumer completed; if database update fails after enqueue, a later drain can enqueue the job again.
 
+NWS snapshot advancement locks the series row and invalidates its previous geolocation in the same transaction, including transitions to nil or point geometry. Target workers compute H3 coverage before opening their transaction, then lock the same series row and accept coverage plus notification intent only when the payload revision is still canonical. Series merges never borrow a losing series' coverage. Until current polygon coverage completes, API geometry/H3 and H3 discovery remain empty; existing UGC policies still apply. The send job rechecks canonical revision after eager loading to reject mixed reads across snapshot advancement.
+
 ### Notification dispatch
 
 Delivery subject identity in `notification_outbox`, `notification_ledger`,

@@ -1,6 +1,11 @@
 @testable import App
 import Fluent
+import ArcusCore
+import APNSCore
 import Foundation
+import Queues
+import SQLKit
+import XCTQueues
 import Testing
 import Vapor
 
@@ -351,7 +356,6 @@ struct NWSIngestPersistenceFlowTests {
                     try await series.update(on: database)
                 }
 
-                var geolocationIDsBySeries: [UUID: UUID] = [:]
                 for (index, seriesID) in ([winnerSeriesID] + Array(loserSeriesIDs)).enumerated() {
                     let geolocation = ArcusGeolocationModel(
                         series: seriesID,
@@ -362,7 +366,6 @@ struct NWSIngestPersistenceFlowTests {
                         h3Hash: "h3-\(index)"
                     )
                     try await geolocation.create(on: database)
-                    geolocationIDsBySeries[seriesID] = try geolocation.requireID()
                 }
 
                 let merge = makeEvent(
@@ -412,13 +415,213 @@ struct NWSIngestPersistenceFlowTests {
                 let geolocations = try await ArcusGeolocationModel.query(on: database)
                     .filter(\.$series.$id ~~ ([winnerSeriesID] + Array(loserSeriesIDs)))
                     .all()
-                let winnerGeolocationID = try #require(geolocationIDsBySeries[winnerSeriesID])
-                #expect(geolocations.count == 1)
-                #expect(geolocations.first?.id == winnerGeolocationID)
-                #expect(geolocations.first?.$series.id == winnerSeriesID)
-                #expect(geolocations.first?.geometryHash == "geometry-0")
+                #expect(geolocations.isEmpty)
                 #expect(try await notificationOutboxes(for: allUrns, on: database).isEmpty)
             }
+        }
+    }
+
+    private func withCoverageApp(test: (Application, String) async throws -> Void) async throws {
+        let databaseName = Environment.get("DATABASE_URL")
+            .flatMap { URLComponents(string: $0)?.path.split(separator: "/").last.map(String.init) }
+            ?? Environment.get("DATABASE_NAME") ?? ""
+        guard databaseName.range(of: #"^arcus_issue[0-9]+_(test|validation)(_|$)"#, options: .regularExpression) != nil,
+              !databaseName.contains("/") else {
+            throw Abort(.internalServerError, reason: "Coverage tests require an explicit issue-scoped test database.")
+        }
+        let sourceURL = "https://api.weather.gov/alerts/issue354-\(UUID())"
+        try await withIntegrationTestApplication(setup: .configured(mode: .worker, migrate: true)) { app in
+            app.queues.use(.test)
+            do {
+                try await test(app, sourceURL)
+            } catch {
+                try await ArcusSeriesModel.query(on: app.db).filter(\.$sourceURL == sourceURL).delete()
+                try await DeviceInstallationModel.query(on: app.db).filter(\.$apnsDeviceToken == sourceURL).delete()
+                throw error
+            }
+            try await ArcusSeriesModel.query(on: app.db).filter(\.$sourceURL == sourceURL).delete()
+            try await DeviceInstallationModel.query(on: app.db).filter(\.$apnsDeviceToken == sourceURL).delete()
+        }
+    }
+
+    private func context(_ app: Application) -> QueueContext {
+        .init(queueName: .init(string: "issue354"), configuration: app.queues.configuration,
+              application: app, logger: app.logger, on: app.eventLoopGroup.any())
+    }
+
+    private func accept(_ event: ArcusEvent, on app: Application) async throws {
+        _ = try await app.db.transaction {
+            try await NWSIngestPersistence().persistArcusEvents([event], on: $0, asOf: now, logger: app.logger)
+        }
+    }
+
+    @Test("snapshot advancement removes old coverage before new targeting", arguments: ["narrow", "expand", "nil", "point"])
+    func revisionCoverageCoherence(transition: String) async throws {
+        try await withCoverageApp { app, sourceURL in
+            let a = makeEvent(urn: "urn:oid:\(UUID())", sent: now, geometry: polygon(), sourceURL: sourceURL)
+            let geometry: GeoShape? = transition == "nil" ? nil
+                : transition == "point" ? .point(lon: -105, lat: 40) : polygon(offset: 0.1)
+            let b = makeEvent(urn: "urn:oid:\(UUID())", references: [a.id], sent: now.addingTimeInterval(60),
+                              geometry: geometry, sourceURL: sourceURL)
+            try await accept(a, on: app)
+            let seriesID = try #require(try await ArcusEventRevisionModel.query(on: app.db)
+                .filter(\.$revisionUrn == a.id).first()).$series.id
+            let installationID = UUID()
+            try await DeviceInstallationModel(installationId: installationID, apnsDeviceToken: sourceURL,
+                apnsEnvironment: .sandbox, platform: .iOS, osVersion: "26", appVersion: "1", buildNumber: "1",
+                locationAuth: .always).create(on: app.db)
+            try await DevicePresenceModel(installationId: installationID, capturedAt: .now,
+                locationAgeSeconds: 0, horizontalAccuracyMeters: 10, cellScheme: .h3, h3Cell: 202, h3Resolution: 8,
+                county: nil, zone: nil, fireZone: nil, source: .unknown, countyLabel: nil, fireZoneLabel: nil).create(on: app.db)
+            let candidates = NotificationCandidateStore()
+            let cellsA: [Int64] = transition == "expand" ? [101] : [101, 202]
+            let cellsB: [Int64] = transition == "expand" ? [101, 202] : [101]
+            let jobA = TargetEventRevisionJob(buildCoverage: { _ in
+                .supported(.init(cells: cellsA, h3Hash: "A", geometryHash: "A", resolution: 8))
+            })
+            let payloadA = TargetEventRevisionPayload(seriesId: seriesID, revisionUrn: a.id,
+                geometry: polygon(), reason: .new)
+            try await jobA.dequeue(context(app), payloadA)
+            try await accept(b, on: app)
+            let sql = try #require(app.db as? any SQLDatabase)
+            let intermediate = try await loadAlertSeries(sql: sql, ugcCodes: ["COC031"], h3: nil, evaluatedAt: now)
+            let row = try #require(intermediate.first { $0.id == seriesID })
+            #expect(row.currentRevisionUrn == b.id)
+            #expect(row.geometry == nil && row.h3Cells.isEmpty)
+            #expect(try await loadAlertSeries(sql: sql, ugcCodes: [], h3: 202, evaluatedAt: now)
+                .allSatisfy { $0.id != seriesID })
+            #expect(try await candidates.loadMatchingActiveAlerts(for: installationID, evaluatedAt: now, on: app.db)
+                .allSatisfy { $0.seriesId != seriesID })
+            // An old job finishing while B has no coverage must not resurrect A.
+            try await jobA.dequeue(context(app), payloadA)
+            #expect(try await ArcusGeolocationModel.query(on: app.db).filter(\.$series.$id == seriesID).count() == 0)
+            if let geometry {
+                let jobB = TargetEventRevisionJob(buildCoverage: { _ in
+                    transition == "point" ? .unsupportedPoint
+                        : .supported(.init(cells: cellsB, h3Hash: "B", geometryHash: "B", resolution: 8))
+                })
+                try await jobB.dequeue(context(app), .init(seriesId: seriesID, revisionUrn: b.id,
+                    geometry: geometry, reason: .update))
+            }
+            try await jobA.dequeue(context(app), payloadA)
+            let final = try #require(try await loadAlertSeries(sql: sql, ugcCodes: ["COC031"], h3: nil, evaluatedAt: now)
+                .first { $0.id == seriesID })
+            let polygonB = transition == "narrow" || transition == "expand"
+            #expect(final.currentRevisionUrn == b.id)
+            #expect(final.h3Cells == (polygonB ? cellsB : []))
+            #expect(final.geometry == (polygonB ? geometry : nil))
+            let intents = try await notificationOutboxes(for: [b.id], on: app.db)
+            #expect(intents.count == 1)
+            #expect(intents.first?.mode == (polygonB ? "h3" : "ugc"))
+            let presenceMatches = try await candidates.loadMatchingActiveAlerts(for: installationID, evaluatedAt: now, on: app.db)
+            #expect(presenceMatches.contains { $0.seriesId == seriesID } == (transition == "expand"))
+            let eventMatches = try await candidates.loadH3Candidates(cells: final.h3Cells,
+                capturedAtOrAfter: Date().addingTimeInterval(-60), installationId: installationID, on: app.db)
+            #expect(eventMatches.contains { $0.id == installationID } == (transition == "expand"))
+        }
+    }
+
+    @Test("send rejects advancement between content and coverage reads")
+    func sendRejectsMixedRevisionReads() async throws {
+        try await withCoverageApp { app, sourceURL in
+            let a = makeEvent(urn: "urn:oid:\(UUID())", sent: now, geometry: polygon(), sourceURL: sourceURL)
+            let b = makeEvent(urn: "urn:oid:\(UUID())", references: [a.id], sent: now.addingTimeInterval(60),
+                              geometry: polygon(offset: 0.1), sourceURL: sourceURL)
+            try await accept(a, on: app)
+            let id = try #require(try await ArcusEventRevisionModel.query(on: app.db)
+                .filter(\.$revisionUrn == a.id).first()).$series.id
+            let installationID = UUID()
+            try await DeviceInstallationModel(installationId: installationID, apnsDeviceToken: sourceURL,
+                apnsEnvironment: .sandbox, platform: .iOS, osVersion: "26", appVersion: "1", buildNumber: "1",
+                locationAuth: .always).create(on: app.db)
+            try await DevicePresenceModel(installationId: installationID, capturedAt: .now,
+                locationAgeSeconds: 0, horizontalAccuracyMeters: 10, cellScheme: .h3, h3Cell: 202, h3Resolution: 8,
+                county: nil, zone: nil, fireZone: nil, source: .unknown, countyLabel: nil, fireZoneLabel: nil).create(on: app.db)
+            let sender = CoverageRaceSender()
+            let job = NotificationSendJob(sender: sender, beforeCoverageRead: {
+                try await accept(b, on: app)
+                let target = TargetEventRevisionJob(buildCoverage: { _ in
+                    .supported(.init(cells: [202], h3Hash: "B", geometryHash: "B", resolution: 8))
+                })
+                try await target.dequeue(context(app), .init(seriesId: id, revisionUrn: b.id,
+                    geometry: polygon(offset: 0.1), reason: .update))
+            })
+            try await job.dequeue(context(app), .init(seriesId: id, revisionUrn: a.id, mode: .h3, reason: .new))
+            #expect(await sender.count == 0)
+            let sql = try #require(app.db as? any SQLDatabase)
+            struct Count: Decodable { let count: Int }
+            let claims = try #require(try await sql.raw("SELECT COUNT(*)::int AS count FROM notification_ledger WHERE series_id = \(bind: id)").first(decoding: Count.self))
+            #expect(claims.count == 0)
+            let staleAttempts = try #require(try await sql.raw("""
+                SELECT COUNT(*)::int AS count FROM notification_send_attempts
+                WHERE series_id = \(bind: id) AND no_op_reason = 'stale_revision_mismatch'
+                """).first(decoding: Count.self))
+            #expect(staleAttempts.count == 1)
+        }
+    }
+
+    @Test("non-advancing merge never borrows losing coverage")
+    func olderMergeDoesNotBorrowCoverage() async throws {
+        try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
+            try await withRollbackTransaction(on: app) { database in
+                let winner = makeEvent(urn: "urn:oid:\(UUID())", sent: now.addingTimeInterval(120), geometry: nil)
+                let loser = makeEvent(urn: "urn:oid:\(UUID())", sent: now, geometry: polygon())
+                _ = try await NWSIngestPersistence().persistArcusEvents([winner, loser], on: database, asOf: now, logger: app.logger)
+                let rows = try await revisions(for: [winner.id, loser.id], on: database)
+                let winnerID = try #require(rows.first { $0.revisionUrn == winner.id }).$series.id
+                let loserID = try #require(rows.first { $0.revisionUrn == loser.id }).$series.id
+                try await ArcusGeolocationModel(series: loserID, geometry: polygon(), geometryHash: "loser",
+                    h3Cells: [101], h3Resolution: 8, h3Hash: "loser").create(on: database)
+                let merge = makeEvent(urn: "urn:oid:\(UUID())", references: [winner.id, loser.id],
+                                      sent: now.addingTimeInterval(60), geometry: polygon())
+                _ = try await NWSIngestPersistence().persistArcusEvents([merge], on: database, asOf: now, logger: app.logger)
+                #expect(try await ArcusSeriesModel.find(winnerID, on: database)?.currentRevisionUrn == winner.id)
+                #expect(try await ArcusGeolocationModel.query(on: database)
+                    .filter(\.$series.$id ~~ [winnerID, loserID]).count() == 0)
+            }
+        }
+    }
+
+    @Test("target validation holds the series lock through its coverage write")
+    func targetAcceptanceSerializesWithIngest() async throws {
+        try await withCoverageApp { app, sourceURL in
+            let a = makeEvent(urn: "urn:oid:\(UUID())", sent: now, geometry: polygon(), sourceURL: sourceURL)
+            let b = makeEvent(urn: "urn:oid:\(UUID())", references: [a.id], sent: now.addingTimeInterval(60),
+                              geometry: nil, sourceURL: sourceURL)
+            try await accept(a, on: app)
+            let id = try #require(try await ArcusEventRevisionModel.query(on: app.db)
+                .filter(\.$revisionUrn == a.id).first()).$series.id
+            let entered = AsyncStream<Void>.makeStream()
+            let release = AsyncStream<Void>.makeStream()
+            let job = TargetEventRevisionJob(buildCoverage: { _ in
+                .supported(.init(cells: [101], h3Hash: "A", geometryHash: "A", resolution: 8))
+            }, beforeCoverageWrite: {
+                entered.continuation.yield(())
+                for await _ in release.stream { break }
+            })
+            let target = Task {
+                defer { entered.continuation.finish() }
+                try await job.dequeue(context(app), .init(seriesId: id,
+                    revisionUrn: a.id, geometry: polygon(), reason: .new))
+            }
+            defer { release.continuation.yield(()); release.continuation.finish() }
+            var iterator = entered.stream.makeAsyncIterator()
+            _ = try #require(await iterator.next())
+            do {
+                _ = try await app.db.transaction { database in
+                    let sql = try #require(database as? any SQLDatabase)
+                    try await sql.raw("SET LOCAL lock_timeout = '100ms'").run()
+                    return try await NWSIngestPersistence().persistArcusEvents([b], on: database, asOf: now, logger: app.logger)
+                }
+                Issue.record("Snapshot advancement bypassed the target acceptance lock.")
+            } catch {
+                #expect(String(reflecting: error).contains("55P03"))
+            }
+            release.continuation.yield(())
+            try await target.value
+            try await accept(b, on: app)
+            #expect(try await ArcusGeolocationModel.query(on: app.db).filter(\.$series.$id == id).count() == 0)
+            #expect(try await ArcusSeriesModel.find(id, on: app.db)?.currentRevisionUrn == b.id)
         }
     }
 
@@ -477,4 +680,10 @@ struct NWSIngestPersistenceFlowTests {
             #expect(try await notificationOutboxes(for: urns, on: app.db).isEmpty)
         }
     }
+}
+
+private actor CoverageRaceSender: NotificationSender {
+    private(set) var count = 0
+    func sendNotification(app: Application, with: AlertDetails, hotAlertPayload: HotAlertAPNsPayload,
+                          to: String, environment: APNsEnvironment) async throws { count += 1 }
 }

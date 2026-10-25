@@ -141,6 +141,7 @@ public struct NotificationSendJob: AsyncJob {
     static let retryPolicy = NotificationSendRetryPolicy()
     static var maximumRetryCount: Int { retryPolicy.maximumRetryCount }
 
+    private let beforeCoverageRead: @Sendable () async throws -> Void
     private let sender: any NotificationSender
     private let engine: NotificationEngine
     private let freshnessPolicy: LocationFreshnessPolicy
@@ -150,6 +151,7 @@ public struct NotificationSendJob: AsyncJob {
     private let failureClassifier: APNsDeliveryFailureClassifier
 
     public init() {
+        self.beforeCoverageRead = {}
         self.sender = APNsClient()
         self.engine = NotificationEngine()
         self.freshnessPolicy = LocationFreshnessPolicy()
@@ -166,8 +168,10 @@ public struct NotificationSendJob: AsyncJob {
         missedDecisionStore: NotificationMissedDecisionStore = NotificationMissedDecisionStore(),
         candidateStore: NotificationCandidateStore = NotificationCandidateStore(),
         deliveryStore: NotificationDeliveryStore = NotificationDeliveryStore(),
-        failureClassifier: APNsDeliveryFailureClassifier = APNsDeliveryFailureClassifier()
+        failureClassifier: APNsDeliveryFailureClassifier = APNsDeliveryFailureClassifier(),
+        beforeCoverageRead: @escaping @Sendable () async throws -> Void = {}
     ) {
+        self.beforeCoverageRead = beforeCoverageRead
         self.sender = sender
         self.engine = engine
         self.freshnessPolicy = freshnessPolicy
@@ -242,14 +246,24 @@ public struct NotificationSendJob: AsyncJob {
         
         // Grab the associated series, revisions, & geometry
         let series = try await ArcusSeriesModel.query(on: context.application.db)
-            .with(\.$geolocation)
             .with(\.$revisions)
             .group(.and) { group in
                 group.filter(\.$id == seriesID)
             }
             .first()
         
-        guard let series, series.currentRevisionUrn == payload.subject.revisionID else {
+        try await beforeCoverageRead()
+        if let series {
+            try await series.$geolocation.load(on: context.application.db)
+        }
+
+        // Relationship loading uses separate queries: advancement between the series and
+        // geolocation reads must not pair old content with newer coverage.
+        guard let series, series.currentRevisionUrn == payload.subject.revisionID,
+              try await ArcusSeriesModel.query(on: context.application.db)
+                .filter(\.$id == seriesID)
+                .filter(\.$currentRevisionUrn == series.currentRevisionUrn)
+                .count() == 1 else {
             let failedRetryCount = try await deliveryStore.failRetryingDeliveries(
                 subject: payload.subject,
                 installationID: payload.installationId,

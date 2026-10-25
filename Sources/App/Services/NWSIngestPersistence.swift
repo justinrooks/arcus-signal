@@ -1,5 +1,6 @@
 import Fluent
 import Foundation
+import SQLKit
 import Vapor
 
 struct PersistResult {
@@ -44,6 +45,11 @@ struct NWSIngestPersistence {
                 on: database
             )
 
+            // Serialize snapshot acceptance with coverage writes before reading current state.
+            for id in seriesIds.sorted(by: { $0.uuidString < $1.uuidString }) {
+                try await Self.lockSeries(id, on: database)
+            }
+
             switch seriesIds.count {
             case 0:
                 logger.info("New series detected")
@@ -84,6 +90,8 @@ struct NWSIngestPersistence {
                 if shouldAdvanceSeriesSnapshot(currentSent: series.currentRevisionSent, incomingSent: event.sent, logger: logger) {
                     try applySnapshot(from: event, to: series, asOf: asOf)
                     try await series.update(on: database)
+                    try await ArcusGeolocationModel.query(on: database)
+                        .filter(\.$series.$id == seriesId).delete()
                     logger.info("Series snapshot updated.", metadata: ["seriesId": .stringConvertible(seriesId)])
 
                     let (geoOutbox, notificationOutbox) = try await queueDispatchMessages(
@@ -129,6 +137,8 @@ struct NWSIngestPersistence {
                 if shouldAdvanceSeriesSnapshot(currentSent: series.currentRevisionSent, incomingSent: event.sent, logger: logger) {
                     try applySnapshot(from: event, to: series, asOf: asOf)
                     try await series.update(on: database)
+                    try await ArcusGeolocationModel.query(on: database)
+                        .filter(\.$series.$id == winnerSeriesId).delete()
                     logger.info("Winner series snapshot updated.", metadata: ["seriesId": .stringConvertible(winnerSeriesId)])
 
                     guard let seriesId = series.id else { throw Abort(.notFound, reason: "Series Id missing on winning series") }
@@ -154,6 +164,14 @@ struct NWSIngestPersistence {
             targetOutboxQueued: outboxQueued,
             notificationOutboxQueued: notificationOutboxQueued
         )
+    }
+
+    // Both ingest and target must hold this row lock until their transaction commits.
+    static func lockSeries(_ id: UUID, on database: any Database) async throws {
+        guard database.inTransaction, let sql = database as? any SQLDatabase else {
+            throw Abort(.internalServerError, reason: "NWS coverage acceptance requires a SQL transaction.")
+        }
+        _ = try await sql.raw("SELECT id FROM arcus_series WHERE id = \(bind: id) FOR UPDATE").all()
     }
 
     func shouldQueueUGCNotificationDispatch(for event: ArcusEvent) -> Bool {
@@ -256,6 +274,7 @@ private extension NWSIngestPersistence {
         series.source = event.source.rawValue
         series.event = event.kind
         series.sourceURL = event.sourceURL
+        series.geometry = event.geometry
         series.currentRevisionUrn = event.id
         series.currentRevisionSent = event.sent
         series.messageType = event.messageType.rawValue
@@ -414,23 +433,11 @@ private extension NWSIngestPersistence {
         let geolocations = try await ArcusGeolocationModel.query(on: database)
             .filter(\.$series.$id ~~ (loserSeriesIDs + [winnerSeriesId]))
             .all()
-        let winnerGeolocation = geolocations.first { $0.$series.id == winnerSeriesId }
         let loserGeolocations = geolocations.filter { $0.$series.id != winnerSeriesId }
 
-        var movedGeolocationID: UUID?
-        var geolocationMovedToWinner = false
-        if winnerGeolocation == nil, let newestLoserGeo = newestGeolocation(from: loserGeolocations) {
-            newestLoserGeo.$series.id = winnerSeriesId
-            try await newestLoserGeo.update(on: database)
-            movedGeolocationID = newestLoserGeo.id
-            geolocationMovedToWinner = true
-        }
-
+        // A loser's geometry has no authority over the winner's canonical revision.
         var geolocationsDeleted = 0
         for geo in loserGeolocations {
-            if let movedGeolocationID, geo.id == movedGeolocationID {
-                continue
-            }
             try await geo.delete(on: database)
             geolocationsDeleted += 1
         }
@@ -451,7 +458,7 @@ private extension NWSIngestPersistence {
             revisionsMoved: revisionsToMove.count,
             pendingOutboxMoved: pendingOutbox.count,
             geolocationsDeleted: geolocationsDeleted,
-            geolocationMovedToWinner: geolocationMovedToWinner
+            geolocationMovedToWinner: false
         )
     }
 
