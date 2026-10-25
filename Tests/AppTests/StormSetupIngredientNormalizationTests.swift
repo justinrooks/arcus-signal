@@ -59,14 +59,52 @@ struct StormSetupIngredientNormalizationTests {
         #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .threeCapeJkg)
     }
 
-    @Test("representative CIN inventory maps to the documented CIN field")
-    func cinInventoryMapsWhenIdentifiable() {
+    @Test("representative 90-0 mb CIN inventory maps to mixed-layer CIN")
+    func mixedLayerCINInventoryMapsWhenIdentifiable() {
         let result = normalize(
             "1:0:d=2026060313:CIN:90-0 mb above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-35"
         )
 
         #expect(result.raw.mlcinJkg == -35)
         #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == .mlcinJkg)
+    }
+
+    @Test("supported mixed-layer CIN takes precedence while surface CIN stays diagnostic")
+    func mixedLayerCINSurvivesSurfaceCIN() {
+        let result = normalize(
+            [
+                "1:0:d=2026060313:CIN:surface:9 hour fcst:lon=-104.47,lat=39.79,val=-10",
+                "2:0:d=2026060313:CIN:90-0 mb above ground:9 hour fcst:lon=-104.47,lat=39.79,val=-35"
+            ]
+        )
+
+        #expect(result.raw.mlcinJkg == -35)
+        #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == nil)
+        #expect(result.raw.diagnostics?.last?.matchedRawParameterKey == .mlcinJkg)
+    }
+
+    @Test("surface CIN stays diagnostic and cannot populate mixed-layer CIN")
+    func surfaceCINRemainsDiagnosticOnly() {
+        let result = normalize(
+            "1:0:d=2026060313:CIN:surface:9 hour fcst:lon=-104.47,lat=39.79,val=-35"
+        )
+
+        #expect(result.raw.mlcinJkg == nil)
+        #expect(result.raw.diagnostics?.first?.inventory.contains("CIN:surface") == true)
+        #expect(result.raw.diagnostics?.first?.parsedValue == -35)
+        #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == nil)
+    }
+
+    @Test("surface condensation height stays diagnostic and cannot populate mixed-layer LCL")
+    func surfaceCondensationHeightRemainsDiagnosticOnly() {
+        let result = normalize(
+            "1:0:d=2026060313:HGT:level of adiabatic condensation from sfc:9 hour fcst:lon=-104.47,lat=39.79,val=950"
+        )
+
+        #expect(result.raw.mllclM == nil)
+        #expect(result.raw.diagnostics?.first?.inventory.contains("level of adiabatic condensation from sfc") == true)
+        #expect(result.raw.diagnostics?.first?.parsedValue == 950)
+        #expect(result.raw.diagnostics?.first?.matchedRawParameterKey == nil)
     }
 
     @Test("representative HLCY inventory maps to 0-1 km SRH")

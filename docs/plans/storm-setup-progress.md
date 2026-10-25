@@ -649,7 +649,9 @@ Related GitHub issues:
 - Raw diagnostics now preserve inventory text, parsed value, matched raw parameter key, requested lon/lat, and nearest grid lon/lat when wgrib2 provides it.
 - `TornadoRawParameters` now includes `mlcinJkg` and an optional `diagnostics` array so the response shape can carry the raw sampling trail forward into issue `#75`.
 - `VUCSH`/`VVCSH` are converted from m/s to knots for `shear06kmKt` using the explicit factor `1.9438444924406`.
-- `HGT` at the level of adiabatic condensation from surface is carried through as `mllclM` without further conversion.
+- `CIN:90-0 mb above ground` remains the native approximation for Anvil's 100-hPa mixed-layer CIN; the layer difference is retained and is not claimed numerically identical.
+- `CIN:surface` remains a raw diagnostic and cannot populate mixed-layer CIN.
+- `HGT` at the level of adiabatic condensation from surface remains a raw diagnostic; its height datum is unresolved and it does not populate mixed-layer LCL.
 - Issue `#74` should start from the normalized raw fields and the current nil surface for unsupported fields. Do not re-open the sampler/normalizer seam unless a field-map bug is proven.
 
 ### Files changed
@@ -685,7 +687,7 @@ Related GitHub issues:
 - `HLCY:1000-0 m above ground` or `HLCY:0-1 km above ground` -> `srh01kmM2s2`
 - `HLCY:3000-0 m above ground` or `HLCY:0-3 km above ground` -> `srh03kmM2s2`
 - `VUCSH` + `VVCSH` at `0-6000 m above ground` or `0-6 km above ground` -> `shear06kmKt` via vector magnitude and explicit m/s to kt conversion
-- `HGT` at the level of adiabatic condensation from sfc/surface -> `mllclM`
+- `CIN:surface` and `HGT` at the level of adiabatic condensation from sfc/surface remain diagnostic-only because they do not establish mixed-layer parcel identity or LCL height datum.
 
 ### Uncertain / deferred field mappings
 - `effectiveSrhM2s2`
@@ -698,7 +700,7 @@ Related GitHub issues:
 
 ### Unit conversion decisions
 - `shear06kmKt` is derived from `VUCSH`/`VVCSH` in m/s using `hypot(u, v) * 1.9438444924406`.
-- `mllclM` uses the HRRR `HGT` height value directly as a meters-like raw field.
+- No native conversion currently populates `mllclM`; the HRRR condensation-level height's datum relative to ground remains unresolved.
 - CAPE/CIN and SRH values are passed through without additional unit conversion.
 
 ### Risks / open questions

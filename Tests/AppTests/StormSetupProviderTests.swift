@@ -163,6 +163,44 @@ struct StormSetupProviderTests {
         #expect(await anvilProvider.requestCount == 1)
     }
 
+    @Test("missing Anvil mixed-layer ingredients do not fall back to native diagnostics")
+    func missingAnvilMixedLayerIngredientsDoNotUseNativeFallbacks() async throws {
+        let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
+        let fixedH3: Int64 = 617700169958293503
+        let expected = try DefaultStormSetupH3Resolver().resolve(h3Cell: fixedH3)
+        let candidate = HrrrRunCandidate(
+            runTime: makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
+            forecastHour: 0
+        )
+        let source = makeSourceMetadata(candidate: candidate, centroid: expected.centroid)
+        let raw = makeRaw(sbcapeJkg: 1450, mlcinJkg: -35, mllclM: 950)
+        let snapshotCache = StubStormSetupSnapshotCache(cachedSnapshot: nil)
+        let provider = makeProvider(
+            dateProvider: StormSetupRouteDateProvider(nowDate: now),
+            snapshotCache: snapshotCache,
+            subsetLoader: StubStormSetupSubsetLoader { _, _, _ in makeSubsetResult(source: source, fetchedAt: now) },
+            fieldSampler: StubStormSetupFieldSampler { _, _ in [] },
+            normalizer: StubStormSetupNormalizer(result: makeNormalizationResult(raw: raw)),
+            interpreter: TornadoIngredientInterpreter(),
+            anvilProfileAnalysisProvider: StubStormSetupRouteAnvilProfileAnalysisProvider(
+                response: makeStormSetupRouteAnalysisResponse(
+                    validTime: candidate.validTime,
+                    mlcin: nil,
+                    mllclMetersAgl: nil
+                )
+            )
+        )
+
+        let response = try await provider.currentResponse(for: fixedH3)
+
+        #expect(response.ingredients.diagnostics.mlcinJkg == -35)
+        #expect(response.ingredients.diagnostics.mllclM == 950)
+        #expect(response.ingredients.canonical.mlcinJkg == nil)
+        #expect(response.ingredients.canonical.mllclM == nil)
+        #expect(response.tornadoViability.details.inhibition == .unknown)
+        #expect(response.tornadoViability.details.cloudBase == .unknown)
+    }
+
     @Test("current response omits raw Anvil analysis when the provider rejects it")
     func currentResponseOmitsRawAnvilAnalysisWhenRejected() async throws {
         let now = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22, minute: 45)
@@ -1958,7 +1996,9 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
     func makeStormSetupRouteAnalysisResponse(
         validTime: Date = makeProviderUTCDate(year: 2026, month: 6, day: 3, hour: 22),
         debugValidTime: Date? = nil,
-        warnings: [String] = []
+        warnings: [String] = [],
+        mlcin: Double? = -221.93726424748172,
+        mllclMetersAgl: Double? = 1179.4130766012365
     ) -> AnvilAnalyzeProfileAnalysisResponse {
         AnvilAnalyzeProfileAnalysisResponse(
             request: AnvilAnalyzeProfileRequest(
@@ -2025,8 +2065,8 @@ func makeStormSetupRouteProvider(now: Date) -> DefaultStormSetupProvider {
                 ),
                 mucape: 362.1018454649957,
                 mlcape: 191.7304143918497,
-                mlcin: -221.93726424748172,
-                mllclMetersAgl: 1179.4130766012365,
+                mlcin: mlcin,
+                mllclMetersAgl: mllclMetersAgl,
                 effectiveSrh: 29.42420403684148,
                 effectiveBulkShearMs: 30.134722226263612,
                 scp: 4.2,

@@ -26,7 +26,7 @@ struct GribInventoryFieldMap: Sendable {
         case "VUCSH", "VVCSH", "UGRD", "VGRD":
             return shearComponentMatch(for: variable, level: level)
         case "HGT":
-            return hgtMatch(for: level)
+            return nil
         default:
             return nil
         }
@@ -75,8 +75,6 @@ struct GribInventoryFieldMap: Sendable {
         switch level {
         case "90-0 mb above ground":
             return .direct(.mlcinJkg, priority: 0)
-        case "surface":
-            return .direct(.mlcinJkg, priority: 10)
         default:
             return nil
         }
@@ -104,14 +102,6 @@ struct GribInventoryFieldMap: Sendable {
         default:
             return nil
         }
-    }
-
-    private func hgtMatch(for level: String) -> GribInventoryFieldMatch? {
-        guard level == "level of adiabatic condensation from sfc" || level == "level of adiabatic condensation from surface" else {
-            return nil
-        }
-
-        return .direct(.mllclM, priority: 0)
     }
 
     private func normalizedToken(_ value: String) -> String {
