@@ -67,6 +67,8 @@ struct NotificationCandidateStore {
               AND (
                     (
                         o.mode = \(bind: NotificationTargetMode.h3.rawValue)
+                    AND p.cell_scheme = 'h3'
+                    AND p.h3_resolution = 8
                     AND p.h3_cell IS NOT NULL
                     AND p.h3_cell = ANY(g.h3_cells)
                     )
@@ -147,6 +149,8 @@ struct NotificationCandidateStore {
               AND i.is_subscribed = TRUE
               AND i.apns_device_token <> ''
               AND (\(bind: installationId)::uuid IS NULL OR i.installation_id = \(bind: installationId)::uuid)
+              AND p.cell_scheme = 'h3'
+              AND p.h3_resolution = 8
               AND p.h3_cell IS NOT NULL
               AND p.h3_cell = ANY(\(bind: cells)::bigint[])
               AND p.captured_at >= \(bind: cutoff)

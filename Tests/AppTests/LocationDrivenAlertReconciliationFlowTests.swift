@@ -398,6 +398,80 @@ struct LocationDrivenAlertReconciliationFlowTests {
         }
     }
 
+    @Test("NWS H3 matching follows the current presence scheme and resolution")
+    func nwsH3MatchingRequiresCurrentSupportedPresence() async throws {
+        try await withApp { app in
+            let installationID = UUID()
+            let h3Cell = uniqueH3Cell()
+            let county = "county-\(UUID().uuidString.lowercased())"
+            let evaluatedAt = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+            let firstObservedAt = evaluatedAt.addingTimeInterval(-10)
+            let h3Alert = try await seedAlert(mode: .h3, h3Cells: [h3Cell], on: app.db)
+            let ugcAlert = try await seedAlert(mode: .ugc, ugcCodes: [county], on: app.db)
+
+            try await submit(snapshot(
+                for: installationID,
+                capturedAt: firstObservedAt,
+                cellScheme: .h3,
+                h3Cell: h3Cell
+            ), to: app)
+
+            let cutoff = evaluatedAt.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold)
+            let candidates = NotificationCandidateStore()
+            #expect(try await candidates.loadH3Candidates(
+                cells: [h3Cell], capturedAtOrAfter: cutoff, installationId: installationID, on: app.db
+            ).map(\.id) == [installationID])
+            #expect(try await candidates.loadMatchingActiveAlerts(
+                for: installationID, evaluatedAt: evaluatedAt, on: app.db
+            ).contains { $0.seriesId == h3Alert.seriesID })
+
+            try await submit(snapshot(
+                for: installationID,
+                county: county,
+                capturedAt: firstObservedAt.addingTimeInterval(1)
+            ), to: app)
+            let partialUpdate = try #require(try await DevicePresenceModel.find(installationID, on: app.db))
+            #expect(partialUpdate.cellScheme == .ugcOnly)
+            #expect(partialUpdate.h3Cell == h3Cell)
+            #expect(partialUpdate.capturedAt == firstObservedAt.addingTimeInterval(1))
+            #expect(try await candidates.loadH3Candidates(
+                cells: [h3Cell], capturedAtOrAfter: cutoff, installationId: installationID, on: app.db
+            ).isEmpty)
+            let ugcOnlyMatches = try await candidates.loadMatchingActiveAlerts(
+                for: installationID, evaluatedAt: evaluatedAt, on: app.db
+            )
+            #expect(ugcOnlyMatches.map(\.seriesId) == [ugcAlert.seriesID])
+
+            try await submit(snapshot(
+                for: installationID,
+                capturedAt: firstObservedAt.addingTimeInterval(2),
+                cellScheme: .h3,
+                h3Cell: h3Cell,
+                h3Resolution: 7
+            ), to: app)
+            #expect(try await candidates.loadH3Candidates(
+                cells: [h3Cell], capturedAtOrAfter: cutoff, installationId: installationID, on: app.db
+            ).isEmpty)
+            #expect(try await candidates.loadMatchingActiveAlerts(
+                for: installationID, evaluatedAt: evaluatedAt, on: app.db
+            ).map(\.seriesId) == [ugcAlert.seriesID])
+
+            try await submit(snapshot(
+                for: installationID,
+                capturedAt: firstObservedAt.addingTimeInterval(3),
+                cellScheme: .h3,
+                h3Cell: h3Cell,
+                h3Resolution: 8
+            ), to: app)
+            #expect(try await candidates.loadH3Candidates(
+                cells: [h3Cell], capturedAtOrAfter: cutoff, installationId: installationID, on: app.db
+            ).map(\.id) == [installationID])
+            #expect(try await candidates.loadMatchingActiveAlerts(
+                for: installationID, evaluatedAt: evaluatedAt, on: app.db
+            ).contains { $0.seriesId == h3Alert.seriesID })
+        }
+    }
+
     @Test("H3 and UGC fallback deliver while inactive and stale revisions are excluded")
     func targetingAndLifecycleMatrix() async throws {
         try await withApp { app in
@@ -679,7 +753,8 @@ struct LocationDrivenAlertReconciliationFlowTests {
         capturedAt: Date = .now,
         source: LocationUploadSource = .foregroundPrime,
         cellScheme: CellScheme = .ugcOnly,
-        h3Cell: Int64? = nil
+        h3Cell: Int64? = nil,
+        h3Resolution: Int? = nil
     ) -> LocationSnapshotPushPayload {
         LocationSnapshotPushPayload(
             capturedAt: capturedAt,
@@ -687,7 +762,7 @@ struct LocationDrivenAlertReconciliationFlowTests {
             horizontalAccuracyMeters: 10,
             cellScheme: cellScheme.rawValue,
             h3Cell: h3Cell,
-            h3Resolution: h3Cell == nil ? nil : 8,
+            h3Resolution: h3Resolution ?? (h3Cell == nil ? nil : 8),
             county: county,
             zone: nil,
             fireZone: nil,
