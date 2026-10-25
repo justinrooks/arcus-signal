@@ -50,14 +50,20 @@ public struct TargetEventRevisionPayload: Codable, Sendable {
 public struct TargetEventRevisionJob: AsyncJob {
     public typealias Payload = TargetEventRevisionPayload
 
+    private let beforeCoverageWrite: @Sendable () async throws -> Void
     private let buildCoverage: @Sendable (GeoShape) throws -> H3CoverageResult
 
     public init() {
         self.buildCoverage = { try H3CoverageBuilder.build(for: $0) }
+        self.beforeCoverageWrite = {}
     }
 
-    init(buildCoverage: @escaping @Sendable (GeoShape) throws -> H3CoverageResult) {
+    init(
+        buildCoverage: @escaping @Sendable (GeoShape) throws -> H3CoverageResult,
+        beforeCoverageWrite: @escaping @Sendable () async throws -> Void = {}
+    ) {
         self.buildCoverage = buildCoverage
+        self.beforeCoverageWrite = beforeCoverageWrite
     }
 
     public func dequeue(_ context: QueueContext, _ payload: Payload) async throws {
@@ -205,7 +211,14 @@ private extension TargetEventRevisionJob {
         coverage: H3Coverage,
         on database: any Database,
         logger: Logger
-    ) async throws -> Date {
+    ) async throws -> Date? {
+        try await NWSIngestPersistence.lockSeries(payload.seriesId, on: database)
+        guard let series = try await ArcusSeriesModel.find(payload.seriesId, on: database),
+              series.currentRevisionUrn == payload.revisionUrn else {
+            logger.debug("Superseded target coverage ignored.")
+            return nil
+        }
+        try await beforeCoverageWrite()
         if let existing = try await ArcusGeolocationModel.query(on: database)
             .filter(\.$series.$id == payload.seriesId)
             .first() {
