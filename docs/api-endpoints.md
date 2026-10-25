@@ -144,7 +144,7 @@ Privacy/logging note:
   - `fire` (optional)
   - `h3` (optional, must be `> 0` when present)
 - At least one of `ugc`, `fire`, `h3` is required.
-- Collection results include alerts that are active at evaluation time, plus alerts in `expired` or `ended` state whose known terminal time falls within the previous hour. Active rows whose known `expires` or `ends` time has passed are excluded. Other terminal and historical states are excluded.
+- Collection results include alerts that are active at evaluation time, plus alerts in `expired` or `ended` state whose known terminal time falls within the previous hour. Active rows whose known `expires` or `ends` time has passed are excluded. Both `cancelled` and `cancelled_in_error` are also included when persisted canonical `currentRevisionSent` is between evaluation time minus one hour and evaluation time (inclusive). Cancellation eligibility is independent of `expires`, `ends`, `updated`, and `lastSeenActive`. Older cancellations and other historical states are excluded.
 - Response: `200 OK` JSON array of alert payloads.
 - Error: `400 Bad Request` when no filter is provided or `h3 <= 0`.
 
@@ -165,8 +165,8 @@ curl -i "http://localhost:8080/api/v1/alerts?ugc=COC001"
   - `fire` (optional)
   - `h3` (optional, must be `> 0` when present)
 - Lookup modes:
-  - Targeted lookup: provide `id` only (plus optional `sent`) to fetch exactly one current alert by `arcus_series.id`.
-  - Collection lookup: provide one or more of `county`, `forecast`, `fire`, `h3`. Results include alerts that are active at evaluation time, plus `expired` or `ended` alerts whose known terminal time falls within the previous hour. Active rows whose known `expires` or `ends` time has passed, and older terminal history, are excluded.
+  - Targeted lookup: provide `id` only (plus optional `sent`) to fetch exactly one current alert by `arcus_series.id`, including either cancellation state for as long as the series is retained, regardless of the collection window.
+  - Collection lookup: provide one or more of `county`, `forecast`, `fire`, `h3`. Results include alerts that are active at evaluation time, plus `expired` or `ended` alerts whose known terminal time falls within the previous hour. Both cancellation states are included for one hour after canonical `currentRevisionSent`, including the exact cutoff and independently of prior expiration. Active rows whose known `expires` or `ends` time has passed, and older terminal history, are excluded.
   - `id` is mutually exclusive with `county`, `forecast`, `fire`, `h3`.
 - Response: `200 OK` JSON array of alert payloads.
 - Error:
@@ -186,6 +186,15 @@ Targeted example:
 ```bash
 curl -i "http://localhost:8080/api/v2/alerts?id=11111111-1111-1111-1111-111111111111"
 ```
+
+### NWS cancellation reconciliation limits
+
+The v1/v2 collection cancellation window is bounded and location-matched. Normal successful refresh can reconcile a cached alert when its explicit terminal payload is returned. Omission, unknown/deleted IDs, transport failure, and cache fallback are not cancellation evidence. Devices offline beyond the one-hour window may not reconcile automatically. Targeted lookup provides explicit recovery for a retained series, but does not imply automatic client reconciliation after missing that window.
+
+Collection matching uses the current canonical UGC codes or current revision's accepted H3 coverage. Canonical revision acceptance invalidates previous coverage (#354); cancellation responses never restore historical geometry or H3. A cancellation with no polygon/H3 can still match UGC. If its UGC codes changed or are missing and it has no matching current coverage, ordinary collection refresh may omit it even for a previously affected device. This contract does not guarantee cancellation delivery to every previously affected device.
+
+Wire values remain `state: "cancelled"` with `messageType: "update"` for VTEC CAN updates, and `state: "cancelled_in_error"` with `messageType: "cancel"` for CAP Cancel. SkyAware's existing terminal handling recognizes the former by state and the latter by message type. Revision timestamps remain authoritative; this response policy does not alter monotonic acceptance or non-destructive omission.
+
 
 ## `GET /api/v1/notifications`
 

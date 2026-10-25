@@ -155,8 +155,7 @@ func loadAlertSeries(
         FROM \(ident: ArcusSeriesModel.schema) AS \(ident: "s")
         LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
           ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
-        WHERE \(ident: "s").\(ident: "state") <> \(bind: EventState.cancelled_in_error.rawValue)
-          AND (
+        WHERE (
               (\(ident: "s").\(ident: "state") = \(bind: EventState.active.rawValue)
                AND (\(ident: "s").\(ident: "expires") IS NULL OR \(ident: "s").\(ident: "expires") > \(bind: evaluatedAt))
                AND (\(ident: "s").\(ident: "ends") IS NULL OR \(ident: "s").\(ident: "ends") > \(bind: evaluatedAt))
@@ -169,6 +168,9 @@ func loadAlertSeries(
                   AND \(ident: "s").\(ident: "ends") IS NOT NULL
                   AND \(ident: "s").\(ident: "ends") <= \(bind: evaluatedAt)
                   AND \(ident: "s").\(ident: "ends") >= \(bind: recentTerminalCutoff))
+              OR (\(ident: "s").\(ident: "state") IN (\(bind: EventState.cancelled.rawValue), \(bind: EventState.cancelled_in_error.rawValue))
+                  AND \(ident: "s").\(ident: "current_revision_sent") >= \(bind: recentTerminalCutoff)
+                  AND \(ident: "s").\(ident: "current_revision_sent") <= \(bind: evaluatedAt))
           )
           AND (\(matchClauses.joined(separator: " OR ")))
         ORDER BY \(ident: "s").\(ident: "ends") DESC NULLS LAST,
@@ -189,7 +191,6 @@ private func loadAlertSeries(
         LEFT JOIN \(ident: ArcusGeolocationModel.schema) AS \(ident: "g")
           ON \(ident: "g").\(ident: "series_id") = \(ident: "s").\(ident: "id")
         WHERE \(ident: "s").\(ident: "id") = \(bind: id)
-          AND \(ident: "s").\(ident: "state") <> \(bind: EventState.cancelled_in_error.rawValue)
         LIMIT 1
         """)
         .first(decoding: AlertSeriesRow.self) else {
