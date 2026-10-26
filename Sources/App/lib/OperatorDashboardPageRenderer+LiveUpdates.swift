@@ -849,10 +849,24 @@ extension OperatorDashboardPageRenderer {
           function controlStat(label, value, context) {
             return '<div><span class="stat-label">'+escapeHtml(label)+'</span><strong class="stat-value">'+escapeHtml(value)+'</strong><span class="stat-unit">'+escapeHtml(context)+'</span></div>';
           }
-          function controlHealthItem(title, value, status, summary, details = '', page = null) {
-            return '<div class="health-item health-'+escapeHtml(status)+'"><h3>'+escapeHtml(title)+'</h3><div class="health-reading"><strong>'+escapeHtml(value)+'</strong><span class="health-status">'+escapeHtml(status.charAt(0).toUpperCase()+status.slice(1))+'</span></div><p>'+escapeHtml(summary)+'</p>'+(details ? '<details class="health-details"><summary>Details</summary><div class="detail-copy">'+escapeHtml(details)+'</div></details>' : '')+(page?'<p><a href="/dashboard/'+page+'">Inspect Meso Activity ↗</a></p>':'')+'</div>';
+          function controlHealthItem(title, value, status, summary, details = '', page = null, pageTitle = 'Meso Activity') {
+            return '<div class="health-item health-'+escapeHtml(status)+'"><h3>'+escapeHtml(title)+'</h3><div class="health-reading"><strong>'+escapeHtml(value)+'</strong><span class="health-status">'+escapeHtml(status.charAt(0).toUpperCase()+status.slice(1))+'</span></div><p>'+escapeHtml(summary)+'</p>'+(details ? '<details class="health-details"><summary>Details</summary><div class="detail-copy">'+escapeHtml(details)+'</div></details>' : '')+(page?'<p><a href="/dashboard/'+page+'">Inspect '+escapeHtml(pageTitle)+' ↗</a></p>':'')+'</div>';
           }
-          function renderHealthOverview(r) {
+          function anvilFindingSummary(anvil) {
+            if(anvil.status==='warning') return 'Anvil reachable · SHARPpy unavailable';
+            if(anvil.status==='critical') return 'Anvil unreachable after '+(anvil.consecutiveFailures??0)+' consecutive probes';
+            return null;
+          }
+          function renderAnvilOverview(anvil, detail) {
+            anvil=anvil??{status:'unknown'};
+            const current=anvil.status==='healthy'||anvil.status==='warning';
+            const identity=current&&anvil.version?'Version '+anvil.version+' · revision '+(anvil.revision??'n/a'):(anvil.version?'Last successful identity '+anvil.version+' · revision '+(anvil.revision??'n/a')+' · observed '+controlTime(anvil.lastSuccessfulAt):'No successful identity recorded');
+            const readiness=anvil.status==='healthy'||anvil.status==='warning'?(anvil.sharppyAvailable==null?'SHARPpy readiness unknown':(anvil.sharppyAvailable?'SHARPpy import ready':'SHARPpy import unavailable')):(anvil.sharppyAvailable==null?'SHARPpy readiness unknown':'Last successful SHARPpy import was '+(anvil.sharppyAvailable?'ready':'unavailable'));
+            if(detail) return '<div class="anvil-observation"><p class="module-note '+(anvil.status==='warning'?'warning':anvil.status==='critical'?'danger':'')+'"><strong>Anvil · '+escapeHtml(anvil.status.charAt(0).toUpperCase()+anvil.status.slice(1))+'</strong> · '+escapeHtml(readiness)+'</p><p class="module-note">'+escapeHtml(identity)+'</p><p class="module-note">Last check: '+escapeHtml(controlTime(anvil.checkedAt))+' · Last successful observation: '+escapeHtml(controlTime(anvil.lastSuccessfulAt))+' · Recent failure category: '+escapeHtml(anvil.recentFailure??'none')+'</p></div>';
+            const tone=anvil.status==='healthy'?'good':anvil.status==='warning'?'warning':anvil.status==='critical'?'danger':'muted';
+            return '<p class="module-note anvil-status"><strong class="'+tone+'">'+escapeHtml('Anvil · '+anvil.status.charAt(0).toUpperCase()+anvil.status.slice(1)+' · '+readiness+' · '+identity+' · Checked '+controlTime(anvil.checkedAt))+'</strong></p>';
+          }
+          function renderHealthOverview(r, anvil) {
             const i=r.ingestFreshness,m=r.spcMesoIngest,b=r.pipelineBacklogAge,c=r.stuckClaimedRows,s=r.staleActiveSeriesCount,a=r.airQuality??{status:"unknown",summary:"Awaiting upstream evidence",dependency:{}};
             const findings=[];
             if(i.status==='warning') findings.push('Ingest delayed');
@@ -860,10 +874,13 @@ extension OperatorDashboardPageRenderer {
             if(c.status==='critical') findings.push(c.count+' stuck claims');
             if(s.status==='warning') findings.push(s.count+' stale active series');
             if(a.status==='warning'||a.status==='critical') findings.push(a.summary);
-            const unknown=[i,m,b,c,s,a].filter(m=>m.status==='unknown').length;
+            anvil=anvil??{status:'unknown'};
+            const anvilFinding=anvilFindingSummary(anvil);
+            if(anvilFinding) findings.push(anvilFinding);
+            const unknown=[i,m,b,c,s,a,anvil].filter(m=>m.status==='unknown').length;
             const headline=findings.length ? findings.join(' · ')+' need review' : 'No classified red lights · '+unknown+' unknown signals';
-            const tone=c.status==='critical'||a.status==='critical'?'danger':(findings.length?'warning':'muted');
-            const destination=c.status==='critical'?'delivery':(m.status==='warning'?'mesos':'nws'),title=c.status==='critical'?'Delivery':(m.status==='warning'?'Meso Activity':'NWS Activity');
+            const tone=c.status==='critical'||a.status==='critical'||anvil.status==='critical'?'danger':(findings.length?'warning':'muted');
+            const destination=c.status==='critical'?'delivery':(anvil.status==='critical'||(anvilFinding&&m.status!=='warning')?'models':(m.status==='warning'?'mesos':'nws')),title=destination==='models'?'Model Pipeline':(c.status==='critical'?'Delivery':(m.status==='warning'?'Meso Activity':'NWS Activity'));
             const airNowOnlyFinding=findings.length===1&&(a.status==='warning'||a.status==='critical');
             const inspectLink=airNowOnlyFinding?'':'<a href="/dashboard/'+destination+'">Inspect '+title+' ↗</a>';
             return '<div class="health-top '+(findings.length?'':'neutral')+'"><div><div class="health-label">Red Lights</div><strong class="'+tone+'">'+escapeHtml(headline)+'</strong></div>'+inspectLink+'</div><div class="health-rail">'+
@@ -872,9 +889,10 @@ extension OperatorDashboardPageRenderer {
               controlHealthItem('Air Quality / AirNow',a.status.charAt(0).toUpperCase()+a.status.slice(1),a.status,a.summary,'Last real attempt: '+controlTime(a.dependency.lastAttemptAt)+'. Last HTTP success: '+controlTime(a.dependency.lastUpstreamSuccessAt)+'. Last usable AQI: '+controlTime(a.dependency.lastUsableAQIAt)+'. Consecutive failures: '+(a.dependency.consecutiveFailures??0)+'. Failure streak started: '+controlTime(a.dependency.failureStartedAt)+'. Duration: '+(a.dependency.durationMilliseconds==null?'n/a':a.dependency.durationMilliseconds+' ms')+'. Updated: '+controlTime(a.dependency.updatedAt)+'.')+
               controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). Pending queue handoffs, not delivery completions.')+
               controlHealthItem('Stuck claims',String(c.count),c.status,'Claim age threshold: '+formatDuration(c.thresholdSeconds),'Oldest claim: '+formatDuration(c.oldestClaimedAgeSeconds)+' ('+controlTime(c.oldestClaimedCreatedAt)+').')+
-              controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+'</div>';
+              controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+
+              (anvilFinding?controlHealthItem('Anvil',anvil.status.charAt(0).toUpperCase()+anvil.status.slice(1),anvil.status,anvilFinding,'Last successful SHARPpy readiness: '+(anvil.sharppyAvailable==null?'unknown':(anvil.sharppyAvailable?'ready':'unavailable'))+', observed '+controlTime(anvil.lastSuccessfulAt)+'. Last successful identity: '+(anvil.version??'n/a')+' (revision '+(anvil.revision??'n/a')+'). Last check: '+controlTime(anvil.checkedAt)+'. Recent failure category: '+(anvil.recentFailure??'none')+'.','models','Model Pipeline'):'')+'</div>';
           }
-          function renderModelOverview(m, detail) {
+          function renderModelOverview(m, detail, anvil) {
             const r=m.pressureArtifactReadiness,c=m.pressureArtifactCatalog;
             const outcome=r.selectionOutcome==='exact'?'READY':(r.selectionOutcome??'NO DATA').toUpperCase();
             const tone=({exact:'accent',stale:'warn',unavailable:'danger'})[r.selectionOutcome]??'muted';
@@ -883,7 +901,7 @@ extension OperatorDashboardPageRenderer {
             const track=c.refreshedAt?catalog.filter(([,count])=>count>0).map(([name,count])=>'<i class="catalog-'+name.toLowerCase()+'" style="flex:'+Number(count)+'"></i>').join(''):'';
             return controlHead('Model Pipeline','HRRR · pressure artifacts',detail?null:'models')+
               '<div class="model-current"><span class="ready-mark '+tone+'" aria-hidden="true">'+(r.selectionOutcome==='exact'?'✓':'—')+'</span><div><div class="artifact-title">'+(r.selectionOutcome==='exact'?'Current artifact ready':'Pressure artifact '+escapeHtml(outcome.toLowerCase()))+'</div><div class="artifact-sub">'+escapeHtml(controlTime(r.runTime))+' / F'+escapeHtml(r.forecastHour??'—')+' · valid '+escapeHtml(controlTime(r.validTime))+'</div></div><span class="badge '+tone+'">'+escapeHtml(outcome)+'</span></div><div class="catalog">'+counts+'</div><div class="catalog-track" aria-hidden="true">'+track+'</div><p class="module-note">Checked '+escapeHtml(controlTime(r.lastCheckedAt??r.updatedAt))+' · '+(c.refreshedAt?c.stuckWarmingCount+' stuck warming · '+c.expiredCount+' expired catalog rows':'Catalog unavailable')+'</p><p class="module-note">Pressure artifact catalog history retained for 60 days</p>'+
-              [r.readinessReason,r.errorSummary,c.stuckReason].filter(v=>v!==null&&v!==undefined).map(v=>'<p class="module-note warning">'+escapeHtml(v)+'</p>').join('');
+              [r.readinessReason,r.errorSummary,c.stuckReason].filter(v=>v!==null&&v!==undefined).map(v=>'<p class="module-note warning">'+escapeHtml(v)+'</p>').join('')+renderAnvilOverview(anvil,detail);
           }
           function renderUsageOverview(g, detail) {
             const growth=g.installationGrowth,activity=g.installationActivity;
@@ -949,8 +967,8 @@ extension OperatorDashboardPageRenderer {
             const detail = document.body.classList.contains('detail-page');
             updateSlot('meso-summary', JSON.stringify(snapshot.redLights.spcMesoIngest), renderMesoSummary(snapshot.redLights.spcMesoIngest));
             updateSlot('meso-activity', JSON.stringify(snapshot.mesoActivity), renderMesoActivity(snapshot.mesoActivity));
-            updateSlot('health-overview', JSON.stringify(snapshot.redLights), renderHealthOverview(snapshot.redLights));
-            updateSlot('model-overview', JSON.stringify(snapshot.modelArtifacts), renderModelOverview(snapshot.modelArtifacts, detail));
+            updateSlot('health-overview', JSON.stringify([snapshot.redLights,snapshot.anvil]), renderHealthOverview(snapshot.redLights,snapshot.anvil));
+            updateSlot('model-overview', JSON.stringify([snapshot.modelArtifacts,snapshot.anvil]), renderModelOverview(snapshot.modelArtifacts, detail,snapshot.anvil));
             updateSlot('usage-overview', JSON.stringify(snapshot.growthUsage), renderUsageOverview(snapshot.growthUsage, detail));
             updateSlot('footprint-overview', JSON.stringify(snapshot.growthUsage), renderFootprintOverview(snapshot.growthUsage, detail));
             updateSlot('geography-overview', JSON.stringify(snapshot.growthUsage.installationActivity), renderGeographyOverview(snapshot.growthUsage.installationActivity, detail));

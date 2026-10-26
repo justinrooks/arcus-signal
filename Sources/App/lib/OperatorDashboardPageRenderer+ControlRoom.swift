@@ -52,7 +52,7 @@ extension OperatorDashboardPageRenderer {
         }.joined()
     }
 
-    static func healthOverview(_ r: OperatorDashboardRedLightsSectionResponse) -> String {
+    static func healthOverview(_ r: OperatorDashboardRedLightsSectionResponse, anvil: AnvilServiceObservation? = nil) -> String {
         let i = r.ingestFreshness, m = r.spcMesoIngest, b = r.pipelineBacklogAge, c = r.stuckClaimedRows, s = r.staleActiveSeriesCount, a = r.airQuality
         var findings: [String] = []
         if i.status == .warning { findings.append("Ingest delayed") }
@@ -60,10 +60,12 @@ extension OperatorDashboardPageRenderer {
         if c.status == .critical { findings.append("\(c.count) stuck claims") }
         if s.status == .warning { findings.append("\(s.count) stale active series") }
         if a.status == .warning || a.status == .critical { findings.append(a.summary) }
-        let unknown = [i.status, m.status, b.status, c.status, s.status, a.status].filter { $0 == .unknown }.count
+        let anvilFinding = anvil.flatMap(anvilFindingSummary)
+        if let anvilFinding { findings.append(anvilFinding) }
+        let unknown = [i.status, m.status, b.status, c.status, s.status, a.status, anvil?.status ?? .unknown].filter { $0 == .unknown }.count
         let headline = findings.isEmpty ? "No classified red lights · \(unknown) unknown signals" : findings.joined(separator: " · ") + " need review"
-        let tone = c.status == .critical || a.status == .critical ? "danger" : (findings.isEmpty ? "muted" : "warning")
-        let destination = c.status == .critical ? Page.delivery : (m.status == .warning ? Page.mesos : Page.nws)
+        let tone = c.status == .critical || a.status == .critical || anvil?.status == .critical ? "danger" : (findings.isEmpty ? "muted" : "warning")
+        let destination = c.status == .critical ? Page.delivery : (anvil?.status == .critical || anvilFinding != nil && m.status != .warning ? Page.models : (m.status == .warning ? Page.mesos : Page.nws))
         let airNowOnlyFinding = findings.count == 1 && (a.status == .warning || a.status == .critical)
         let inspectLink = airNowOnlyFinding ? "" : "<a href=\"\(destination.path)\">Inspect \(destination.title) ↗</a>"
         return """
@@ -73,11 +75,58 @@ extension OperatorDashboardPageRenderer {
         \(healthItem("Air Quality / AirNow", a.status.rawValue.capitalized, a.status, a.summary, "Last real attempt: \(controlTime(a.dependency.lastAttemptAt)). Last HTTP success: \(controlTime(a.dependency.lastUpstreamSuccessAt)). Last usable AQI: \(controlTime(a.dependency.lastUsableAQIAt)). Consecutive failures: \(a.dependency.consecutiveFailures). Failure streak started: \(controlTime(a.dependency.failureStartedAt)). Duration: \(a.dependency.durationMilliseconds.map { "\($0) ms" } ?? "n/a"). Updated: \(controlTime(a.dependency.updatedAt))."))
         \(healthItem("Dispatch backlog", "\(b.pendingTargetDispatchCount + b.pendingNotificationDispatchCount)", b.status, "\(b.pendingTargetDispatchCount) target · \(b.pendingNotificationDispatchCount) notification rows", "Oldest target: \(maybeDuration(b.oldestPendingTargetDispatchAgeSeconds)) (\(controlTime(b.oldestPendingTargetDispatchCreatedAt))). Oldest notification: \(maybeDuration(b.oldestPendingNotificationDispatchAgeSeconds)) (\(controlTime(b.oldestPendingNotificationDispatchCreatedAt))). Pending queue handoffs, not delivery completions."))
         \(healthItem("Stuck claims", "\(c.count)", c.status, "Claim age threshold: \(formatDuration(c.thresholdSeconds))", "Oldest claim: \(maybeDuration(c.oldestClaimedAgeSeconds)) (\(controlTime(c.oldestClaimedCreatedAt)))."))
-        \(healthItem("Stale active series", "\(s.count)", s.status, "Grace window: \(formatDuration(s.graceSeconds))"))</div>
+        \(healthItem("Stale active series", "\(s.count)", s.status, "Grace window: \(formatDuration(s.graceSeconds))"))\(anvil.flatMap(anvilFindingSummary) == nil ? "" : anvilHealthItem(anvil))</div>
         """
     }
 
-    static func modelOverview(_ m: OperatorDashboardModelArtifactsSectionResponse, detail: Bool = false) -> String {
+    static func anvilFindingSummary(_ observation: AnvilServiceObservation) -> String? {
+        switch observation.status {
+        case .warning: "Anvil reachable · SHARPpy unavailable"
+        case .critical: "Anvil unreachable after \(observation.consecutiveFailures) consecutive probes"
+        case .healthy, .unknown: nil
+        }
+    }
+
+    static func anvilHealthItem(_ observation: AnvilServiceObservation?) -> String {
+        guard let observation, let summary = anvilFindingSummary(observation) else { return "" }
+        let failure = observation.recentFailure.map { $0.rawValue } ?? "none"
+        let identity = observation.version.map { "\($0) (revision \(observation.revision ?? "n/a"))" } ?? "n/a"
+        return healthItem(
+            "Anvil", observation.status.rawValue.capitalized, observation.status, summary,
+            "Last successful SHARPpy import readiness: \(observation.sharppyAvailable.map { $0 ? "ready" : "unavailable" } ?? "unknown"), observed \(controlTime(observation.lastSuccessfulAt)). Last successful identity: \(identity). Last check: \(controlTime(observation.checkedAt)). Recent failure category: \(failure).",
+            page: .models
+        )
+    }
+
+    static func anvilOverview(_ observation: AnvilServiceObservation?, detail: Bool) -> String {
+        let value = observation ?? .init()
+        let current = value.status == .healthy || value.status == .warning
+        let identity: String
+        if current, let version = value.version {
+            identity = "Version \(version) · revision \(value.revision ?? "n/a")"
+        } else if let version = value.version {
+            identity = "Last successful identity \(version) · revision \(value.revision ?? "n/a") · observed \(controlTime(value.lastSuccessfulAt))"
+        } else {
+            identity = "No successful identity recorded"
+        }
+        let readiness: String
+        if value.status == .healthy || value.status == .warning {
+            readiness = value.sharppyAvailable.map { $0 ? "SHARPpy import ready" : "SHARPpy import unavailable" } ?? "SHARPpy readiness unknown"
+        } else if let available = value.sharppyAvailable {
+            readiness = "Last successful SHARPpy import was \(available ? "ready" : "unavailable")"
+        } else {
+            readiness = "SHARPpy readiness unknown"
+        }
+        let summary = "Anvil · \(value.status.rawValue.capitalized) · \(readiness) · \(identity) · Checked \(controlTime(value.checkedAt))"
+        if detail {
+            let failure = value.recentFailure.map { $0.rawValue } ?? "none"
+            return "<div class=\"anvil-observation\"><p class=\"module-note \(value.status == .warning ? "warning" : value.status == .critical ? "danger" : "")\"><strong>Anvil · \(escape(value.status.rawValue.capitalized))</strong> · \(escape(readiness))</p><p class=\"module-note\">\(escape(identity))</p><p class=\"module-note\">Last check: \(escape(controlTime(value.checkedAt))) · Last successful observation: \(escape(controlTime(value.lastSuccessfulAt))) · Recent failure category: \(escape(failure))</p></div>"
+        }
+        let tone = value.status == .healthy ? "good" : value.status == .warning ? "warning" : value.status == .critical ? "danger" : "muted"
+        return "<p class=\"module-note anvil-status\"><strong class=\"\(tone)\">\(escape(summary))</strong></p>"
+    }
+
+    static func modelOverview(_ m: OperatorDashboardModelArtifactsSectionResponse, anvil: AnvilServiceObservation? = nil, detail: Bool = false) -> String {
         let r = m.pressureArtifactReadiness, c = m.pressureArtifactCatalog
         let outcome = pressureArtifactOutcome(r.selectionOutcome)
         let tone = pressureArtifactOutcomeClass(r.selectionOutcome) ?? "muted"
@@ -85,7 +134,7 @@ extension OperatorDashboardPageRenderer {
         let counts = catalog.map { name, count in "<div><strong>\(c.refreshedAt == nil ? "n/a" : String(count))</strong><span>\(name)</span></div>" }.joined()
         let track = c.refreshedAt == nil ? "" : catalog.filter { $0.1 > 0 }.map { name, count in "<i class=\"catalog-\(name.lowercased())\" style=\"flex:\(count)\"></i>" }.joined()
         return """
-        \(moduleHead("Model Pipeline", "HRRR · pressure artifacts", detail ? nil : .models))<div class="model-current"><span class="ready-mark \(tone)" aria-hidden="true">\(r.selectionOutcome == .exact ? "✓" : "—")</span><div><div class="artifact-title">\(r.selectionOutcome == .exact ? "Current artifact ready" : "Pressure artifact \(outcome.lowercased())")</div><div class="artifact-sub">\(escape(controlTime(r.runTime))) / F\(r.forecastHour.map(String.init) ?? "—") · valid \(escape(controlTime(r.validTime)))</div></div><span class="badge \(tone)">\(outcome)</span></div><div class="catalog">\(counts)</div><div class="catalog-track" aria-hidden="true">\(track)</div><p class="module-note">Checked \(escape(controlTime(r.lastCheckedAt ?? r.updatedAt))) · \(c.refreshedAt == nil ? "Catalog unavailable" : "\(c.stuckWarmingCount) stuck warming · \(c.expiredCount) expired catalog rows")</p><p class="module-note">Pressure artifact catalog history retained for 60 days</p>\([r.readinessReason, r.errorSummary, c.stuckReason].compactMap { $0 }.map { "<p class=\"module-note warning\">\(escape($0))</p>" }.joined())
+        \(moduleHead("Model Pipeline", "HRRR · pressure artifacts", detail ? nil : .models))<div class="model-current"><span class="ready-mark \(tone)" aria-hidden="true">\(r.selectionOutcome == .exact ? "✓" : "—")</span><div><div class="artifact-title">\(r.selectionOutcome == .exact ? "Current artifact ready" : "Pressure artifact \(outcome.lowercased())")</div><div class="artifact-sub">\(escape(controlTime(r.runTime))) / F\(r.forecastHour.map(String.init) ?? "—") · valid \(escape(controlTime(r.validTime)))</div></div><span class="badge \(tone)">\(outcome)</span></div><div class="catalog">\(counts)</div><div class="catalog-track" aria-hidden="true">\(track)</div><p class="module-note">Checked \(escape(controlTime(r.lastCheckedAt ?? r.updatedAt))) · \(c.refreshedAt == nil ? "Catalog unavailable" : "\(c.stuckWarmingCount) stuck warming · \(c.expiredCount) expired catalog rows")</p><p class="module-note">Pressure artifact catalog history retained for 60 days</p>\([r.readinessReason, r.errorSummary, c.stuckReason].compactMap { $0 }.map { "<p class=\"module-note warning\">\(escape($0))</p>" }.joined())\(anvilOverview(anvil, detail: detail))
         """
     }
 

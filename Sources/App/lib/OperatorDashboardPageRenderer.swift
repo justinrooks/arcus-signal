@@ -68,15 +68,15 @@ enum OperatorDashboardPageRenderer {
     static func pageContent(_ s: OperatorDashboardSnapshotResponse, page: Page) -> String {
         switch page {
         case .overview:
-            return controlModule("health-overview", "health", healthOverview(s.redLights))
-                + controlModule("model-overview", "model", modelOverview(s.modelArtifacts))
+            return controlModule("health-overview", "health", healthOverview(s.redLights, anvil: s.anvil))
+                + controlModule("model-overview", "model", modelOverview(s.modelArtifacts, anvil: s.anvil))
                 + controlModule("usage-overview", "usage", usageOverview(s.growthUsage))
                 + controlModule("footprint-overview", "footprint", footprintOverview(s.growthUsage))
                 + controlModule("geography-overview", "geography", geographyOverview(s.growthUsage.installationActivity))
                 + controlModule("nws-overview", "nws", nwsOverview(s.operatorContext.lastTouchedSeries))
                 + controlModule("delivery-overview", "delivery", deliveryOverview(s.deliveryKPIs, s.audienceTargeting))
         case .models:
-            return controlModule("model-overview", "model", modelOverview(s.modelArtifacts, detail: true))
+            return controlModule("model-overview", "model", modelOverview(s.modelArtifacts, anvil: s.anvil, detail: true))
                 + detailModule("Catalog diagnostics", slot("pressure-artifact-catalog-card", content: pressureArtifactCatalogCard(s.modelArtifacts.pressureArtifactCatalog)))
                 + detailModule("Recent pressure artifacts", slot("recent-pressure-artifacts-table", content: recentPressureArtifactsTable(s.modelArtifacts.recentPressureArtifacts)) + "<details><summary>Selected artifact evidence</summary>" + slot("pressure-artifact-readiness-card", content: pressureArtifactReadinessCard(s.modelArtifacts.pressureArtifactReadiness)) + "</details>", wide: true)
         case .installations:
@@ -86,7 +86,7 @@ enum OperatorDashboardPageRenderer {
                 + controlModule("geography-overview", "geography", geographyOverview(s.growthUsage.installationActivity, detail: true))
                 + detailModule("Monthly installation growth", slot("installation-growth-table", content: installationGrowthTable(s.growthUsage.installationGrowth)))
         case .nws:
-            return controlModule("health-overview", "health wide", healthOverview(s.redLights))
+            return controlModule("health-overview", "health wide", healthOverview(s.redLights, anvil: s.anvil))
                 + detailModule("Stale series context", "<p id=\"stale\" class=\"detail-copy\">The snapshot supplies the stale-series count, not the affected identities. The recently touched series below are not necessarily the stale ones.</p>", wide: true)
                 + detailModule("Hazard and revision context", slot("touched-series-table", content: touchedSeriesTable(s.operatorContext.lastTouchedSeries)), wide: true)
         case .mesos:
