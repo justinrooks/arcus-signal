@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.4.2
+
+### Features
+
+- Added a guarded development-only `POST /v1/dev/notification-test` flow that creates short-lived synthetic `TEST` SPC discussions from resolution-8 H3 cells and can hand accepted fixtures to the existing notification pipeline when its rollout gate is enabled.
+<!-- evidence: 0491925, 0e44beb, 8a1ff08 -->
+
+### Reliability
+
+- NWS coverage now remains tied to the canonical revision: revision advancement invalidates prior geometry/H3, delayed targeting cannot replace newer coverage, and sends reject content read across a revision change.
+<!-- evidence: dfda009 -->
+- NWS location collections now expose recent cancellation states for reconciliation, while targeted lookups retain cancellation payloads by series ID; H3 targeting also requires the current supported scheme and resolution 8.
+<!-- evidence: 39c5518, cfa5ffe -->
+- Storm Setup fallbacks preserve parcel identity by keeping surface CIN and condensation-height values out of mixed-layer fields and leaving unsupported canonical ingredients nil.
+<!-- evidence: dcb5828 -->
+
+### Operations
+
+- The worker now reports Anvil reachability, SHARPpy readiness, and observed version/revision; the Control Room shows those observations and surfaces actionable health findings.
+<!-- evidence: 5bd252d, a7066d9 -->
+- Usage reporting now limits DAU/MAU to foreground-active registered production installations and reports the subset registered before the current UTC month.
+<!-- evidence: 2880221 -->
+- Release installation now verifies the selected stable image and runtime identity, checks migrations and schema before service replacement, observes health and delivery evidence, and persists the verified image tag for later Compose commands.
+<!-- evidence: d272ac1, 0491925 -->
+
+### Maintenance
+
+- Added a repeatable runbook for separately validating development meso notifications, distinguishing endpoint acceptance, queue handoff, APNs response, and physical receipt or tap evidence.
+<!-- evidence: c40c0f8 -->
+
 ## v1.4.1
 
 ### Reliability

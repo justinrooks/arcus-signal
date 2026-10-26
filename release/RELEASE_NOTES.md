@@ -1,5 +1,23 @@
 # Release Notes
 
+## v1.4.2
+
+## Overview
+
+Arcus Signal v1.4.2 improves NWS revision and cancellation handling, preserves Storm Setup parcel meaning during native fallbacks, and adds operator visibility into Anvil and production installation usage. It also provides a gated development path for exercising SPC meso notifications. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- NWS targeting and delivery now follow the canonical alert revision, reject stale H3 presence, and expose recent cancellations for client reconciliation.
+- Storm Setup keeps surface measurements separate from mixed-layer ingredients and leaves unsupported canonical values unset.
+- The Control Room reports Anvil health and deployed identity, plus production-only DAU/MAU and returning installations registered before the current month.
+- A guarded development endpoint creates short-lived TEST meso fixtures and can pass them through the existing notification pipeline when the rollout gate is enabled.
+- Release installation verifies the selected stable image and runtime, checks migrations and schema before replacing services, observes outcomes, and saves the verified tag for subsequent Compose commands.
+
+## Maintenance
+
+- Added a runbook for separately validating the development meso notification path, from HTTP acceptance through queue and APNs evidence to physical device receipt or interaction.
+
 ## v1.4.1
 
 ## Overview
