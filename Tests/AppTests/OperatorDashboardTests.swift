@@ -344,9 +344,12 @@ struct OperatorDashboardTests {
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "test", revision: nil))
         let usageOverview = OperatorDashboardPageRenderer.usageOverview(response.growthUsage)
-        #expect(usageOverview.contains("stat-label\">Returning this month</span><strong class=\"stat-value\">30</strong>"))
+        let usageMetricsRail = usageOverview.components(separatedBy: "</div><p class=\"usage-returning\">").first ?? usageOverview
+        #expect(usageMetricsRail.components(separatedBy: "class=\"stat-label\"").count - 1 == 4)
+        #expect(usageOverview.contains("class=\"usage-returning\"><strong>Returning this month:</strong> 30 <span>registered before current UTC month</span>"))
+        #expect(html.contains(".usage-returning { display: flex; flex-wrap: wrap; gap: 4px 6px;"))
         let liveUsage = liveFunction("function renderUsageOverview", until: "function renderFootprintOverview", in: html)
-        #expect(liveUsage.contains("activity.refreshedAt?activity.returningThisMonthInstallationCount:'n/a'"))
+        #expect(liveUsage.contains(#"usage-returning"><strong>Returning this month:</strong> '+(activity.refreshedAt?activity.returningThisMonthInstallationCount:'n/a')"#))
         let live = liveFunction("function renderAPNsSuccessCard", until: "function renderCoverageCard", in: html)
         #expect(live.contains("spcMesoSentCount"))
         #expect(live.contains("spcMesoNoOpAttemptCount"))
