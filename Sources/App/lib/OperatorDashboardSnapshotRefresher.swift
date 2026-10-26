@@ -886,9 +886,13 @@ struct OperatorDashboardSnapshotRefresher {
             active_installations AS (
                 SELECT
                     activity.installation_id,
-                    BOOL_OR(activity.activity_date = bounds.current_day) AS active_today
+                    BOOL_OR(activity.activity_date = bounds.current_day) AS active_today,
+                    BOOL_OR(installation.created_at < (bounds.current_month_start::timestamp AT TIME ZONE 'UTC')) AS returning_this_month
                 FROM installation_activity_daily activity
                 CROSS JOIN bounds
+                JOIN device_installations installation
+                  ON installation.installation_id = activity.installation_id
+                 AND installation.apns_environment = 'prod'
                 WHERE activity.activity_date >= bounds.current_month_start
                   AND activity.activity_date < bounds.current_month_start + INTERVAL '1 month'
                 GROUP BY activity.installation_id
@@ -897,6 +901,7 @@ struct OperatorDashboardSnapshotRefresher {
                 SELECT
                     active.installation_id,
                     active.active_today,
+                    active.returning_this_month,
                     COALESCE(presence.state, 'Unknown') AS state
                 FROM active_installations active
                 LEFT JOIN presence_state presence
@@ -905,7 +910,8 @@ struct OperatorDashboardSnapshotRefresher {
             SELECT
                 state,
                 COUNT(*) FILTER (WHERE active_today) AS "activeTodayCount",
-                COUNT(*) AS "activeThisMonthCount"
+                COUNT(*) AS "activeThisMonthCount",
+                COUNT(*) FILTER (WHERE returning_this_month) AS "returningThisMonthCount"
             FROM classified
             GROUP BY state
             ORDER BY CASE WHEN state = 'Unknown' THEN 1 ELSE 0 END, state
@@ -914,6 +920,7 @@ struct OperatorDashboardSnapshotRefresher {
         return .init(
             dailyActiveInstallationCount: rows.reduce(0) { $0 + Int($1.activeTodayCount) },
             monthlyActiveInstallationCount: rows.reduce(0) { $0 + Int($1.activeThisMonthCount) },
+            returningThisMonthInstallationCount: rows.reduce(0) { $0 + Int($1.returningThisMonthCount) },
             stateBreakdown: rows.map {
                 .init(
                     state: $0.state,
@@ -1490,6 +1497,7 @@ private struct InstallationActivityStateRow: Decodable {
     let state: String
     let activeTodayCount: Int64
     let activeThisMonthCount: Int64
+    let returningThisMonthCount: Int64
 }
 
 private struct InstallationFootprintRow: Decodable {

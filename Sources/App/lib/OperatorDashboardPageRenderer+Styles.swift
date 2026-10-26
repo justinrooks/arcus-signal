@@ -99,6 +99,8 @@ details[open] summary { color: var(--ink); }
 .catalog-track i:last-child { flex: 1; background: var(--warn); }
 .module-note { font-size: 11px; color: var(--muted); margin-top: 12px; }
 .usage-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.usage-returning { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 12px 0 0; font-size: 11px; color: var(--muted); }
+.usage-returning strong { color: var(--ink); font-weight: 600; }
 .stat-label { font-size: 11px; color: var(--muted); display: block; }
 .stat-value { font-size: 32px; font-weight: 500; letter-spacing: -.05em; line-height: 1.2; margin: 7px 0; display: block; font-variant-numeric: tabular-nums; }
 .stat-unit { font-size: 11px; color: var(--muted); }

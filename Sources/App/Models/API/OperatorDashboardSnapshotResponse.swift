@@ -619,16 +619,36 @@ public struct StoredInstallationActivityState: Codable, Sendable {
 public struct StoredInstallationActivityMetric: Codable, Sendable {
     public var dailyActiveInstallationCount: Int
     public var monthlyActiveInstallationCount: Int
+    public var returningThisMonthInstallationCount: Int
     public var stateBreakdown: [StoredInstallationActivityState]
 
     public init(
         dailyActiveInstallationCount: Int = 0,
         monthlyActiveInstallationCount: Int = 0,
+        returningThisMonthInstallationCount: Int = 0,
         stateBreakdown: [StoredInstallationActivityState] = []
     ) {
         self.dailyActiveInstallationCount = dailyActiveInstallationCount
         self.monthlyActiveInstallationCount = monthlyActiveInstallationCount
+        self.returningThisMonthInstallationCount = returningThisMonthInstallationCount
         self.stateBreakdown = stateBreakdown
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case dailyActiveInstallationCount
+        case monthlyActiveInstallationCount
+        case returningThisMonthInstallationCount
+        case stateBreakdown
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            dailyActiveInstallationCount: try container.decodeIfPresent(Int.self, forKey: .dailyActiveInstallationCount) ?? 0,
+            monthlyActiveInstallationCount: try container.decodeIfPresent(Int.self, forKey: .monthlyActiveInstallationCount) ?? 0,
+            returningThisMonthInstallationCount: try container.decodeIfPresent(Int.self, forKey: .returningThisMonthInstallationCount) ?? 0,
+            stateBreakdown: try container.decodeIfPresent([StoredInstallationActivityState].self, forKey: .stateBreakdown) ?? []
+        )
     }
 }
 
@@ -1706,12 +1726,14 @@ public struct InstallationActivityMetricResponse: Content, Sendable {
     public var refreshedAt: Date?
     public var dailyActiveInstallationCount: Int
     public var monthlyActiveInstallationCount: Int
+    public var returningThisMonthInstallationCount: Int
     public var stateBreakdown: [InstallationActivityStateResponse]
 
     init(refreshedAt: Date?, metric: StoredInstallationActivityMetric) {
         self.refreshedAt = refreshedAt
         self.dailyActiveInstallationCount = metric.dailyActiveInstallationCount
         self.monthlyActiveInstallationCount = metric.monthlyActiveInstallationCount
+        self.returningThisMonthInstallationCount = metric.returningThisMonthInstallationCount
         self.stateBreakdown = metric.stateBreakdown.map {
             .init(
                 state: $0.state,
