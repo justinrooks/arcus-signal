@@ -3,7 +3,8 @@ import Vapor
 
 /// A /version observation establishes reachability and import readiness only, never analysis success.
 /// The standard worker refresh probes every 60 seconds with one 3-second request (no retries).
-/// Three consecutive failed probes are critical; the first two are unknown. Success clears failures.
+/// Three consecutive transport failures are critical; the first two are unknown. Success clears failures.
+/// Reachable HTTP/contract failures stay unknown and break a transport-failure streak.
 /// Observations older than 180 seconds or future-dated render unknown, independently of snapshot age.
 /// A gap beyond 180 seconds restarts failure accumulation. Last successful identity/readiness remain
 /// dated diagnostic context during failures or missing configuration. No expected release is inferred.
@@ -18,6 +19,7 @@ public struct AnvilServiceObservation: Codable, Sendable {
     public var sharppyAvailable: Bool?
     public var version: String?
     public var revision: String?
+    /// Consecutive failures of the same category, bounded at the critical threshold.
     public var consecutiveFailures: Int = 0
     public var recentFailure: Failure?
 
@@ -36,14 +38,14 @@ public struct AnvilServiceObservation: Codable, Sendable {
 
     func failed(_ failure: Failure, at now: Date) -> Self {
         var result = self
-        // A gap in observation cannot establish a continuous outage.
+        // A gap or a different failure category cannot establish a continuous transport outage.
         let previousCount = checkedAt.flatMap { date in
-            (0...Self.freshnessSeconds).contains(now.timeIntervalSince(date)) ? consecutiveFailures : nil
+            recentFailure == failure && (0...Self.freshnessSeconds).contains(now.timeIntervalSince(date)) ? consecutiveFailures : nil
         } ?? 0
         result.consecutiveFailures = min(previousCount + 1, Self.criticalFailureCount)
         result.checkedAt = now
         result.recentFailure = failure
-        result.status = result.consecutiveFailures >= Self.criticalFailureCount ? .critical : .unknown
+        result.status = failure == .transport && result.consecutiveFailures >= Self.criticalFailureCount ? .critical : .unknown
         return result
     }
 }

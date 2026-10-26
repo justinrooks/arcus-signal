@@ -86,6 +86,35 @@ struct AnvilServiceObservationTests {
         #expect(result.version == nil && result.lastSuccessfulAt == nil)
     }
 
+    @Test(arguments: [401, 404, 503, 200])
+    func repeatedReachableFailuresRemainUnknown(status: Int) async throws {
+        let healthy = try await AnvilServiceObserver(httpClient: client(), baseURL: baseURL).observe(previous: nil, now: now)
+        let observer = AnvilServiceObserver(
+            httpClient: ObservationHTTPClient(body: #"{"service":"arcus-anvil","version":"v1.2.3","analysisEngine":{"name":"unsupported","available":true}}"#, status: status),
+            baseURL: baseURL
+        )
+        var result = healthy
+        for count in 1...4 {
+            let checkedAt = now.addingTimeInterval(Double(count * 60))
+            result = try await observer.observe(previous: result, now: checkedAt)
+            #expect(result.status == .unknown)
+            #expect(result.recentFailure == (status == 200 ? .invalidPayload : .httpStatus))
+            #expect(result.consecutiveFailures == min(count, AnvilServiceObservation.criticalFailureCount))
+            #expect(result.checkedAt == checkedAt && result.lastSuccessfulAt == now)
+            #expect(result.version == healthy.version && result.revision == healthy.revision)
+        }
+    }
+
+    @Test(arguments: [AnvilServiceObservation.Failure.httpStatus, .invalidPayload])
+    func reachableFailureBreaksTransportOutageStreak(failure: AnvilServiceObservation.Failure) {
+        var result = AnvilServiceObservation()
+        for (index, category) in [AnvilServiceObservation.Failure.transport, .transport, failure, .transport, .transport, .transport].enumerated() {
+            result = result.failed(category, at: now.addingTimeInterval(Double(index * 60)))
+            #expect(result.status == (index == 5 ? .critical : .unknown))
+            if index == 3 { #expect(result.consecutiveFailures == 1) }
+        }
+    }
+
     @Test
     func unconfiguredAndFailures() async throws {
         let http = client()
