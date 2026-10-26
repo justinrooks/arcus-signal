@@ -159,6 +159,7 @@ struct OperatorDashboardTests {
             installationActivity: .init(
                 dailyActiveInstallationCount: 27,
                 monthlyActiveInstallationCount: 38,
+                returningThisMonthInstallationCount: 30,
                 stateBreakdown: [
                     .init(state: "CO", activeTodayCount: 18, activeThisMonthCount: 29),
                     .init(state: "TX", activeTodayCount: 4, activeThisMonthCount: 6),
@@ -323,6 +324,7 @@ struct OperatorDashboardTests {
         #expect(response.growthUsage.installationGrowth.dormantInstallationCount == 4)
         #expect(response.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
         #expect(response.growthUsage.installationActivity.monthlyActiveInstallationCount == 38)
+        #expect(response.growthUsage.installationActivity.returningThisMonthInstallationCount == 30)
         #expect(response.growthUsage.installationActivity.stateBreakdown.last?.state == "Unknown")
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.targetableRate ?? 0) - 0.61) < 0.0001)
         #expect(abs((response.audienceTargeting.freshTargetableInstallationCoverage.candidateQueryEligibilityRate ?? 0) - 0.74) < 0.0001)
@@ -341,6 +343,10 @@ struct OperatorDashboardTests {
         #expect(zeroCandidateCard.contains("Meso eligible candidates across attempts") && zeroCandidateCard.contains("17"))
 
         let html = OperatorDashboardPageRenderer.render(snapshot: response, buildInfo: .init(version: "test", revision: nil))
+        let usageOverview = OperatorDashboardPageRenderer.usageOverview(response.growthUsage)
+        #expect(usageOverview.contains("stat-label\">Returning this month</span><strong class=\"stat-value\">30</strong>"))
+        let liveUsage = liveFunction("function renderUsageOverview", until: "function renderFootprintOverview", in: html)
+        #expect(liveUsage.contains("activity.refreshedAt?activity.returningThisMonthInstallationCount:'n/a'"))
         let live = liveFunction("function renderAPNsSuccessCard", until: "function renderCoverageCard", in: html)
         #expect(live.contains("spcMesoSentCount"))
         #expect(live.contains("spcMesoNoOpAttemptCount"))
@@ -349,6 +355,16 @@ struct OperatorDashboardTests {
         let liveNoOp = liveFunction("function renderNoOpCard", until: "function renderZeroCandidateCard", in: html)
         #expect(liveNoOp.range(of: "{ label: 'Reasons'")!.lowerBound < liveNoOp.range(of: "{ label: 'Meso attempts / no-ops'")!.lowerBound)
         #expect(liveNoOp.range(of: "{ label: 'Meso attempts / no-ops'")!.lowerBound < liveNoOp.range(of: "{ label: 'Meso no-op reasons'")!.lowerBound)
+    }
+
+    @Test("legacy installation activity metrics default returning count")
+    func legacyInstallationActivityMetricDefaultsReturningCount() throws {
+        let json = #"{"dailyActiveInstallationCount":2,"monthlyActiveInstallationCount":5,"stateBreakdown":[]}"#
+        let metric = try JSONDecoder().decode(StoredInstallationActivityMetric.self, from: Data(json.utf8))
+
+        #expect(metric.dailyActiveInstallationCount == 2)
+        #expect(metric.monthlyActiveInstallationCount == 5)
+        #expect(metric.returningThisMonthInstallationCount == 0)
     }
 
     @Test("legacy dashboard snapshots decode without product-kind breakdowns")
@@ -606,6 +622,7 @@ struct OperatorDashboardTests {
         #expect(snapshot.installationGrowth.monthlyGrowth.isEmpty)
         #expect(snapshot.installationActivity.dailyActiveInstallationCount == 0)
         #expect(snapshot.installationActivity.monthlyActiveInstallationCount == 0)
+        #expect(snapshot.installationActivity.returningThisMonthInstallationCount == 0)
         #expect(snapshot.installationActivity.stateBreakdown.isEmpty)
         #expect(snapshot.recentNotificationDebugEntries.first?.seriesID == UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
         #expect(snapshot.recentNotificationDebugEntries.first?.subjectKind == nil)
@@ -677,6 +694,7 @@ struct OperatorDashboardTests {
                 #expect(payload.growthUsage.installationGrowth.monthlyGrowth.last?.cumulativeInstallationCount == 40)
                 #expect(payload.growthUsage.installationActivity.dailyActiveInstallationCount == 27)
                 #expect(payload.growthUsage.installationActivity.monthlyActiveInstallationCount == 38)
+                #expect(payload.growthUsage.installationActivity.returningThisMonthInstallationCount == 30)
                 #expect(payload.growthUsage.installationActivity.stateBreakdown.first?.state == "CO")
                 let coverage = payload.audienceTargeting.freshTargetableInstallationCoverage
                 #expect(coverage.hardStalePresenceThresholdSeconds == 86_400)

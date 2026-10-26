@@ -909,6 +909,7 @@ extension OperatorDashboardPageRenderer {
               '<div class="usage-metrics">'+controlStat('Current',growth.refreshedAt?growth.currentInstallationCount:'n/a','installations')+
               controlStat('Today',activity.refreshedAt?activity.dailyActiveInstallationCount:'n/a','DAU')+
               controlStat('This month',activity.refreshedAt?activity.monthlyActiveInstallationCount:'n/a','MAU')+
+              controlStat('Returning this month',activity.refreshedAt?activity.returningThisMonthInstallationCount:'n/a','registered before this month')+
               controlStat('New this month',growth.refreshedAt?growth.newThisMonthCount:'n/a',growth.monthlyGrowth.length?formatMonth(growth.monthlyGrowth[growth.monthlyGrowth.length-1].monthStart):'n/a')+
               '</div><div class="usage-foot"><span><strong>'+(growth.refreshedAt?growth.currentlySubscribedCount:'n/a')+'</strong> subscribed</span><span class="muted">Activity updated '+escapeHtml(controlTime(activity.refreshedAt))+'</span></div><p class="module-note">Installations, not people. Background contact is not DAU.</p>';
           }

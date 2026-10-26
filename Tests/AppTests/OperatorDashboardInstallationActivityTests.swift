@@ -23,12 +23,22 @@ struct OperatorDashboardInstallationActivityTests {
                         throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
                     }
 
+                    try await sql.raw("SET LOCAL TIME ZONE 'America/Denver'").run()
+
                     try await sql.raw("""
                         CREATE TEMPORARY TABLE installation_activity_daily (
                             installation_id UUID NOT NULL,
                             activity_date DATE NOT NULL,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                             UNIQUE (installation_id, activity_date)
+                        ) ON COMMIT DROP
+                    """).run()
+                    try await sql.raw("""
+                        CREATE TEMPORARY TABLE device_installations (
+                            installation_id UUID PRIMARY KEY,
+                            apns_environment TEXT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            is_active BOOLEAN NOT NULL
                         ) ON COMMIT DROP
                     """).run()
                     try await sql.raw("""
@@ -64,6 +74,19 @@ struct OperatorDashboardInstallationActivityTests {
         """).run()
     }
 
+    private func seedInstallation(
+        _ installationID: UUID,
+        environment: String = "prod",
+        createdAt: String,
+        isActive: Bool = true,
+        on sql: any SQLDatabase
+    ) async throws {
+        try await sql.raw("""
+            INSERT INTO device_installations (installation_id, apns_environment, created_at, is_active)
+            VALUES (\(bind: installationID), \(bind: environment), \(bind: createdAt)::timestamptz, \(bind: isActive))
+        """).run()
+    }
+
     private func seedPresence(
         installationID: UUID,
         county: String? = nil,
@@ -87,6 +110,7 @@ struct OperatorDashboardInstallationActivityTests {
             let invalidPresence = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
             let priorMonth = UUID(uuidString: "00000000-0000-0000-0000-000000000006")!
             let nextMonth = UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
+            let sandbox = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
 
             try await seedActivity(installationID: colorado, activityDate: "2026-04-07", on: sql)
             try await seedActivity(installationID: colorado, activityDate: "2026-04-08", on: sql)
@@ -96,6 +120,15 @@ struct OperatorDashboardInstallationActivityTests {
             try await seedActivity(installationID: invalidPresence, activityDate: "2026-04-07", on: sql)
             try await seedActivity(installationID: priorMonth, activityDate: "2026-03-31", on: sql)
             try await seedActivity(installationID: nextMonth, activityDate: "2026-05-01", on: sql)
+            try await seedActivity(installationID: sandbox, activityDate: "2026-04-08", on: sql)
+
+            try await seedInstallation(colorado, createdAt: "2026-03-31T23:59:59Z", on: sql)
+            try await seedInstallation(texas, createdAt: "2026-04-01T00:00:00Z", on: sql)
+            try await seedInstallation(kansas, createdAt: "2026-04-07T12:00:00Z", isActive: false, on: sql)
+            try await seedInstallation(invalidPresence, createdAt: "2026-03-01T00:00:00Z", isActive: false, on: sql)
+            try await seedInstallation(priorMonth, createdAt: "2026-02-01T00:00:00Z", on: sql)
+            try await seedInstallation(nextMonth, createdAt: "2026-05-01T00:00:00Z", on: sql)
+            try await seedInstallation(sandbox, environment: "sandbox", createdAt: "2026-02-01T00:00:00Z", on: sql)
 
             try await seedPresence(
                 installationID: colorado,
@@ -129,13 +162,20 @@ struct OperatorDashboardInstallationActivityTests {
             let metric = try await OperatorDashboardSnapshotRefresher()
                 .loadInstallationActivity(on: sql, now: now)
 
-            #expect(metric.dailyActiveInstallationCount == 3)
-            #expect(metric.monthlyActiveInstallationCount == 5)
+            #expect(metric.dailyActiveInstallationCount == 2)
+            #expect(metric.monthlyActiveInstallationCount == 4)
+            #expect(metric.returningThisMonthInstallationCount == 2)
             #expect(metric.stateBreakdown.map(\.state) == ["CO", "KS", "TX", "Unknown"])
-            #expect(metric.stateBreakdown.map(\.activeTodayCount) == [1, 1, 0, 1])
-            #expect(metric.stateBreakdown.map(\.activeThisMonthCount) == [1, 1, 1, 2])
+            #expect(metric.stateBreakdown.map(\.activeTodayCount) == [1, 1, 0, 0])
+            #expect(metric.stateBreakdown.map(\.activeThisMonthCount) == [1, 1, 1, 1])
             #expect(metric.stateBreakdown.reduce(0) { $0 + $1.activeTodayCount } == metric.dailyActiveInstallationCount)
             #expect(metric.stateBreakdown.reduce(0) { $0 + $1.activeThisMonthCount } == metric.monthlyActiveInstallationCount)
+
+            let utcMonthStart = try await OperatorDashboardSnapshotRefresher()
+                .loadInstallationActivity(on: sql, now: isoDate("2026-04-01T00:30:00Z"))
+            #expect(utcMonthStart.dailyActiveInstallationCount == 1)
+            #expect(utcMonthStart.monthlyActiveInstallationCount == 4)
+            #expect(utcMonthStart.returningThisMonthInstallationCount == 2)
         }
     }
 
@@ -149,5 +189,13 @@ struct OperatorDashboardInstallationActivityTests {
             #expect(metric.monthlyActiveInstallationCount == 0)
             #expect(metric.stateBreakdown.isEmpty)
         }
+    }
+
+    private func isoDate(_ value: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else {
+            fatalError("Invalid ISO8601 date in test fixture: \(value)")
+        }
+        return date
     }
 }
