@@ -42,6 +42,7 @@ private struct FixedStormSetupDateProvider: StormSetupDateProviding {
 }
 
 struct OperatorDashboardSnapshotRefresher {
+    var anvilHTTPClient: (any HTTPClient)? = nil
     func refreshIfDue(
         on app: Application,
         forceAll: Bool = false,
@@ -74,6 +75,10 @@ struct OperatorDashboardSnapshotRefresher {
         }
 
         if standardDue {
+            snapshot.anvil = try await AnvilServiceObserver(
+                httpClient: anvilHTTPClient ?? VaporApplicationHTTPClient(application: app, retryDelaysSeconds: []),
+                baseURL: app.stormSetupConfiguration.anvilProfileAnalysisBaseURL
+            ).observe(previous: snapshot.anvil, now: now)
             snapshot.staleActiveSeries = try await loadStaleActiveSeries(on: sql, now: now)
             snapshot.sendNoOps = try await loadSendNoOps(on: sql, now: now)
             snapshot.zeroCandidateRate = try await loadZeroCandidateRate(on: sql, now: now)

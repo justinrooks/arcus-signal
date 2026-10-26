@@ -15,7 +15,7 @@ public enum OperatorDashboardHealthState: String, Codable, Sendable {
 }
 
 public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 11
+    public static let currentSchemaVersion = 12
 
     public var schemaVersion: Int
     public var generatedAt: Date
@@ -25,6 +25,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
     public var slowRefreshedAt: Date?
 
     public var airNow: AirNowDependencyStatus
+    public var anvil: AnvilServiceObservation?
     public var ingestFreshness: StoredIngestFreshnessMetric
     public var mesoActivity: StoredMesoActivity?
     public var spcMesoIngest: StoredSPCMesoIngestMetric
@@ -76,6 +77,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.standardRefreshedAt = standardRefreshedAt
         self.slowRefreshedAt = slowRefreshedAt
         self.airNow = airNow
+        self.anvil = nil
         self.ingestFreshness = ingestFreshness
         self.spcMesoIngest = spcMesoIngest
         self.mesoActivity = mesoActivity
@@ -103,6 +105,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         case standardRefreshedAt
         case slowRefreshedAt
         case airNow
+        case anvil
         case ingestFreshness
         case spcMesoIngest
         case mesoActivity
@@ -131,6 +134,7 @@ public struct OperatorDashboardStoredSnapshot: Codable, Sendable {
         self.standardRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .standardRefreshedAt)
         self.slowRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .slowRefreshedAt)
         self.airNow = try container.decodeIfPresent(AirNowDependencyStatus.self, forKey: .airNow) ?? .init()
+        self.anvil = try container.decodeIfPresent(AnvilServiceObservation.self, forKey: .anvil)
         self.ingestFreshness = try container.decode(StoredIngestFreshnessMetric.self, forKey: .ingestFreshness)
         self.spcMesoIngest = try container.decodeIfPresent(StoredSPCMesoIngestMetric.self, forKey: .spcMesoIngest) ?? .init()
         self.mesoActivity = try container.decodeIfPresent(StoredMesoActivity.self, forKey: .mesoActivity)
@@ -1057,6 +1061,7 @@ public struct StoredTouchedSeriesEntry: Codable, Sendable {
 }
 
 public struct OperatorDashboardSnapshotResponse: Content, Sendable {
+    public var anvil: AnvilServiceObservation?
     public var renderedAt: Date
     public var generatedAt: Date
     public var redLights: OperatorDashboardRedLightsSectionResponse
@@ -1068,6 +1073,7 @@ public struct OperatorDashboardSnapshotResponse: Content, Sendable {
     public var operatorContext: OperatorDashboardOperatorContextSectionResponse
 
     public init(snapshot: OperatorDashboardStoredSnapshot, renderedAt: Date = .now) {
+        self.anvil = (snapshot.anvil ?? .init()).rendered(at: renderedAt)
         self.renderedAt = renderedAt
         self.generatedAt = snapshot.generatedAt
         self.redLights = .init(snapshot: snapshot, renderedAt: renderedAt)
