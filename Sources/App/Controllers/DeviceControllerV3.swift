@@ -125,7 +125,7 @@ private func preferenceResponse(_ status: DevicePreferencesV3AcceptedResponse.St
     return try .init(status: status, acceptedConsentRevision: revision, receivedAt: now,
         serverOwnsMesoNotificationDelivery: app.mesoNotificationsEnabled && installation.isActive
             && installation.isSubscribed && installation.mesoNotificationsEnabled == true
-            && installation.locationSharingEnabled
+            && installation.locationSharingEnabled && !installation.apnsDeviceToken.isEmpty
             && (installation.locationAuth == .always || installation.locationAuth == .whenInUse))
 }
 

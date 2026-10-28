@@ -93,11 +93,15 @@ struct DeviceV3ControllerTests {
             #expect(try status(first) == "accepted")
             let response = try first.content.decode(DevicePreferencesV3AcceptedResponse.self)
             #expect(response.acceptedConsentRevision == 1)
+            #expect(!response.serverOwnsMesoNotificationDelivery)
             #expect(try await DeviceInstallationModel.find(id, on: app.db)?.apnsDeviceToken == "")
             var binding = preferences(id)
             binding["apnsDeviceToken"] = "rotated-token"
             binding["apnsEnvironment"] = "prod"
-            #expect(try status(try await post("api/v3/devices/preferences", binding, app: app)) == "unchanged")
+            let bound = try await post("api/v3/devices/preferences", binding, app: app)
+            let boundResponse = try bound.content.decode(DevicePreferencesV3AcceptedResponse.self)
+            #expect(boundResponse.status == .unchanged && boundResponse.acceptedConsentRevision == 1)
+            #expect(boundResponse.serverOwnsMesoNotificationDelivery)
             #expect(try await DeviceInstallationModel.find(id, on: app.db)?.apnsDeviceToken == "rotated-token")
             #expect(try await DeviceInstallationModel.find(id, on: app.db)?.apnsEnvironmentRaw == "prod")
             var omitted = preferences(id)
@@ -173,6 +177,30 @@ struct DeviceV3ControllerTests {
             #expect(try await !store.acceptedConsentAllowsDelivery(candidate, meso: true, on: app.db))
             let state = try #require(PresenceReconciliationState(installation: try await DeviceInstallationModel.find(id, on: app.db), presence: try await DevicePresenceModel.find(id, on: app.db)))
             #expect(!PresenceReconciliationTrigger.isUsable(state, now: .now))
+        }
+    }
+
+    @Test("A selected candidate needs an existing installation, including before v3 promotion")
+    func missingInstallationFailsClosed() async throws {
+        try await withApp { app in
+            let id = id(); try await enroll(id, app: app)
+            var legacy = location(id)
+            legacy.merge(["apnsDeviceToken": "bound", "apnsEnvironment": "sandbox", "platform": "iOS",
+                          "osVersion": "26", "appVersion": "1", "buildNumber": "1", "auth": "always",
+                          "isSubscribed": true]) { _, new in new }
+            #expect(try await post("v2/devices/location-snapshots", legacy, app: app).status == .ok)
+            let store = NotificationCandidateStore()
+            let candidate = try #require(try await store.loadUGCCandidates(ugcCodes: ["COC031"],
+                capturedAtOrAfter: .distantPast, installationId: id, on: app.db).first)
+            let installation = try #require(try await DeviceInstallationModel.find(id, on: app.db))
+            #expect(installation.consentRevision == nil)
+            for meso in [false, true] {
+                #expect(try await store.acceptedConsentAllowsDelivery(candidate, meso: meso, on: app.db))
+            }
+            try await installation.delete(on: app.db)
+            for meso in [false, true] {
+                #expect(try await !store.acceptedConsentAllowsDelivery(candidate, meso: meso, on: app.db))
+            }
         }
     }
 
