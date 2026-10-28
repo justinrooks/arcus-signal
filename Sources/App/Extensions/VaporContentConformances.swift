@@ -29,3 +29,6 @@ extension AnvilStormMotionDTO: @retroactive Content {}
 extension AnvilBunkersRightStormMotionDTO: @retroactive Content {}
 extension AirQualityCurrentResponse: @retroactive Content {}
 extension AirQualityCategory: @retroactive Content {}
+
+extension InstallationEnrollmentRequest: @retroactive Content {}
+extension InstallationEnrollmentAcceptedResponse: @retroactive Content {}

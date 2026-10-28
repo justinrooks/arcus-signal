@@ -153,6 +153,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(CreateAirNowDependencyStatus())
     app.migrations.add(AddNotificationSubjectIdentity())
     app.migrations.add(MakeNotificationSubjectKindsExtensible())
+    app.migrations.add(CreateInstallationCredentials())
 }
 
 private func configureAPNs(on app: Application) async throws {
