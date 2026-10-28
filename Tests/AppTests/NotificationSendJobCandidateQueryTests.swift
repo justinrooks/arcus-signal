@@ -34,7 +34,9 @@ struct NotificationSendJobCandidateQueryTests {
 
         try await sql.raw("""
             ALTER TABLE device_installations
-            ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN NOT NULL DEFAULT TRUE;
+            ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS location_sharing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS consent_revision BIGINT;
             """).run()
 
         try await sql.raw("""

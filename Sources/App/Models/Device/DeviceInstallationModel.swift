@@ -47,6 +47,12 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
     @Field(key: "is_subscribed")
     public var isSubscribed: Bool
 
+    @OptionalField(key: "consent_revision")
+    public var consentRevision: Int64?
+
+    @Field(key: "location_sharing_enabled")
+    public var locationSharingEnabled: Bool
+
     @OptionalField(key: "meso_notifications_enabled")
     public var mesoNotificationsEnabled: Bool?
 
@@ -75,6 +81,7 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
         isSubscribed: Bool = true,
         mesoNotificationsEnabled: Bool? = nil
     ) {
+        self.locationSharingEnabled = true
         self.id = installationId
         self.apnsDeviceToken = apnsDeviceToken
         self.apnsEnvironmentRaw = apnsEnvironment.rawValue

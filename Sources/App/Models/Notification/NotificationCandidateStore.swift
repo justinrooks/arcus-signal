@@ -27,6 +27,17 @@ struct NotificationActiveAlertMatch: Decodable, Sendable {
 }
 
 struct NotificationCandidateStore {
+    /// Recheck promoted installations after claiming, including retry claims. This cannot recall an APNs request already started.
+    func acceptedConsentAllowsDelivery(_ candidate: NotificationCandidate, meso: Bool = false, on db: any Database) async throws -> Bool {
+        guard let installation = try await DeviceInstallationModel.find(candidate.id, on: db),
+              installation.consentRevision != nil else { return true }
+        return installation.isActive && installation.isSubscribed && installation.locationSharingEnabled
+            && (installation.locationAuth == .always || installation.locationAuth == .whenInUse)
+            && (!meso || installation.mesoNotificationsEnabled == true)
+            && !installation.apnsDeviceToken.isEmpty && installation.apnsDeviceToken == candidate.apnsToken
+            && installation.apnsEnvironmentRaw == candidate.apnsEnvironment
+    }
+
     func loadMatchingActiveAlerts(
         for installationId: UUID,
         evaluatedAt: Date,
@@ -43,6 +54,7 @@ struct NotificationCandidateStore {
                 o.mode AS "mode",
                 o.reason AS "reason"
             FROM device_presence p
+            JOIN device_installations i ON i.installation_id = p.installation_id
             CROSS JOIN arcus_series s
             JOIN alert_revisions r
               ON r.series_id = s.id
@@ -53,6 +65,8 @@ struct NotificationCandidateStore {
             LEFT JOIN arcus_geolocation g
               ON g.series_id = s.id
             WHERE p.installation_id = \(bind: installationId)
+              AND i.is_active = TRUE AND i.is_subscribed = TRUE
+              AND i.location_sharing_enabled = TRUE AND i.apns_device_token <> ''
               AND s.state = \(bind: EventState.active.rawValue)
               AND (s.expires IS NULL OR s.expires > \(bind: evaluatedAt))
               AND (s.ends IS NULL OR s.ends > \(bind: evaluatedAt))
@@ -108,7 +122,7 @@ struct NotificationCandidateStore {
             FROM device_installations i
             JOIN device_presence p on i.installation_id = p.installation_id
             WHERE i.is_active = TRUE
-              AND i.is_subscribed = TRUE
+              AND i.is_subscribed = TRUE AND i.location_sharing_enabled = TRUE
               AND i.apns_device_token <> ''
               AND (\(bind: installationId)::uuid IS NULL OR i.installation_id = \(bind: installationId)::uuid)
               AND p.captured_at >= \(bind: cutoff)
@@ -146,7 +160,7 @@ struct NotificationCandidateStore {
             JOIN device_presence p
               ON i.installation_id = p.installation_id
             WHERE i.is_active = TRUE
-              AND i.is_subscribed = TRUE
+              AND i.is_subscribed = TRUE AND i.location_sharing_enabled = TRUE
               AND i.apns_device_token <> ''
               AND (\(bind: installationId)::uuid IS NULL OR i.installation_id = \(bind: installationId)::uuid)
               AND p.cell_scheme = 'h3'

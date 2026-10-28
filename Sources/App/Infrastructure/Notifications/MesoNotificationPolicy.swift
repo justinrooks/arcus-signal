@@ -51,7 +51,7 @@ extension NotificationCandidateStore {
             WHERE s.valid_start <= \(bind: evaluatedAt) AND s.valid_end > \(bind: evaluatedAt)
               AND g.h3_resolution = 8 AND g.h3_hash IS NOT NULL
               AND p.cell_scheme = 'h3' AND p.h3_resolution = 8
-              AND i.is_active = TRUE AND i.is_subscribed = TRUE
+              AND i.is_active = TRUE AND i.is_subscribed = TRUE AND i.location_sharing_enabled = TRUE
               AND i.meso_notifications_enabled = TRUE AND i.apns_device_token <> ''
               AND p.captured_at >= \(bind: evaluatedAt.addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold))
             """
