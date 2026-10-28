@@ -149,6 +149,26 @@ struct InstallationCredentialControllerTests {
         }
     }
 
+    @Test("Credential rollback refuses a populated table and preserves installation authority")
+    func populatedMigrationRevertPreservesAuthority() async throws {
+        try await withApp { (app: Application) async throws in
+            let id = newID()
+            #expect(try await enroll(id, credential: owner, app: app).status == .ok)
+            let before = try #require(try await InstallationCredentialStore.load(id, on: app.db))
+            await #expect {
+                try await CreateInstallationCredentials().revert(on: app.db)
+            } throws: { error in
+                guard let abort = error as? Abort else { return false }
+                return abort.status == .conflict
+                    && abort.reason == "Cannot revert installation credentials while enrolled installations exist"
+            }
+            #expect(try await InstallationCredentialStore.load(id, on: app.db) == before)
+            #expect(try await enroll(id, credential: owner, app: app).status == .ok)
+            #expect(try await enroll(id, credential: stranger, app: app).status == .conflict)
+            #expect(try await post("v1/devices/foreground-activity", body: payload(id, endpoint: "foreground-activity"), app: app).status == .unauthorized)
+        }
+    }
+
     @Test("Every mutation and alias rejects absent, malformed, wrong-owner, and v1 bypass proofs without effects")
     func protectedMutationMatrix() async throws {
         try await withApp { (app: Application) async throws in
