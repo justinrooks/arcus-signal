@@ -17,6 +17,12 @@ func configureAPIRoutes(_ app: Application) throws {
     try app.register(collection: NotificationsController())
     try app.register(collection: AlertsController())
     try app.register(collection: MesosController())
+    let legacyWrites = Environment.get("DEVICE_LEGACY_WRITES_ENABLED") ?? "true"
+    guard ["true", "false"].contains(legacyWrites) else {
+        throw Abort(.internalServerError, reason: "DEVICE_LEGACY_WRITES_ENABLED must be true or false")
+    }
+    app.deviceLegacyWritesEnabled = legacyWrites == "true"
+    app.logger.notice("Device legacy writes configured.", metadata: ["enabled": .string(legacyWrites)])
     try app.register(collection: DeviceController())
     try app.register(collection: OperatorDashboardController())
     try app.register(collection: StormSetupController())

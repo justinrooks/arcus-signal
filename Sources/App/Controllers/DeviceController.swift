@@ -32,20 +32,57 @@ struct DeviceController: RouteCollection {
             devices.post("location-snapshots", use: create)
             devices.post("preferences", use: createPreferences)
             devices.post("foreground-activity", use: createForegroundActivity)
+            let authenticated = root.grouped("v2", "devices")
+            authenticated.post("enroll", use: enroll)
+            authenticated.post("location-snapshots", use: createV2)
+            authenticated.post("preferences", use: createPreferencesV2)
+            authenticated.post("foreground-activity", use: createForegroundActivityV2)
         }
     }
 
+    func enroll(req: Request) async throws -> InstallationEnrollmentAcceptedResponse {
+        let payload = try req.content.decode(InstallationEnrollmentRequest.self)
+        guard let id = UUID(uuidString: payload.installationId),
+              let verifier = InstallationCredentialStore.verifier(for: payload.credential) else {
+            throw Abort(.badRequest, reason: "Invalid enrollment request")
+        }
+        try await req.db.transaction { database in
+            try await InstallationCredentialStore.lock(id, on: database)
+            try await InstallationCredentialStore.enroll(id, verifier: verifier, on: database)
+        }
+        return .init(status: "accepted")
+    }
+
     func createForegroundActivity(req: Request) async throws -> HTTPStatus {
+        try await createForegroundActivity(req: req, authenticated: false)
+    }
+
+    func createForegroundActivityV2(req: Request) async throws -> HTTPStatus {
+        try await createForegroundActivity(req: req, authenticated: true)
+    }
+
+    private func createForegroundActivity(req: Request, authenticated: Bool) async throws -> HTTPStatus {
         let payload = try req.content.decode(ForegroundActivityRequest.self)
-        try await InstallationActivityDailyStore().record(
-            installationID: payload.installationId,
-            receivedAt: .now,
-            on: req.db
-        )
+        try await req.db.transaction { database in
+            try await authorize(req, installationID: payload.installationId, authenticated: authenticated, on: database)
+            try await InstallationActivityDailyStore().record(
+                installationID: payload.installationId,
+                receivedAt: .now,
+                on: database
+            )
+        }
         return .noContent
     }
     
     func create(req: Request) async throws -> LocationSnapshotAcceptedResponse {
+        try await create(req: req, authenticated: false)
+    }
+
+    func createV2(req: Request) async throws -> LocationSnapshotAcceptedResponse {
+        try await create(req: req, authenticated: true)
+    }
+
+    private func create(req: Request, authenticated: Bool) async throws -> LocationSnapshotAcceptedResponse {
         let payload = try req.content.decode(LocationSnapshotPushPayload.self)
         let installationId = payload.installationId
         guard let installationUUID = UUID(uuidString: installationId) else {
@@ -123,6 +160,7 @@ struct DeviceController: RouteCollection {
         }
         
         let commitResult = try await req.db.transaction { database in
+            try await authorize(req, installationID: installationUUID, authenticated: authenticated, on: database)
             let previousInstallation = try await DeviceInstallationModel.find(installationUUID, on: database)
             let previousPresence = try await DevicePresenceModel.find(installationUUID, on: database)
             let previousState = PresenceReconciliationState(
@@ -245,6 +283,14 @@ struct DeviceController: RouteCollection {
     }
 
     func createPreferences(req: Request) async throws -> DevicePreferenceSyncAcceptedResponse {
+        try await createPreferences(req: req, authenticated: false)
+    }
+
+    func createPreferencesV2(req: Request) async throws -> DevicePreferenceSyncAcceptedResponse {
+        try await createPreferences(req: req, authenticated: true)
+    }
+
+    private func createPreferences(req: Request, authenticated: Bool) async throws -> DevicePreferenceSyncAcceptedResponse {
         let payload = try req.content.decode(DevicePreferenceSyncPayload.self)
 
         guard let installationUUID = UUID(uuidString: payload.installationId) else {
@@ -283,7 +329,8 @@ struct DeviceController: RouteCollection {
         let receivedAt = Date()
 
         let installation = try await req.db.transaction { database in
-            try await upsertDeviceInstallation(
+            try await authorize(req, installationID: installationUUID, authenticated: authenticated, on: database)
+            return try await upsertDeviceInstallation(
                 installationId: installationUUID,
                 apnsDeviceToken: apnsDeviceToken,
                 apnsEnvironment: apnsEnvironment,
@@ -320,6 +367,30 @@ struct DeviceController: RouteCollection {
                 && installation.isSubscribed
                 && installation.mesoNotificationsEnabled == true
         )
+    }
+}
+
+/// Authorization and the entire mutation must use the same transaction as this lock.
+private func authorize(
+    _ req: Request,
+    installationID: UUID,
+    authenticated: Bool,
+    on database: any Database
+) async throws {
+    try await InstallationCredentialStore.lock(installationID, on: database)
+    let verifier = try await InstallationCredentialStore.load(installationID, on: database)
+    if authenticated {
+        guard let verifier,
+              req.headers[.authorization].count == 1,
+              let credential = req.headers.bearerAuthorization?.token,
+              let supplied = InstallationCredentialStore.verifier(for: credential),
+              verifier.utf8.secureCompare(to: supplied.utf8) else {
+            throw Abort(.unauthorized)
+        }
+    } else {
+        guard req.application.deviceLegacyWritesEnabled, verifier == nil else {
+            throw Abort(.unauthorized)
+        }
     }
 }
 
