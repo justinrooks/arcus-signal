@@ -812,6 +812,21 @@ extension NotificationSendJob {
                 using: context
             )
 
+            let consentAllowsDelivery: Bool
+            do {
+                consentAllowsDelivery = try await candidateStore.acceptedConsentAllowsDelivery(candidate, on: context.application.db)
+            } catch {
+                // A failed pre-send read must remain retryable; never strand a claimed row.
+                try await deliveryStore.markRetrying(claimID: claim.id, retryOwnerID: retryOwnerID,
+                    retryGeneration: claim.retryGeneration, apnsErrorCode: "ConsentEligibilityReadFailed", on: context.application.db)
+                retryableFailureCount += 1
+                continue
+            }
+            guard consentAllowsDelivery else {
+                try await deliveryStore.completeFailed(claimID: claim.id, apnsErrorCode: "ConsentRevokedBeforeSend", on: context.application.db)
+                failedCount += 1
+                continue
+            }
             let apnsEnvironment = APNsEnvironment(rawValue: candidate.apnsEnvironment) ?? .prod
             let hotAlertPayload = HotAlertAPNsPayload(
                 arcusAlertId: payload.seriesId.uuidString,

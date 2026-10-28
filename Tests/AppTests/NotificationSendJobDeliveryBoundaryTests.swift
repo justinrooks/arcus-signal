@@ -36,7 +36,10 @@ struct NotificationSendJobDeliveryBoundaryTests {
 
         try await sql.raw("""
             ALTER TABLE device_installations
-            ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN NOT NULL DEFAULT TRUE;
+            ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS location_sharing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS consent_revision BIGINT,
+            ADD COLUMN IF NOT EXISTS meso_notifications_enabled BOOLEAN;
             """).run()
 
         try await sql.raw("""
@@ -479,6 +482,49 @@ struct NotificationSendJobDeliveryBoundaryTests {
             let data = try JSONSerialization.data(withJSONObject: changed)
             #expect(throws: DecodingError.self) {
                 try JSONDecoder().decode(NotificationSendJobPayload.self, from: data)
+            }
+        }
+    }
+
+    @Test("V3 consent is checked after fresh and retry claims; failed reads remain recoverable", arguments: [false, true], [false, true])
+    func v3ClaimBoundary(retry: Bool, readFailure: Bool) async throws {
+        try await withIntegrationTestApplication(setup: .directPostgres, prepare: { app in
+            try await bootstrapTables(on: app.db)
+        }) { app in
+            let id = UUID(), seriesID = UUID(), revision = "urn:oid:v3-\(UUID())", owner = UUID().uuidString
+            let sql = try #require(app.db as? any SQLDatabase)
+            try await seedInstallation(id: id, locationAuth: .always, on: app.db)
+            try await seedSeries(id: seriesID, revisionUrn: revision, on: app.db)
+            try await sql.raw("UPDATE device_installations SET consent_revision = 1 WHERE installation_id = \(bind: id)").run()
+            let store = NotificationDeliveryStore()
+            let subject = NotificationSubject.nws(seriesID: seriesID, revisionUrn: revision)
+            if retry {
+                let claim = try await store.claim(installationID: id, subject: subject, mode: .h3, reason: .new,
+                    freshnessState: .fresh, retryOwnerID: owner, on: app.db)
+                try await store.markRetrying(claimID: claim.id, retryOwnerID: owner, retryGeneration: claim.retryGeneration,
+                    apnsErrorCode: "TestTransportFailure", on: app.db)
+            }
+            let sender = RecordingNotificationSender(), job = NotificationSendJob(sender: sender)
+            let candidate = makeCandidate(id: id, auth: .always, capturedAt: .now)
+            let series = makeSeries(id: seriesID, revisionUrn: revision, now: .now)
+            let payload = NotificationSendJobPayload(seriesId: seriesID, revisionUrn: revision, mode: .h3, reason: .new)
+            func dispatch() async throws -> DispatchNotificationsResult {
+                let retries = try await store.loadRetryingDeliveries(subject: subject, installationID: id, retryOwnerID: owner, on: app.db)
+                return try await job.dispatchNotifications(to: [candidate], with: payload, and: series,
+                    retryingDeliveriesByInstallation: Dictionary(uniqueKeysWithValues: retries.map { ($0.installationID, $0) }),
+                    retryOwnerID: owner, using: makeQueueContext(app: app))
+            }
+            try await withConsentClaimBoundary(installationID: id, readFailure: readFailure, on: app.db) {
+                let result = try await dispatch()
+                #expect(result.sentCount == 0)
+                #expect(result.retryableFailureCount == (readFailure ? 1 : 0))
+            }
+            #expect(await sender.sendCount == 0)
+            let ledger = try #require(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == id).first())
+            #expect(ledger.status == (readFailure ? "retrying" : "failed"))
+            if readFailure {
+                #expect(try await dispatch().sentCount == 1)
+                #expect(await sender.sendCount == 1)
             }
         }
     }

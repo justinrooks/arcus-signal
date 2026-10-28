@@ -9,7 +9,7 @@ import Fluent
 import Vapor
 import ArcusCore
 
-private enum DevicePresenceUpsertOutcome: String {
+enum DevicePresenceUpsertOutcome: String {
     case inserted
     case updated
     case staleIgnored
@@ -20,7 +20,7 @@ private struct DevicePresenceCommitResult {
     let reconciliationHandoff: PresenceReconciliationHandoffRequest?
 }
 
-private struct ForegroundActivityRequest: Content {
+struct ForegroundActivityRequest: Content {
     let installationId: UUID
 }
 
@@ -32,6 +32,10 @@ struct DeviceController: RouteCollection {
             devices.post("location-snapshots", use: create)
             devices.post("preferences", use: createPreferences)
             devices.post("foreground-activity", use: createForegroundActivity)
+            let v3 = root.grouped("v3", "devices")
+            v3.post("preferences", use: createPreferencesV3)
+            v3.post("location-snapshots", use: createLocationV3)
+            v3.post("foreground-activity", use: createActivityV3)
             let authenticated = root.grouped("v2", "devices")
             authenticated.post("enroll", use: enroll)
             authenticated.post("location-snapshots", use: createV2)
@@ -197,34 +201,10 @@ struct DeviceController: RouteCollection {
                 return DevicePresenceCommitResult(outcome: presenceOutcome, reconciliationHandoff: nil)
             }
 
-            guard let currentState = PresenceReconciliationState(
-                installation: installation,
-                presence: presence
-            ) else {
-                return DevicePresenceCommitResult(outcome: presenceOutcome, reconciliationHandoff: nil)
-            }
-            var reconciliationHandoff: PresenceReconciliationHandoffRequest?
-            if let trigger = PresenceReconciliationTrigger.decide(
-                previous: previousState,
-                current: currentState,
-                now: receivedAt
-            ) {
-                let insertResult = try await PresenceReconciliationOutboxStore().insert(
-                    installationID: installationUUID,
-                    presenceCapturedAt: presence.capturedAt,
-                    triggerCategory: trigger.category,
-                    targetingFingerprint: try StableContentHasher.sha256Hex(of: currentState.fingerprint),
-                    on: database
-                )
-                if let intentId = insertResult.id {
-                    reconciliationHandoff = .init(
-                        intentId: intentId,
-                        installationId: installationUUID,
-                        triggerCategory: trigger.category,
-                        priorAttemptCount: 0
-                    )
-                }
-            }
+            let reconciliationHandoff = try await reconcileDevicePresence(
+                installationID: installationUUID, previous: previousState,
+                installation: installation, presence: presence, receivedAt: receivedAt, on: database
+            )
 
             return DevicePresenceCommitResult(
                 outcome: presenceOutcome,
@@ -371,10 +351,11 @@ struct DeviceController: RouteCollection {
 }
 
 /// Authorization and the entire mutation must use the same transaction as this lock.
-private func authorize(
+func authorize(
     _ req: Request,
     installationID: UUID,
     authenticated: Bool,
+    v3: Bool = false,
     on database: any Database
 ) async throws {
     try await InstallationCredentialStore.lock(installationID, on: database)
@@ -391,6 +372,9 @@ private func authorize(
         guard req.application.deviceLegacyWritesEnabled, verifier == nil else {
             throw Abort(.unauthorized)
         }
+    }
+    if !v3, try await DeviceInstallationModel.find(installationID, on: database)?.consentRevision != nil {
+        throw Abort(.conflict, reason: "Installation requires v3 device mutations")
     }
 }
 
@@ -468,9 +452,9 @@ private func upsertDeviceInstallation(
     }
 }
 
-private func upsertDevicePresence(
+func upsertDevicePresence(
     installationId: UUID,
-    payload: LocationSnapshotPushPayload,
+    payload: any DevicePresenceSnapshot,
     cellScheme: CellScheme,
     locationSource: LocationUploadSource,
     receivedAt: Date,

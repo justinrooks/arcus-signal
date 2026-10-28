@@ -32,3 +32,7 @@ extension AirQualityCategory: @retroactive Content {}
 
 extension InstallationEnrollmentRequest: @retroactive Content {}
 extension InstallationEnrollmentAcceptedResponse: @retroactive Content {}
+
+extension DevicePreferencesV3Payload: @retroactive Content {}
+extension DevicePreferencesV3AcceptedResponse: @retroactive Content {}
+extension DeviceLocationSnapshotV3Payload: @retroactive Content {}

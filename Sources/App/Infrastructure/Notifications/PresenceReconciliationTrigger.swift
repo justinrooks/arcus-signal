@@ -134,7 +134,7 @@ extension PresenceReconciliationState {
             capturedAt: presence.capturedAt,
             locationAuth: installation.locationAuth,
             isActive: installation.isActive,
-            isSubscribed: installation.isSubscribed,
+            isSubscribed: installation.isSubscribed && installation.locationSharingEnabled,
             hasAPNsToken: !installation.apnsDeviceToken
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .isEmpty

@@ -167,6 +167,21 @@ struct MesoNotificationSendJob: AsyncJob {
                 details: details,
                 using: context
             )
+            let consentAllowsDelivery: Bool
+            do {
+                consentAllowsDelivery = try await NotificationCandidateStore().acceptedConsentAllowsDelivery(candidate, meso: true, on: db)
+            } catch {
+                // A failed pre-send read must remain retryable; never strand a claimed row.
+                try await store.markRetrying(claimID: claim.id, retryOwnerID: payload.retryOwnerID,
+                    retryGeneration: claim.retryGeneration, apnsErrorCode: "ConsentEligibilityReadFailed", on: db)
+                summary.retryableFailureCount += 1
+                continue
+            }
+            guard consentAllowsDelivery else {
+                try await store.completeFailed(claimID: claim.id, apnsErrorCode: "ConsentRevokedBeforeSend", on: db)
+                summary.failedCount += 1
+                continue
+            }
             let startedAt = retry == nil ? Date() : nil
             do {
                 try await sender.sendNotification(

@@ -19,8 +19,8 @@ struct InstallationCredentialControllerTests {
 
     private func withApp(_ test: (Application) async throws -> Void) async throws {
         let name = Environment.get("DATABASE_URL").flatMap(URL.init(string:))?.lastPathComponent ?? ""
-        guard name.hasPrefix("arcus_issue386_test_") || name.hasPrefix("arcus_issue386_validation_") else {
-            throw Abort(.internalServerError, reason: "An issue-386 isolated test database is required")
+        guard name.range(of: #"^arcus_issue[0-9]+_(test|validation)_[A-Za-z0-9_]+$"#, options: .regularExpression) != nil else {
+            throw Abort(.internalServerError, reason: "An explicitly issue-scoped isolated test database is required")
         }
         let app = try await Application.make(.testing)
         do {

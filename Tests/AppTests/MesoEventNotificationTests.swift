@@ -224,6 +224,12 @@ struct MesoEventNotificationTests {
             excluded.append(try await installation(app, cell: nil))
             excluded.append(try await installation(app, cell: cell + 1000))
             for id in excluded { #expect(try await reconcile(app, installationID: id).isEmpty) }
+            let revokedID = try await installation(app, cell: cell)
+            let revoked = try #require(try await DeviceInstallationModel.find(revokedID, on: app.db))
+            revoked.consentRevision = 2
+            revoked.locationSharingEnabled = false
+            try await revoked.update(on: app.db)
+            #expect(try await NotificationCandidateStore().loadMatchingActiveMesos(for: revokedID, evaluatedAt: .now, on: app.db).isEmpty)
             let degraded = try await installation(app, cell: cell, capturedAt: .now.addingTimeInterval(-7 * 3600))
             #expect(try await reconcile(app, installationID: degraded).count == 1)
             app.mesoNotificationsEnabled = false
@@ -346,6 +352,41 @@ struct MesoEventNotificationTests {
             let sender = MesoEventRecordingSender()
             try await MesoNotificationSendJob(sender: sender).dequeue(context(app), .init(issueYear: inactive.issueYear, number: inactive.number))
             #expect(await sender.tokens.isEmpty)
+        }
+    }
+
+    @Test("V3 consent is checked after meso fresh/retry claims and failed reads recover", arguments: [false, true], [false, true])
+    func v3ClaimBoundary(retry: Bool, readFailure: Bool) async throws {
+        try await fixture { app, discussion in
+            app.mesoNotificationsEnabled = true
+            let cell = try await persist(app, discussion)
+            let id = try await installation(app, cell: cell)
+            let installation = try #require(try await DeviceInstallationModel.find(id, on: app.db))
+            installation.consentRevision = 1
+            try await installation.update(on: app.db)
+            let payload = MesoNotificationSendPayload(issueYear: discussion.issueYear, number: discussion.number)
+            let store = NotificationDeliveryStore()
+            if retry {
+                let claim = try await store.claimMeso(installationID: id, issueYear: discussion.issueYear, number: discussion.number,
+                    mode: .h3, reason: .new, freshnessState: .fresh, retryOwnerID: payload.retryOwnerID,
+                    origin: .alertDriven, on: app.db)
+                try await store.markRetrying(claimID: claim.id, retryOwnerID: payload.retryOwnerID,
+                    retryGeneration: claim.retryGeneration, apnsErrorCode: "TestTransportFailure", on: app.db)
+            }
+            let sender = MesoEventRecordingSender(), job = MesoNotificationSendJob(sender: sender)
+            try await withConsentClaimBoundary(installationID: id, readFailure: readFailure, on: app.db) {
+                if readFailure {
+                    await #expect(throws: NotificationDeliveryRetryableError.self) { try await job.dequeue(context(app), payload) }
+                } else { try await job.dequeue(context(app), payload) }
+            }
+            #expect(await sender.tokens.isEmpty)
+            let ledger = try #require(try await NotificationLedgerModel.query(on: app.db).filter(\.$deviceInstallation.$id == id).first())
+            #expect(ledger.status == (readFailure ? "retrying" : "failed"))
+            if readFailure {
+                try await job.dequeue(retryContext(app, payload: payload), payload)
+                #expect(await sender.tokens == ["meso-event-test-\(id)"])
+                #expect(try await NotificationLedgerModel.find(ledger.id!, on: app.db)?.status == "sent")
+            }
         }
     }
 
