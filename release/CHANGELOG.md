@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.5.0
+
+### Features
+
+- Device writes now support authenticated v2 installation enrollment, while v3 consent revisions are ordered and permanently fenced against downgrade; v3 meso ownership requires usable accepted presence.
+<!-- evidence: 24f3f87, f8efe0e, 3b69ae2 -->
+
+### Reliability
+
+- NWS outbox handoffs can be recovered without fresh weather, and dispatch diagnostics expose expired notification leases and failed queue handoffs.
+<!-- evidence: b01a7e0, 5df90b5 -->
+- Invalid NWS collection envelopes are rejected before ingestion, and meso feature gates are checked explicitly throughout release operations.
+<!-- evidence: ffdbdeb, c4f5ee2 -->
+- Storm Setup surface cache reclamation coordinates readers and publishers, while the AirNow current cache bounds residency and performs expiry cleanup.
+<!-- evidence: d415c0e, 237a6f5 -->
+
+### Operations
+
+- The operator dashboard aligns targetable coverage with location-sharing consent.
+<!-- evidence: 31eed26 -->
+
 ## v1.4.2
 
 ### Features

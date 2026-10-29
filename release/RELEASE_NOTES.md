@@ -1,5 +1,18 @@
 # Release Notes
 
+## v1.5.0
+
+## Overview
+
+Arcus Signal v1.5.0 strengthens authenticated device enrollment and consent ordering, improves NWS delivery recovery and validation, and tightens cache lifecycle and location-consent reporting. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- Device writes use authenticated installation enrollment, with ordered v3 consent revisions and downgrade fencing; meso ownership requires usable accepted presence.
+- NWS outbox handoffs can recover without new weather, and operator diagnostics expose expired leases and failed queue handoffs.
+- Invalid NWS collection envelopes are rejected, while surface cache cleanup and AQI cache residency are bounded.
+- Dashboard coverage reflects location-sharing consent, and meso rollout gates are checked explicitly during release operations.
+
 ## v1.4.2
 
 ## Overview
