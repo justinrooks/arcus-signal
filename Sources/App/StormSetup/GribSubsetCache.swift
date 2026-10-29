@@ -13,6 +13,7 @@ struct GribSubsetCacheResult: Sendable {
     let fetchedAt: Date
     let expiresAt: Date
     let cacheHit: Bool
+    var readLease: SurfaceCacheFileLease? = nil
 
     var localFilePath: String {
         localFileURL.path
@@ -96,16 +97,16 @@ actor GribSubsetCache {
         if let record = try await loadValidRecord(
             key: key,
             fileURL: fileURL,
-            metadataURL: metadataURL,
-            now: now
+            metadataURL: metadataURL
         ) {
             return GribSubsetCacheResult(
-                source: record.source,
+                source: record.record.source,
                 localFileURL: fileURL,
-                byteSize: record.byteSize,
-                fetchedAt: record.fetchedAt,
-                expiresAt: record.expiresAt,
-                cacheHit: true
+                byteSize: record.record.byteSize,
+                fetchedAt: record.record.fetchedAt,
+                expiresAt: record.record.expiresAt,
+                cacheHit: true,
+                readLease: record.lease
             )
         }
 
@@ -142,8 +143,11 @@ actor GribSubsetCache {
 
         let expiresAt = now.addingTimeInterval(retentionDuration)
 
+        let readLease: SurfaceCacheFileLease
+        let rootURL = rootURL
         do {
-            try await executeFilesystemWork {
+            readLease = try await executeFilesystemWork {
+                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
                 let record = GribSubsetCacheRecord(
                     source: sourceMetadata,
                     byteSize: Int64(body.count),
@@ -165,10 +169,13 @@ actor GribSubsetCache {
                         )
                     }
                 } catch {
-                    try? FileManager.default.removeItem(at: fileURL)
-                    try? FileManager.default.removeItem(at: metadataURL)
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                     throw error
                 }
+                guard let lease = try SurfaceCacheFileLease.attempt(rootURL: rootURL, identity: key.cacheIdentifier, kind: .reader) else {
+                    throw POSIXError(.EBUSY)
+                }
+                return lease
             }
         } catch {
             try rethrowCancellationIfNeeded(error)
@@ -181,17 +188,20 @@ actor GribSubsetCache {
             byteSize: Int64(body.count),
             fetchedAt: now,
             expiresAt: expiresAt,
-            cacheHit: false
+            cacheHit: false,
+            readLease: readLease
         )
     }
 
     private func loadValidRecord(
         key: StormSetupCacheKey,
         fileURL: URL,
-        metadataURL: URL,
-        now: Date
-    ) async throws -> GribSubsetCacheRecord? {
+        metadataURL: URL
+    ) async throws -> (record: GribSubsetCacheRecord, lease: SurfaceCacheFileLease)? {
+        let rootURL = rootURL
+        let dateProvider = dateProvider
         return try await executeFilesystemWork {
+            let now = dateProvider.now()
             guard FileManager.default.fileExists(atPath: fileURL.path),
                   FileManager.default.fileExists(atPath: metadataURL.path) else {
                 return nil
@@ -203,42 +213,45 @@ actor GribSubsetCache {
                 let record = try jsonDecoder.decode(GribSubsetCacheRecord.self, from: metadataData)
 
                 guard record.expiresAt > now else {
-                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                     return nil
                 }
 
                 let expectedKey = try StormSetupCacheKey(sourceMetadata: record.source)
                 guard expectedKey == key else {
-                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                     return nil
                 }
 
                 let data = try Data(contentsOf: fileURL)
                 guard !data.isEmpty else {
-                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                     return nil
                 }
 
                 guard data.count == Int(record.byteSize) else {
-                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                     return nil
                 }
 
                 let checksum = Self.sha256Hex(of: data)
                 guard checksum == record.checksumSHA256 else {
-                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                    Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                     return nil
                 }
 
-                return record
+                guard let lease = try SurfaceCacheFileLease.attempt(rootURL: rootURL, identity: key.cacheIdentifier, kind: .reader) else { return nil }
+                return (record, lease)
             } catch {
-                Self.invalidate(fileURL: fileURL, metadataURL: metadataURL)
+                Self.invalidate(fileURL: fileURL, metadataURL: metadataURL, rootURL: rootURL, identity: key.cacheIdentifier)
                 return nil
             }
         }
     }
 
-    private static func invalidate(fileURL: URL, metadataURL: URL) {
+    private static func invalidate(fileURL: URL, metadataURL: URL, rootURL: URL, identity: String) {
+        guard let lease = try? SurfaceCacheFileLease.attempt(rootURL: rootURL, identity: identity, kind: .removal) else { return }
+        defer { withExtendedLifetime(lease) {} }
         try? FileManager.default.removeItem(at: fileURL)
         try? FileManager.default.removeItem(at: metadataURL)
     }
@@ -247,6 +260,10 @@ actor GribSubsetCache {
         _ operation: @escaping @Sendable () throws -> T
     ) async throws -> T {
         let filesystemCriticalSection = filesystemCriticalSection
+        let gate = try await SurfaceCacheFileLease.acquire(
+            rootURL: rootURL, identity: "", kind: .operation, executor: blockingWorkExecutor
+        )
+        defer { withExtendedLifetime(gate) {} }
         return try await blockingWorkExecutor.execute {
             try filesystemCriticalSection.withLock(operation)
         }

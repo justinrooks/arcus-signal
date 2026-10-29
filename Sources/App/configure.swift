@@ -83,6 +83,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         app.recordWorkerScheduledJob("DispatchPresenceReconciliationScheduledJob")
         app.queues.schedule(ProbeHRRRPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactProbeIntervalSeconds))
         app.recordWorkerScheduledJob("ProbeHRRRPressureArtifactsScheduledJob")
+        app.queues.schedule(CleanupSurfaceCachesScheduledJob()).every(seconds: 60)
+        app.recordWorkerScheduledJob("CleanupSurfaceCachesScheduledJob")
         app.queues.schedule(CleanupPressureArtifactsScheduledJob()).every(seconds: Int(app.stormSetupConfiguration.pressureArtifactCleanupIntervalSeconds))
         app.recordWorkerScheduledJob("CleanupPressureArtifactsScheduledJob")
         app.queues.schedule(RefreshOperatorDashboardSnapshotScheduledJob()).every(seconds: OperatorDashboardConfig.fastRefreshIntervalSeconds)

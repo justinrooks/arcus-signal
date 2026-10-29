@@ -477,6 +477,81 @@ struct StormSetupGribSubsetCacheTests {
         #expect(client.requestCount == 2)
     }
 
+    @Test("cleanup skips a returned GRIB reader and reclaims after release")
+    func cleanupHonorsReaderLifetime() async throws {
+        let root = testRootURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = makeSourceMetadata(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13), forecastHour: 9)
+        let client = StubHTTPClient(plannedResponses: [source.nomadsURL!.absoluteString: .success(HTTPResponse(status: 200, headers: [:], data: Data("GRIB".utf8)))])
+        let work = PressureArtifactBlockingWorkTestContext()
+        let cache = GribSubsetCache(httpClient: client, blockingWorkExecutor: work.executor, rootURL: root, retentionDuration: 1)
+        var result: GribSubsetCacheResult? = try await cache.loadOrFetch(sourceMetadata: source)
+        let file = try #require(result).localFileURL
+        let future = Date().addingTimeInterval(7200)
+        let busy = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: false, now: future, executor: work.executor)
+        #expect(busy.removedFiles == 0)
+        #expect(try Data(contentsOf: file) == Data("GRIB".utf8))
+        result = nil
+        let idle = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: false, now: future, executor: work.executor)
+        #expect(idle.removedFiles == 2)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        let fetched = try await cache.loadOrFetch(sourceMetadata: source)
+        #expect(!fetched.cacheHit)
+        #expect(client.requestCount == 2)
+    }
+
+    @Test("publication recreates an expired directory removed during download")
+    func cleanupDuringDownload() async throws {
+        let root = testRootURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = makeSourceMetadata(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13), forecastHour: 9)
+        let key = try StormSetupCacheKey(sourceMetadata: source)
+        let work = PressureArtifactBlockingWorkTestContext()
+        try FileManager.default.createDirectory(at: key.directoryURL(rootURL: root), withIntermediateDirectories: true)
+        let now = Date()
+        let record = GribSubsetCacheRecord(source: source, byteSize: 4, checksumSHA256: "old", fetchedAt: now.addingTimeInterval(-7200), expiresAt: now.addingTimeInterval(-3600))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(record).write(to: key.metadataFileURL(rootURL: root))
+        try Data("GRIB".utf8).write(to: key.subsetFileURL(rootURL: root))
+        let child = try ChildSurfaceLease(root: root, identity: key.cacheIdentifier)
+        let barrier = SurfaceTestBarrier()
+        let cache = GribSubsetCache(httpClient: PausedSurfaceHTTPClient(barrier: barrier), blockingWorkExecutor: work.executor, rootURL: root)
+        let task = Task { try await cache.loadOrFetch(sourceMetadata: source) }
+        await barrier.waitUntilReached()
+        let pinned = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: false, now: now.addingTimeInterval(7200), executor: work.executor)
+        #expect(pinned.removedFiles == 0)
+        await child.finish()
+        let removed = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: false, now: now.addingTimeInterval(7200), executor: work.executor)
+        #expect(removed.removedFiles == 2)
+        #expect(!FileManager.default.fileExists(atPath: key.directoryURL(rootURL: root).path))
+        await barrier.release()
+        let result = try await task.value
+        #expect(try Data(contentsOf: result.localFileURL) == Data("GRIB".utf8))
+        #expect(try await cache.loadOrFetch(sourceMetadata: source).cacheHit)
+    }
+
+    @Test("sampling pins a temporary GRIB result through its asynchronous read")
+    func samplingPinsReader() async throws {
+        let root = testRootURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = makeSourceMetadata(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13), forecastHour: 9)
+        let work = PressureArtifactBlockingWorkTestContext()
+        let download = SurfaceTestBarrier()
+        await download.release()
+        let cache = GribSubsetCache(httpClient: PausedSurfaceHTTPClient(barrier: download), blockingWorkExecutor: work.executor, rootURL: root, retentionDuration: 1)
+        let barrier = SurfaceTestBarrier()
+        let sampler = HrrrFieldSampler(client: PausedSurfaceSampler(barrier: barrier))
+        let task = Task { try await sampler.sample(from: cache.loadOrFetch(sourceMetadata: source), around: StormSetupCentroid(latitude: 39.7, longitude: -104.4)) }
+        await barrier.waitUntilReached()
+        let busy = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: false, now: Date().addingTimeInterval(7200), executor: work.executor)
+        #expect(busy.removedFiles == 0)
+        await barrier.release()
+        #expect(try await task.value.isEmpty)
+        let idle = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: false, now: Date().addingTimeInterval(7200), executor: work.executor)
+        #expect(idle.removedFiles == 2)
+    }
+
     private func makeCache(
         client: StubHTTPClient,
         blockingWorkExecutor: any PressureArtifactBlockingWorkExecuting

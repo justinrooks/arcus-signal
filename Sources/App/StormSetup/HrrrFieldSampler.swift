@@ -23,7 +23,8 @@ struct HrrrFieldSampler: Sendable {
         from subset: GribSubsetCacheResult,
         around centroid: StormSetupCentroid
     ) async throws -> [HrrrFieldSample] {
-        try await sample(localFileURL: subset.localFileURL, around: centroid)
+        defer { withExtendedLifetime(subset.readLease) {} }
+        return try await sample(localFileURL: subset.localFileURL, around: centroid)
     }
 
     func sample(

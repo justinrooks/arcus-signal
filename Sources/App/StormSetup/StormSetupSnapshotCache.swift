@@ -49,10 +49,11 @@ actor StormSetupSnapshotCache {
 
     func loadSnapshot(for key: StormSetupSnapshotCacheKey) async -> StormSetupSnapshotCacheResult? {
         let fileURL = key.snapshotFileURL(rootURL: rootURL)
-        let now = dateProvider.now()
+        let dateProvider = dateProvider
 
         do {
             return try await executeFilesystemWork {
+                let now = dateProvider.now()
                 guard FileManager.default.fileExists(atPath: fileURL.path) else {
                     return nil
                 }
@@ -174,6 +175,10 @@ actor StormSetupSnapshotCache {
         _ operation: @escaping @Sendable () throws -> T
     ) async throws -> T {
         let filesystemCriticalSection = filesystemCriticalSection
+        let gate = try await SurfaceCacheFileLease.acquire(
+            rootURL: rootURL, identity: "", kind: .operation, executor: blockingWorkExecutor
+        )
+        defer { withExtendedLifetime(gate) {} }
         return try await blockingWorkExecutor.execute {
             try filesystemCriticalSection.withLock(operation)
         }
