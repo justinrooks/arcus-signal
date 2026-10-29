@@ -519,6 +519,88 @@ struct StormSetupSnapshotCacheTests {
         )
     }
 
+    @Test("cleanup excludes publication and observes a fresh replacement")
+    func cleanupObservesFreshReplacement() async throws {
+        let root = testRootURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let work = PressureArtifactBlockingWorkTestContext()
+        let now = Date().addingTimeInterval(7200)
+        let source = makeSourceMetadata(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13), forecastHour: 9)
+        let key = try StormSetupSnapshotCacheKey(h3Cell: 1, sourceMetadata: source, rulesVersion: .current)
+        let cache = StormSetupSnapshotCache(blockingWorkExecutor: work.executor, rootURL: root)
+        _ = try await cache.store(snapshot: makeSnapshot(h3Cell: 1, source: source, fetchedAt: now, expiresAt: now.addingTimeInterval(-3600)), for: key)
+        let oldData = try Data(contentsOf: key.snapshotFileURL(rootURL: root))
+        let child = try ChildSurfaceLease(root: root, identity: "", operation: true)
+        let barrier = SurfaceTestBarrier()
+        let writer = StormSetupSnapshotCache(blockingWorkExecutor: PausingSurfaceExecutor(wrapped: work.executor, barrier: barrier), rootURL: root)
+        let replacement = makeSnapshot(h3Cell: 1, source: source, fetchedAt: now, expiresAt: now.addingTimeInterval(3600))
+        let task = Task { try await writer.store(snapshot: replacement, for: key) }
+        await barrier.waitUntilReached()
+        #expect(try Data(contentsOf: key.snapshotFileURL(rootURL: root)) == oldData)
+        let blocked = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: true, now: now, executor: work.executor)
+        #expect(blocked.examined == 0)
+        await child.finish()
+        await barrier.release()
+        _ = try await task.value
+        let fresh = try await SurfaceCacheCleanupService().cleanup(rootURL: root, snapshots: true, now: now, executor: work.executor)
+        #expect(fresh.removedFiles == 0)
+        #expect(await cache.loadSnapshot(for: key) != nil)
+    }
+
+    @Test("expiry and modification grace boundaries preserve recent replacements")
+    func cleanupGraceBoundaries() async throws {
+        let root = testRootURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let work = PressureArtifactBlockingWorkTestContext()
+        let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 7200)
+        let source = makeSourceMetadata(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13), forecastHour: 9)
+        let cache = StormSetupSnapshotCache(blockingWorkExecutor: work.executor, rootURL: root)
+        for (cell, expiryAge, modifiedAge) in [(1, 599.0, 601.0), (2, 600.0, 601.0), (3, 601.0, 601.0), (4, 601.0, 599.0), (5, 601.0, 600.0)] {
+            let key = try StormSetupSnapshotCacheKey(h3Cell: Int64(cell), sourceMetadata: source, rulesVersion: .current)
+            _ = try await cache.store(snapshot: makeSnapshot(h3Cell: Int64(cell), source: source, fetchedAt: now.addingTimeInterval(-7200), expiresAt: now.addingTimeInterval(-expiryAge)), for: key)
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-modifiedAge)], ofItemAtPath: key.snapshotFileURL(rootURL: root).path)
+        }
+        let service = SurfaceCacheCleanupService()
+        let first = try await service.cleanup(rootURL: root, snapshots: true, now: now, executor: work.executor)
+        #expect(first.removedFiles == 3)
+        let later = try await service.cleanup(rootURL: root, snapshots: true, now: now.addingTimeInterval(1), executor: work.executor)
+        #expect(later.removedFiles == 2)
+    }
+
+    @Test("cleanup preserves fresh, malformed and outside-root entries")
+    func cleanupSafetyControls() async throws {
+        let root = testRootURL()
+        let outside = testRootURL()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: outside) }
+        let work = PressureArtifactBlockingWorkTestContext()
+        let now = Date().addingTimeInterval(7200)
+        let cache = StormSetupSnapshotCache(blockingWorkExecutor: work.executor, rootURL: root)
+        let source = makeSourceMetadata(runTime: makeUTCDate(year: 2026, month: 6, day: 3, hour: 13), forecastHour: 9)
+        for cell in 1...3 {
+            let key = try StormSetupSnapshotCacheKey(h3Cell: Int64(cell), sourceMetadata: source, rulesVersion: .current)
+            let snapshot = makeSnapshot(h3Cell: Int64(cell), source: source, fetchedAt: now, expiresAt: now.addingTimeInterval(cell == 1 ? 3600 : -3600))
+            _ = try await cache.store(snapshot: snapshot, for: key)
+            if cell == 3 { try Data("malformed".utf8).write(to: key.snapshotFileURL(rootURL: root)) }
+        }
+        let outsideCache = StormSetupSnapshotCache(blockingWorkExecutor: work.executor, rootURL: outside)
+        let outsideKey = try StormSetupSnapshotCacheKey(h3Cell: 99, sourceMetadata: source, rulesVersion: .current)
+        _ = try await outsideCache.store(snapshot: makeSnapshot(h3Cell: 99, source: source, fetchedAt: now, expiresAt: now.addingTimeInterval(-3600)), for: outsideKey)
+        let control = outsideKey.snapshotFileURL(rootURL: outside)
+        let controlData = try Data(contentsOf: control)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("escape"), withDestinationURL: outside)
+        let service = SurfaceCacheCleanupService()
+        let report = try await service.cleanup(rootURL: root, snapshots: true, now: now, executor: work.executor)
+        #expect(report.removedFiles == 1)
+        for cell in [1, 3] {
+            let key = try StormSetupSnapshotCacheKey(h3Cell: Int64(cell), sourceMetadata: source, rulesVersion: .current)
+            #expect(fileExists(at: key.snapshotFileURL(rootURL: root)))
+        }
+        #expect(try Data(contentsOf: control) == controlData)
+        let unsafeRoot = try await service.cleanup(rootURL: root.appendingPathComponent("escape"), snapshots: true, now: now, executor: work.executor)
+        #expect(unsafeRoot.removedFiles == 0)
+        #expect(try Data(contentsOf: control) == controlData)
+    }
+
     private func makeSnapshot(
         h3Cell: Int64,
         source: StormSetupSourceMetadata,
