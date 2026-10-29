@@ -32,8 +32,12 @@ extension OperatorDashboardPageRenderer {
                 ("Pending target rows", "\(metric.pendingTargetDispatchCount)"),
                 ("Oldest target row", maybeDate(metric.oldestPendingTargetDispatchCreatedAt)),
                 ("Notification backlog", maybeDuration(metric.oldestPendingNotificationDispatchAgeSeconds)),
-                ("Pending notification rows", "\(metric.pendingNotificationDispatchCount)")
-            ]
+                ("Pending notification rows", "\(metric.pendingNotificationDispatchCount)"),
+                ("Handoff evidence", metric.handoffSummary),
+                ("Safe next action", PipelineBacklogMetricResponse.handoffGuidance)
+            ] + (metric.notificationHandoffs ?? []).map {
+                ("\($0.category) · \($0.count)", "Oldest lease deadline / failure: \(maybeDate($0.oldestAt))")
+            }
         )
     }
 

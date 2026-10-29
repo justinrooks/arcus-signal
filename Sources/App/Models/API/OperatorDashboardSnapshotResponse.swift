@@ -296,7 +296,15 @@ public struct StoredSPCMesoIngestMetric: Codable, Sendable {
     }
 }
 
+/// Queue handoff evidence only; neither completion nor a live lease proves delivery.
+public struct StoredNotificationHandoffGroup: Codable, Sendable {
+    public var category: String
+    public var count: Int
+    public var oldestAt: Date?
+}
+
 public struct StoredPipelineBacklogMetric: Codable, Sendable {
+    public var notificationHandoffs: [StoredNotificationHandoffGroup]?
     public var pendingTargetDispatchCount: Int
     public var oldestPendingTargetDispatchCreatedAt: Date?
     public var pendingNotificationDispatchCount: Int
@@ -306,11 +314,13 @@ public struct StoredPipelineBacklogMetric: Codable, Sendable {
         pendingTargetDispatchCount: Int = 0,
         oldestPendingTargetDispatchCreatedAt: Date? = nil,
         pendingNotificationDispatchCount: Int = 0,
-        oldestPendingNotificationDispatchCreatedAt: Date? = nil
+        oldestPendingNotificationDispatchCreatedAt: Date? = nil,
+        notificationHandoffs: [StoredNotificationHandoffGroup]? = []
     ) {
         self.pendingTargetDispatchCount = pendingTargetDispatchCount
         self.oldestPendingTargetDispatchCreatedAt = oldestPendingTargetDispatchCreatedAt
         self.pendingNotificationDispatchCount = pendingNotificationDispatchCount
+        self.notificationHandoffs = notificationHandoffs
         self.oldestPendingNotificationDispatchCreatedAt = oldestPendingNotificationDispatchCreatedAt
     }
 }
@@ -1467,6 +1477,10 @@ public struct SPCMesoIngestMetricResponse: Content, Sendable {
 }
 
 public struct PipelineBacklogMetricResponse: Content, Sendable {
+    public var notificationHandoffs: [StoredNotificationHandoffGroup]?
+    public var handoffSummary: String
+    public static let handoffGuidance = "Queue handoffs only; done does not prove APNs delivery or device receipt. Inspect cause and current eligibility before intervention; never automatically reset dead intent or delivery claims."
+
     public var status: OperatorDashboardHealthState
     public var refreshedAt: Date?
     public var pendingTargetDispatchCount: Int
@@ -1477,7 +1491,16 @@ public struct PipelineBacklogMetricResponse: Content, Sendable {
     public var oldestPendingNotificationDispatchAgeSeconds: Int?
 
     init(refreshedAt: Date?, renderedAt: Date, metric: StoredPipelineBacklogMetric) {
-        self.status = if refreshedAt == nil {
+        self.notificationHandoffs = metric.notificationHandoffs
+        self.handoffSummary = metric.notificationHandoffs.map { groups in
+            groups.isEmpty ? "No processing or failed handoffs" : groups.map { "\($0.category): \($0.count) (oldest lease deadline / failure: \($0.oldestAt?.ISO8601Format() ?? "unknown"))" }.joined(separator: " · ")
+        } ?? "Processing and failure evidence unavailable in legacy snapshot"
+        let fresh = refreshedAt.map { renderedAt.timeIntervalSince($0) >= 0 && renderedAt.timeIntervalSince($0) <= 180 } ?? false
+        self.status = if !fresh || metric.notificationHandoffs == nil {
+            .unknown
+        } else if metric.notificationHandoffs?.contains(where: { ["expiredLease", "failedHandoff"].contains($0.category) }) == true {
+            .warning
+        } else if metric.notificationHandoffs?.contains(where: { $0.category == "unclassified" }) == true {
             .unknown
         } else if metric.pendingTargetDispatchCount == 0 && metric.pendingNotificationDispatchCount == 0 {
             .healthy
