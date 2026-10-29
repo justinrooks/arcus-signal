@@ -588,6 +588,7 @@ struct OperatorDashboardSnapshotRefresher {
                 COUNT(*) FILTER (
                     WHERE i.is_active = TRUE
                       AND i.is_subscribed = TRUE
+                      AND i.location_sharing_enabled = TRUE
                       AND i.apns_device_token <> ''
                       AND i.last_seen_at >= \(bind: installationCutoff)
                       AND p.installation_id IS NOT NULL
@@ -637,6 +638,7 @@ struct OperatorDashboardSnapshotRefresher {
                 COUNT(*) FILTER (
                     WHERE i.is_active = TRUE
                       AND i.is_subscribed = TRUE
+                      AND i.location_sharing_enabled = TRUE
                       AND i.apns_device_token <> ''
                       AND p.installation_id IS NOT NULL
                       AND p.captured_at >= \(bind: hardStalePresenceCutoff)

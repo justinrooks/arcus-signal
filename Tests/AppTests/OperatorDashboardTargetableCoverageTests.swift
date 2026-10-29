@@ -4,6 +4,7 @@ import FluentSQL
 import Foundation
 import Testing
 import Vapor
+import VaporTesting
 
 @Suite("Operator dashboard targetable coverage", .serialized, .sharedDatabase)
 struct OperatorDashboardTargetableCoverageTests {
@@ -51,6 +52,7 @@ struct OperatorDashboardTargetableCoverageTests {
     }
 
     private func seedInstallation(
+        installationID: UUID = UUID(),
         token: String = "token",
         apnsEnvironment: APNsEnvironment = .prod,
         locationAuth: LocationAuth = .always,
@@ -61,7 +63,6 @@ struct OperatorDashboardTargetableCoverageTests {
         hasTargetingData: Bool = true,
         on database: any Database
     ) async throws {
-        let installationID = UUID()
         try await DeviceInstallationModel(
             installationId: installationID,
             apnsDeviceToken: token,
@@ -151,6 +152,84 @@ struct OperatorDashboardTargetableCoverageTests {
             #expect(coverage.activeSubscribedInstallationCount == 6)
             #expect(coverage.candidateQueryEligibleInstallationCount == 2)
             #expect(coverage.hardStalePresenceCount == 1)
+        }
+    }
+
+    @Test("coverage follows current sharing consent while presence remains")
+    func coverageFollowsSharingConsent() async throws {
+        try await withApp { database in
+            try await seedInstallation(lastSeenAt: now, capturedAt: now, on: database)
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            for enabled in [true, false, true] {
+                try await sql.raw("UPDATE device_installations SET location_sharing_enabled = \(bind: enabled)").run()
+                let coverage = try await OperatorDashboardSnapshotRefresher().loadTargetableCoverage(on: sql, now: now)
+                let response = TargetableCoverageMetricResponse(refreshedAt: now, metric: coverage)
+                #expect(coverage.activeSubscribedInstallationCount == 1)
+                #expect(coverage.targetableInstallationCount == (enabled ? 1 : 0))
+                #expect(coverage.candidateQueryEligibleInstallationCount == (enabled ? 1 : 0))
+                #expect(response.targetableInstallationCount == (enabled ? 1 : 0))
+                #expect(response.candidateQueryEligibleInstallationCount == (enabled ? 1 : 0))
+                #expect(response.activeSubscribedInstallationCount == 1)
+            }
+        }
+    }
+
+    @Test("refreshed consent coverage reaches the persisted metrics endpoint")
+    func refreshedConsentCoverageReachesMetrics() async throws {
+        let name = Environment.get("DATABASE_URL").flatMap(URL.init(string:))?.lastPathComponent ?? ""
+        guard name.range(of: #"^arcus_issue[0-9]+_(test|validation)(_|$)"#, options: .regularExpression) != nil else {
+            throw Abort(.badRequest, reason: "An issue-scoped database is required")
+        }
+        try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
+            guard let sql = app.db as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Database is not SQLDatabase")
+            }
+            let store = DatabaseOperatorDashboardSnapshotStore()
+            let original = try await store.load(on: app.db)
+            let installationID = UUID()
+            func cleanup() async throws {
+                try await sql.raw("DELETE FROM device_presence WHERE installation_id = \(bind: installationID)").run()
+                try await sql.raw("DELETE FROM device_installations WHERE installation_id = \(bind: installationID)").run()
+                if let original {
+                    try await store.save(original, on: app.db)
+                } else {
+                    try await sql.raw("DELETE FROM operator_dashboard_snapshots WHERE id = 'current'").run()
+                }
+            }
+            do {
+                let baseline = try await OperatorDashboardSnapshotRefresher().loadTargetableCoverage(on: sql, now: now)
+                try await seedInstallation(installationID: installationID, lastSeenAt: now, capturedAt: now, on: app.db)
+                for enabled in [true, false, true] {
+                    try await sql.raw("UPDATE device_installations SET location_sharing_enabled = \(bind: enabled) WHERE installation_id = \(bind: installationID)").run()
+                    var snapshot = try await store.load(on: app.db) ?? .empty(now: now)
+                    snapshot.fastRefreshedAt = now
+                    snapshot.standardRefreshedAt = now
+                    snapshot.slowRefreshedAt = nil
+                    try await store.save(snapshot, on: app.db)
+                    try await OperatorDashboardSnapshotRefresher().refreshIfDue(on: app, now: now)
+                    let saved = try #require(try await store.load(on: app.db))
+                    let expectedTargetable = baseline.targetableInstallationCount + (enabled ? 1 : 0)
+                    let expectedEligible = baseline.candidateQueryEligibleInstallationCount + (enabled ? 1 : 0)
+                    let expectedDenominator = baseline.activeSubscribedInstallationCount + 1
+                    #expect(saved.targetableCoverage.targetableInstallationCount == expectedTargetable)
+                    #expect(saved.targetableCoverage.candidateQueryEligibleInstallationCount == expectedEligible)
+                    #expect(saved.targetableCoverage.activeSubscribedInstallationCount == expectedDenominator)
+                    try await app.testing().test(.GET, "/v1/metrics", afterResponse: { response async throws in
+                        #expect(response.status == .ok)
+                        let payload = try response.content.decode(OperatorDashboardSnapshotResponse.self)
+                        let coverage = payload.audienceTargeting.freshTargetableInstallationCoverage
+                        #expect(coverage.targetableInstallationCount == expectedTargetable)
+                        #expect(coverage.candidateQueryEligibleInstallationCount == expectedEligible)
+                        #expect(coverage.activeSubscribedInstallationCount == expectedDenominator)
+                    })
+                }
+            } catch {
+                try await cleanup()
+                throw error
+            }
+            try await cleanup()
         }
     }
 
