@@ -14,11 +14,6 @@ struct NotificationDispatchOutboxTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func withApp(test: (Application) async throws -> Void) async throws {
-        let name = Environment.get("DATABASE_URL").flatMap(URL.init(string:))?.lastPathComponent
-            ?? Environment.get("DATABASE_NAME") ?? ""
-        guard name.range(of: #"^arcus_issue[0-9]+_(test|validation)_[A-Za-z0-9_]+$"#, options: .regularExpression) != nil else {
-            throw Abort(.internalServerError, reason: "An issue-scoped test database is required")
-        }
         try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
             app.queues.use(.test)
             try await test(app)
@@ -282,8 +277,7 @@ struct NotificationDispatchOutboxTests {
                 let due = failed.availableAt
                 app.queues.use(.test)
                 // Identical accepted weather is repeatedly acquired; it cannot create fresh intent.
-                let events = try LocalNWSReplayFixtureLoader().loadEvents(
-                    fixtureName: "nws-series-geometry-v1", on: app, logger: app.logger)
+                let events = [recoveryEvent(owner: series)]
                 app.nwsIngestService = RecoveryWeather(events: events)
                 for _ in 0..<10 {
                     try await IngestNWSAlertsJob().dequeue(context, .init(runLabel: "issue383-\(series)"))
@@ -451,15 +445,55 @@ struct NotificationDispatchOutboxTests {
         }
     }
 
+    @Test("recovery cleanup preserves unrelated replay rows", arguments: [false, true])
+    func recoveryCleanupOwnership(throwDuringTest: Bool) async throws {
+        try await withApp { app in
+            let owned = try await seed(on: app.db)
+            let unrelated = try await seed(on: app.db)
+            do {
+                try await ArcusSeriesModel.query(on: app.db).filter(\.$id == unrelated)
+                    .set(\.$currentRevisionUrn, to: "urn:oid:2.49.0.1.840.0.replay.alert.002").update()
+                if throwDuringTest {
+                    await #expect(throws: RecoveryFixtureError.self) {
+                        try await withRecoveryFixtures(series: owned, app: app) { throw RecoveryFixtureError.expected }
+                    }
+                } else {
+                    try await withRecoveryFixtures(series: owned, app: app) {}
+                }
+                #expect(try await ArcusSeriesModel.find(owned, on: app.db) == nil)
+                #expect(try await ArcusSeriesModel.find(unrelated, on: app.db) != nil)
+            } catch {
+                try? await ArcusSeriesModel.find(owned, on: app.db)?.delete(on: app.db)
+                try? await ArcusSeriesModel.find(unrelated, on: app.db)?.delete(on: app.db)
+                throw error
+            }
+            try await ArcusSeriesModel.find(unrelated, on: app.db)?.delete(on: app.db)
+        }
+    }
+
+    private func recoveryEvent(owner: UUID) -> ArcusEvent {
+        ArcusEvent(
+            urn: "urn:oid:issue383-\(owner)", source: .nws, kind: "Tornado Warning",
+            sourceURL: "https://api.weather.gov/alerts/issue383-\(owner)", vtec: nil,
+            messageType: .alert, state: .active, sent: now, effective: nil, onset: nil,
+            expires: nil, ends: nil, lastSeenActive: now, severity: .severe,
+            urgency: .immediate, certainty: .observed, geometry: nil, ugcCodes: [],
+            title: "Recovery TEST", areaDesc: "Recovery TEST", rawRef: nil,
+            category: "Met", event: "Tornado Warning", senderName: "Recovery TEST",
+            headline: "Recovery TEST", description: "Recovery TEST", instructions: nil,
+            response: "Shelter", status: "Actual", tornadoDetection: nil,
+            tornadoDamageThreat: nil, maxWindGust: nil, maxHailSize: nil,
+            windThreat: nil, hailThreat: nil, thunderstormDamageThreat: nil,
+            flashFloodDetection: nil, flashFloodDamageThreat: nil
+        )
+    }
+
     private func withRecoveryFixtures(series: UUID, app: Application, test: () async throws -> Void) async throws {
         func cleanup() async throws {
             try await IngestSweepRunModel.query(on: app.db).filter(\.$runLabel == "issue383-\(series)").delete()
             try await ArcusSeriesModel.find(series, on: app.db)?.delete(on: app.db)
-            let events = try LocalNWSReplayFixtureLoader().loadEvents(
-                fixtureName: "nws-series-geometry-v1", on: app, logger: app.logger)
-            for event in events {
-                try await ArcusSeriesModel.query(on: app.db).filter(\.$currentRevisionUrn == event.id).delete()
-            }
+            try await ArcusSeriesModel.query(on: app.db)
+                .filter(\.$sourceURL == "https://api.weather.gov/alerts/issue383-\(series)").delete()
         }
         do { try await test(); try await cleanup() }
         catch { try? await cleanup(); throw error }
@@ -566,3 +600,5 @@ private actor RecoverySender: NotificationSender {
     func sendNotification(app: Application, with: AlertDetails, hotAlertPayload: HotAlertAPNsPayload,
                           to: String, environment: APNsEnvironment) async throws { count += 1 }
 }
+
+private enum RecoveryFixtureError: Error { case expected }
