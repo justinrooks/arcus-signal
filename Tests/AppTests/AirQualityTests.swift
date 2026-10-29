@@ -5,6 +5,53 @@ import Testing
 
 @Suite("AirNow AQI normalization")
 struct AirQualityTests {
+    @Test("cache reclaims expired entries during bounded maintenance")
+    func cacheReclaimsExpiredEntries() async {
+        let cache = AirQualityCurrentCache()
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        for key in 0..<10_000 {
+            await cache.store(nil, for: Int64(key), expiresAt: start.addingTimeInterval(1), now: start)
+        }
+        let expired = start.addingTimeInterval(1)
+        for key in 0..<10_000 {
+            #expect(await cache.response(for: Int64(key), now: expired) == nil)
+        }
+        #expect(await cache.entryCount() == 0)
+    }
+
+    @Test("cache preserves fresh and negative hits while bounding churn")
+    func cacheBoundsChurnAndPreservesHits() async {
+        let cache = AirQualityCurrentCache()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        for key in 0..<AirQualityCurrentCache.capacity {
+            await cache.store(nil, for: Int64(key), expiresAt: now.addingTimeInterval(60), now: now)
+        }
+        for _ in 0..<100 { _ = await cache.response(for: 0, now: now) }
+        for key in AirQualityCurrentCache.capacity..<AirQualityCurrentCache.capacity + 500 {
+            await cache.store(nil, for: Int64(key), expiresAt: now.addingTimeInterval(60), now: now)
+        }
+        #expect(await cache.entryCount() == AirQualityCurrentCache.capacity)
+        #expect(await cache.response(for: 0, now: now) == .some(nil))
+        #expect(await cache.response(for: 1_499, now: now) == .some(nil))
+        await cache.store(nil, for: 1_499, expiresAt: now.addingTimeInterval(120), now: now)
+        #expect(await cache.response(for: 1_499, now: now.addingTimeInterval(61)) == .some(nil))
+    }
+
+    @Test("cache remains bounded under concurrent actor access")
+    func cacheConcurrentAccessRemainsBounded() async {
+        let cache = AirQualityCurrentCache()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        await withTaskGroup(of: Void.self) { group in
+            for key in 0..<2_000 {
+                group.addTask {
+                    await cache.store(nil, for: Int64(key), expiresAt: now.addingTimeInterval(60), now: now)
+                    _ = await cache.response(for: Int64(key), now: now)
+                }
+            }
+        }
+        #expect(await cache.entryCount() <= AirQualityCurrentCache.capacity)
+    }
+
     @Test("AirNow client preserves the request and response contract")
     func airNowClientPreservesRequestAndResponseContract() async throws {
         let responseData = Data("""

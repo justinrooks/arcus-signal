@@ -15,21 +15,46 @@ struct UnavailableAirQualityProvider: AirQualityCurrentProviding {
 }
 
 actor AirQualityCurrentCache {
+    static let capacity = 1_000
+    static let maintenanceInterval = 64
+
     private struct Entry: Sendable {
         let response: AirQualityCurrentResponse?
         let expiresAt: Date
+        var lastAccess: UInt64
     }
 
     private var entries: [Int64: Entry] = [:]
+    private var operationsSinceMaintenance = 0
+    private var accessSequence: UInt64 = 0
 
     func response(for h3Cell: Int64, now: Date) -> AirQualityCurrentResponse?? {
-        guard let entry = entries[h3Cell], entry.expiresAt > now else { return nil }
+        maintainIfNeeded(now: now)
+        guard var entry = entries[h3Cell], entry.expiresAt > now else { return nil }
+        accessSequence &+= 1
+        entry.lastAccess = accessSequence
+        entries[h3Cell] = entry
         return entry.response
     }
 
-    func store(_ response: AirQualityCurrentResponse?, for h3Cell: Int64, expiresAt: Date) {
-        entries[h3Cell] = Entry(response: response, expiresAt: expiresAt)
+    func store(_ response: AirQualityCurrentResponse?, for h3Cell: Int64, expiresAt: Date, now: Date) {
+        maintainIfNeeded(now: now)
+        accessSequence &+= 1
+        entries[h3Cell] = Entry(response: response, expiresAt: expiresAt, lastAccess: accessSequence)
+        if entries.count > Self.capacity {
+            let oldest = entries.min { $0.value.lastAccess < $1.value.lastAccess }?.key
+            if let oldest { entries.removeValue(forKey: oldest) }
+        }
     }
+
+    private func maintainIfNeeded(now: Date) {
+        operationsSinceMaintenance += 1
+        guard operationsSinceMaintenance >= Self.maintenanceInterval else { return }
+        operationsSinceMaintenance = 0
+        entries = entries.filter { $0.value.expiresAt > now }
+    }
+
+    func entryCount() -> Int { entries.count }
 }
 
 struct DefaultAirQualityProvider: AirQualityCurrentProviding {
@@ -78,7 +103,7 @@ struct DefaultAirQualityProvider: AirQualityCurrentProviding {
             )
             let response = AirNowNormalizer.normalize(observations: upstream.observations)
             await recorder?.record(event(response == nil ? .noUsableObservation : .usableAQI, status: upstream.httpStatus))
-            await cache.store(response, for: h3Cell, expiresAt: requestDate.addingTimeInterval(configuration.cacheLifetime))
+            await cache.store(response, for: h3Cell, expiresAt: requestDate.addingTimeInterval(configuration.cacheLifetime), now: requestDate)
             return response
         } catch is CancellationError {
             throw CancellationError()
