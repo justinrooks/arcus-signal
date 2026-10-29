@@ -1,4 +1,5 @@
 @testable import App
+import ArcusCore
 import Fluent
 import FluentSQL
 import Foundation
@@ -13,6 +14,11 @@ struct NotificationDispatchOutboxTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func withApp(test: (Application) async throws -> Void) async throws {
+        let name = Environment.get("DATABASE_URL").flatMap(URL.init(string:))?.lastPathComponent
+            ?? Environment.get("DATABASE_NAME") ?? ""
+        guard name.range(of: #"^arcus_issue[0-9]+_(test|validation)_[A-Za-z0-9_]+$"#, options: .regularExpression) != nil else {
+            throw Abort(.internalServerError, reason: "An issue-scoped test database is required")
+        }
         try await withIntegrationTestApplication(setup: .configured(mode: .api, migrate: true)) { app in
             app.queues.use(.test)
             try await test(app)
@@ -257,6 +263,208 @@ struct NotificationDispatchOutboxTests {
         }
     }
 
+    private func context(_ app: Application) -> QueueContext {
+        .init(queueName: .init(string: "scheduled"), configuration: app.queues.configuration,
+              application: app, logger: app.logger, on: app.eventLoopGroup.any())
+    }
+
+    @Test("recovery revisits failed H3 handoff after unchanged sweeps and quiet weather")
+    func independentH3Recovery() async throws {
+        try await withApp { app in
+            let series = try await seed(on: app.db)
+            try await withRecoveryFixtures(series: series, app: app) {
+                let id = try await insert(series: series, mode: "h3", availableAt: .distantPast, on: app.db)
+                let context = context(app)
+                app.queues.use(custom: FailingNotificationQueueDriver())
+                try await RecoverNWSOutboxScheduledJob().run(context: context)
+                let failed = try #require(try await ArcusNotificationOutboxModel.find(id, on: app.db))
+                #expect(failed.state == "ready" && failed.attempts == 1)
+                let due = failed.availableAt
+                app.queues.use(.test)
+                // Identical accepted weather is repeatedly acquired; it cannot create fresh intent.
+                let events = try LocalNWSReplayFixtureLoader().loadEvents(
+                    fixtureName: "nws-series-geometry-v1", on: app, logger: app.logger)
+                app.nwsIngestService = RecoveryWeather(events: events)
+                for _ in 0..<10 {
+                    try await IngestNWSAlertsJob().dequeue(context, .init(runLabel: "issue383-\(series)"))
+                }
+                #expect(app.queues.test.all(NotificationSendJob.self).filter { $0.seriesId == series }.isEmpty)
+                try await RecoverNWSOutboxScheduledJob().run(context: context)
+                #expect(try await ArcusNotificationOutboxModel.find(id, on: app.db)?.availableAt == due)
+                // Advance only this persisted deadline, avoiding sleeps or a process-global clock.
+                try await ArcusNotificationOutboxModel.query(on: app.db).filter(\.$id == id)
+                    .set(\.$availableAt, to: .distantPast).update()
+                // Quiet/stopped interval: no tick means no handoff, even when due.
+                #expect(try await ArcusNotificationOutboxModel.find(id, on: app.db)?.state == "ready")
+                app.nwsIngestService = RecoveryWeather(events: [])
+                try await RecoverNWSOutboxScheduledJob().run(context: context)
+                #expect(try await ArcusNotificationOutboxModel.find(id, on: app.db)?.state == "done")
+                #expect(app.queues.test.all(NotificationSendJob.self).filter { $0.seriesId == series }.count == 1)
+            }
+        }
+    }
+
+    @Test("recovery drains target and UGC through repeated acquisition failures and abandoned H3 lease")
+    func upstreamFailureAndRestart() async throws {
+        try await withApp { app in
+            let series = try await seed(on: app.db)
+            try await withRecoveryFixtures(series: series, app: app) {
+                let context = context(app)
+                let ugc = try await insert(series: series, availableAt: .distantPast, on: app.db)
+                let h3 = try await insert(series: series, mode: "h3", availableAt: .distantPast, on: app.db)
+                let abandoned = try #require(try await store.claim(mode: "h3", limit: 1, on: app.db).first)
+                let future = try await insert(series: series, mode: "h3", availableAt: .distantFuture, on: app.db)
+                let dead = try await insert(series: series, mode: "h3", state: "dead", on: app.db)
+                let done = try await insert(series: series, mode: "h3", state: "done", on: app.db)
+                try await ArcusTargetDispatchOutboxModel(revisionUrn: "urn:oid:recovery-\(series)", seriesId: series,
+                    payload: .init(seriesId: series, revisionUrn: "urn:oid:recovery-\(series)",
+                                   geometry: .point(lon: -104, lat: 39), reason: .new)).create(on: app.db)
+                app.nwsIngestService = RecoveryWeather(events: nil)
+                for _ in 0..<3 {
+                    await #expect(throws: NWSIngestServiceError.self) {
+                        try await IngestNWSAlertsJob().dequeue(context, .init(runLabel: "issue383-\(series)"))
+                    }
+                }
+                #expect(app.queues.test.all(TargetEventRevisionJob.self).isEmpty)
+                try await RecoverNWSOutboxScheduledJob().run(context: context)
+                #expect(app.queues.test.all(TargetEventRevisionJob.self).filter { $0.seriesId == series }.count == 1)
+                #expect(try await ArcusNotificationOutboxModel.find(ugc, on: app.db)?.state == "done")
+                #expect(try await ArcusNotificationOutboxModel.find(h3, on: app.db)?.state == "processing")
+                try await ArcusNotificationOutboxModel.query(on: app.db).filter(\.$id == h3)
+                    .set(\.$availableAt, to: .distantPast).update()
+                // A fresh job instance models restart; the durable deadline is the authority.
+                try await RecoverNWSOutboxScheduledJob().run(context: context)
+                #expect(try await ArcusNotificationOutboxModel.find(h3, on: app.db)?.state == "done")
+                #expect(!(try await store.complete(abandoned, error: "late old owner", on: app.db)))
+                #expect(try await ArcusNotificationOutboxModel.find(future, on: app.db)?.state == "ready")
+                #expect(try await ArcusNotificationOutboxModel.find(dead, on: app.db)?.state == "dead")
+                #expect(try await ArcusNotificationOutboxModel.find(done, on: app.db)?.state == "done")
+            }
+        }
+    }
+
+    @Test("scheduled and ingest target handoffs preserve retry state and delivery", arguments: [false, true])
+    func overlappingRecovery(failFirstHandoff: Bool) async throws {
+        try await withApp { app in
+            let series = try await seed(on: app.db)
+            try await withRecoveryFixtures(series: series, app: app) {
+                let context = context(app)
+                let revision = "urn:oid:\(series)"
+                let geometry = GeoShape.polygon(rings: [[.init(lon: -105, lat: 39), .init(lon: -104.9, lat: 39),
+                    .init(lon: -104.9, lat: 39.1), .init(lon: -105, lat: 39)]])
+                try await ArcusTargetDispatchOutboxModel(revisionUrn: revision, seriesId: series,
+                    payload: .init(seriesId: series, revisionUrn: revision, geometry: geometry, reason: .new))
+                    .create(on: app.db)
+                let barrier = RecoveryTargetBarrier()
+                app.queues.add(barrier)
+                async let scheduled: Void = RecoverNWSOutboxScheduledJob().run(context: context)
+                async let ingest = IngestNWSAlertsJob().dispatchPendingTargetJobs(context: context)
+                _ = try await (scheduled, ingest)
+                let targets = await barrier.targets.filter { $0.seriesId == series }
+                #expect(targets.count == 2) // Deliberately force the older target handoff race.
+                if failFirstHandoff {
+                    app.queues.use(custom: FailingNotificationQueueDriver())
+                    try await TargetEventRevisionJob().dequeue(context, targets[0])
+                    let failed = try #require(try await ArcusNotificationOutboxModel.query(on: app.db)
+                        .filter(\.$series.$id == series).first())
+                    #expect(failed.state == "ready" && failed.attempts == 1)
+                    let due = failed.availableAt
+                    app.queues.use(.test)
+                    // The second target copy must not bypass the first handoff's backoff.
+                    try await TargetEventRevisionJob().dequeue(context, targets[1])
+                    let afterDuplicate = try #require(try await ArcusNotificationOutboxModel.find(failed.requireID(), on: app.db))
+                    #expect(afterDuplicate.state == "ready")
+                    #expect(afterDuplicate.attempts == 1 && afterDuplicate.availableAt == due)
+                    return
+                }
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for payload in targets { group.addTask { try await TargetEventRevisionJob().dequeue(context, payload) } }
+                    group.addTask { try await RecoverNWSOutboxScheduledJob().run(context: context) }
+                    try await group.waitForAll()
+                }
+                let rows = try await ArcusNotificationOutboxModel.query(on: app.db).filter(\.$series.$id == series).all()
+                #expect(rows.count == 1 && rows.first?.state == "done")
+                let coverage = try #require(try await ArcusGeolocationModel.query(on: app.db)
+                    .filter(\.$series.$id == series).first())
+                let cell = try #require(coverage.h3Cells.first)
+                let installation = UUID()
+                try await DeviceInstallationModel(installationId: installation, apnsDeviceToken: "recovery-test",
+                    apnsEnvironment: .sandbox, platform: .iOS, osVersion: "26", appVersion: "1",
+                    buildNumber: "1", locationAuth: .always).create(on: app.db)
+                do {
+                    try await DevicePresenceModel(installationId: installation, capturedAt: .now,
+                        locationAgeSeconds: 0, horizontalAccuracyMeters: 10, cellScheme: .h3,
+                        h3Cell: cell, h3Resolution: 8, county: nil, zone: nil, fireZone: nil,
+                        source: .unknown, countyLabel: nil, fireZoneLabel: nil).create(on: app.db)
+                    let payload = try #require(await barrier.sends.first { $0.seriesId == series })
+                    let sender = RecoverySender()
+                    // Duplicate Redis handoff after a lost completion still crosses one delivery claim.
+                    try await NotificationSendJob(sender: sender).dequeue(context, payload)
+                    try await NotificationSendJob(sender: sender).dequeue(context, payload)
+                    #expect(await sender.count == 1)
+                    #expect(try await NotificationLedgerModel.query(on: app.db)
+                        .filter(\.$series.$id == series).count() == 1)
+                } catch {
+                    try? await DeviceInstallationModel.find(installation, on: app.db)?.delete(on: app.db)
+                    throw error
+                }
+                try await DeviceInstallationModel.find(installation, on: app.db)?.delete(on: app.db)
+            }
+        }
+    }
+
+    @Test("duplicate automatic targets preserve failed and exhausted H3/UGC handoffs",
+          arguments: [NotificationTargetMode.h3, .ugc], [false, true])
+    func duplicateTargetFailureState(mode: NotificationTargetMode, exhaust: Bool) async throws {
+        try await withApp { app in
+            let series = try await seed(on: app.db)
+            try await withRecoveryFixtures(series: series, app: app) {
+                let context = context(app)
+                let payload = TargetEventRevisionPayload(seriesId: series, revisionUrn: "urn:oid:\(series)",
+                    geometry: .point(lon: -105, lat: 39), reason: .new)
+                let job = TargetEventRevisionJob(buildCoverage: { _ in
+                    mode == .h3 ? .supported(.init(cells: [123], h3Hash: "recovery", geometryHash: "recovery", resolution: 8))
+                        : .unsupportedPoint
+                })
+                app.queues.use(custom: FailingNotificationQueueDriver())
+                try await job.dequeue(context, payload)
+                let failed = try #require(try await ArcusNotificationOutboxModel.query(on: app.db)
+                    .filter(\.$series.$id == series).first())
+                #expect(failed.mode == mode.rawValue && failed.state == "ready" && failed.attempts == 1)
+                if exhaust {
+                    // Drive the real completion transition through its terminal failure.
+                    for _ in 0..<2 {
+                        try await ArcusNotificationOutboxModel.query(on: app.db).filter(\.$id == failed.requireID())
+                            .set(\.$availableAt, to: .distantPast).update()
+                        try await RecoverNWSOutboxScheduledJob().run(context: context)
+                    }
+                }
+                let before = try #require(try await ArcusNotificationOutboxModel.find(failed.requireID(), on: app.db))
+                app.queues.use(.test)
+                try await job.dequeue(context, payload)
+                let after = try #require(try await ArcusNotificationOutboxModel.find(failed.requireID(), on: app.db))
+                #expect(before.state == (exhaust ? "dead" : "ready"))
+                #expect(after.state == before.state && after.attempts == before.attempts)
+                #expect(after.availableAt == before.availableAt && after.lastError == before.lastError)
+                #expect(app.queues.test.all(NotificationSendJob.self).filter { $0.seriesId == series }.isEmpty)
+            }
+        }
+    }
+
+    private func withRecoveryFixtures(series: UUID, app: Application, test: () async throws -> Void) async throws {
+        func cleanup() async throws {
+            try await IngestSweepRunModel.query(on: app.db).filter(\.$runLabel == "issue383-\(series)").delete()
+            try await ArcusSeriesModel.find(series, on: app.db)?.delete(on: app.db)
+            let events = try LocalNWSReplayFixtureLoader().loadEvents(
+                fixtureName: "nws-series-geometry-v1", on: app, logger: app.logger)
+            for event in events {
+                try await ArcusSeriesModel.query(on: app.db).filter(\.$currentRevisionUrn == event.id).delete()
+            }
+        }
+        do { try await test(); try await cleanup() }
+        catch { try? await cleanup(); throw error }
+    }
+
     @Test("a queue dispatch error persists one failed handoff with backoff")
     func queueHandoffFailure() async throws {
         try await withApp { app in
@@ -322,4 +530,39 @@ private struct FailingNotificationQueue: AsyncQueue {
     func clear(_ id: JobIdentifier) async throws {}
     func pop() async throws -> JobIdentifier? { nil }
     func push(_ id: JobIdentifier) async throws { throw Abort(.serviceUnavailable) }
+}
+
+private struct RecoveryWeather: NWSIngestService {
+    let events: [ArcusEvent]?
+    func ingestOnce(on application: Application, logger: Logger) async throws -> [ArcusEvent] {
+        guard let events else { throw NWSIngestServiceError.unconfigured }
+        return events
+    }
+}
+
+private actor RecoveryTargetBarrier: AsyncJobEventDelegate {
+    private var first: CheckedContinuation<Void, Never>?
+    private var arrivals = 0
+    private(set) var targets: [TargetEventRevisionPayload] = []
+    private(set) var sends: [NotificationSendJobPayload] = []
+    func dispatched(job: JobEventData) async throws {
+        if job.jobName == NotificationSendJob.name {
+            sends.append(try NotificationSendJob.parsePayload(job.payload))
+        }
+        guard job.jobName == TargetEventRevisionJob.name else { return }
+        targets.append(try TargetEventRevisionJob.parsePayload(job.payload))
+        arrivals += 1
+        if arrivals == 1 {
+            await withCheckedContinuation { first = $0 }
+        } else if arrivals == 2 {
+            first?.resume()
+            first = nil
+        }
+    }
+}
+
+private actor RecoverySender: NotificationSender {
+    private(set) var count = 0
+    func sendNotification(app: Application, with: AlertDetails, hotAlertPayload: HotAlertAPNsPayload,
+                          to: String, environment: APNsEnvironment) async throws { count += 1 }
 }

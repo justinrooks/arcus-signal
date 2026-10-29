@@ -87,6 +87,7 @@ public struct DispatchAgent {
         reason: NotificationReason,
         mode: NotificationTargetMode,
         sourceTargetExecutionId: UUID? = nil,
+        replayExisting: Bool = true,
         on database: any Database,
         logger: Logger
     ) async throws -> Bool {
@@ -99,6 +100,8 @@ public struct DispatchAgent {
             .first()
 
         if let existing {
+            // Automatic targeting must not reset a handoff's retry budget or deadline.
+            guard replayExisting else { return false }
             return try await handleExistingNotificationDispatchOutbox(
                 existing,
                 revisionUrn: revisionUrn,
@@ -135,6 +138,7 @@ public struct DispatchAgent {
                     .first()
 
                 if let existing {
+                    guard replayExisting else { return false }
                     return try await handleExistingNotificationDispatchOutbox(
                         existing,
                         revisionUrn: revisionUrn,

@@ -144,6 +144,7 @@ public struct TargetEventRevisionJob: AsyncJob {
                     reason: payload.reason,
                     mode: .ugc,
                     sourceTargetExecutionId: payload.targetExecutionId,
+                    replayExisting: false,
                     on: context.application.db,
                     logger: context.logger
                 ) {
@@ -261,6 +262,7 @@ private extension TargetEventRevisionJob {
             reason: payload.reason,
             mode: .h3,
             sourceTargetExecutionId: payload.targetExecutionId,
+            replayExisting: false,
             on: database,
             logger: logger
         ) {

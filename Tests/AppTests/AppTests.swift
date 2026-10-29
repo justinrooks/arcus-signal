@@ -1027,7 +1027,8 @@ struct AppTests {
             #expect(app.workerScheduledJobNames.contains("CleanupPressureArtifactsScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("RefreshOperatorDashboardSnapshotScheduledJob"))
             #expect(app.workerScheduledJobNames.contains("CleanupSurfaceCachesScheduledJob"))
-            #expect(app.workerScheduledJobNames.count == 8)
+            #expect(app.workerScheduledJobNames.contains("RecoverNWSOutboxScheduledJob"))
+            #expect(app.workerScheduledJobNames.count == 9)
         }
     }
 
