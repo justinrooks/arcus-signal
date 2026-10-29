@@ -54,8 +54,9 @@ struct OperatorDashboardHandoffTests {
 
     @Test func collectorSeparatesLeaseFailureAndEligibility() async throws {
         guard let url = Environment.get("DATABASE_URL"),
-              URL(string: url)?.lastPathComponent.hasPrefix("arcus_issue385_test_") == true else {
-            throw Abort(.internalServerError, reason: "Requires an explicit arcus_issue385_test_ database")
+              let name = URL(string: url)?.lastPathComponent,
+              name.range(of: #"^arcus_issue[0-9]+_(test|validation)_[A-Za-z0-9_]+$"#, options: .regularExpression) != nil else {
+            throw Abort(.internalServerError, reason: "Requires an explicit isolated arcus_issue<number>_(test|validation)_ database")
         }
         let app = try await Application.make(.testing)
         do {
