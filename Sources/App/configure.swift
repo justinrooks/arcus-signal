@@ -76,6 +76,8 @@ public func configure(_ app: Application, mode: AppRuntimeMode) async throws {
         configureWorkerRuntime(on: app)
         app.queues.schedule(DispatchIngestNWSAlertsScheduledJob()).minutely().at(0)
         app.recordWorkerScheduledJob("DispatchIngestNWSAlertsScheduledJob")
+        app.queues.schedule(RecoverNWSOutboxScheduledJob()).every(seconds: RecoverNWSOutboxScheduledJob.intervalSeconds)
+        app.recordWorkerScheduledJob("RecoverNWSOutboxScheduledJob")
         registerSPCMesoIngestSchedule(on: app)
         app.queues.schedule(DispatchMesoNotificationsScheduledJob()).minutely().at(0)
         app.recordWorkerScheduledJob("DispatchMesoNotificationsScheduledJob")
