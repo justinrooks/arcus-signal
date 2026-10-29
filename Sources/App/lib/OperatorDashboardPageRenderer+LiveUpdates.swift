@@ -231,7 +231,10 @@ extension OperatorDashboardPageRenderer {
               { label: 'Pending target rows', value: String(metric.pendingTargetDispatchCount) },
               { label: 'Oldest target row', value: formatDate(metric.oldestPendingTargetDispatchCreatedAt) },
               { label: 'Notification backlog', value: formatDuration(metric.oldestPendingNotificationDispatchAgeSeconds) },
-              { label: 'Pending notification rows', value: String(metric.pendingNotificationDispatchCount) }
+              { label: 'Pending notification rows', value: String(metric.pendingNotificationDispatchCount) },
+              { label: 'Handoff evidence', value: metric.handoffSummary ?? 'Handoff evidence unavailable' },
+              { label: 'Safe next action', value: '\#(PipelineBacklogMetricResponse.handoffGuidance)' },
+              ...(metric.notificationHandoffs ?? []).map(g => ({label: g.category+' · '+g.count, value: 'Oldest lease deadline / failure: '+formatDate(g.oldestAt)}))
             ], '', metric.status);
           }
 
@@ -871,6 +874,7 @@ extension OperatorDashboardPageRenderer {
             const findings=[];
             if(i.status==='warning') findings.push('Ingest delayed');
             if(m.status==='warning') findings.push('SPC meso delayed or failing');
+            if(b.status==='warning') findings.push('Notification handoffs need inspection');
             if(c.status==='critical') findings.push(c.count+' stuck claims');
             if(s.status==='warning') findings.push(s.count+' stale active series');
             if(a.status==='warning'||a.status==='critical') findings.push(a.summary);
@@ -887,7 +891,7 @@ extension OperatorDashboardPageRenderer {
               controlHealthItem('Ingest freshness',formatDuration(i.timeSinceLastSuccessfulSweepSeconds),i.status,i.recentSuccessCount+' successes / '+i.recentFailureCount+' failures','Last success: '+controlTime(i.lastSuccessfulSweepAt)+'. Last attempt: '+controlTime(i.lastAttemptAt)+'. Last failure: '+controlTime(i.lastFailureAt)+'. Error: '+(i.lastFailureMessage??'none')+'.')+
               controlHealthItem('SPC meso ingest',formatDuration(m.lastAttemptAgeSeconds),m.status,m.activeProductCount+' active products · last attempt '+(m.lastAttemptStatus??'unknown')+' · 10-minute cadence','Last attempt: '+controlTime(m.lastAttemptAt)+'. Last success: '+controlTime(m.lastSuccessfulAt)+'. Latest accepted: '+(m.latestProductTitle??'none')+' ('+(m.latestProductKey??'n/a')+'), issued '+controlTime(m.latestProductIssuedAt)+', valid '+controlTime(m.latestProductValidStart)+' to '+controlTime(m.latestProductValidEnd)+'. Active geometry H3 coverage: '+m.activeProductsWithH3Coverage+' complete, '+m.activeProductsWithoutH3Coverage+' missing. Recent failures: '+m.recentFailureCount+' total; transport/fetch '+m.fetchFailureCount+', parse/reject '+m.parseRejectionCount+', persistence '+m.persistenceFailureCount+', H3 '+m.h3FailureCount+', other '+m.otherFailureCount+'. Last error: '+(m.lastFailureMessage??'none')+'.','mesos')+
               controlHealthItem('Air Quality / AirNow',a.status.charAt(0).toUpperCase()+a.status.slice(1),a.status,a.summary,'Last real attempt: '+controlTime(a.dependency.lastAttemptAt)+'. Last HTTP success: '+controlTime(a.dependency.lastUpstreamSuccessAt)+'. Last usable AQI: '+controlTime(a.dependency.lastUsableAQIAt)+'. Consecutive failures: '+(a.dependency.consecutiveFailures??0)+'. Failure streak started: '+controlTime(a.dependency.failureStartedAt)+'. Duration: '+(a.dependency.durationMilliseconds==null?'n/a':a.dependency.durationMilliseconds+' ms')+'. Updated: '+controlTime(a.dependency.updatedAt)+'.')+
-              controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). Pending queue handoffs, not delivery completions.')+
+              controlHealthItem('Dispatch backlog',String(b.pendingTargetDispatchCount+b.pendingNotificationDispatchCount),b.status,b.pendingTargetDispatchCount+' target · '+b.pendingNotificationDispatchCount+' notification rows','Oldest target: '+formatDuration(b.oldestPendingTargetDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingTargetDispatchCreatedAt)+'). Oldest notification: '+formatDuration(b.oldestPendingNotificationDispatchAgeSeconds)+' ('+controlTime(b.oldestPendingNotificationDispatchCreatedAt)+'). '+escapeHtml(b.handoffSummary??'Handoff evidence unavailable')+'. \#(PipelineBacklogMetricResponse.handoffGuidance)')+
               controlHealthItem('Stuck claims',String(c.count),c.status,'Claim age threshold: '+formatDuration(c.thresholdSeconds),'Oldest claim: '+formatDuration(c.oldestClaimedAgeSeconds)+' ('+controlTime(c.oldestClaimedCreatedAt)+').')+
               controlHealthItem('Stale active series',String(s.count),s.status,'Grace window: '+formatDuration(s.graceSeconds))+
               (anvilFinding?controlHealthItem('Anvil',anvil.status.charAt(0).toUpperCase()+anvil.status.slice(1),anvil.status,anvilFinding,'Last successful SHARPpy readiness: '+(anvil.sharppyAvailable==null?'unknown':(anvil.sharppyAvailable?'ready':'unavailable'))+', observed '+controlTime(anvil.lastSuccessfulAt)+'. Last successful identity: '+(anvil.version??'n/a')+' (revision '+(anvil.revision??'n/a')+'). Last check: '+controlTime(anvil.checkedAt)+'. Recent failure category: '+(anvil.recentFailure??'none')+'.','models','Model Pipeline'):'')+'</div>';
@@ -976,7 +980,7 @@ extension OperatorDashboardPageRenderer {
             updateSlot('nws-overview', JSON.stringify(snapshot.operatorContext.lastTouchedSeries), renderNWSOverview(snapshot.operatorContext.lastTouchedSeries));
             updateSlot('delivery-overview', JSON.stringify([snapshot.deliveryKPIs, snapshot.audienceTargeting]), renderDeliveryOverview(snapshot.deliveryKPIs, snapshot.audienceTargeting, detail));
             updateSlot('ingest-card', refreshKey(snapshot.redLights.ingestFreshness.refreshedAt), renderIngestCard(snapshot.redLights.ingestFreshness));
-            updateSlot('pipeline-backlog-card', refreshKey(snapshot.redLights.pipelineBacklogAge.refreshedAt), renderPipelineBacklogCard(snapshot.redLights.pipelineBacklogAge));
+            updateSlot('pipeline-backlog-card', JSON.stringify(snapshot.redLights.pipelineBacklogAge), renderPipelineBacklogCard(snapshot.redLights.pipelineBacklogAge));
             updateSlot('stuck-claimed-card', refreshKey(snapshot.redLights.stuckClaimedRows.refreshedAt), renderStuckClaimedCard(snapshot.redLights.stuckClaimedRows));
             updateSlot('stale-series-card', refreshKey(snapshot.redLights.staleActiveSeriesCount.refreshedAt), renderStaleSeriesCard(snapshot.redLights.staleActiveSeriesCount));
             updateSlot('known-installations-card', refreshKey(snapshot.growthUsage.installationGrowth.refreshedAt), renderKnownInstallationsCard(snapshot.growthUsage.installationGrowth));

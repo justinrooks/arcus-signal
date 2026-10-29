@@ -66,7 +66,7 @@ struct OperatorDashboardSnapshotRefresher {
             snapshot.ingestFreshness = try await loadIngestFreshness(on: app.db)
             snapshot.spcMesoIngest = try await loadSPCMesoIngest(on: app.db, sql: sql, now: now)
             snapshot.mesoActivity = try await loadMesoActivity(on: sql, now: now)
-            snapshot.pipelineBacklog = try await loadPipelineBacklog(on: app.db)
+            snapshot.pipelineBacklog = try await loadPipelineBacklog(on: app.db, now: now, mesoEnabled: app.mesoNotificationsEnabled)
             snapshot.stuckClaimedRows = try await loadStuckClaimedRows(on: app.db, now: now)
             snapshot.modelArtifacts = try await loadPressureArtifactCatalog(on: app, sql: sql, now: now)
             snapshot.recentNotificationDebugEntries = try await loadRecentNotificationDebugEntries(on: sql)
@@ -223,7 +223,37 @@ struct OperatorDashboardSnapshotRefresher {
         return .init(refreshedAt: now, capped: rows.count > StoredMesoActivity.recordLimit, entries: entries)
     }
 
-    private func loadPipelineBacklog(on database: any Database) async throws -> StoredPipelineBacklogMetric {
+    func loadPipelineBacklog(on database: any Database, now: Date, mesoEnabled: Bool) async throws -> StoredPipelineBacklogMetric {
+        guard let sql = database as? any SQLDatabase else { throw Abort(.internalServerError) }
+        // Classify from one database observation. Unknown product kinds retain evidence
+        // without guessing eligibility. Done is intentionally excluded: it is a handoff.
+        let groups = try await sql.raw("""
+            WITH evidence AS (
+                SELECT o.*, CASE
+                    WHEN COALESCE(o.subject_kind, 'nws') = 'nws' AND s.id IS NOT NULL THEN
+                        CASE WHEN s.current_revision_urn <> o.revision_urn THEN 'inactive'
+                             WHEN o.reason IN ('endedAllClear', 'cancelInError') THEN 'unclassified'
+                             WHEN s.state <> 'active' OR s.ends <= \(bind: now) OR s.expires <= \(bind: now) THEN 'inactive'
+                             ELSE 'current' END
+                    WHEN o.subject_kind = 'spc-meso' AND m.product_key IS NOT NULL THEN
+                        CASE WHEN m.valid_end <= \(bind: now) THEN 'inactive'
+                             WHEN NOT \(bind: mesoEnabled) THEN 'gated'
+                             WHEN m.valid_start <= \(bind: now) THEN 'current' ELSE 'inactive' END
+                    ELSE 'unclassified' END AS eligibility
+                FROM notification_outbox o
+                LEFT JOIN arcus_series s ON s.id = o.series_id
+                LEFT JOIN spc_mesos m ON o.subject_kind = 'spc-meso' AND m.product_key = o.subject_id
+                WHERE o.state IN ('processing', 'dead')
+            ), classified AS (
+                SELECT CASE WHEN state = 'processing' AND available_at > \(bind: now) THEN 'activeProcessing'
+                            WHEN eligibility <> 'current' THEN eligibility
+                            WHEN state = 'processing' THEN 'expiredLease' ELSE 'failedHandoff' END AS category,
+                       CASE WHEN state = 'processing' THEN available_at ELSE updated END AS relevant_at
+                FROM evidence
+            )
+            SELECT category, COUNT(*)::integer AS count, MIN(relevant_at) AS "oldestAt"
+            FROM classified GROUP BY category ORDER BY category
+            """).all(decoding: StoredNotificationHandoffGroup.self)
         let pendingTargetQuery = ArcusTargetDispatchOutboxModel.query(on: database)
             .filter(\.$dispatched == nil)
         let pendingNotificationQuery = ArcusNotificationOutboxModel.query(on: database)
@@ -236,7 +266,8 @@ struct OperatorDashboardSnapshotRefresher {
             pendingTargetDispatchCount: try await pendingTargetQuery.count(),
             oldestPendingTargetDispatchCreatedAt: oldestTarget?.created,
             pendingNotificationDispatchCount: try await pendingNotificationQuery.count(),
-            oldestPendingNotificationDispatchCreatedAt: oldestNotification?.created
+            oldestPendingNotificationDispatchCreatedAt: oldestNotification?.created,
+            notificationHandoffs: groups
         )
     }
 

@@ -1,6 +1,8 @@
 def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 . as $s
 | .metricsFresh = (try (($s.capturedAt | epoch) - ($s.metrics.generatedAt | epoch) | . >= 0 and . <= 180) catch false)
+| .backlogFresh = (try (($s.capturedAt | epoch) - ($s.metrics.backlog.refreshedAt | epoch) | . >= 0 and . <= 180) catch false)
+| if .metrics != null then .metrics.backlog.status = (if .backlogFresh then .metrics.backlog.status else "unknown" end) else . end
 | .infrastructureStatus = (
   if ([.services[]] | any(.running != true or (.health != "none" and .health != "healthy")))
     or .services.postgres.health != "healthy" or .services.redis.health != "healthy"

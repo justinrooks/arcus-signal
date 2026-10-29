@@ -40,7 +40,7 @@ if name=='curl':
  print(json.dumps({'generatedAt':epoch(now if mode!='stale' else now-500),
   'redLights':{'ingestFreshness':{'status':'critical' if regression or mode=='nws_failed' else 'healthy','recentFailureCount':0},
    'spcMesoIngest':{'status':meso,'lastAttemptStatus':'failed' if regression else 'succeeded','lastAttemptAgeSeconds':700 if meso=='warning' else 20,'recentFailureCount':1 if regression else 0},
-   'pipelineBacklogAge':{'status':'warning' if regression else 'healthy','pendingTargetDispatchCount':2 if regression else 0,'pendingNotificationDispatchCount':0},
+   'pipelineBacklogAge':{'refreshedAt':epoch(now-181 if mode=='backlog_stale' else now),'status':'warning' if regression or (mode=='handoff_transient' and now-int(os.environ['MOCK_EPOCH'])==120) else 'healthy','pendingTargetDispatchCount':2 if regression else 0,'pendingNotificationDispatchCount':0},
    'stuckClaimedRows':{'status':'warning' if regression else 'healthy','count':1 if regression else 0}},
   'deliveryKPIs':{'apnsDeliverySuccessRate':{'sentCount':6,'failedCount':2},'sendNoOpRateByReason':{}}}));sys.exit()
 if name!='docker': sys.exit(90)
@@ -341,6 +341,71 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(item['recoveredAt'],report['snapshots'][2]['capturedAt'])
         self.assertEqual([sample['operationalStatus'] for sample in report['snapshots']],
                          ['healthy','degraded','healthy','healthy'])
+
+    def test_handoff_failure_without_ready_rows_recovers(self):
+        path,_=self.deploy()
+        p=self.run_script('tools/release-observe.sh','--deployment',str(path),case='handoff_transient')
+        report=json.loads(p.stdout)
+        finding=next(f for f in report['findings'] if f['key']=='dispatch_backlog')
+        self.assertEqual(finding['state'],'recovered')
+        self.assertEqual([o['status'] for o in finding['observations']],['warning'])
+
+    def test_stale_backlog_cannot_report_recovery_or_health(self):
+        path,_=self.deploy()
+        for mode in ('backlog_stale','stale'):
+            with self.subTest(mode=mode):
+                p=self.run_script('tools/release-observe.sh','--deployment',str(path),case=mode,expected=1)
+                report=json.loads(p.stdout)
+                self.assertNotEqual(report['operationalStatus'],'healthy')
+                finding=next(f for f in report['findings'] if f['key']=='dispatch_backlog')
+                self.assertEqual(finding['state'],'unresolved')
+                self.assertTrue(all(o['status']=='unknown' for o in finding['observations']))
+
+    def test_stale_samples_do_not_recover_existing_findings(self):
+        def sample(offset, fresh, warning):
+            metric={'status':'warning' if warning else 'healthy','count':1 if warning else 0,
+                    'pendingTargetDispatchCount':1 if warning else 0,'pendingNotificationDispatchCount':0}
+            return {'capturedAt':f'2027-01-15T08:{offset:02}:00Z','scheduledOffsetSeconds':offset,
+                    'metricsFresh':fresh,'backlogFresh':fresh,'collectionStatus':'passed','status':'passed',
+                    'metrics':{'generatedAt':f'2027-01-15T08:{offset:02}:00Z',
+                               **{key:dict(metric) for key in ('nwsIngest','mesoIngest','backlog','stuckClaims')}},
+                    'postDeployDelivery':{'sentCount':0,'failedCount':0}}
+        baseline=sample(0,True,False)
+        warning=sample(1,True,True)
+        for last in (sample(2,False,True),sample(2,True,False)):
+            report={'baseline':baseline,'snapshots':[baseline,warning,last],'expectedOffsetsSeconds':[0,1,2]}
+            output=subprocess.check_output(['jq','-f',str(ROOT/'tools/lib/release-observe.jq')],input=json.dumps(report),text=True)
+            findings={f['key']:f for f in json.loads(output)['findings']}
+            for key in ('nws_ingest','spc_ingest','stuck_claims','dispatch_backlog','dispatch_count_growth','stuck_claim_growth'):
+                self.assertEqual(findings[key]['state'],'recovered' if last['metricsFresh'] else 'unresolved')
+                self.assertEqual(findings[key]['recoveredAt'],last['capturedAt'] if last['metricsFresh'] else None)
+
+    def test_dispatch_growth_requires_backlog_freshness(self):
+        def sample(offset, count, fresh):
+            metric={'status':'healthy','count':0,'pendingTargetDispatchCount':count,'pendingNotificationDispatchCount':0}
+            return {'capturedAt':f'2027-01-15T08:{offset:02}:00Z','scheduledOffsetSeconds':offset,
+                    'metricsFresh':True,'backlogFresh':fresh,'collectionStatus':'passed','status':'passed',
+                    'metrics':{'generatedAt':f'2027-01-15T08:{offset:02}:00Z',
+                               **{key:dict(metric) for key in ('nwsIngest','mesoIngest','backlog','stuckClaims')}},
+                    'postDeployDelivery':{'sentCount':0,'failedCount':0}}
+        baseline=sample(0,0,True)
+        warning=sample(1,2,True)
+        stale=sample(2,0,False)
+        recovery=sample(3,0,True)
+        for samples in ([baseline,warning,stale],[baseline,warning,stale,recovery]):
+            report={'baseline':baseline,'snapshots':samples,'expectedOffsetsSeconds':list(range(len(samples)))}
+            output=subprocess.check_output(['jq','-f',str(ROOT/'tools/lib/release-observe.jq')],input=json.dumps(report),text=True)
+            finding=next(f for f in json.loads(output)['findings'] if f['key']=='dispatch_count_growth')
+            self.assertEqual(finding['observations'][-1]['status'],'unknown')
+            self.assertEqual([o['status'] for o in finding['observations']],['warning','unknown'])
+            recovered=len(samples)==4
+            self.assertEqual(finding['state'],'recovered' if recovered else 'unresolved')
+            self.assertEqual(finding['recoveredAt'],recovery['capturedAt'] if recovered else None)
+        # Stale counts cannot create a new warning either, even when they exceed baseline.
+        report={'baseline':baseline,'snapshots':[baseline,sample(1,2,False)],'expectedOffsetsSeconds':[0,1]}
+        output=subprocess.check_output(['jq','-f',str(ROOT/'tools/lib/release-observe.jq')],input=json.dumps(report),text=True)
+        finding=next(f for f in json.loads(output)['findings'] if f['key']=='dispatch_count_growth')
+        self.assertEqual([o['status'] for o in finding['observations']],['unknown'])
 
     def test_delivery_between_startup_and_finished_is_not_lost(self):
         path,deployment=self.deploy(case='early_delivery_mixed')
