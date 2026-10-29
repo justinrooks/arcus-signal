@@ -14,8 +14,10 @@ import Foundation
 
 // MARK: - Root
 public struct NwsEventDTO: Codable, Sendable {
+    private static let collectionType = "FeatureCollection"
+
     public let type: String
-    public let features: [NwsEventFeatureDTO]?
+    public let features: [NwsEventFeatureDTO]
     public let title: String?
     public let updated: Date?
     public let pagination: NWSPaginationDTO?
@@ -26,6 +28,24 @@ public struct NwsEventDTO: Codable, Sendable {
         case title
         case updated
         case pagination
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        guard type == Self.collectionType else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Expected an NWS FeatureCollection."
+            )
+        }
+
+        self.type = type
+        self.features = try container.decode([NwsEventFeatureDTO].self, forKey: .features)
+        self.title = try container.decodeIfPresent(String.self, forKey: .title)
+        self.updated = try container.decodeIfPresent(Date.self, forKey: .updated)
+        self.pagination = try container.decodeIfPresent(NWSPaginationDTO.self, forKey: .pagination)
     }
 }
 

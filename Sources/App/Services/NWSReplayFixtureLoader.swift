@@ -44,7 +44,7 @@ public struct LocalNWSReplayFixtureLoader: NWSReplayFixtureLoader {
             metadata: [
                 "fixtureName": .string(fileName),
                 "fixturePath": .string(fixturePath),
-                "nwsFeatures": .stringConvertible(decoded.features?.count ?? 0),
+                "nwsFeatures": .stringConvertible(decoded.features.count),
                 "arcusEvents": .stringConvertible(events.count)
             ]
         )

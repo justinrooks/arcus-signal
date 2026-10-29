@@ -218,7 +218,7 @@ public extension NwsEventDTO {
         revision: Int = 1,
         rawRef: String? = nil
     ) -> [ArcusEvent] {
-        (features ?? []).compactMap {
+        features.compactMap {
             $0.toArcusEvent(
                 now: now,
                 revision: revision,
