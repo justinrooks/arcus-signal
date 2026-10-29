@@ -21,10 +21,11 @@ actor SurfaceCacheCleanupService {
 
     func cleanup(rootURL: URL, snapshots: Bool, now: Date,
                  executor: any PressureArtifactBlockingWorkExecuting,
-                 limit: Int = 500, grace: TimeInterval = 600) async throws -> Report {
+                 limit: Int = 500, grace: TimeInterval = 600,
+                 orphanRetention: TimeInterval = StormSetupConfiguration.default.gribSubsetCacheRetentionSeconds) async throws -> Report {
         let scanner = scanner
         return try await executor.execute {
-            try scanner.pass(rootURL: rootURL, snapshots: snapshots, now: now, limit: limit, grace: grace)
+            try scanner.pass(rootURL: rootURL, snapshots: snapshots, now: now, limit: limit, grace: grace, orphanRetention: orphanRetention)
         }
     }
 
@@ -33,7 +34,29 @@ actor SurfaceCacheCleanupService {
         private let section = BlockingWorkCriticalSection()
         private var cursors: [URL: FileManager.DirectoryEnumerator] = [:]
 
-        func pass(rootURL: URL, snapshots: Bool, now: Date, limit: Int, grace: TimeInterval) throws -> Report {
+        /// Without a sidecar, recognize only the established surface identity.
+        /// Round-trip through the producer's key format; future formats stay put.
+        private static func isRecognizedSurfaceIdentity(_ relative: String, components: [String]) -> Bool {
+            guard components[0] == "model=hrrr", components[1] == "product=wrfsfc",
+                  components[2] == "domain=conus", components[6] == "fields=tornado-v1",
+                  let hour = Int(components[4].dropFirst(3)), (0...999).contains(hour) else { return false }
+            let hash = String(components[7].dropFirst(5))
+            guard hash.count == 64, hash.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return false }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "yyyyMMdd'T'HH'Z'"
+            formatter.isLenient = false
+            guard let run = formatter.date(from: String(components[3].dropFirst(4))),
+                  let valid = formatter.date(from: String(components[5].dropFirst(6))),
+                  valid == run.addingTimeInterval(Double(hour) * 3600) else { return false }
+            return StormSetupCacheKey(model: .hrrr, product: .wrfsfc, domain: .conus, runTime: run,
+                                      forecastHour: hour, validTime: valid, bboxKey: "", bboxHash: hash,
+                                      fieldSetVersion: .tornadoV1).cacheIdentifier == relative
+        }
+
+        func pass(rootURL: URL, snapshots: Bool, now: Date, limit: Int, grace: TimeInterval, orphanRetention: TimeInterval) throws -> Report {
             try section.withLock {
                 guard (try? rootURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { return Report() }
                 let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
@@ -58,7 +81,8 @@ actor SurfaceCacheCleanupService {
                         cursor.skipDescendants()
                         continue
                     }
-                    guard url.lastPathComponent == (snapshots ? "snapshot.json" : "subset.json") else { continue }
+                    let orphanCandidate = !snapshots && url.lastPathComponent == "subset.grib2"
+                    guard orphanCandidate || url.lastPathComponent == (snapshots ? "snapshot.json" : "subset.json") else { continue }
                     let normalizedURL = url.standardizedFileURL.resolvingSymlinksInPath()
                     let prefix = root.path + "/"
                     guard normalizedURL.path.hasPrefix(prefix) else { continue }
@@ -81,34 +105,50 @@ actor SurfaceCacheCleanupService {
                         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
                         defer { try? handle.close() }
                         var info = stat()
-                        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-                              info.st_size > 0, info.st_size <= 1_048_576 else { continue }
-                        let data = try handle.read(upToCount: 1_048_577) ?? Data()
-                        let decoder = JSONDecoder()
-                        decoder.dateDecodingStrategy = .iso8601
-                        let expiry: Date
-                        if snapshots {
-                            let record = try decoder.decode(StormSetupSnapshotCacheRecord.self, from: data)
-                            guard record.key.cacheIdentifier == relative else { continue }
-                            expiry = record.snapshot.freshness.expiresAt
-                        } else {
-                            let record = try decoder.decode(GribSubsetCacheRecord.self, from: data)
-                            guard try StormSetupCacheKey(sourceMetadata: record.source).cacheIdentifier == relative else { continue }
-                            expiry = record.expiresAt
-                        }
-                        guard expiry <= now.addingTimeInterval(-max(0, grace)) else { continue }
+                        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size > 0 else { continue }
                         #if canImport(Darwin)
                         let modified = Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec))
                         #else
                         let modified = Date(timeIntervalSince1970: Double(info.st_mtim.tv_sec))
                         #endif
                         guard modified <= now.addingTimeInterval(-max(0, grace)) else { continue }
-                        if !snapshots {
-                            var bodyInfo = stat()
-                            guard fstatat(directory, "subset.grib2", &bodyInfo, AT_SYMLINK_NOFOLLOW) == 0,
-                                  bodyInfo.st_mode & S_IFMT == S_IFREG else { continue }
+                        let names: [String]
+                        if orphanCandidate {
+                            // Only ENOENT establishes absence: symlinks, malformed
+                            // sidecars and inspection failures remain ambiguous.
+                            var metadataInfo = stat()
+                            guard fstatat(directory, "subset.json", &metadataInfo, AT_SYMLINK_NOFOLLOW) == -1,
+                                  errno == ENOENT,
+                                  modified <= now.addingTimeInterval(-max(0, orphanRetention) - max(0, grace)),
+                                  Self.isRecognizedSurfaceIdentity(relative, components: components),
+                                  info.st_size >= 20 else { continue }
+                            let header = try handle.read(upToCount: 8) ?? Data()
+                            try handle.seek(toOffset: UInt64(info.st_size - 4))
+                            let trailer = try handle.read(upToCount: 4)
+                            guard header.count == 8, header.prefix(4) == Data("GRIB".utf8), header[7] == 2,
+                                  trailer == Data("7777".utf8) else { continue }
+                            names = [name]
+                        } else {
+                            guard info.st_size <= 1_048_576 else { continue }
+                            let data = try handle.read(upToCount: 1_048_577) ?? Data()
+                            let decoder = JSONDecoder()
+                            decoder.dateDecodingStrategy = .iso8601
+                            let expiry: Date
+                            if snapshots {
+                                let record = try decoder.decode(StormSetupSnapshotCacheRecord.self, from: data)
+                                guard record.key.cacheIdentifier == relative else { continue }
+                                expiry = record.snapshot.freshness.expiresAt
+                            } else {
+                                let record = try decoder.decode(GribSubsetCacheRecord.self, from: data)
+                                guard try StormSetupCacheKey(sourceMetadata: record.source).cacheIdentifier == relative else { continue }
+                                expiry = record.expiresAt
+                                var bodyInfo = stat()
+                                guard fstatat(directory, "subset.grib2", &bodyInfo, AT_SYMLINK_NOFOLLOW) == 0,
+                                      bodyInfo.st_mode & S_IFMT == S_IFREG else { continue }
+                            }
+                            guard expiry <= now.addingTimeInterval(-max(0, grace)) else { continue }
+                            names = snapshots ? [name] : ["subset.grib2", name]
                         }
-                        let names = snapshots ? [name] : ["subset.grib2", name]
                         for item in names {
                             var itemInfo = stat()
                             guard fstatat(directory, item, &itemInfo, AT_SYMLINK_NOFOLLOW) == 0,
@@ -147,7 +187,8 @@ struct CleanupSurfaceCachesScheduledJob: AsyncScheduledJob {
         for (root, snapshots) in [(configuration.gribSubsetCacheRootURL, false),
                                   (configuration.sampledSnapshotCacheRootURL, true)] {
             let start = ContinuousClock.now
-            let report = try await service.cleanup(rootURL: root, snapshots: snapshots, now: Date(), executor: executor)
+            let report = try await service.cleanup(rootURL: root, snapshots: snapshots, now: Date(), executor: executor,
+                                                   orphanRetention: configuration.gribSubsetCacheRetentionSeconds)
             context.logger.info("Surface cache cleanup pass completed.", metadata: [
                 "snapshots": .stringConvertible(snapshots), "examined": .stringConvertible(report.examined),
                 "removedFiles": .stringConvertible(report.removedFiles), "removedBytes": .stringConvertible(report.removedBytes),
