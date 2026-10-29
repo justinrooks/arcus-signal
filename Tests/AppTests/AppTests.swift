@@ -563,7 +563,7 @@ struct AppTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
 
-        guard let geometry = decoded.features?.first?.geometry else {
+        guard let geometry = decoded.features.first?.geometry else {
             Issue.record("Expected a geometry payload.")
             return
         }
@@ -602,7 +602,7 @@ struct AppTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(NwsEventDTO.self, from: Data(json.utf8))
 
-        guard let geometry = decoded.features?.first?.geometry else {
+        guard let geometry = decoded.features.first?.geometry else {
             Issue.record("Expected a geometry payload.")
             return
         }

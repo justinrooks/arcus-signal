@@ -27,7 +27,7 @@ public struct DefaultNWSIngestService: NWSIngestService {
         logger.info(
             "Mapped NWS alert payload into canonical events.",
             metadata: [
-                "nwsFeatures": .string("\(decoded.features?.count ?? 0)"),
+                "nwsFeatures": .string("\(decoded.features.count)"),
                     "arcusEvents": .string("\(arcusEvents.count)")
                 ]
         )
