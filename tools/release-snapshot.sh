@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib/release-common.sh"
-usage() { echo 'Usage: tools/release-snapshot.sh [--expected-tag vMAJOR.MINOR.PATCH] [--since UTC_TIMESTAMP [--attributable-since UTC_TIMESTAMP]] [--json] [--output FILE]'; }
+usage() { echo 'Usage: tools/release-snapshot.sh [--expected-tag vMAJOR.MINOR.PATCH] [--expected-meso-gate false|true] [--since UTC_TIMESTAMP [--attributable-since UTC_TIMESTAMP]] [--json] [--output FILE]'; }
+expected_gate=false
 tag='' since='' attributable_since='' output='' json=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --expected-tag|--since|--attributable-since|--output)
+    --expected-meso-gate|--expected-tag|--since|--attributable-since|--output)
       [[ $# -ge 2 && -n "$2" ]] || release_die 2 'Missing option value.'
-      case "$1" in --expected-tag) tag="$2";; --since) since="$2";; --attributable-since) attributable_since="$2";; --output) output="$2";; esac
+      case "$1" in --expected-meso-gate) expected_gate="$2";; --expected-tag) tag="$2";; --since) since="$2";; --attributable-since) attributable_since="$2";; --output) output="$2";; esac
       shift 2 ;;
     --json) json=1; shift;;
     --help|-h) usage; exit 0;;
     *) usage >&2; exit 2;;
   esac
 done
+[[ "$expected_gate" == false || "$expected_gate" == true ]] || release_die 2 'Expected meso gate must be literal false or true.'
 [[ -z "$tag" ]] || release_tag_valid "$tag" || release_die 2 'Invalid expected tag.'
 [[ -z "$since" ]] || release_timestamp_valid "$since" || release_die 2 'Use a UTC ISO timestamp, optionally with fractional seconds.'
 if [[ -n "$attributable_since" ]]; then
@@ -29,7 +31,7 @@ emit() {
     release_write "$output" "$result"
   fi
   if [[ "$json" == 1 ]]; then printf '%s\n' "$result" | jq .
-  else printf '%s' "$result" | jq -r '"Snapshot: \(.status) | collection \(.collectionStatus) | infrastructure \(.infrastructureStatus // "unknown") | operations \(.operationalStatus // "unknown")"'; fi
+  else printf '%s' "$result" | jq -r '"Snapshot: \(.status) | collection \(.collectionStatus) | infrastructure \(.infrastructureStatus // "unknown") | expected meso \(.expectedMesoGate // "unknown") | operations \(.operationalStatus // "unknown")"'; fi
 }
 # Docker errors are collection failures, never apparently valid missing-service results.
 if ! (release_docker_check) >/dev/null 2>&1; then
@@ -68,10 +70,10 @@ if [[ -n "$since" ]]; then
   if ! post_delivery="$(release_psql -v since="$since" -v attributable_since="$attributable_since" \
     < "$RELEASE_ROOT/tools/sql/release-delivery-evidence.sql" 2>/dev/null)"; then post_delivery=null; fi
 fi
-result="$(jq -nc --arg at "$(release_now)" --arg tag "$tag" --arg since "$since" --arg attributableSince "$attributable_since" --arg metricsError "$metrics_error" \
+result="$(jq -nc --arg expectedGate "$expected_gate" --arg at "$(release_now)" --arg tag "$tag" --arg since "$since" --arg attributableSince "$attributable_since" --arg metricsError "$metrics_error" \
   --argjson services "$services" --argjson apiHttp "$api_http" --argjson workerHttp "$worker_http" \
   --argjson metrics "$metrics" --argjson postDelivery "$post_delivery" \
-  '{schemaVersion:2,capturedAt:$at,expectedTag:$tag,deliverySince:$since,deliveryAttributableSince:$attributableSince,collectionStatus:"passed",
+  '{schemaVersion:2,capturedAt:$at,expectedTag:$tag,expectedMesoGate:$expectedGate,deliverySince:$since,deliveryAttributableSince:$attributableSince,collectionStatus:"passed",
     services:$services,httpHealth:{api:$apiHttp,worker:$workerHttp},metrics:$metrics,metricsError:$metricsError,postDeployDelivery:$postDelivery}' \
   | jq -c -f "$RELEASE_ROOT/tools/lib/release-snapshot.jq")"
 emit

@@ -2,17 +2,32 @@
 set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/tools/lib/release-common.sh"
 if [[ $# == 1 && "$1" == --help ]]; then
-  echo 'Usage: ./install vMAJOR.MINOR.PATCH'
+  echo 'Usage: ./install vMAJOR.MINOR.PATCH [--baseline-meso-gate false|true] [--expected-meso-gate false|true]'
   echo 'Deploys exactly the supplied release. Uses ~/backups/arcus-signal; see tools/release-preflight.sh --help.'
   exit 0
 fi
-[[ $# == 1 ]] && release_tag_valid "$1" || release_die 2 'Usage: ./install vMAJOR.MINOR.PATCH'
-export ARCUS_SIGNAL_IMAGE_TAG="$1"
+[[ $# -ge 1 ]] && release_tag_valid "$1" || release_die 2 'Supply a vMAJOR.MINOR.PATCH tag followed by optional meso expectations.'
+tag="$1"
+release_args=("$@")
+shift
+baseline_gate=false expected_gate=false
+while [[ $# -gt 0 ]]; do
+  [[ $# -ge 2 && ( "$2" == false || "$2" == true ) ]] || release_die 2 'Meso expectations require literal false or true.'
+  case "$1" in
+    --baseline-meso-gate) baseline_gate="$2";;
+    --expected-meso-gate) expected_gate="$2";;
+    *) release_die 2 'Unknown release option.';;
+  esac
+  shift 2
+done
+# Gate configuration must survive a fresh Compose process.
+unset MESO_NOTIFICATIONS_ENABLED
+export ARCUS_SIGNAL_IMAGE_TAG="$tag"
 release_require jq flock mktemp timeout python3
 # One installer per checkout; the FD remains open through every deployment phase.
 exec 9< "$RELEASE_ROOT/install"
 flock -n 9 || release_die 4 'Another release is already running in this checkout.'
-run_dir="$(mktemp -d "${TMPDIR:-/tmp}/arcus-release-${1}.XXXXXXXX")"
+run_dir="$(mktemp -d "${TMPDIR:-/tmp}/arcus-release-${tag}.XXXXXXXX")"
 phase=preflight
 migration_state=not_started
 application_started=false
@@ -30,12 +45,12 @@ finish() {
   trap - EXIT
   [[ "$code" == 0 ]] && status=passed
   release_write "$run_dir/deployment.json" "$(jq -nc \
-    --arg status "$status" --arg tag "$ARCUS_SIGNAL_IMAGE_TAG" --arg phase "$phase" \
+    --arg baselineGate "$baseline_gate" --arg expectedGate "$expected_gate" --arg status "$status" --arg tag "$ARCUS_SIGNAL_IMAGE_TAG" --arg phase "$phase" \
     --arg migration "$migration_state" --arg started "$started_at" --arg finished "$(release_now_precise)" \
     --arg applicationStart "$application_start_at" --arg workerVerified "$worker_verified_at" --arg imageID "$image_id" --arg revision "$revision" --arg digest "$image_digest" \
     --arg persistedTag "$persisted_tag" --arg baseline "$run_dir/before.json" --argjson previous "$previous" --argjson completed "$completed" \
     --argjson applicationStarted "$application_started" --argjson exitCode "$code" \
-    '{schemaVersion:1,status:$status,targetTag:$tag,startedAt:$started,finishedAt:$finished,
+    '{schemaVersion:1,status:$status,targetTag:$tag,baselineMesoGate:$baselineGate,expectedMesoGate:$expectedGate,startedAt:$started,finishedAt:$finished,
       applicationStartAt:$applicationStart,deliveryEvidenceStartAt:$applicationStart,workerVerifiedAt:$workerVerified,applicationStarted:$applicationStarted,migrationState:$migration,
       failedPhase:(if $status=="passed" then null else $phase end),completedPhases:$completed,exitCode:$exitCode,
       imageID:$imageID,revision:$revision,digest:$digest,persistedTag:(if $persistedTag=="" then null else $persistedTag end),previous:$previous,baseline:$baseline}')"
@@ -56,10 +71,10 @@ run_phase() {
   "$@" >/dev/null 2>&1 || release_die 4 "Release phase failed: $phase"
   complete_phase
 }
-"$RELEASE_ROOT/tools/release-preflight.sh" "$1" > "$run_dir/preflight.json"
+"$RELEASE_ROOT/tools/release-preflight.sh" "${release_args[@]}" > "$run_dir/preflight.json"
 complete_phase
 phase=baseline
-"$RELEASE_ROOT/tools/release-snapshot.sh" --json --output "$run_dir/before.json" >/dev/null || {
+"$RELEASE_ROOT/tools/release-snapshot.sh" --expected-meso-gate "$baseline_gate" --json --output "$run_dir/before.json" >/dev/null || {
   # A successful SPC attempt can age beyond the dashboard's ten-minute threshold.
   jq -e '.collectionStatus == "passed" and .infrastructureStatus == "passed" and
     .metrics.nwsIngest.status == "healthy" and .metrics.backlog.status == "healthy" and
@@ -72,9 +87,9 @@ previous="$(jq -c '.services | {api,worker}' "$run_dir/before.json")"
 complete_phase
 run_phase pull timeout --foreground 600 docker compose --project-directory "$RELEASE_ROOT" --env-file "$RELEASE_ROOT/.env" pull api worker
 phase=image_identity
-image_metadata="$(timeout 10 docker image inspect --format '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "org.opencontainers.image.version"}}|{{join .RepoDigests ","}}' "$RELEASE_IMAGE:$1" 2>/dev/null)"
+image_metadata="$(timeout 10 docker image inspect --format '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "org.opencontainers.image.version"}}|{{join .RepoDigests ","}}' "$RELEASE_IMAGE:$tag" 2>/dev/null)"
 IFS='|' read -r image_id revision image_version image_digest <<< "$image_metadata"
-[[ "$image_version" == "$1" && "$image_id" == sha256:* && "$revision" =~ ^[0-9a-f]{40}$ && -n "$image_digest" ]] || release_die 4 'Pulled image lacks matching release metadata or a registry digest.'
+[[ "$image_version" == "$tag" && "$image_id" == sha256:* && "$revision" =~ ^[0-9a-f]{40}$ && -n "$image_digest" ]] || release_die 4 'Pulled image lacks matching release metadata or a registry digest.'
 complete_phase
 run_phase packaged_binaries release_compose run --rm --no-deps --pull never --entrypoint sh api -ec 'test -x /usr/local/bin/wgrib2; for binary in ./Run ./RunWorker; do dependencies="$(ldd "$binary")"; case "$dependencies" in *"not found"*) exit 1;; esac; done; test -x ./Run; test -x ./RunWorker'
 # Existing PostgreSQL/Redis must already be healthy in the baseline. Do not
@@ -84,7 +99,7 @@ migration_state=uncertain
 run_phase migrations timeout --foreground 600 docker compose --project-directory "$RELEASE_ROOT" --env-file "$RELEASE_ROOT/.env" run --rm --no-deps --pull never api ./Run migrate --env production --yes
 migration_state=completed
 phase=schema_verification
-if [[ "$(printf '%s\n' v1.4.0 "$1" | sort -V | tail -n 1)" == "$1" ]]; then
+if [[ "$(printf '%s\n' v1.4.0 "$tag" | sort -V | tail -n 1)" == "$tag" ]]; then
   release_psql < "$RELEASE_ROOT/tools/sql/verify-notification-subject-identity.sql" > "$run_dir/schema.json" 2>/dev/null || release_die 4 'Schema verification query failed.'
   jq -e '.passed == true' "$run_dir/schema.json" >/dev/null || release_die 4 'Schema does not match the migration ledger; applications were not replaced.'
 fi
@@ -96,7 +111,7 @@ application_started=true
 phase=image_verification
 for service in api worker; do
   deployed="$(release_service "$service")" || release_die 3 "$service inspection failed."
-  jq -e --arg image "$RELEASE_IMAGE:$1" --arg id "$image_id" '.running and .image == $image and .imageID == $id and .mesoGate == "false"' <<< "$deployed" >/dev/null || release_die 4 "$service image identity or rollout gate mismatch."
+  jq -e --arg image "$RELEASE_IMAGE:$tag" --arg id "$image_id" --arg gate "$expected_gate" '.running and .image == $image and .imageID == $id and .mesoGate == $gate' <<< "$deployed" >/dev/null || release_die 4 "$service image identity or rollout gate mismatch (expected meso=$expected_gate)."
 done
 # Completions during replacement can belong to either worker. Once Compose up
 # has returned and image verification has passed, the old worker is stopped.
@@ -113,11 +128,11 @@ for port in 8080 8081; do
 done
 complete_phase
 # Save only a verified healthy rollout. Failed earlier phases leave .env intact.
-run_phase persist_image_tag python3 "$RELEASE_ROOT/tools/lib/release-pin.py" "$RELEASE_ROOT/.env" "$1"
-persisted_tag="$1"
+run_phase persist_image_tag python3 "$RELEASE_ROOT/tools/lib/release-pin.py" "$RELEASE_ROOT/.env" "$tag"
+persisted_tag="$tag"
 phase=saved_configuration_verification
 # Do not let the installer's temporary export hide a missing or incorrect pin.
-saved_images="$(unset ARCUS_SIGNAL_IMAGE_TAG; release_compose config --format json 2>/dev/null | jq -ec '.services | {api:.api.image,worker:.worker.image}')" || release_die 4 'Saved Compose configuration is unavailable.'
-jq -e --arg image "$RELEASE_IMAGE:$1" '.api == $image and .worker == $image' <<< "$saved_images" >/dev/null || release_die 4 'Saved Compose configuration does not select the deployed release.'
+saved_images="$(unset ARCUS_SIGNAL_IMAGE_TAG MESO_NOTIFICATIONS_ENABLED; release_compose config --format json 2>/dev/null | jq -ec '.services | {api:.api.image,worker:.worker.image,apiGate:.api.environment.MESO_NOTIFICATIONS_ENABLED,workerGate:.worker.environment.MESO_NOTIFICATIONS_ENABLED}')" || release_die 4 'Saved Compose configuration is unavailable.'
+jq -e --arg image "$RELEASE_IMAGE:$tag" --arg gate "$expected_gate" '.api == $image and .worker == $image and .apiGate == $gate and .workerGate == $gate' <<< "$saved_images" >/dev/null || release_die 4 'Saved Compose configuration does not select the deployed release and expected meso gate.'
 complete_phase
 phase=complete

@@ -57,9 +57,9 @@ Investigation and editing this skill do not authorize deployment.
 
 - Use direct Docker access. Access/inspection errors are collection failures,
   not missing services. Do not add `sudo` or change host permissions to bypass an error.
-- Meso delivery stays **explicitly false on API and worker through v1.4.1 and later
-  versions until the separately approved app cutover**. An enabled gate blocks release;
-  this workflow does not change it.
+- Meso expectations default to false. For a separately approved cutover, select the target in the existing deployment `.env` (`MESO_NOTIFICATIONS_ENABLED=true`) and run `./install <tag> --baseline-meso-gate false --expected-meso-gate true`. An enabled subsequent release uses `--baseline-meso-gate true --expected-meso-gate true`; an approved gate-off rollback selects false in `.env` and uses `--baseline-meso-gate true --expected-meso-gate false`. The same flags apply to standalone preflight. Both services must match the baseline before replacement and the target afterward. Flags validate configuration; they do not modify it, grant cutover approval, or bypass readiness/device evidence. Image downgrades still require separate database-compatible rollback approval.
+- Preflight and deployment records carry literal string `baselineMesoGate` and `expectedMesoGate` values. Observation uses the recorded target, never the observed gate. Legacy deployment records missing both fields mean expected false; partial, null, boolean, or malformed fields fail. A legacy record cannot authorize enabled observation. Standalone snapshots default false; use `--expected-meso-gate true` only for an explicitly selected enabled deployment.
+- Keep gate selection in durable `.env` configuration. Install and preflight clear inherited gate exports before resolving Compose, so shell-only selection fails before migration or replacement and stale shell values cannot shadow the saved gate. Saved configuration verification clears temporary image and gate overrides and rechecks both service gates. Gate-off rollback also requires client ownership-refresh evidence under #289; server parity alone does not prove local notifications resumed.
 - Backups default to the newest readable `*.dump` in `~/backups/arcus-signal`.
   `ARCUS_RELEASE_BACKUP_FILE` or `ARCUS_RELEASE_BACKUP_DIR` overrides discovery;
   `ARCUS_RELEASE_BACKUP_MAX_AGE_HOURS` defaults to 24. Archive readability and age
