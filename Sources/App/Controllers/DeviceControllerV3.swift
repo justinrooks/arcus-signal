@@ -22,7 +22,7 @@ extension DeviceController {
             let status: DevicePreferencesV3AcceptedResponse.Status
             if let existing, let revision = existing.consentRevision {
                 if payload.consentRevision < revision {
-                    return (try preferenceResponse(.stale, installation: existing, now: now, app: req.application), Optional<PresenceReconciliationHandoffRequest>.none)
+                    return (try preferenceResponse(.stale, installation: existing, presence: presence, now: now, app: req.application), Optional<PresenceReconciliationHandoffRequest>.none)
                 }
                 if payload.consentRevision == revision {
                     guard existing.consentSnapshotV3 == payload.consent else {
@@ -58,7 +58,7 @@ extension DeviceController {
                 handoff = try await reconcileDevicePresence(installationID: id, previous: previous,
                     installation: installation, presence: presence, receivedAt: now, on: database)
             } else { handoff = nil }
-            return (try preferenceResponse(status, installation: installation, now: now, app: req.application), handoff)
+            return (try preferenceResponse(status, installation: installation, presence: presence, now: now, app: req.application), handoff)
         }
         await handoffV3(result.1, req: req)
         return result.0
@@ -119,14 +119,20 @@ private func initializedV3(_ req: Request, id: UUID, on database: any Database) 
 }
 
 private func preferenceResponse(_ status: DevicePreferencesV3AcceptedResponse.Status,
-    installation: DeviceInstallationModel, now: Date, app: Application
+    installation: DeviceInstallationModel, presence: DevicePresenceModel?, now: Date, app: Application
 ) throws -> DevicePreferencesV3AcceptedResponse {
     guard let revision = installation.consentRevision else { throw Abort(.internalServerError) }
+    // Meso targeting has no UGC fallback: ownership needs accepted resolution-8 H3
+    // presence as well as the same usability/freshness policy used by reconciliation.
+    let usablePresence = presence.map { presence in
+        presence.cellScheme == .h3 && presence.h3Resolution == 8 && presence.h3Cell != nil
+            && PresenceReconciliationState(installation: installation, presence: presence).map {
+                PresenceReconciliationTrigger.isUsable($0, now: now)
+            } == true
+    } ?? false
     return try .init(status: status, acceptedConsentRevision: revision, receivedAt: now,
-        serverOwnsMesoNotificationDelivery: app.mesoNotificationsEnabled && installation.isActive
-            && installation.isSubscribed && installation.mesoNotificationsEnabled == true
-            && installation.locationSharingEnabled && !installation.apnsDeviceToken.isEmpty
-            && (installation.locationAuth == .always || installation.locationAuth == .whenInUse))
+        serverOwnsMesoNotificationDelivery: app.mesoNotificationsEnabled
+            && installation.mesoNotificationsEnabled == true && usablePresence)
 }
 
 private func handoffV3(_ handoff: PresenceReconciliationHandoffRequest?, req: Request) async {

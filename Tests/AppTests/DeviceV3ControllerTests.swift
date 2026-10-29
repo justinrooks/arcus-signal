@@ -101,7 +101,7 @@ struct DeviceV3ControllerTests {
             let bound = try await post("api/v3/devices/preferences", binding, app: app)
             let boundResponse = try bound.content.decode(DevicePreferencesV3AcceptedResponse.self)
             #expect(boundResponse.status == .unchanged && boundResponse.acceptedConsentRevision == 1)
-            #expect(boundResponse.serverOwnsMesoNotificationDelivery)
+            #expect(!boundResponse.serverOwnsMesoNotificationDelivery)
             #expect(try await DeviceInstallationModel.find(id, on: app.db)?.apnsDeviceToken == "rotated-token")
             #expect(try await DeviceInstallationModel.find(id, on: app.db)?.apnsEnvironmentRaw == "prod")
             var omitted = preferences(id)
@@ -122,6 +122,64 @@ struct DeviceV3ControllerTests {
             #expect(try await snapshot(id, app: app) == before)
             #expect(try status(try await post("v3/devices/preferences", preferences(id, 3), app: app)) == "accepted")
             #expect(try await DeviceInstallationModel.find(id, on: app.db)?.apnsDeviceToken == "rotated-token")
+        }
+    }
+
+    @Test("Meso ownership requires accepted usable H3 presence and refreshes without a new consent revision")
+    func mesoOwnership() async throws {
+        try await withApp { app in
+            app.mesoNotificationsEnabled = true
+            let id = id(); try await enroll(id, app: app)
+            var prefs = preferences(id); prefs["apnsDeviceToken"] = "bound"
+            func owns(_ body: [String: Any]) async throws -> Bool {
+                let response = try await post("v3/devices/preferences", body, app: app)
+                #expect(response.status == .ok)
+                return try response.content.decode(DevicePreferencesV3AcceptedResponse.self).serverOwnsMesoNotificationDelivery
+            }
+            #expect(try await !owns(prefs))
+            // Accepted county-only presence is useful for NWS, but cannot target mesos.
+            #expect(try status(try await post("v3/devices/location-snapshots", location(id), app: app)) == "accepted")
+            #expect(try await !owns(prefs))
+            var h3 = location(id)
+            h3["cellScheme"] = "h3"; h3["h3Cell"] = Int64(614934489169608703); h3["h3Resolution"] = 8
+            #expect(try status(try await post("api/v3/devices/location-snapshots", h3, app: app)) == "accepted")
+            #expect(try await owns(prefs))
+            let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+            let capturedAt = presence.capturedAt
+            presence.h3Resolution = 7; try await presence.save(on: app.db)
+            #expect(try await !owns(prefs))
+            presence.h3Resolution = 8
+            presence.cellScheme = .ugcOnly; presence.h3Cell = nil; presence.county = nil
+            try await presence.save(on: app.db)
+            #expect(try await !owns(prefs))
+            presence.cellScheme = .h3; presence.h3Cell = 614934489169608703
+            // Degraded presence remains eligible; hard stale presence does not.
+            presence.capturedAt = Date().addingTimeInterval(-7 * 3600); try await presence.save(on: app.db)
+            #expect(try await owns(prefs))
+            presence.capturedAt = Date().addingTimeInterval(-LocationFreshnessPolicy.hardStaleThreshold - 60)
+            try await presence.save(on: app.db)
+            #expect(try await !owns(prefs))
+            var newer = preferences(id, 2)
+            #expect(try await !owns(newer))
+            // Stale-revision responses must also use current accepted presence.
+            #expect(try await !owns(prefs))
+            presence.capturedAt = capturedAt; try await presence.save(on: app.db)
+            #expect(try await owns(prefs))
+            app.mesoNotificationsEnabled = false
+            #expect(try await !owns(newer))
+            app.mesoNotificationsEnabled = true
+            let installation = try #require(try await DeviceInstallationModel.find(id, on: app.db))
+            installation.apnsDeviceToken = ""; try await installation.save(on: app.db)
+            #expect(try await !owns(newer))
+            newer["apnsDeviceToken"] = "bound"
+            #expect(try await owns(newer))
+            for (offset, field) in ["isSubscribed", "mesoNotificationsEnabled", "locationSharingEnabled", "locationAuthorization"].enumerated() {
+                var denied = preferences(id, Int64(3 + offset))
+                var consent = try #require(denied["consent"] as? [String: Any])
+                consent[field] = field == "locationAuthorization" ? "denied" : false
+                denied["consent"] = consent
+                #expect(try await !owns(denied))
+            }
         }
     }
 
