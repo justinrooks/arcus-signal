@@ -19,7 +19,10 @@ struct NwsEventDTOTests {
             #"{"type":"FeatureCollection"}"#,
             #"{"type":"FeatureCollection","features":null}"#,
             #"{"type":"upstream-error","title":"temporary failure"}"#,
-            #"{"features":[]}"#
+            #"{"features":[]}"#,
+            #"{"type":"FeatureCollection","features":{}}"#,
+            #"{"type":"FeatureCollection","features":[{}]}"#,
+            #"{"type":"FeatureCollection","features":["#
         ]
         for json in invalid {
             #expect(throws: (any Error).self) {
