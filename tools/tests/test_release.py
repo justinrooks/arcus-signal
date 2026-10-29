@@ -58,7 +58,10 @@ if args[0]=='inspect':
  elif '.Config.Image' in template:
   print('ghcr.io/justinrooks/arcus-signal:'+ ((root/'deployed').read_text() if new else 'v1.4.1') if service in ('api','worker') else service+':stable')
  elif '.Image' in template: print('sha256:unexpected' if mode=='image_changed' and new else ('sha256:new' if new else 'sha256:old'))
- else: print('' if mode=='missing_gate' else 'false')
+ else:
+  gate=(root/'deployed-gate').read_text() if new else os.environ.get('MOCK_BASELINE_GATE','false')
+  gate=os.environ.get('MOCK_'+('DEPLOYED' if new else 'BASELINE')+'_'+service.upper()+'_GATE',gate)
+  print('' if mode=='missing_gate' else gate)
  sys.exit()
 if args[0]=='compose':
  if args[1:]==['version']: print('5');sys.exit()
@@ -71,9 +74,11 @@ if args[0]=='compose':
  if not tag: sys.exit(42)
  if command=='config' and mode=='saved_tag_mismatch' and 'ARCUS_SIGNAL_IMAGE_TAG' not in os.environ: tag='v1.4.0'
  if command=='config':
-  env={'VAPOR_ENV':'production','MESO_NOTIFICATIONS_ENABLED':'false','DATABASE_URL':'postgres://arcus:fake@postgres:5432/arcus_signal','REDIS_URL':'redis://redis:6379'}
-  print(json.dumps({'services':{'api':{'image':'ghcr.io/justinrooks/arcus-signal:'+tag,'environment':env},
-   'worker':{'image':'ghcr.io/justinrooks/arcus-signal:'+tag,'environment':env},
+  gates=re.findall(r'^MESO_NOTIFICATIONS_ENABLED=(.*)$',(root/'.env').read_text(),re.M)
+  gate=os.environ.get('MESO_NOTIFICATIONS_ENABLED',gates[-1] if gates else 'false')
+  env={'VAPOR_ENV':'production','MESO_NOTIFICATIONS_ENABLED':gate,'DATABASE_URL':'postgres://arcus:fake@postgres:5432/arcus_signal','REDIS_URL':'redis://redis:6379'}
+  print(json.dumps({'services':{'api':{'image':'ghcr.io/justinrooks/arcus-signal:'+tag,'environment':dict(env,MESO_NOTIFICATIONS_ENABLED=os.environ.get('MOCK_CONFIG_API_GATE',gate))},
+   'worker':{'image':'ghcr.io/justinrooks/arcus-signal:'+tag,'environment':dict(env,MESO_NOTIFICATIONS_ENABLED=os.environ.get('MOCK_CONFIG_WORKER_GATE',gate))},
    'postgres':{'environment':{'POSTGRES_DB':'arcus_signal'}}}}));sys.exit()
  if command=='ps':
   if mode!='missing_service': print(args[-1]+'_id')
@@ -101,6 +106,8 @@ if args[0]=='compose':
   sys.exit()
  if command=='up':
   (root/'deployed').write_text(tag)
+  gates=re.findall(r'^MESO_NOTIFICATIONS_ENABLED=(.*)$',(root/'.env').read_text(),re.M)
+  (root/'deployed-gate').write_text(os.environ.get('MESO_NOTIFICATIONS_ENABLED',gates[-1] if gates else 'false'))
   if mode.startswith('early_delivery'):
    # Two overlap completions, one in the verification second, and a completion
    # after verification but before the installer's delayed HTTP checks finish.
@@ -136,6 +143,7 @@ class ReleaseTests(unittest.TestCase):
             TMPDIR=str(self.root),MOCK_ROOT=str(self.root),MOCK_EPOCH=str(self.epoch),
             ARCUS_RELEASE_BACKUP_FILE=str(backup))
         self.env.pop('CASE',None)
+        self.env.pop('MESO_NOTIFICATIONS_ENABLED',None)
         self.env.pop('ARCUS_SIGNAL_IMAGE_TAG',None)
 
     def run_script(self, name, *args, case='', expected=0):
@@ -152,6 +160,106 @@ class ReleaseTests(unittest.TestCase):
 
     def calls(self):
         return (self.root/'calls').read_text()
+
+    def select_gate_transition(self, baseline, target):
+        self.env['MOCK_BASELINE_GATE']=baseline
+        with (self.root/'.env').open('a') as config:
+            config.write('MESO_NOTIFICATIONS_ENABLED='+target+'\n')
+        return ('--baseline-meso-gate',baseline,'--expected-meso-gate',target)
+
+    def test_explicit_gate_transitions(self):
+        for baseline,target in [('false','false'),('false','true'),('true','true'),('true','false')]:
+            with self.subTest(baseline=baseline,target=target):
+                args=self.select_gate_transition(baseline,target)
+                preflight=json.loads(self.run_script('tools/release-preflight.sh','v1.4.2',*args).stdout)
+                self.assertEqual((preflight['baselineMesoGate'],preflight['expectedMesoGate']),(baseline,target))
+                self.run_script('install','v1.4.2',*args)
+                path=next(self.root.glob('arcus-release-*/deployment.json'))
+                record=json.loads(path.read_text())
+                self.assertEqual((record['baselineMesoGate'],record['expectedMesoGate']),(baseline,target))
+                before=json.loads((path.parent/'before.json').read_text())
+                self.assertEqual(before['expectedMesoGate'],baseline)
+                summary=json.loads(self.run_script('tools/release-observe.sh','--deployment',str(path)).stdout)
+                self.assertEqual(summary['expectedMesoGate'],target)
+                report=json.loads(next(path.parent.glob('observation.*/observation.json')).read_text())
+                self.assertTrue(all(s['expectedMesoGate']==target and s['services']['worker']['mesoGate']==target for s in report['snapshots']))
+                shutil.rmtree(path.parent)
+                (self.root/'deployed').unlink()
+                (self.root/'deployed-gate').unlink()
+                (self.root/'clock').write_text(str(self.epoch))
+
+    def test_enabled_actual_state_cannot_authorize_itself(self):
+        self.select_gate_transition('true','true')
+        self.run_script('tools/release-preflight.sh','v1.4.2',expected=4)
+        self.run_script('tools/release-preflight.sh','v1.4.2','--expected-meso-gate','true',expected=4)
+        snapshot=json.loads(self.run_script('tools/release-snapshot.sh','--json',expected=4).stdout)
+        self.assertEqual(snapshot['expectedMesoGate'],'false')
+        self.assertEqual(len(snapshot['infrastructureErrors']),2)
+        self.assertNotIn('migrate',self.calls())
+
+    def test_invalid_gate_inputs_stop_before_docker(self):
+        for value in ('','TRUE','1','null','garbage'):
+            for script,option in [('install','--expected-meso-gate'),('tools/release-preflight.sh','--baseline-meso-gate'),('tools/release-snapshot.sh','--expected-meso-gate')]:
+                args=() if script.endswith('snapshot.sh') else ('v1.4.2',)
+                self.run_script(script,*args,option,value,expected=2)
+        self.assertFalse((self.root/'calls').exists())
+
+    def test_actual_gate_mismatches_fail_at_each_checkpoint(self):
+        for value in ('','TRUE','true'):
+            for checkpoint in ('BASELINE','CONFIG','DEPLOYED'):
+                for service in ('API','WORKER'):
+                    key='MOCK_'+checkpoint+'_'+service+'_GATE'
+                    self.env[key]=value
+                    with self.subTest(key=key,value=value):
+                        self.run_script('install','v1.4.2',expected=4)
+                        path=next(self.root.glob('arcus-release-*/deployment.json'))
+                        record=json.loads(path.read_text())
+                        self.assertEqual(record['failedPhase'],'image_verification' if checkpoint=='DEPLOYED' else 'preflight')
+                        shutil.rmtree(path.parent)
+                        for file in ('deployed','deployed-gate'):
+                            (self.root/file).unlink(missing_ok=True)
+                    del self.env[key]
+
+    def test_legacy_and_malformed_record_expectations(self):
+        path,record=self.deploy()
+        legacy=dict(record)
+        del legacy['baselineMesoGate']
+        del legacy['expectedMesoGate']
+        path.write_text(json.dumps(legacy))
+        self.run_script('tools/release-observe.sh','--deployment',str(path))
+        self.env['MOCK_DEPLOYED_API_GATE']='true'
+        self.env['MOCK_DEPLOYED_WORKER_GATE']='true'
+        self.run_script('tools/release-observe.sh','--deployment',str(path),expected=4)
+        self.env.pop('MOCK_DEPLOYED_API_GATE')
+        self.env.pop('MOCK_DEPLOYED_WORKER_GATE')
+        for patch in ({'expectedMesoGate':'true'},{'expectedMesoGate':None,'baselineMesoGate':'false'},{'expectedMesoGate':True,'baselineMesoGate':'false'},{'expectedMesoGate':'false','baselineMesoGate':'invalid'}):
+            path.write_text(json.dumps(dict(legacy,**patch)))
+            calls=self.calls()
+            self.run_script('tools/release-observe.sh','--deployment',str(path),expected=4)
+            self.assertEqual(self.calls(),calls)
+
+    def test_observation_detects_gate_drift(self):
+        path,_=self.deploy()
+        self.env['MOCK_DEPLOYED_WORKER_GATE']='true'
+        self.run_script('tools/release-observe.sh','--deployment',str(path),expected=4)
+        report=json.loads(next(path.parent.glob('observation.*/observation.json')).read_text())
+        self.assertEqual(report['status'],'failed')
+        self.assertIn('Worker meso gate',report['snapshots'][0]['infrastructureErrors'][0])
+
+    def test_shell_only_gate_is_not_durable_configuration(self):
+        self.env['MESO_NOTIFICATIONS_ENABLED']='true'
+        self.run_script('install','v1.4.2','--expected-meso-gate','true',expected=4)
+        record=json.loads(next(self.root.glob('arcus-release-*/deployment.json')).read_text())
+        self.assertEqual(record['failedPhase'],'preflight')
+        self.assertNotIn('migrate',self.calls())
+        self.assertFalse((self.root/'deployed').exists())
+        self.assertEqual((self.root/'.env').read_text(),'ARCUS_SIGNAL_IMAGE_TAG=v1.4.1\n')
+
+    def test_durable_gate_is_not_shadowed_by_shell(self):
+        args=self.select_gate_transition('false','true')
+        self.env['MESO_NOTIFICATIONS_ENABLED']='false'
+        self.run_script('install','v1.4.2',*args)
+        self.assertEqual((self.root/'deployed-gate').read_text(),'true')
 
     def test_saved_release_survives_a_fresh_compose_recreation(self):
         # Installer export must not be needed by an independent later process.

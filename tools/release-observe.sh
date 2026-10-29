@@ -13,6 +13,13 @@ record="$(realpath "$2")"
 jq -e '.schemaVersion == 1 and .status == "passed" and .migrationState == "completed" and .applicationStarted == true' "$record" >/dev/null || release_die 4 'Deployment did not complete; inspect its failed phase before observing.'
 tag="$(jq -r .targetTag "$record")"
 release_tag_valid "$tag" || release_die 2 'Deployment record has an invalid tag.'
+# Legacy records lacking BOTH fields authorize only the default-off expectation.
+jq -e 'if (has("expectedMesoGate") or has("baselineMesoGate")) then
+  ((.expectedMesoGate == "false" or .expectedMesoGate == "true") and
+   (.baselineMesoGate == "false" or .baselineMesoGate == "true"))
+  else true end' "$record" >/dev/null || release_die 4 'Deployment record has missing or invalid meso expectations.'
+expected_gate="$(jq -r 'if has("expectedMesoGate") then .expectedMesoGate else "false" end' "$record")"
+baseline_gate="$(jq -r 'if has("baselineMesoGate") then .baselineMesoGate else "false" end' "$record")"
 since="$(jq -r '.deliveryEvidenceStartAt // .applicationStartAt' "$record")"
 attributable_since="$(jq -r '.workerVerifiedAt // .finishedAt' "$record")"
 release_timestamp_valid "$since" && release_timestamp_valid "$attributable_since" || release_die 2 'Invalid deployment evidence timestamps.'
@@ -27,9 +34,9 @@ started_at="$(release_now)"
 snapshots='[]'
 write_report() {
   release_write "$run_dir/observation.json" "$(jq -n \
-    --arg tag "$tag" --arg since "$since" --arg attributableSince "$attributable_since" --arg started "$started_at" --arg finished "$(release_now)" \
+    --arg baselineGate "$baseline_gate" --arg expectedGate "$expected_gate" --arg tag "$tag" --arg since "$since" --arg attributableSince "$attributable_since" --arg started "$started_at" --arg finished "$(release_now)" \
     --argjson snapshots "$snapshots" --slurpfile baseline "$base" \
-    '{schemaVersion:1,targetTag:$tag,startedAt:$started,finishedAt:$finished,
+    '{schemaVersion:1,targetTag:$tag,baselineMesoGate:$baselineGate,expectedMesoGate:$expectedGate,startedAt:$started,finishedAt:$finished,
       deliveryEvidenceStartAt:$since,workerVerifiedAt:$attributableSince,expectedOffsetsSeconds:[0,120,420,720],snapshots:$snapshots,baseline:$baseline[0]}' \
     | jq -c -f "$RELEASE_ROOT/tools/lib/release-observe.jq")"
 }
@@ -43,7 +50,7 @@ for offset in 0 120 420 720; do
   done
   snapshot="$run_dir/after-${offset}s.json"
   code=0
-  "$RELEASE_ROOT/tools/release-snapshot.sh" --expected-tag "$tag" --since "$since" --attributable-since "$attributable_since" --json --output "$snapshot" >/dev/null || code=$?
+  "$RELEASE_ROOT/tools/release-snapshot.sh" --expected-tag "$tag" --expected-meso-gate "$expected_gate" --since "$since" --attributable-since "$attributable_since" --json --output "$snapshot" >/dev/null || code=$?
   [[ -s "$snapshot" ]] || release_die 3 'Snapshot failed without an evidence artifact.'
   value="$(jq -c --argjson offset "$offset" --argjson elapsed "$(( $(date +%s) - start_epoch ))" \
     --arg expectedImageID "$image_id" --argjson exitCode "$code" '
@@ -56,5 +63,5 @@ for offset in 0 120 420 720; do
   printf 'Observation at %ss: %s; report: %s/observation.json\n' "$offset" "$(jq -r .status <<< "$value")" "$run_dir" >&2
   [[ "$(jq -r .status <<< "$value")" != failed ]] || exit 4
 done
-jq '{status,operationalStatus,deliveryConfidence,deliveryEvidence,findings,concerns,snapshotTimes:[.snapshots[].capturedAt]}' "$run_dir/observation.json"
+jq '{expectedMesoGate,baselineMesoGate,status,operationalStatus,deliveryConfidence,deliveryEvidence,findings,concerns,snapshotTimes:[.snapshots[].capturedAt]}' "$run_dir/observation.json"
 case "$(jq -r .status "$run_dir/observation.json")" in passed) exit 0;; failed) exit 4;; *) exit 1;; esac
