@@ -32,6 +32,7 @@ struct DeviceController: RouteCollection {
             devices.post("location-snapshots", use: create)
             devices.post("preferences", use: createPreferences)
             devices.post("foreground-activity", use: createForegroundActivity)
+            root.grouped("v4", "devices").post("location-snapshots", use: createLocationV4)
             let v3 = root.grouped("v3", "devices")
             v3.post("preferences", use: createPreferencesV3)
             v3.post("location-snapshots", use: createLocationV3)
@@ -458,6 +459,7 @@ func upsertDevicePresence(
     cellScheme: CellScheme,
     locationSource: LocationUploadSource,
     receivedAt: Date,
+    invalidateMovedGeography: Bool = false,
     on database: any Database
 ) async throws -> DevicePresenceUpsertOutcome {
     if let existing = try await DevicePresenceModel.find(installationId, on: database) {
@@ -465,6 +467,26 @@ func upsertDevicePresence(
             return .staleIgnored
         }
         
+        // V4 ties enrichment to geographic identity; legacy routes retain patch semantics.
+        if invalidateMovedGeography {
+            let moved = existing.cellScheme != cellScheme
+                || (payload.h3Cell != nil && existing.h3Cell != payload.h3Cell)
+                || (payload.h3Resolution != nil && existing.h3Resolution != payload.h3Resolution)
+            if moved {
+                existing.county = nil
+                existing.zone = nil
+                existing.fireZone = nil
+                existing.countyLabel = nil
+                existing.fireZoneLabel = nil
+            }
+            if let county = normalizedOptional(payload.county), county != existing.county {
+                existing.countyLabel = nil
+            }
+            if let fireZone = normalizedOptional(payload.fireZone), fireZone != existing.fireZone {
+                existing.fireZoneLabel = nil
+            }
+        }
+
         existing.capturedAt = payload.capturedAt
         existing.receivedAt = receivedAt
         existing.locationAgeSeconds = payload.locationAgeSeconds
@@ -528,6 +550,26 @@ func upsertDevicePresence(
             return .staleIgnored
         }
         
+        // V4 ties enrichment to geographic identity; legacy routes retain patch semantics.
+        if invalidateMovedGeography {
+            let moved = existing.cellScheme != cellScheme
+                || (payload.h3Cell != nil && existing.h3Cell != payload.h3Cell)
+                || (payload.h3Resolution != nil && existing.h3Resolution != payload.h3Resolution)
+            if moved {
+                existing.county = nil
+                existing.zone = nil
+                existing.fireZone = nil
+                existing.countyLabel = nil
+                existing.fireZoneLabel = nil
+            }
+            if let county = normalizedOptional(payload.county), county != existing.county {
+                existing.countyLabel = nil
+            }
+            if let fireZone = normalizedOptional(payload.fireZone), fireZone != existing.fireZone {
+                existing.fireZoneLabel = nil
+            }
+        }
+
         existing.capturedAt = payload.capturedAt
         existing.receivedAt = receivedAt
         existing.locationAgeSeconds = payload.locationAgeSeconds
