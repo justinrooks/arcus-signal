@@ -2,6 +2,7 @@
 import ArcusCore
 import Fluent
 import FluentSQL
+import FluentPostgresDriver
 import Queues
 import Testing
 import Vapor
@@ -15,13 +16,18 @@ struct DeviceV3ControllerTests {
         .replacingOccurrences(of: "=", with: "")
 
     private func withApp(_ test: (Application) async throws -> Void) async throws {
-        let name = Environment.get("DATABASE_URL").flatMap(URL.init(string:))?.lastPathComponent ?? ""
+        let databaseURL = Environment.get("DATABASE_URL") ?? ""
+        let name = URL(string: databaseURL)?.lastPathComponent ?? ""
         guard name.range(of: #"^arcus_issue[0-9]+_(test|validation)_[A-Za-z0-9_]+$"#, options: .regularExpression) != nil else {
             throw Abort(.internalServerError, reason: "An explicitly issue-scoped isolated test database is required")
         }
         let app = try await Application.make(.testing)
         do {
             try await configure(app, mode: .api)
+            // Paused transactions, two HTTP writers, and the lock observer need four
+            // connections even when Fluent assigns them to the same event loop.
+            app.databases.use(try .postgres(url: databaseURL,
+                maxConnectionsPerEventLoop: 4), as: .init(string: "issue406"), isDefault: true)
             try await app.autoMigrate()
             app.queues.use(.test)
             _ = try await app.testing().sendRequest(.GET, "health")
@@ -399,7 +405,7 @@ struct DeviceV3ControllerTests {
     func races() async throws {
         try await withApp { app in
             let sql = try #require(app.db as? any SQLDatabase)
-            for kind in ["preferences", "location-snapshots", "legacy"] {
+            for kind in ["preferences", "location-snapshots", "v4-location-snapshots", "legacy"] {
                 for revokeFirst in [false, true] {
                     let id = id(); try await enroll(id, app: app)
                     if kind != "legacy" {
@@ -435,7 +441,7 @@ struct DeviceV3ControllerTests {
                     let otherBody: [String: Any]
                     switch kind {
                     case "preferences": otherPath = revokePath; otherBody = preferences(id, 2)
-                    case "location-snapshots": otherPath = "v3/devices/location-snapshots"; otherBody = location(id, county: "COC013")
+                    case "location-snapshots", "v4-location-snapshots": otherPath = "\(kind == "location-snapshots" ? "v3" : "v4")/devices/location-snapshots"; otherBody = location(id, county: "COC013")
                     default:
                         otherPath = "api/v2/devices/preferences"
                         otherBody = ["installationId": id.uuidString, "apnsDeviceToken": "legacy", "apnsEnvironment": "sandbox", "platform": "iOS", "osVersion": "26", "appVersion": "1", "buildNumber": "1", "auth": "always", "isSubscribed": true, "source": "foregroundPrime", "reason": "preferenceChanged"]
@@ -455,7 +461,7 @@ struct DeviceV3ControllerTests {
                             #expect(results.1.status == (kind == "legacy" && revokeFirst ? .conflict : .ok))
                             let installation = try #require(try await DeviceInstallationModel.find(id, on: app.db))
                             #expect(installation.consentRevision == 3 && !installation.isSubscribed && !installation.locationSharingEnabled)
-                            if revokeFirst && kind == "location-snapshots" {
+                            if revokeFirst && kind.hasSuffix("location-snapshots") {
                                 #expect(try status(results.1) == "ignored")
                                 #expect(try await snapshot(id, app: app)[1...] == before[1...])
                             }
@@ -469,6 +475,123 @@ struct DeviceV3ControllerTests {
                     }
                     try await dropPause(sql)
                 }
+            }
+        }
+    }
+
+    @Test("V3 and V4 serialize first presence and updates before comparing captures")
+    func presenceOrdering() async throws {
+        try await withApp { app in
+            let sql = try #require(app.db as? any SQLDatabase)
+            for version in ["v3", "v4"] {
+                for seeded in [false, true] {
+                    for newerFirst in [false, true] {
+                        let id = id(); try await enroll(id, app: app)
+                        var prefs = preferences(id); prefs["apnsDeviceToken"] = "bound"
+                        _ = try await post("v3/devices/preferences", prefs, app: app)
+                        let path = "\(version)/devices/location-snapshots"
+                        let base = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 30)
+                        if seeded {
+                            _ = try await post(path, location(id, capturedAt: base, county: "COC001"), app: app)
+                        }
+                        let older = try JSONSerialization.data(withJSONObject: location(id, capturedAt: base.addingTimeInterval(1), county: "COC013"))
+                        let newer = try JSONSerialization.data(withJSONObject: location(id, capturedAt: base.addingTimeInterval(2), county: "COC031"))
+                        // Pause the actual first HTTP mutation after its write, while it still owns
+                        // the installation lock. The second must wait before reading any presence.
+                        try await sql.raw("""
+                            CREATE FUNCTION issue406_pause() RETURNS trigger LANGUAGE plpgsql AS $$
+                            BEGIN PERFORM pg_advisory_xact_lock(406, 1); RETURN NEW; END $$
+                            """).run()
+                        try await sql.raw("""
+                            CREATE TRIGGER issue406_pause AFTER INSERT OR UPDATE ON device_presence
+                            FOR EACH ROW WHEN (NEW.installation_id = '\(unsafeRaw: id.uuidString)'::uuid)
+                            EXECUTE FUNCTION issue406_pause()
+                            """).run()
+                        let locked = V3TestEvent(), release = V3TestEvent()
+                        let blocker = Task {
+                            try await app.db.transaction { database in
+                                let connection = try #require(database as? any SQLDatabase)
+                                try await connection.raw("SELECT pg_advisory_xact_lock(406, 1)").run()
+                                await locked.signal(); await release.wait()
+                            }
+                        }
+                        await locked.wait()
+                        let first = Task { try await postData(path, data: newerFirst ? newer : older, app: app) }
+                        do {
+                            try await waitForAdvisoryWaiters(1, sql: sql)
+                            let second = Task { try await postData(path, data: newerFirst ? older : newer, app: app) }
+                            do {
+                                try await waitForAdvisoryWaiters(2, sql: sql)
+                                await release.signal()
+                                try await blocker.value
+                                let results = try await (first.value, second.value)
+                                #expect(try status(results.0) == "accepted")
+                                #expect(try status(results.1) == (newerFirst ? "stale" : "accepted"))
+                                let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                                #expect(presence.capturedAt == base.addingTimeInterval(2))
+                                #expect(presence.county == "COC031")
+                                let intents = try await PresenceReconciliationOutboxModel.query(on: app.db)
+                                    .filter(\.$installation.$id == id).all()
+                                #expect(intents.count == (seeded ? 1 : 0) + (newerFirst ? 1 : 2))
+                                #expect(intents.contains { $0.presenceCapturedAt == base.addingTimeInterval(2) })
+                                if newerFirst {
+                                    #expect(!intents.contains { $0.presenceCapturedAt == base.addingTimeInterval(1) })
+                                }
+                                let beforeReplay = try await snapshot(id, app: app)
+                                #expect(try status(try await postData(path, data: older, app: app)) == "stale")
+                                #expect(try await snapshot(id, app: app) == beforeReplay)
+                            } catch {
+                                await release.signal(); _ = try? await second.value; throw error
+                            }
+                        } catch {
+                            await release.signal(); _ = try? await first.value; _ = try? await blocker.value
+                            try? await dropPresencePause(sql); throw error
+                        }
+                        try await dropPresencePause(sql)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dropPresencePause(_ sql: any SQLDatabase) async throws {
+        try await sql.raw("DROP TRIGGER IF EXISTS issue406_pause ON device_presence").run()
+        try await sql.raw("DROP FUNCTION IF EXISTS issue406_pause()").run()
+    }
+
+    @Test("Client ISO8601 precision collisions retain existing equal-capture acceptance")
+    func equalCapture() async throws {
+        try await withApp { app in
+            for version in ["v3", "v4"] {
+                let id = id(); try await enroll(id, app: app)
+                var prefs = preferences(id); prefs["apnsDeviceToken"] = "bound"
+                _ = try await post("v3/devices/preferences", prefs, app: app)
+                let path = "\(version)/devices/location-snapshots"
+                let base = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 30)
+                let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+                func observation(_ offset: Double, _ county: String) throws -> Data {
+                    try encoder.encode(DeviceLocationSnapshotV3Payload(installationId: id.uuidString,
+                        capturedAt: base.addingTimeInterval(offset), locationAgeSeconds: 0,
+                        horizontalAccuracyMeters: 10, cellScheme: "ugc-only", h3Cell: nil, h3Resolution: nil,
+                        county: county, zone: nil, fireZone: nil, countyLabel: nil, fireZoneLabel: nil, source: .foregroundPrime))
+                }
+                let older = try observation(0.1, "COC013"), newer = try observation(0.9, "COC031")
+                let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+                #expect(try decoder.decode(DeviceLocationSnapshotV3Payload.self, from: older).capturedAt == base)
+                #expect(try decoder.decode(DeviceLocationSnapshotV3Payload.self, from: newer).capturedAt == base)
+                #expect(try status(try await postData(path, data: newer, app: app)) == "accepted")
+                let intentsBefore = try await snapshot(id, app: app)[3]
+                #expect(try status(try await postData(path, data: newer, app: app)) == "accepted")
+                #expect(try await snapshot(id, app: app)[3] == intentsBefore)
+                // Equal captures intentionally resolve by server acceptance order: a delayed
+                // conflicting observation with the same wire timestamp replaces geography.
+                #expect(try status(try await postData(path, data: older, app: app)) == "accepted")
+                let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(presence.capturedAt == base && presence.county == "COC013")
+                let intents = try await PresenceReconciliationOutboxModel.query(on: app.db)
+                    .filter(\.$installation.$id == id).all()
+                #expect(intents.count == 2)
+                #expect(intents.contains { $0.triggerCategory == .movedWhileUsable })
             }
         }
     }
