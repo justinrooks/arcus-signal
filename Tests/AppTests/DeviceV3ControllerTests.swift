@@ -122,6 +122,27 @@ struct DeviceV3ControllerTests {
                 initial["fireZoneLabel"] = "Old fire zone"
                 let path = "\(version)/devices/location-snapshots"
                 #expect(try await post(path, initial, app: app).status == .ok)
+                if version == "v4" {
+                    let beforeInvalid = try await snapshot(id, app: app)
+                    // Exercise the shared DTO decoder through the authenticated controller:
+                    // missing and explicit null fields must never refresh old geography.
+                    for fields in [["h3Cell"], ["h3Resolution"], ["h3Cell", "h3Resolution"]] {
+                        for explicitNull in [false, true] {
+                            var incomplete = initial
+                            incomplete["capturedAt"] = ISO8601DateFormatter().string(from: time.addingTimeInterval(10))
+                            for key in fields {
+                                if explicitNull { incomplete[key] = NSNull() }
+                                else { incomplete.removeValue(forKey: key) }
+                            }
+                            #expect(try await post(path, incomplete, app: app).status == .badRequest)
+                            #expect(try await snapshot(id, app: app) == beforeInvalid)
+                            let falselyFreshCandidates = try await NotificationCandidateStore().loadUGCCandidates(
+                                ugcCodes: ["COC031", "COZ040", "COZ240"],
+                                capturedAtOrAfter: time.addingTimeInterval(1), installationId: id, on: app.db)
+                            #expect(falselyFreshCandidates.isEmpty)
+                        }
+                    }
+                }
                 var movement = initial
                 movement["capturedAt"] = ISO8601DateFormatter().string(from: time.addingTimeInterval(20))
                 movement["h3Cell"] = Int64(614934489169608704)
