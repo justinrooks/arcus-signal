@@ -37,6 +37,7 @@ struct DeviceV3ControllerTests {
 
     private func cleanup(_ app: Application) async throws {
         let sql = try #require(app.db as? any SQLDatabase)
+        try await sql.raw("DELETE FROM arcus_series WHERE id::text LIKE '03890000-%'").run()
         for table in ["installation_activity_daily", "installation_credentials", "device_installations"] {
             try await sql.raw("DELETE FROM \(unsafeRaw: table) WHERE installation_id::text LIKE '03890000-%'").run()
         }
@@ -77,6 +78,112 @@ struct DeviceV3ControllerTests {
             result.append(try row?.decode(column: "value", as: String?.self) ?? "null")
         }
         return result
+    }
+
+    @Test("V4 movement clears enrichment while V3 retains legacy patches")
+    func versionedMovement() async throws {
+        try await withApp { app in
+            for version in ["v3", "v4"] {
+                let id = id()
+                try await enroll(id, app: app)
+                var prefs = preferences(id)
+                prefs["apnsDeviceToken"] = "bound"
+                _ = try await post("v3/devices/preferences", prefs, app: app)
+                // Initial H3-only admission needs no enrichment and uses the same authority.
+                var minimal = location(id, capturedAt: Date().addingTimeInterval(-90))
+                minimal.removeValue(forKey: "county")
+                minimal["cellScheme"] = "h3"
+                minimal["h3Cell"] = Int64(614934489169608703)
+                minimal["h3Resolution"] = 8
+                #expect(try await post("v4/devices/location-snapshots", minimal, app: app, authorized: false).status == .unauthorized)
+                #expect(try status(try await post("v4/devices/location-snapshots", minimal, app: app)) == "accepted")
+                let seriesID = self.id()
+                let urn = "urn:oid:\(UUID())"
+                let now = Date()
+                try await ArcusSeriesModel(id: seriesID, source: "nws", event: "Tornado Watch",
+                    sourceURL: "https://api.weather.gov/alerts/\(seriesID)", currentRevisionUrn: urn,
+                    currentRevisionSent: now, messageType: "alert", contentFingerprint: String(repeating: "a", count: 64),
+                    state: EventState.active.rawValue, expires: now.addingTimeInterval(3600),
+                    ends: now.addingTimeInterval(3600), lastSeenActive: now, severity: "severe",
+                    urgency: "immediate", certainty: "observed", ugcCodes: ["COC031"]).create(on: app.db)
+                try await ArcusEventRevisionModel(seriesId: seriesID, revisionUrn: urn, messageType: "alert",
+                    sent: now, received: now, referencedUrns: []).create(on: app.db)
+                try await ArcusNotificationOutboxModel(series: seriesID, revisionUrn: urn,
+                    mode: NotificationTargetMode.ugc.rawValue, reason: NotificationReason.new.rawValue,
+                    state: "done", attempts: 1, availableAt: now).create(on: app.db)
+                let time = Date().addingTimeInterval(-60)
+                var initial = location(id, capturedAt: time)
+                initial["cellScheme"] = "h3"
+                initial["h3Cell"] = Int64(614934489169608703)
+                initial["h3Resolution"] = 8
+                initial["zone"] = "COZ040"
+                initial["fireZone"] = "COZ240"
+                initial["countyLabel"] = "Denver"
+                initial["fireZoneLabel"] = "Old fire zone"
+                let path = "\(version)/devices/location-snapshots"
+                #expect(try await post(path, initial, app: app).status == .ok)
+                if version == "v4" {
+                    let beforeInvalid = try await snapshot(id, app: app)
+                    // Exercise the shared DTO decoder through the authenticated controller:
+                    // missing and explicit null fields must never refresh old geography.
+                    for fields in [["h3Cell"], ["h3Resolution"], ["h3Cell", "h3Resolution"]] {
+                        for explicitNull in [false, true] {
+                            var incomplete = initial
+                            incomplete["capturedAt"] = ISO8601DateFormatter().string(from: time.addingTimeInterval(10))
+                            for key in fields {
+                                if explicitNull { incomplete[key] = NSNull() }
+                                else { incomplete.removeValue(forKey: key) }
+                            }
+                            #expect(try await post(path, incomplete, app: app).status == .badRequest)
+                            #expect(try await snapshot(id, app: app) == beforeInvalid)
+                            let falselyFreshCandidates = try await NotificationCandidateStore().loadUGCCandidates(
+                                ugcCodes: ["COC031", "COZ040", "COZ240"],
+                                capturedAtOrAfter: time.addingTimeInterval(1), installationId: id, on: app.db)
+                            #expect(falselyFreshCandidates.isEmpty)
+                        }
+                    }
+                }
+                var movement = initial
+                movement["capturedAt"] = ISO8601DateFormatter().string(from: time.addingTimeInterval(20))
+                movement["h3Cell"] = Int64(614934489169608704)
+                for key in ["county", "zone", "fireZone", "countyLabel", "fireZoneLabel"] { movement.removeValue(forKey: key) }
+                #expect(try status(try await post(path, movement, app: app)) == "accepted")
+                let moved = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(moved.county == (version == "v4" ? nil : "COC031"))
+                #expect(moved.zone == (version == "v4" ? nil : "COZ040"))
+                #expect(moved.fireZone == (version == "v4" ? nil : "COZ240"))
+                #expect(moved.countyLabel == (version == "v4" ? nil : "Denver"))
+                #expect(moved.fireZoneLabel == (version == "v4" ? nil : "Old fire zone"))
+                let store = NotificationCandidateStore()
+                let matches = try await store.loadMatchingActiveAlerts(for: id, evaluatedAt: .now, on: app.db)
+                #expect(matches.contains { $0.seriesId == seriesID } == (version == "v3"))
+                let oldCandidates = try await store.loadUGCCandidates(ugcCodes: ["COC031", "COZ040", "COZ240"], capturedAtOrAfter: .distantPast, installationId: id, on: app.db)
+                #expect(oldCandidates.isEmpty == (version == "v4"))
+                #expect(try await store.loadH3Candidates(cells: [614934489169608704], capturedAtOrAfter: .distantPast, installationId: id, on: app.db).map(\.id) == [id])
+                // Older observations cannot revive the old scopes.
+                let beforeStale = try await snapshot(id, app: app)
+                #expect(try status(try await post(path, initial, app: app)) == "stale")
+                #expect(try await snapshot(id, app: app) == beforeStale)
+                movement["county"] = "COC013"
+                movement["countyLabel"] = "Boulder"
+                #expect(try status(try await post(path, movement, app: app)) == "accepted")
+                movement.removeValue(forKey: "county")
+                movement.removeValue(forKey: "countyLabel")
+                #expect(try status(try await post(path, movement, app: app)) == "accepted")
+                let enriched = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(enriched.county == "COC013" && enriched.countyLabel == "Boulder")
+                if version == "v4" {
+                    // A partial movement replaces the county and invalidates all omitted enrichment.
+                    movement["h3Cell"] = Int64(614934489169608705)
+                    movement["county"] = "COC001"
+                    #expect(try status(try await post(path, movement, app: app)) == "accepted")
+                    let partial = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                    #expect(partial.county == "COC001" && partial.countyLabel == nil)
+                    #expect(partial.zone == nil && partial.fireZone == nil && partial.fireZoneLabel == nil)
+                }
+                try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+            }
+        }
     }
 
     @Test("Tokenless initialization, monotonic consent, same-revision binding, stale no-effects, and re-enable")

@@ -65,6 +65,14 @@ extension DeviceController {
     }
 
     func createLocationV3(req: Request) async throws -> LocationSnapshotAcceptedResponse {
+        try await createLocation(req: req, invalidateMovedGeography: false)
+    }
+
+    func createLocationV4(req: Request) async throws -> LocationSnapshotAcceptedResponse {
+        try await createLocation(req: req, invalidateMovedGeography: true)
+    }
+
+    private func createLocation(req: Request, invalidateMovedGeography: Bool) async throws -> LocationSnapshotAcceptedResponse {
         let payload: DeviceLocationSnapshotV3Payload = try decodeV3(req)
         let now = Date()
         guard let id = UUID(uuidString: payload.installationId),
@@ -82,7 +90,8 @@ extension DeviceController {
             let previous = PresenceReconciliationState(installation: installation,
                 presence: try await DevicePresenceModel.find(id, on: database))
             let outcome = try await upsertDevicePresence(installationId: id, payload: payload,
-                cellScheme: scheme, locationSource: payload.source, receivedAt: now, on: database)
+                cellScheme: scheme, locationSource: payload.source, receivedAt: now,
+                invalidateMovedGeography: invalidateMovedGeography, on: database)
             guard outcome != .staleIgnored,
                   let presence = try await DevicePresenceModel.find(id, on: database) else {
                 return ("stale", Optional<PresenceReconciliationHandoffRequest>.none)
