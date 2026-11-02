@@ -1,6 +1,6 @@
 ---
 name: arcus-signal-release
-description: Deploy an explicitly requested Arcus Signal version on its server, then observe ingestion, queues, and delivery for 12 minutes. Use for requests such as "release v1.4.2"; require an explicit version.
+description: Back up the database, deploy an explicitly requested Arcus Signal version, observe ingestion, queues, and delivery for 12 minutes, then retain only the latest backup on success. Use for requests such as "release v1.4.2"; require an explicit version.
 ---
 
 # Arcus Signal release
@@ -18,25 +18,28 @@ normalized by adding `v`. Reject leading zeroes, prerelease/build suffixes, and
 ask for it before starting. Never infer a tag from the checkout or release list.
 
 An explicit instruction such as **"release v1.4.2" authorizes preflight, one install,
-and bounded observation**. Announce the target and proceed without a second
+bounded observation, a fresh database backup, and removal of older release backups after success**. Announce the target and proceed without a second
 conversational approval. Runtime execution approvals remain enforced; request the
 specific command through that boundary when needed, explaining its source.
 Investigation and editing this skill do not authorize deployment.
 
 ## Execute
 
-1. Run `./install <tag>` **once**. It locks the checkout, checks the published stable
+1. Create and validate a fresh backup using **Database backup and retention** below.
+   Stop before installation if backup creation or validation fails.
+2. Run `./install <tag>` **once**, with `ARCUS_RELEASE_BACKUP_FILE` set to the
+   absolute path of the newly validated archive. It locks the checkout, checks the published stable
    release and GHCR image, verifies configuration and a backup, saves a baseline,
    pulls the image, checks packaged binaries, migrates using production configuration,
    verifies the schema, starts API/worker, checks image identities and HTTP health,
    and atomically saves the successful image tag in `.env`. Preflight requires
    Python 3 and a writable regular `.env` file and directory.
    `./tools/release-preflight.sh <tag>` is available for a standalone readiness check.
-2. Use the printed `deployment.json` path. If installation failed, inspect its
+3. Use the printed `deployment.json` path. If installation failed, inspect its
    `failedPhase`, `completedPhases`, and `migrationState`; stop deployment actions.
    `uncertain` or `completed` migrations may have committed changes. Inspect ledger
    **and schema** before proposing an explicitly approved retry or rollback.
-3. On success, confirm `persistedTag` equals the requested tag and
+4. On success, confirm `persistedTag` equals the requested tag and
    `saved_configuration_verification` is in `completedPhases`. Independently check
    `env -u ARCUS_SIGNAL_IMAGE_TAG docker compose --env-file .env config --images`
    after the installer exits; both application images must select the requested
@@ -47,11 +50,53 @@ Investigation and editing this skill do not authorize deployment.
    It samples immediately and at **2, 7, and 12 minutes** from observation start.
    When the tool yields, poll its running session and provide progress updates.
    Never claim observations that have not actually completed.
-4. Read the resulting `observation.json`. Report target/revision/digest, saved image tag, previous
+5. Read the resulting `observation.json`. Report target/revision/digest, saved image tag, previous
    images, migration/schema result, rollout gates, observation times, NWS/SPC status,
    backlog/claim changes, and delivery confidence. Include `findings` from the whole
    window, with recovered/unresolved states and baseline context; recovered warnings
    remain visible even when the final status passes.
+6. Only after installation, saved configuration verification, and the complete
+   observation all pass, prune older backups using the procedure below. Report
+   the retained archive, deleted count/bytes, and any cleanup failure separately
+   from deployment status. Failed or incomplete runs preserve all backups.
+
+## Database backup and retention
+
+- Before installation, inspect the current Compose project and confirm which
+  running PostgreSQL service contains the application's production database.
+  Check database identity without exposing credentials; do not assume container
+  names or back up a development/test database.
+- Use `ARCUS_RELEASE_BACKUP_DIR` when configured, otherwise
+  `~/backups/arcus-signal`. If `ARCUS_RELEASE_BACKUP_FILE` was supplied, use its
+  parent directory for a new unique archive rather than overwriting that file.
+  Use a dedicated backup directory; refuse symlink destinations. Create new
+  directories with mode `0700` and archive files with mode `0600`.
+- Create a unique `arcus_signal_pre_<tag>_<UTC timestamp>.dump.partial` file
+  with exclusive creation. Stream a custom-format `pg_dump` from the inspected
+  PostgreSQL service into it. In this checkout, after confirming the database
+  matches the container's `POSTGRES_DB`, the command is:
+  ```bash
+  docker compose --env-file .env exec -T postgres sh -c 'exec pg_dump --format=custom --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"'
+  ```
+  Redirect stdout directly to the private partial archive; never print dump
+  contents. Keep stderr private and report sanitized failures. Do not stop
+  services or change production database data to make a backup.
+- Require successful `pg_dump` exit and a nonempty archive. Flush and close the
+  file, then validate it by feeding it to the same service's
+  `pg_restore --list`, suppressing the archive listing. Rename to `.dump` only
+  after validation; never overwrite an existing archive. Pass this exact absolute
+  path to the installer through `ARCUS_RELEASE_BACKUP_FILE`. On failure, preserve
+  existing completed backups and stop; a partial file is not a usable backup.
+- After the complete successful release observation, revalidate the retained
+  archive with `pg_restore --list` before deleting anything. Enumerate only
+  regular, non-symlink `*.dump` files directly in the selected backup directory.
+  Confirm the archive created for this release is still the newest by modification
+  time; if another backup has appeared or selection is ambiguous, skip cleanup
+  and report it. Delete only the explicitly enumerated older archives, leaving
+  exactly that newest validated backup. Never recurse, follow symlinks, or remove
+  partial files, unrelated files, other backup directories, or database volumes.
+- Archive readability does not prove a tested restore. Report the retained path,
+  size, validation result, and cleanup outcome. Never restore a backup implicitly.
 
 ## Operating rules
 
@@ -64,7 +109,7 @@ Investigation and editing this skill do not authorize deployment.
   `ARCUS_RELEASE_BACKUP_FILE` or `ARCUS_RELEASE_BACKUP_DIR` overrides discovery;
   `ARCUS_RELEASE_BACKUP_MAX_AGE_HOURS` defaults to 24. Archive readability and age
   do not prove a tested restore. Missing/stale/invalid evidence blocks deployment;
-  do not create or restore backups implicitly.
+  create the fresh backup as part of this release workflow; never restore it implicitly.
 - A recent successful SPC attempt can warn after ten minutes because the schedule
   also runs every ten minutes. One age-only warning calls for a recheck. Continued
   staleness or failed attempts require investigation; report an unresolved warning
