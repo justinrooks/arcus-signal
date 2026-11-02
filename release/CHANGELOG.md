@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.6.0
+
+### Features
+
+- Added `POST /api/v4/devices/location-snapshots` for authenticated location presence updates that invalidate stale county and zone enrichment when the accepted H3 geography changes, while preserving legacy V1–V3 merge behavior.
+<!-- evidence: 0f1e873 -->
+
+### Reliability
+
+- V3 and V4 presence writes now serialize authorization and mutation through the installation lock; strictly older observations are ignored, while equal-timestamp conflicts follow server acceptance order and are covered by verification.
+<!-- evidence: 25552c9 -->
+
 ## v1.5.0
 
 ### Features

@@ -1,5 +1,16 @@
 # Release Notes
 
+## v1.6.0
+
+## Overview
+
+Arcus Signal v1.6.0 adds V4 location presence updates with H3 geography invalidation and verifies ordering behavior for V3 and V4 writes. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- V4 location uploads clear stale county and zone enrichment when H3 geography changes, while preserving V1–V3 endpoint behavior.
+- Presence writes ignore strictly older observations and resolve timestamp ties by server acceptance order.
+
 ## v1.5.0
 
 ## Overview
