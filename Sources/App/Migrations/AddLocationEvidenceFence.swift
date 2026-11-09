@@ -7,9 +7,10 @@ struct AddLocationEvidenceFence: AsyncMigration {
         try await database.transaction { transaction in
             guard let sql = transaction as? any SQLDatabase else { throw Abort(.internalServerError) }
             try await sql.raw("ALTER TABLE device_installations ADD COLUMN location_evidence_not_before TIMESTAMPTZ").run()
+            // DDL may wait behind a revocation committed after this transaction started.
             try await sql.raw("""
                 UPDATE device_installations i
-                SET location_evidence_not_before = GREATEST(now(),
+                SET location_evidence_not_before = GREATEST(clock_timestamp(),
                     (SELECT p.captured_at FROM device_presence p WHERE p.installation_id = i.installation_id))
                 WHERE i.consent_revision IS NOT NULL
                   AND (NOT i.location_sharing_enabled OR i.location_auth NOT IN ('always', 'whenInUse'))

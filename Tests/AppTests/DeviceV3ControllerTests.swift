@@ -194,6 +194,64 @@ struct DeviceV3ControllerTests {
         }
     }
 
+    @Test("Migration backfill time follows a revocation committed during its DDL lock wait")
+    func delayedRevocationFenceMigration() async throws {
+        try await withApp { app in
+            let id = id(); try await enroll(id, app: app)
+            _ = try await post("v3/devices/preferences", preferences(id), app: app)
+            _ = try await post("v4/devices/location-snapshots", location(id, capturedAt: Date().addingTimeInterval(-60)), app: app)
+            let original = try #require(try await DevicePresenceModel.find(id, on: app.db))
+            try await AddLocationEvidenceFence().revert(on: app.db)
+            let locked = V3TestEvent(), release = V3TestEvent()
+            // Simulate a pre-migration preference writer retaining its table lock until commit.
+            let writer = Task {
+                try await app.db.transaction { database in
+                    try await InstallationCredentialStore.lock(id, on: database)
+                    let sql = try #require(database as? any SQLDatabase)
+                    try await sql.raw("LOCK TABLE device_installations IN ROW EXCLUSIVE MODE").run()
+                    await locked.signal(); await release.wait()
+                    try await sql.raw("UPDATE device_installations SET location_sharing_enabled = FALSE, consent_revision = 2 WHERE installation_id = \(bind: id)").run()
+                    let row = try #require(try await sql.raw("SELECT clock_timestamp() AS revoked_at").first())
+                    return try row.decode(column: "revoked_at", as: Date.self)
+                }
+            }
+            await locked.wait()
+            let migration = Task { try await AddLocationEvidenceFence().prepare(on: app.db) }
+            do {
+                let sql = try #require(app.db as? any SQLDatabase)
+                var observedWait = false
+                for _ in 0..<500 {
+                    let row = try #require(try await sql.raw("""
+                        SELECT EXISTS(SELECT 1 FROM pg_locks
+                        WHERE relation = 'device_installations'::regclass
+                          AND mode = 'AccessExclusiveLock' AND NOT granted) AS waiting
+                        """).first())
+                    if try row.decode(column: "waiting", as: Bool.self) { observedWait = true; break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                try #require(observedWait, "Migration must be blocked on the real DDL lock")
+                // Evidence captured after transaction start but before the writer revokes consent.
+                let row = try #require(try await sql.raw("SELECT clock_timestamp() AS captured_at").first())
+                let bufferedCapture = try row.decode(column: "captured_at", as: Date.self)
+                await release.signal()
+                let revokedAt = try await writer.value
+                try await migration.value
+                let installation = try #require(try await DeviceInstallationModel.find(id, on: app.db))
+                let fence = try #require(installation.locationEvidenceNotBefore)
+                #expect(fence >= revokedAt)
+                #expect(fence > bufferedCapture)
+                let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(presence.capturedAt == original.capturedAt && presence.county == nil)
+                _ = try await post("v3/devices/preferences", preferences(id, 3), app: app)
+                #expect(try status(try await post("v4/devices/location-snapshots", location(id, capturedAt: bufferedCapture), app: app)) == "stale")
+            } catch {
+                await release.signal()
+                _ = try? await writer.value; _ = try? await migration.value
+                throw error
+            }
+        }
+    }
+
     @Test("V4 movement clears enrichment while V3 retains legacy patches")
     func versionedMovement() async throws {
         try await withApp { app in
