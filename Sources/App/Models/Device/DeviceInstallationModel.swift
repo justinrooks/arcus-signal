@@ -50,6 +50,10 @@ public final class DeviceInstallationModel: Model, @unchecked Sendable {
     @OptionalField(key: "consent_revision")
     public var consentRevision: Int64?
 
+    /// Observations at or before an observed location-consent transition cannot restore targeting.
+    @OptionalField(key: "location_evidence_not_before")
+    public var locationEvidenceNotBefore: Date?
+
     @Field(key: "location_sharing_enabled")
     public var locationSharingEnabled: Bool
 

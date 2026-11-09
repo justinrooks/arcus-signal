@@ -86,6 +86,172 @@ struct DeviceV3ControllerTests {
         return result
     }
 
+    @Test("Observed location revocation fences old presence across restoration and replay")
+    func revocationFence() async throws {
+        try await withApp { app in
+            app.mesoNotificationsEnabled = true
+            for version in ["v3", "v4"] {
+                for revokeAuthorization in [false, true] {
+                    let id = id(); try await enroll(id, app: app)
+                    var prefs = preferences(id)
+                    prefs["apnsDeviceToken"] = "bound"
+                    _ = try await post("v3/devices/preferences", prefs, app: app)
+                    let path = "\(version)/devices/location-snapshots"
+                    var old = location(id, capturedAt: Date().addingTimeInterval(version == "v4" ? 60 : -60))
+                    old["cellScheme"] = "h3"; old["h3Cell"] = Int64(614934489169608703); old["h3Resolution"] = 8
+                    old["zone"] = "COZ040"; old["fireZone"] = "COZ240"
+                    old["countyLabel"] = "Denver"; old["fireZoneLabel"] = "Old fire zone"
+                    #expect(try status(try await post(path, old, app: app)) == "accepted")
+                    let seriesID = self.id(), urn = "urn:oid:\(UUID())", now = Date()
+                    try await ArcusSeriesModel(id: seriesID, source: "nws", event: "Tornado Watch",
+                        sourceURL: "https://api.weather.gov/alerts/\(seriesID)", currentRevisionUrn: urn,
+                        currentRevisionSent: now, messageType: "alert", contentFingerprint: String(repeating: "a", count: 64),
+                        state: EventState.active.rawValue, expires: now.addingTimeInterval(3600),
+                        ends: now.addingTimeInterval(3600), lastSeenActive: now, severity: "severe",
+                        urgency: "immediate", certainty: "observed", ugcCodes: ["COC031", "COC013"]).create(on: app.db)
+                    try await ArcusEventRevisionModel(seriesId: seriesID, revisionUrn: urn, messageType: "alert",
+                        sent: now, received: now, referencedUrns: []).create(on: app.db)
+                    try await ArcusNotificationOutboxModel(series: seriesID, revisionUrn: urn,
+                        mode: NotificationTargetMode.ugc.rawValue, reason: NotificationReason.new.rawValue,
+                        state: "done", attempts: 1, availableAt: now).create(on: app.db)
+                    let queued = try #require(app.queues.test.all(ReconcileInstallationAlertsJob.self).first { $0.installationId == id })
+                    let context = QueueContext(queueName: ArcusQueueLane.target.queueName,
+                        configuration: app.queues.configuration, application: app, logger: app.logger, on: app.eventLoopGroup.any())
+                    let store = NotificationCandidateStore()
+                    let candidate = try #require(try await store.loadH3Candidates(cells: [614934489169608703],
+                        capturedAtOrAfter: .distantPast, installationId: id, on: app.db).first)
+                    let intentCount = try await PresenceReconciliationOutboxModel.query(on: app.db).filter(\.$installation.$id == id).count()
+                    var revoked = preferences(id, 2, sharing: revokeAuthorization)
+                    if revokeAuthorization {
+                        var consent = try #require(revoked["consent"] as? [String: Any])
+                        consent["locationAuthorization"] = "denied"; revoked["consent"] = consent
+                    }
+                    #expect(try status(try await post("v3/devices/preferences", revoked, app: app)) == "accepted")
+                    #expect(try status(try await post(path, old, app: app)) == "ignored")
+                    let restored = try await post("v3/devices/preferences", preferences(id, 3), app: app)
+                    #expect(try restored.content.decode(DevicePreferencesV3AcceptedResponse.self).serverOwnsMesoNotificationDelivery == false)
+                    #expect(try status(try await post("v3/devices/preferences", preferences(id, 3), app: app)) == "unchanged")
+                    #expect(try status(try await post("v3/devices/preferences", revoked, app: app)) == "stale")
+                    #expect(try await PresenceReconciliationOutboxModel.query(on: app.db).filter(\.$installation.$id == id).count() == intentCount)
+                    #expect(try await store.loadH3Candidates(cells: [614934489169608703], capturedAtOrAfter: .distantPast, installationId: id, on: app.db).isEmpty)
+                    #expect(try await store.loadUGCCandidates(ugcCodes: ["COC031", "COZ040", "COZ240"], capturedAtOrAfter: .distantPast, installationId: id, on: app.db).isEmpty)
+                    let sendsBefore = app.queues.test.all(NotificationSendJob.self).count
+                    try await ReconcileInstallationAlertsJob().reconcile(context, queued, on: app.db)
+                    #expect(app.queues.test.all(NotificationSendJob.self).count == sendsBefore)
+                    // A candidate loaded before revocation must also fail the shared post-claim gate.
+                    #expect(try await store.acceptedConsentAllowsDelivery(candidate, on: app.db) == false)
+                    #expect(try await store.acceptedConsentAllowsDelivery(candidate, meso: true, on: app.db) == false)
+                    #expect(try status(try await post(path, old, app: app)) == "stale")
+                    let invalidated = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                    #expect(invalidated.capturedAt == candidate.capturedAt)
+                    #expect(invalidated.h3Cell == nil && invalidated.county == nil && invalidated.zone == nil && invalidated.fireZone == nil)
+                    #expect(invalidated.countyLabel == nil && invalidated.fireZoneLabel == nil)
+                    // Future relative to receipt is allowed within the existing five-minute skew bound.
+                    let fresh = location(id, capturedAt: Date().addingTimeInterval(version == "v4" ? 62 : 2), county: "COC013")
+                    #expect(try status(try await post(path, fresh, app: app)) == "accepted")
+                    #expect(try await store.loadUGCCandidates(ugcCodes: ["COC013"], capturedAtOrAfter: .distantPast, installationId: id, on: app.db).map(\.id) == [id])
+                    #expect(try await PresenceReconciliationOutboxModel.query(on: app.db).filter(\.$installation.$id == id).count() == intentCount + 1)
+                    try await ReconcileInstallationAlertsJob().reconcile(context, queued, on: app.db)
+                    #expect(app.queues.test.all(NotificationSendJob.self).count == sendsBefore + 1)
+                    #expect(try status(try await post("v3/devices/preferences", preferences(id, 3), app: app)) == "unchanged")
+                    #expect(try status(try await post(path, fresh, app: app)) == "accepted")
+                    // Subscription-only transitions retain usable geography.
+                    _ = try await post("v3/devices/preferences", preferences(id, 4, subscribed: false), app: app)
+                    _ = try await post("v3/devices/preferences", preferences(id, 5), app: app)
+                    #expect(try await store.loadUGCCandidates(ugcCodes: ["COC013"], capturedAtOrAfter: .distantPast, installationId: id, on: app.db).map(\.id) == [id])
+                    try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+                }
+            }
+        }
+    }
+
+    @Test("Location fence migration preserves legacy geography and fences already revoked consent")
+    func revocationFenceMigration() async throws {
+        try await withApp { app in
+            let revokedID = id(), legacyID = id(), capturedAt = Date().addingTimeInterval(120)
+            for id in [revokedID, legacyID] {
+                try await enroll(id, app: app)
+                _ = try await post("v3/devices/preferences", preferences(id), app: app)
+                _ = try await post("v4/devices/location-snapshots", location(id, capturedAt: capturedAt), app: app)
+            }
+            try await withRollbackTransaction(on: app) { database in
+                let sql = try #require(database as? any SQLDatabase)
+                try await sql.raw("UPDATE device_installations SET location_sharing_enabled = FALSE WHERE installation_id = \(bind: revokedID)").run()
+                try await sql.raw("UPDATE device_installations SET consent_revision = NULL WHERE installation_id = \(bind: legacyID)").run()
+                try await AddLocationEvidenceFence().revert(on: database)
+                try await AddLocationEvidenceFence().prepare(on: database)
+                let revoked = try #require(try await DeviceInstallationModel.find(revokedID, on: database))
+                let presence = try #require(try await DevicePresenceModel.find(revokedID, on: database))
+                #expect(revoked.locationEvidenceNotBefore == presence.capturedAt)
+                #expect(presence.county == nil)
+                #expect(try await DeviceInstallationModel.find(legacyID, on: database)?.locationEvidenceNotBefore == nil)
+                #expect(try await DevicePresenceModel.find(legacyID, on: database)?.county == "COC031")
+                do {
+                    try await AddLocationEvidenceFence().revert(on: database)
+                    Issue.record("A populated location fence must block rollback")
+                } catch let error as Abort { #expect(error.status == .conflict) }
+            }
+        }
+    }
+
+    @Test("Migration backfill time follows a revocation committed during its DDL lock wait")
+    func delayedRevocationFenceMigration() async throws {
+        try await withApp { app in
+            let id = id(); try await enroll(id, app: app)
+            _ = try await post("v3/devices/preferences", preferences(id), app: app)
+            _ = try await post("v4/devices/location-snapshots", location(id, capturedAt: Date().addingTimeInterval(-60)), app: app)
+            let original = try #require(try await DevicePresenceModel.find(id, on: app.db))
+            try await AddLocationEvidenceFence().revert(on: app.db)
+            let locked = V3TestEvent(), release = V3TestEvent()
+            // Simulate a pre-migration preference writer retaining its table lock until commit.
+            let writer = Task {
+                try await app.db.transaction { database in
+                    try await InstallationCredentialStore.lock(id, on: database)
+                    let sql = try #require(database as? any SQLDatabase)
+                    try await sql.raw("LOCK TABLE device_installations IN ROW EXCLUSIVE MODE").run()
+                    await locked.signal(); await release.wait()
+                    try await sql.raw("UPDATE device_installations SET location_sharing_enabled = FALSE, consent_revision = 2 WHERE installation_id = \(bind: id)").run()
+                    let row = try #require(try await sql.raw("SELECT clock_timestamp() AS revoked_at").first())
+                    return try row.decode(column: "revoked_at", as: Date.self)
+                }
+            }
+            await locked.wait()
+            let migration = Task { try await AddLocationEvidenceFence().prepare(on: app.db) }
+            do {
+                let sql = try #require(app.db as? any SQLDatabase)
+                var observedWait = false
+                for _ in 0..<500 {
+                    let row = try #require(try await sql.raw("""
+                        SELECT EXISTS(SELECT 1 FROM pg_locks
+                        WHERE relation = 'device_installations'::regclass
+                          AND mode = 'AccessExclusiveLock' AND NOT granted) AS waiting
+                        """).first())
+                    if try row.decode(column: "waiting", as: Bool.self) { observedWait = true; break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                try #require(observedWait, "Migration must be blocked on the real DDL lock")
+                // Evidence captured after transaction start but before the writer revokes consent.
+                let row = try #require(try await sql.raw("SELECT clock_timestamp() AS captured_at").first())
+                let bufferedCapture = try row.decode(column: "captured_at", as: Date.self)
+                await release.signal()
+                let revokedAt = try await writer.value
+                try await migration.value
+                let installation = try #require(try await DeviceInstallationModel.find(id, on: app.db))
+                let fence = try #require(installation.locationEvidenceNotBefore)
+                #expect(fence >= revokedAt)
+                #expect(fence > bufferedCapture)
+                let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(presence.capturedAt == original.capturedAt && presence.county == nil)
+                _ = try await post("v3/devices/preferences", preferences(id, 3), app: app)
+                #expect(try status(try await post("v4/devices/location-snapshots", location(id, capturedAt: bufferedCapture), app: app)) == "stale")
+            } catch {
+                await release.signal()
+                _ = try? await writer.value; _ = try? await migration.value
+                throw error
+            }
+        }
+    }
+
     @Test("V4 movement clears enrichment while V3 retains legacy patches")
     func versionedMovement() async throws {
         try await withApp { app in
@@ -463,7 +629,8 @@ struct DeviceV3ControllerTests {
                             #expect(installation.consentRevision == 3 && !installation.isSubscribed && !installation.locationSharingEnabled)
                             if revokeFirst && kind.hasSuffix("location-snapshots") {
                                 #expect(try status(results.1) == "ignored")
-                                #expect(try await snapshot(id, app: app)[1...] == before[1...])
+                                #expect(try await snapshot(id, app: app)[2...] == before[2...])
+                                #expect(try await DevicePresenceModel.find(id, on: app.db)?.county == nil)
                             }
                             if revokeFirst && kind == "preferences" { #expect(try status(results.1) == "stale") }
                         } catch {
@@ -474,6 +641,12 @@ struct DeviceV3ControllerTests {
                         try? await dropPause(sql); throw error
                     }
                     try await dropPause(sql)
+                    if kind.hasSuffix("location-snapshots") {
+                        // The same fence must survive either actual transaction commit order.
+                        _ = try await post(revokePath, preferences(id, 4), app: app)
+                        #expect(try status(try await postData(otherPath, data: otherData, app: app)) == "stale")
+                        #expect(try await DevicePresenceModel.find(id, on: app.db)?.county == nil)
+                    }
                 }
             }
         }

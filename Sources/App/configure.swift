@@ -159,6 +159,7 @@ private func configureMigrations(on app: Application) {
     app.migrations.add(MakeNotificationSubjectKindsExtensible())
     app.migrations.add(CreateInstallationCredentials())
     app.migrations.add(AddDeviceConsentRevision())
+    app.migrations.add(AddLocationEvidenceFence())
 }
 
 private func configureAPNs(on app: Application) async throws {
