@@ -31,6 +31,7 @@ struct NotificationCandidateStore {
     func acceptedConsentAllowsDelivery(_ candidate: NotificationCandidate, meso: Bool = false, on db: any Database) async throws -> Bool {
         guard let installation = try await DeviceInstallationModel.find(candidate.id, on: db) else { return false }
         guard installation.consentRevision != nil else { return true }
+        guard installation.locationEvidenceNotBefore.map({ candidate.capturedAt > $0 }) ?? true else { return false }
         return installation.isActive && installation.isSubscribed && installation.locationSharingEnabled
             && (installation.locationAuth == .always || installation.locationAuth == .whenInUse)
             && (!meso || installation.mesoNotificationsEnabled == true)

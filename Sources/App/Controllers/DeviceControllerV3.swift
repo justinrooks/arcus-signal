@@ -36,11 +36,30 @@ extension DeviceController {
                 installationId: id, apnsDeviceToken: "", apnsEnvironment: .sandbox,
                 platform: platform, osVersion: payload.osVersion, appVersion: payload.appVersion,
                 buildNumber: payload.buildNumber, locationAuth: auth)
+            let previouslyAllowedLocation = installation.locationSharingEnabled
+                && (installation.locationAuth == .always || installation.locationAuth == .whenInUse)
             installation.isSubscribed = payload.consent.isSubscribed
             installation.mesoNotificationsEnabled = payload.consent.mesoNotificationsEnabled
             installation.locationSharingEnabled = payload.consent.locationSharingEnabled
             installation.locationAuth = auth
             installation.consentRevision = payload.consentRevision
+            let allowsLocation = installation.locationSharingEnabled
+                && (auth == .always || auth == .whenInUse)
+            if status == .accepted && (previouslyAllowedLocation != allowsLocation
+                || (!allowsLocation && installation.locationEvidenceNotBefore == nil)) {
+                // Sample after acquiring installation authority. Preserve the accepted capture
+                // watermark, including future-skewed observations, while retiring its geography.
+                installation.locationEvidenceNotBefore = max(installation.locationEvidenceNotBefore ?? .distantPast,
+                    max(Date(), presence?.capturedAt ?? .distantPast))
+                if let presence {
+                    presence.cellScheme = .ugcOnly
+                    presence.h3Cell = nil; presence.h3Resolution = nil
+                    presence.county = nil; presence.zone = nil; presence.fireZone = nil
+                    presence.countyLabel = nil; presence.fireZoneLabel = nil
+                    try await presence.save(on: database)
+                }
+            }
+
             // Binding is independent of consent equality. A nil token preserves token AND environment.
             if let token = payload.apnsDeviceToken {
                 installation.apnsDeviceToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -86,6 +105,9 @@ extension DeviceController {
             guard installation.locationSharingEnabled,
                   installation.locationAuth == .always || installation.locationAuth == .whenInUse else {
                 return ("ignored", Optional<PresenceReconciliationHandoffRequest>.none)
+            }
+            if let fence = installation.locationEvidenceNotBefore, payload.capturedAt <= fence {
+                return ("stale", Optional<PresenceReconciliationHandoffRequest>.none)
             }
             let previous = PresenceReconciliationState(installation: installation,
                 presence: try await DevicePresenceModel.find(id, on: database))
