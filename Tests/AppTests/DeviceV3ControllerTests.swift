@@ -348,6 +348,8 @@ struct DeviceV3ControllerTests {
                     // A partial movement replaces the county and invalidates all omitted enrichment.
                     movement["h3Cell"] = Int64(614934489169608705)
                     movement["county"] = "COC001"
+                    // A changed identity needs newer capture evidence under V4.
+                    movement["capturedAt"] = ISO8601DateFormatter().string(from: time.addingTimeInterval(21))
                     #expect(try status(try await post(path, movement, app: app)) == "accepted")
                     let partial = try #require(try await DevicePresenceModel.find(id, on: app.db))
                     #expect(partial.county == "COC001" && partial.countyLabel == nil)
@@ -576,7 +578,7 @@ struct DeviceV3ControllerTests {
                     let id = id(); try await enroll(id, app: app)
                     if kind != "legacy" {
                         _ = try await post("v3/devices/preferences", preferences(id), app: app)
-                        _ = try await post("v3/devices/location-snapshots", location(id), app: app)
+                        _ = try await post("v3/devices/location-snapshots", location(id, capturedAt: Date().addingTimeInterval(-1)), app: app)
                     }
                     let before = try await snapshot(id, app: app)
                     // A test-only trigger pauses the REAL first route after it holds the production
@@ -667,8 +669,17 @@ struct DeviceV3ControllerTests {
                         if seeded {
                             _ = try await post(path, location(id, capturedAt: base, county: "COC001"), app: app)
                         }
-                        let older = try JSONSerialization.data(withJSONObject: location(id, capturedAt: base.addingTimeInterval(1), county: "COC013"))
-                        let newer = try JSONSerialization.data(withJSONObject: location(id, capturedAt: base.addingTimeInterval(2), county: "COC031"))
+                        let olderCapture = base.addingTimeInterval(version == "v4" ? 0.1 : 1)
+                        let newerCapture = base.addingTimeInterval(version == "v4" ? 0.9 : 2)
+                        var olderBody = location(id, capturedAt: olderCapture, county: "COC013")
+                        var newerBody = location(id, capturedAt: newerCapture, county: "COC031")
+                        if version == "v4" {
+                            let second = ISO8601DateFormatter().string(from: base).dropLast()
+                            olderBody["capturedAt"] = "\(second).100000000Z"
+                            newerBody["capturedAt"] = "\(second).900000000Z"
+                        }
+                        let older = try JSONSerialization.data(withJSONObject: olderBody)
+                        let newer = try JSONSerialization.data(withJSONObject: newerBody)
                         // Pause the actual first HTTP mutation after its write, while it still owns
                         // the installation lock. The second must wait before reading any presence.
                         try await sql.raw("""
@@ -701,14 +712,14 @@ struct DeviceV3ControllerTests {
                                 #expect(try status(results.0) == "accepted")
                                 #expect(try status(results.1) == (newerFirst ? "stale" : "accepted"))
                                 let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
-                                #expect(presence.capturedAt == base.addingTimeInterval(2))
+                                #expect(abs(presence.capturedAt.timeIntervalSince(newerCapture)) < 0.000001)
                                 #expect(presence.county == "COC031")
                                 let intents = try await PresenceReconciliationOutboxModel.query(on: app.db)
                                     .filter(\.$installation.$id == id).all()
                                 #expect(intents.count == (seeded ? 1 : 0) + (newerFirst ? 1 : 2))
-                                #expect(intents.contains { $0.presenceCapturedAt == base.addingTimeInterval(2) })
+                                #expect(intents.contains { abs($0.presenceCapturedAt.timeIntervalSince(newerCapture)) < 0.000001 })
                                 if newerFirst {
-                                    #expect(!intents.contains { $0.presenceCapturedAt == base.addingTimeInterval(1) })
+                                    #expect(!intents.contains { abs($0.presenceCapturedAt.timeIntervalSince(olderCapture)) < 0.000001 })
                                 }
                                 let beforeReplay = try await snapshot(id, app: app)
                                 #expect(try status(try await postData(path, data: older, app: app)) == "stale")
@@ -732,7 +743,7 @@ struct DeviceV3ControllerTests {
         try await sql.raw("DROP FUNCTION IF EXISTS issue406_pause()").run()
     }
 
-    @Test("Client ISO8601 precision collisions retain existing equal-capture acceptance")
+    @Test("Whole-second collisions preserve V3 arrival order and fail closed on V4 conflicts")
     func equalCapture() async throws {
         try await withApp { app in
             for version in ["v3", "v4"] {
@@ -756,16 +767,103 @@ struct DeviceV3ControllerTests {
                 let intentsBefore = try await snapshot(id, app: app)[3]
                 #expect(try status(try await postData(path, data: newer, app: app)) == "accepted")
                 #expect(try await snapshot(id, app: app)[3] == intentsBefore)
-                // Equal captures intentionally resolve by server acceptance order: a delayed
-                // conflicting observation with the same wire timestamp replaces geography.
-                #expect(try status(try await postData(path, data: older, app: app)) == "accepted")
+                let beforeConflict = try await snapshot(id, app: app)
+                #expect(try status(try await postData(path, data: older, app: app)) == (version == "v4" ? "stale" : "accepted"))
                 let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
-                #expect(presence.capturedAt == base && presence.county == "COC013")
+                #expect(presence.capturedAt == base)
+                #expect(presence.county == (version == "v4" ? "COC031" : "COC013"))
+                if version == "v4" { #expect(try await snapshot(id, app: app) == beforeConflict) }
                 let intents = try await PresenceReconciliationOutboxModel.query(on: app.db)
                     .filter(\.$installation.$id == id).all()
-                #expect(intents.count == 2)
-                #expect(intents.contains { $0.triggerCategory == .movedWhileUsable })
+                #expect(intents.count == (version == "v4" ? 1 : 2))
             }
+        }
+    }
+
+    @Test("V4 fractional ingress preserves chronology, compatible enrichment, and database precision ties")
+    func fractionalPresence() async throws {
+        try await withApp { app in
+            for crossCell in [false, true] {
+                let id = id(); try await enroll(id, app: app)
+                var prefs = preferences(id); prefs["apnsDeviceToken"] = "bound"
+                _ = try await post("v3/devices/preferences", prefs, app: app)
+                let path = "v4/devices/location-snapshots"
+                let base = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 30)
+                let second = ISO8601DateFormatter().string(from: base).dropLast()
+                var newer = location(id, capturedAt: base)
+                newer["capturedAt"] = "\(second).900000000Z"
+                newer["cellScheme"] = "h3"; newer["h3Resolution"] = 8
+                newer["h3Cell"] = Int64(614934489169608703)
+                newer["zone"] = "COZ040"; newer["fireZone"] = "COZ240"
+                // Accept H3-only first, then compatible enrichment at the same capture.
+                var minimal = newer
+                for key in ["county", "zone", "fireZone"] { minimal.removeValue(forKey: key) }
+                #expect(try status(try await post(path, minimal, app: app)) == "accepted")
+                #expect(try status(try await post(path, newer, app: app)) == "accepted")
+                let intentsBeforeRetry = try await snapshot(id, app: app)[3]
+                #expect(try status(try await post(path, newer, app: app)) == "accepted")
+                #expect(try status(try await post(path, minimal, app: app)) == "accepted")
+                #expect(try await snapshot(id, app: app)[3] == intentsBeforeRetry)
+                var older = newer
+                older["capturedAt"] = "\(second).100000000Z"
+                older["county"] = "COC013"; older["zone"] = "COZ041"; older["fireZone"] = "COZ241"
+                if crossCell { older["h3Cell"] = Int64(614934489186385919) }
+                let before = try await snapshot(id, app: app)
+                // Reverse arrival/completion: delayed A cannot replace B or enqueue movement.
+                #expect(try status(try await post(path, older, app: app)) == "stale")
+                older["capturedAt"] = ISO8601DateFormatter().string(from: base.addingTimeInterval(-1))
+                #expect(try status(try await post(path, older, app: app)) == "stale")
+                for key in ["county", "zone", "fireZone", "h3Cell", "h3Resolution", "cellScheme"] {
+                    var conflicting = newer
+                    switch key {
+                    case "h3Cell": conflicting[key] = Int64(614934489186385919)
+                    case "h3Resolution": conflicting[key] = 7
+                    case "cellScheme": conflicting[key] = "ugc-only"
+                    default: conflicting[key] = older[key]
+                    }
+                    #expect(try status(try await post(path, conflicting, app: app)) == "stale")
+                }
+                // Distinct Dates below database resolution must use the same fail-safe.
+                older["capturedAt"] = "\(second).900000100Z"
+                #expect(try status(try await post(path, older, app: app)) == "stale")
+                #expect(try await snapshot(id, app: app) == before)
+                let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(abs(presence.capturedAt.timeIntervalSince(base) - 0.9) < 0.000001)
+                #expect(presence.county == "COC031" && presence.zone == "COZ040" && presence.fireZone == "COZ240")
+                // A genuinely newer fractional capture still owns movement invalidation.
+                older["capturedAt"] = "\(second).950000000Z"
+                #expect(try status(try await post(path, older, app: app)) == "accepted")
+            }
+        }
+    }
+
+    @Test("Actual SkyAware uploader bodies decode at authenticated V4 ingress")
+    func uploaderWireBodies() async throws {
+        // Exported from SkyAware HTTPLocationSnapshotUploaderTests XCResult attachments.
+        let oldA = #"{"county":"COC001","h3Cell":613725958748241919,"zone":"COZ245","h3Resolution":8,"capturedAt":"2024-03-09T16:00:00Z","installationId":"f0465f55-f0a2-48a0-aac0-6a5c48a95891","source":"unknown","locationAgeSeconds":5,"cellScheme":"h3","horizontalAccuracyMeters":12,"fireZone":"COZ245","countyLabel":"Adams County","fireZoneLabel":"Front Range"}"#
+        let oldB = #"{"h3Cell":613725958748241919,"horizontalAccuracyMeters":12,"locationAgeSeconds":5,"installationId":"f0465f55-f0a2-48a0-aac0-6a5c48a95891","capturedAt":"2024-03-09T16:00:00Z","cellScheme":"h3","fireZone":"COZ245","source":"unknown","zone":"COZ245","countyLabel":"Adams County","h3Resolution":8,"county":"COC001","fireZoneLabel":"Front Range"}"#
+        let newA = #"{"county":"COC001","installationId":"f0465f55-f0a2-48a0-aac0-6a5c48a95891","locationAgeSeconds":5,"zone":"COZ245","source":"unknown","capturedAt":"2024-03-09T16:00:00.100000024Z","fireZoneLabel":"Front Range","cellScheme":"h3","h3Cell":613725958748241919,"countyLabel":"Adams County","horizontalAccuracyMeters":12,"fireZone":"COZ245","h3Resolution":8}"#
+        let newB = #"{"installationId":"f0465f55-f0a2-48a0-aac0-6a5c48a95891","countyLabel":"Adams County","h3Resolution":8,"zone":"COZ245","fireZoneLabel":"Front Range","cellScheme":"h3","county":"COC001","source":"unknown","h3Cell":613725958748241919,"fireZone":"COZ245","capturedAt":"2024-03-09T16:00:00.899999976Z","horizontalAccuracyMeters":12,"locationAgeSeconds":5}"#
+        try await withApp { app in
+            let id = id(); try await enroll(id, app: app)
+            _ = try await post("v3/devices/preferences", preferences(id), app: app)
+            func body(_ wire: String) throws -> [String: Any] {
+                var value = try #require(JSONSerialization.jsonObject(with: Data(wire.utf8)) as? [String: Any])
+                // Isolate only installation identity; retain the uploader's exact capture/targeting fields.
+                value["installationId"] = id.uuidString
+                return value
+            }
+            #expect(try body(oldA)["capturedAt"] as? String == body(oldB)["capturedAt"] as? String)
+            let path = "v4/devices/location-snapshots"
+            #expect(try status(try await post(path, body(oldA), app: app)) == "accepted")
+            #expect(try status(try await post(path, body(newB), app: app)) == "accepted")
+            let before = try await snapshot(id, app: app)
+            #expect(try status(try await post(path, body(newA), app: app)) == "stale")
+            #expect(try await snapshot(id, app: app) == before)
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let decoded = try decoder.decode(DeviceLocationSnapshotV3Payload.self, from: Data(newB.utf8))
+            let presence = try #require(try await DevicePresenceModel.find(id, on: app.db))
+            #expect(abs(presence.capturedAt.timeIntervalSince(decoded.capturedAt)) < 0.000001)
         }
     }
 

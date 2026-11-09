@@ -463,7 +463,8 @@ func upsertDevicePresence(
     on database: any Database
 ) async throws -> DevicePresenceUpsertOutcome {
     if let existing = try await DevicePresenceModel.find(installationId, on: database) {
-        guard payload.capturedAt >= existing.capturedAt else {
+        guard acceptsPresenceCapture(payload, existing: existing, cellScheme: cellScheme,
+                                     failClosedOnTie: invalidateMovedGeography) else {
             return .staleIgnored
         }
         
@@ -546,7 +547,8 @@ func upsertDevicePresence(
             throw error
         }
         
-        guard payload.capturedAt >= existing.capturedAt else {
+        guard acceptsPresenceCapture(payload, existing: existing, cellScheme: cellScheme,
+                                     failClosedOnTie: invalidateMovedGeography) else {
             return .staleIgnored
         }
         
@@ -602,4 +604,28 @@ func upsertDevicePresence(
         try await existing.update(on: database)
         return .updated
     }
+}
+
+// PostgreSQL stores capture times at microsecond precision. Match PostgresNIO's
+// truncation on ingress and recover the integer tick from the persisted Date.
+private func acceptsPresenceCapture(
+    _ payload: any DevicePresenceSnapshot, existing: DevicePresenceModel,
+    cellScheme: CellScheme, failClosedOnTie: Bool
+) -> Bool {
+    guard failClosedOnTie else { return payload.capturedAt >= existing.capturedAt }
+    let epoch = Date(timeIntervalSince1970: 946_684_800)
+    let incoming = (payload.capturedAt.timeIntervalSince(epoch) * 1_000_000).rounded(.towardZero)
+    let accepted = (existing.capturedAt.timeIntervalSince(epoch) * 1_000_000).rounded()
+    guard incoming >= accepted else { return false }
+    guard incoming == accepted else { return true }
+    // A tie cannot establish that conflicting geography is newer. Compatible
+    // retries may still fill missing enrichment without replacing accepted UGC.
+    guard existing.cellScheme == cellScheme,
+          payload.h3Cell == nil || payload.h3Cell == existing.h3Cell,
+          payload.h3Resolution == nil || payload.h3Resolution == existing.h3Resolution else { return false }
+    for (supplied, current) in [(payload.county, existing.county),
+                                (payload.zone, existing.zone), (payload.fireZone, existing.fireZone)] {
+        if let supplied = normalizedOptional(supplied), let current, supplied != current { return false }
+    }
+    return true
 }
