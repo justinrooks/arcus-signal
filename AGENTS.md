@@ -15,19 +15,23 @@ The backend is intentionally split into two runtime roles:
 This solution is implemented with Vapor. For all feature work, architecture changes, and operational behavior, default to official Vapor documentation and Vapor best practices.
 
 ## Arcus Signal — Canonical Specs
+
 Before making changes, read:
+
 - docs/architecture.md
 - docs/epics-stories.md
 
 Treat `docs/architecture.md` as the living source of truth. `docs/epics-stories.md` is a historical planning artifact; preserve it as a record, but do not treat its stored-payload, retry, or exactly-once language as the production contract.
 
 Use the living architecture document for:
+
 - pipeline flow (ingest → target → outbox → send)
 - DB invariants (including the per-installation, at-most-one ledger claim boundary)
 - notification content composition (compose candidate-specific copy after a successful ledger claim, at send time)
 - queue lanes and concurrency caps
 
 ## Working agreements
+
 - Prefer idempotent jobs and DB-enforced uniqueness.
 - Never send APNs directly from targeting; write to outbox.
 - Do not introduce server-side lat/lon storage unless explicitly requested.
@@ -37,6 +41,7 @@ Use the living architecture document for:
 ## Arcus-Signal Slice Boundaries
 
 For Vapor server work, prefer slices around one of:
+
 - One route behavior.
 - One service method.
 - One DTO or decoding path.

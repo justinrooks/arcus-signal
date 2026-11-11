@@ -1,5 +1,15 @@
 # Release Notes
 
+## v1.6.2
+
+## Overview
+
+Arcus Signal v1.6.2 corrects V4 location enrichment when a newer capture remains in the same H3 cell. A GitHub release builds the production container; deployment remains a separate explicit operation.
+
+## Highlights
+
+- Newer V4 captures retire prior county and zone enrichment before supplied fields are applied. Compatible enrichment at the same capture time remains accepted; V1–V3 patch behavior is unchanged.
+
 ## v1.6.0
 
 ## Overview

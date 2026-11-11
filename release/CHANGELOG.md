@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.2
+
+### Reliability
+
+- V4 location captures now retire prior county and zone enrichment on every newer capture, including captures in the same H3 cell, while allowing compatible same-microsecond enrichment and leaving V1–V3 patch behavior unchanged.
+<!-- evidence: 089279d -->
+
 ## v1.6.0
 
 ### Features
