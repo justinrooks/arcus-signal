@@ -468,12 +468,15 @@ func upsertDevicePresence(
             return .staleIgnored
         }
         
-        // V4 ties enrichment to geographic identity; legacy routes retain patch semantics.
+        // V4 UGC belongs to one capture, even within the same H3 cell.
+        // Legacy routes retain patch semantics.
         if invalidateMovedGeography {
             let moved = existing.cellScheme != cellScheme
                 || (payload.h3Cell != nil && existing.h3Cell != payload.h3Cell)
                 || (payload.h3Resolution != nil && existing.h3Resolution != payload.h3Resolution)
-            if moved {
+            let newerCapture = presenceCaptureMicroseconds(payload.capturedAt, persisted: false)
+                > presenceCaptureMicroseconds(existing.capturedAt, persisted: true)
+            if moved || newerCapture {
                 existing.county = nil
                 existing.zone = nil
                 existing.fireZone = nil
@@ -552,12 +555,15 @@ func upsertDevicePresence(
             return .staleIgnored
         }
         
-        // V4 ties enrichment to geographic identity; legacy routes retain patch semantics.
+        // V4 UGC belongs to one capture, even within the same H3 cell.
+        // Legacy routes retain patch semantics.
         if invalidateMovedGeography {
             let moved = existing.cellScheme != cellScheme
                 || (payload.h3Cell != nil && existing.h3Cell != payload.h3Cell)
                 || (payload.h3Resolution != nil && existing.h3Resolution != payload.h3Resolution)
-            if moved {
+            let newerCapture = presenceCaptureMicroseconds(payload.capturedAt, persisted: false)
+                > presenceCaptureMicroseconds(existing.capturedAt, persisted: true)
+            if moved || newerCapture {
                 existing.county = nil
                 existing.zone = nil
                 existing.fireZone = nil
@@ -613,9 +619,8 @@ private func acceptsPresenceCapture(
     cellScheme: CellScheme, failClosedOnTie: Bool
 ) -> Bool {
     guard failClosedOnTie else { return payload.capturedAt >= existing.capturedAt }
-    let epoch = Date(timeIntervalSince1970: 946_684_800)
-    let incoming = (payload.capturedAt.timeIntervalSince(epoch) * 1_000_000).rounded(.towardZero)
-    let accepted = (existing.capturedAt.timeIntervalSince(epoch) * 1_000_000).rounded()
+    let incoming = presenceCaptureMicroseconds(payload.capturedAt, persisted: false)
+    let accepted = presenceCaptureMicroseconds(existing.capturedAt, persisted: true)
     guard incoming >= accepted else { return false }
     guard incoming == accepted else { return true }
     // A tie cannot establish that conflicting geography is newer. Compatible
@@ -628,4 +633,9 @@ private func acceptsPresenceCapture(
         if let supplied = normalizedOptional(supplied), let current, supplied != current { return false }
     }
     return true
+}
+
+private func presenceCaptureMicroseconds(_ date: Date, persisted: Bool) -> Double {
+    let epoch = Date(timeIntervalSince1970: 946_684_800)
+    return (date.timeIntervalSince(epoch) * 1_000_000).rounded(persisted ? .toNearestOrAwayFromZero : .towardZero)
 }

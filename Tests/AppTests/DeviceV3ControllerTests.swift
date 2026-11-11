@@ -360,6 +360,82 @@ struct DeviceV3ControllerTests {
         }
     }
 
+    @Test("V4 same-cell captures retire old UGC and reconcile active alerts after enrichment")
+    func sameCellEnrichment() async throws {
+        try await withApp { app in
+            for codeKey in ["county", "zone", "fireZone"] {
+                let id = id(); try await enroll(id, app: app)
+                var prefs = preferences(id); prefs["apnsDeviceToken"] = "bound"
+                _ = try await post("v3/devices/preferences", prefs, app: app)
+                let path = "v4/devices/location-snapshots"
+                let time = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 60)
+                var initial = location(id, capturedAt: time)
+                initial["cellScheme"] = "h3"; initial["h3Cell"] = Int64(614934489169608703)
+                initial["h3Resolution"] = 8
+                initial["zone"] = "COZ040"; initial["fireZone"] = "COZ240"
+                initial["countyLabel"] = "Denver"; initial["fireZoneLabel"] = "Old fire zone"
+                #expect(try status(try await post(path, initial, app: app)) == "accepted")
+                let newCode = codeKey == "county" ? "COC013" : (codeKey == "zone" ? "COZ041" : "COZ241")
+                let seriesID = self.id(), urn = "urn:oid:\(UUID())", now = Date()
+                // The alert is already active before B's minimal upload or enrichment.
+                try await ArcusSeriesModel(id: seriesID, source: "nws", event: "Tornado Watch",
+                    sourceURL: "https://api.weather.gov/alerts/\(seriesID)", currentRevisionUrn: urn,
+                    currentRevisionSent: now, messageType: "alert", contentFingerprint: String(repeating: "a", count: 64),
+                    state: EventState.active.rawValue, expires: now.addingTimeInterval(3600),
+                    ends: now.addingTimeInterval(3600), lastSeenActive: now, severity: "severe",
+                    urgency: "immediate", certainty: "observed", ugcCodes: [newCode]).create(on: app.db)
+                try await ArcusEventRevisionModel(seriesId: seriesID, revisionUrn: urn, messageType: "alert",
+                    sent: now, received: now, referencedUrns: []).create(on: app.db)
+                try await ArcusNotificationOutboxModel(series: seriesID, revisionUrn: urn,
+                    mode: NotificationTargetMode.ugc.rawValue, reason: NotificationReason.new.rawValue,
+                    state: "done", attempts: 1, availableAt: now).create(on: app.db)
+                var minimal = initial
+                minimal["capturedAt"] = ISO8601DateFormatter().string(from: time.addingTimeInterval(20))
+                for key in ["county", "zone", "fireZone", "countyLabel", "fireZoneLabel"] { minimal.removeValue(forKey: key) }
+                #expect(try status(try await post(path, minimal, app: app)) == "accepted")
+                let incomplete = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(incomplete.capturedAt == time.addingTimeInterval(20))
+                #expect(incomplete.county == nil && incomplete.zone == nil && incomplete.fireZone == nil)
+                #expect(incomplete.countyLabel == nil && incomplete.fireZoneLabel == nil)
+                let store = NotificationCandidateStore()
+                #expect(try await store.loadUGCCandidates(ugcCodes: ["COC031", "COZ040", "COZ240"],
+                    capturedAtOrAfter: .distantPast, installationId: id, on: app.db).isEmpty)
+                #expect(try await store.loadH3Candidates(cells: [614934489169608703],
+                    capturedAtOrAfter: time.addingTimeInterval(1), installationId: id, on: app.db).map(\.id) == [id])
+                let context = QueueContext(queueName: ArcusQueueLane.target.queueName,
+                    configuration: app.queues.configuration, application: app, logger: app.logger, on: app.eventLoopGroup.any())
+                let queued = try #require(app.queues.test.all(ReconcileInstallationAlertsJob.self).last { $0.installationId == id })
+                try await ReconcileInstallationAlertsJob().dequeue(context, queued)
+                #expect(app.queues.test.all(NotificationSendJob.self).filter { $0.installationId == id }.isEmpty)
+                // Partial B enrichment can fill one code; a delayed A must never restore old codes.
+                var enriched = minimal; enriched[codeKey] = newCode
+                #expect(try status(try await post(path, enriched, app: app)) == "accepted")
+                let current = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(current.county == (codeKey == "county" ? newCode : nil))
+                #expect(current.zone == (codeKey == "zone" ? newCode : nil))
+                #expect(current.fireZone == (codeKey == "fireZone" ? newCode : nil))
+                let beforeRetry = try await snapshot(id, app: app)[3]
+                #expect(try status(try await post(path, enriched, app: app)) == "accepted")
+                #expect(try status(try await post(path, minimal, app: app)) == "accepted")
+                #expect(try await snapshot(id, app: app)[3] == beforeRetry)
+                let beforeStale = try await snapshot(id, app: app)
+                #expect(try status(try await post(path, initial, app: app)) == "stale")
+                var conflict = enriched; conflict[codeKey] = initial[codeKey]
+                #expect(try status(try await post(path, conflict, app: app)) == "stale")
+                #expect(try await snapshot(id, app: app) == beforeStale)
+                let intents = try await PresenceReconciliationOutboxModel.query(on: app.db)
+                    .filter(\.$installation.$id == id).all()
+                #expect(intents.count == 3 && intents.allSatisfy { $0.state == .done })
+                let complete = try #require(app.queues.test.all(ReconcileInstallationAlertsJob.self).last { $0.installationId == id })
+                #expect(complete.intentId != queued.intentId)
+                try await ReconcileInstallationAlertsJob().dequeue(context, complete)
+                let sends = app.queues.test.all(NotificationSendJob.self).filter { $0.installationId == id }
+                #expect(sends.count == 1 && sends.first?.seriesId == seriesID && sends.first?.revisionUrn == urn)
+                try await ArcusSeriesModel.find(seriesID, on: app.db)?.delete(on: app.db)
+            }
+        }
+    }
+
     @Test("Tokenless initialization, monotonic consent, same-revision binding, stale no-effects, and re-enable")
     func acceptance() async throws {
         try await withApp { app in
@@ -801,6 +877,11 @@ struct DeviceV3ControllerTests {
                 #expect(try status(try await post(path, minimal, app: app)) == "accepted")
                 #expect(try status(try await post(path, newer, app: app)) == "accepted")
                 let intentsBeforeRetry = try await snapshot(id, app: app)[3]
+                var sameTickMinimal = minimal
+                sameTickMinimal["capturedAt"] = "\(second).900000100Z"
+                #expect(try status(try await post(path, sameTickMinimal, app: app)) == "accepted")
+                let afterSameTick = try #require(try await DevicePresenceModel.find(id, on: app.db))
+                #expect(afterSameTick.county == "COC031" && afterSameTick.zone == "COZ040" && afterSameTick.fireZone == "COZ240")
                 #expect(try status(try await post(path, newer, app: app)) == "accepted")
                 #expect(try status(try await post(path, minimal, app: app)) == "accepted")
                 #expect(try await snapshot(id, app: app)[3] == intentsBeforeRetry)
